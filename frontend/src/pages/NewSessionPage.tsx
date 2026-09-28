@@ -1,0 +1,166 @@
+import { useMutation, useQuery } from '@apollo/client';
+import { useEffect, useState } from 'react';
+import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { CREATE_SESSION, PROJECTS, PROVIDERS, type ConfigField, type Project, type Provider, type Session } from '../graphql/operations';
+
+function ConfigInput({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
+  if (field.type === 'boolean') {
+    return <Form.Check type="switch" checked={value === 'true'} onChange={(e) => onChange(String(e.target.checked))} />;
+  }
+  if (field.type === 'select') {
+    return (
+      <Form.Select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">—</option>
+        {(field.options ?? []).map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </Form.Select>
+    );
+  }
+  return <Form.Control type={field.type === 'number' ? 'number' : 'text'} value={value} onChange={(e) => onChange(e.target.value)} />;
+}
+
+/** Convertit les valeurs textuelles du formulaire vers les types attendus par le provider. */
+function buildConfig(fields: ConfigField[], values: Record<string, string>): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  for (const field of fields) {
+    const raw = values[field.key];
+    if (raw === undefined || raw === '') continue;
+    config[field.key] = field.type === 'number' ? Number(raw) : field.type === 'boolean' ? raw === 'true' : raw;
+  }
+  return config;
+}
+
+export default function NewSessionPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { data, loading, error } = useQuery<{ providers: Provider[] }>(PROVIDERS);
+  const { data: projectsData, loading: loadingProjects } = useQuery<{ projects: Project[] }>(PROJECTS);
+  const [createSession, { loading: creating, error: createError }] = useMutation<{ createSession: Session }>(CREATE_SESSION, {
+    onCompleted: (res) => navigate(`/sessions/${res.createSession.id}`),
+  });
+
+  const [name, setName] = useState('');
+  const [projectId, setProjectId] = useState(searchParams.get('projectId') ?? '');
+  const [providerType, setProviderType] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [autoStart, setAutoStart] = useState(true);
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  const providers = data?.providers ?? [];
+  const provider = providers.find((p) => p.type === providerType);
+  const projects = projectsData?.projects ?? [];
+  const project = projects.find((p) => p.id === projectId);
+
+  useEffect(() => {
+    if (!projectId && projects.length) setProjectId(projects[0].id);
+  }, [projects, projectId]);
+
+  useEffect(() => {
+    if (!providerType && providers.length) setProviderType(providers[0].type);
+  }, [providers, providerType]);
+
+  useEffect(() => {
+    // Réinitialise la config avec les valeurs par défaut du provider sélectionné.
+    const defaults: Record<string, string> = {};
+    for (const f of provider?.configFields ?? []) if (f.defaultValue) defaults[f.key] = f.defaultValue;
+    setValues(defaults);
+  }, [provider]);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!provider || !project) return;
+    createSession({
+      variables: {
+        input: { projectId: project.id, name, provider: provider.type, prompt: prompt || null, config: buildConfig(provider.configFields, values), autoStart },
+      },
+    });
+  };
+
+  if (loading || loadingProjects) return <Spinner animation="border" size="sm" />;
+  if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
+  if (projects.length === 0) {
+    return (
+      <Alert variant="warning">
+        Aucun projet : une session s'exécute nécessairement dans un projet. <Link to="/projects/new">Créer un projet</Link>.
+      </Alert>
+    );
+  }
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Nouvelle session</h1>
+      <Card>
+        <Card.Body>
+          <Form onSubmit={submit}>
+            <Form.Group className="mb-3">
+              <Form.Label>Projet</Form.Label>
+              <Form.Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Form.Select>
+              {project && (
+                <Form.Text>
+                  La session s'exécutera dans <code>{project.workspacePath}</code>
+                  {project.systemPrompt ? ' avec le prompt système du projet.' : '.'}
+                </Form.Text>
+              )}
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Nom</Form.Label>
+              <Form.Control value={name} onChange={(e) => setName(e.target.value)} required placeholder="Ex. Refacto du module auth" />
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Type d'agent</Form.Label>
+              <Form.Select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
+                {providers.map((p) => (
+                  <option key={p.type} value={p.type}>
+                    {p.label}
+                  </option>
+                ))}
+              </Form.Select>
+              {provider && <Form.Text>{provider.description}</Form.Text>}
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Prompt / instruction</Form.Label>
+              <Form.Control as="textarea" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+            </Form.Group>
+
+            {provider && provider.configFields.length > 0 && (
+              <fieldset className="mb-3">
+                <legend className="h6">Options « {provider.label} »</legend>
+                {provider.configFields.map((field) => (
+                  <Form.Group className="mb-2" key={field.key}>
+                    <Form.Label className="small mb-1">
+                      {field.label}
+                      {field.required && ' *'}
+                    </Form.Label>
+                    <ConfigInput field={field} value={values[field.key] ?? ''} onChange={(v) => setValues((prev) => ({ ...prev, [field.key]: v }))} />
+                    {field.description && <Form.Text>{field.description}</Form.Text>}
+                  </Form.Group>
+                ))}
+              </fieldset>
+            )}
+
+            <Form.Check className="mb-3" type="switch" id="autoStart" label="Démarrer immédiatement" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />
+
+            {createError && <Alert variant="danger">{createError.message}</Alert>}
+
+            <Button type="submit" disabled={creating || !provider || !project}>
+              {creating ? 'Création…' : 'Créer la session'}
+            </Button>
+          </Form>
+        </Card.Body>
+      </Card>
+    </>
+  );
+}

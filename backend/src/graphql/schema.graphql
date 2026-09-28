@@ -1,0 +1,177 @@
+scalar JSON
+scalar DateTime
+
+enum SessionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  STOPPED
+  INTERRUPTED
+}
+
+type ConfigField {
+  key: String!
+  label: String!
+  type: String!
+  required: Boolean!
+  description: String
+  options: [String!]
+  defaultValue: String
+}
+
+"Un type d'agent que l'on peut exécuter en session (Claude, shell, ...)."
+type Provider {
+  type: String!
+  label: String!
+  description: String!
+  configFields: [ConfigField!]!
+}
+
+"Un projet regroupe des sessions ; chacune s'exécute dans le workspace du projet."
+type Project {
+  id: ID!
+  name: String!
+  "Nom du dossier du projet dans WORKSPACES_ROOT (fixé à la création)."
+  slug: String!
+  description: String
+  "Ajouté au prompt système des agents qui le supportent."
+  systemPrompt: String!
+  gitUrl: String
+  gitBranch: String
+  "Chemin absolu du workspace sur le serveur."
+  workspacePath: String!
+  workspaceExists: Boolean!
+  "Branche et commit courants du workspace, si c'est un dépôt git."
+  git: WorkspaceGit
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  sessions(status: SessionStatus, limit: Int, offset: Int): [Session!]!
+}
+
+type WorkspaceGit {
+  branch: String!
+  commit: String!
+}
+
+type Session {
+  id: ID!
+  project: Project!
+  name: String!
+  provider: String!
+  status: SessionStatus!
+  prompt: String
+  config: JSON!
+  externalId: String
+  exitCode: Int
+  error: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  startedAt: DateTime
+  endedAt: DateTime
+  "Événements journalisés, dans l'ordre chronologique. `after` = id du dernier événement déjà reçu."
+  events(after: ID, limit: Int): [SessionEvent!]!
+  requests(status: RequestStatus): [Request!]!
+  "Nombre de demandes en attente d'une réponse humaine."
+  pendingRequestCount: Int!
+}
+
+enum RequestStatus {
+  PENDING
+  ANSWERED
+  CANCELLED
+  EXPIRED
+}
+
+"Demande d'intervention humaine émise par un agent : autorisation d'outil, question, saisie..."
+type Request {
+  id: ID!
+  session: Session!
+  "'permission', 'question', 'input', ... (extensible)"
+  type: String!
+  status: RequestStatus!
+  title: String!
+  message: String
+  "Données propres au type : { toolName, input, suggestions } pour 'permission', { questions } pour 'question'."
+  payload: JSON!
+  "Réponse fournie : { decision: allow|deny, always?, message? } pour 'permission', { answers: { question: réponse } } pour 'question'."
+  response: JSON
+  createdAt: DateTime!
+  answeredAt: DateTime
+}
+
+type SessionEvent {
+  id: ID!
+  sessionId: ID!
+  type: String!
+  payload: JSON!
+  createdAt: DateTime!
+}
+
+type Query {
+  providers: [Provider!]!
+  sessions(projectId: ID, status: SessionStatus, provider: String, limit: Int, offset: Int): [Session!]!
+  session(id: ID!): Session
+  projects: [Project!]!
+  project(id: ID!): Project
+  "Demandes, toutes sessions confondues (par défaut : celles en attente)."
+  requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int): [Request!]!
+  request(id: ID!): Request
+}
+
+input CreateProjectInput {
+  name: String!
+  "Optionnel : dérivé du nom si absent."
+  slug: String
+  description: String
+  systemPrompt: String
+  gitUrl: String
+  gitBranch: String
+}
+
+input UpdateProjectInput {
+  name: String
+  description: String
+  systemPrompt: String
+  gitUrl: String
+  gitBranch: String
+}
+
+input CreateSessionInput {
+  projectId: ID!
+  name: String!
+  provider: String!
+  prompt: String
+  config: JSON
+  "Démarre la session immédiatement après création (défaut : true)."
+  autoStart: Boolean
+}
+
+type Mutation {
+  "Crée le projet et prépare son workspace (clone git si une URL est fournie)."
+  createProject(input: CreateProjectInput!): Project!
+  updateProject(id: ID!, input: UpdateProjectInput!): Project!
+  "(Re)crée le workspace s'il n'existe pas sur disque."
+  prepareProjectWorkspace(id: ID!): Project!
+  "Supprime le projet et ses sessions en base ; le dossier sur disque est conservé."
+  deleteProject(id: ID!): Boolean!
+  createSession(input: CreateSessionInput!): Session!
+  startSession(id: ID!): Session!
+  stopSession(id: ID!): Session!
+  deleteSession(id: ID!): Boolean!
+  "Répond à une demande en attente ; la session reprend avec cette réponse."
+  answerRequest(id: ID!, response: JSON!): Request!
+  "Abandonne une demande : l'agent reçoit un refus."
+  cancelRequest(id: ID!): Request!
+}
+
+type Subscription {
+  "Flux d'événements d'une session (SSE)."
+  sessionEvents(sessionId: ID!): SessionEvent!
+  "Notifié à chaque changement d'état d'une session."
+  sessionUpdated: Session!
+  "Nouvelle demande d'intervention humaine."
+  requestCreated: Request!
+  "Demande répondue, annulée ou expirée."
+  requestUpdated: Request!
+}
