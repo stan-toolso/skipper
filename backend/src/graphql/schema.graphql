@@ -106,6 +106,8 @@ type Project {
   tasks(status: [TaskStatus!]): [Task!]!
   worktrees: [Worktree!]!
   connections: [Connection!]!
+  "Compte Google relié au projet (Gmail, Drive), null si aucun."
+  googleAccount: GoogleAccount
   members: [ProjectMember!]!
   "Rôle de l'utilisateur connecté sur ce projet."
   myRole: ProjectRole!
@@ -288,16 +290,30 @@ type Worktree {
 enum ConnectionKind {
   ssh
   postgres
+  "Site web : une adresse et autant de champs qu'on veut (identifiant, mot de passe...), utilisés par le navigateur headless des agents."
+  website
 }
 
-"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants), shell de la session (ssh, psql), ou les deux."
+"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants ; pour un site web, le navigateur headless saisit les secrets), shell de la session (ssh, psql, variables d'environnement), ou les deux."
 enum ConnectionExposure {
   mcp
   direct
   both
 }
 
-"Connexion d'un projet vers un système externe (serveur SSH, base PostgreSQL), utilisable par les agents. Les secrets ne sont jamais renvoyés."
+"Champ d'un site web (identifiant, mot de passe, code d'organisation...)."
+type ConnectionField {
+  "Clé technique (minuscules, chiffres, soulignés)."
+  key: String!
+  label: String!
+  secret: Boolean!
+  "Valeur d'un champ public ; null pour un secret (jamais renvoyé)."
+  value: String
+  "Nom de variable sous lequel le navigateur et le shell des agents désignent le champ (ex. ADMIN_SITE_PASSWORD)."
+  variable: String!
+}
+
+"Connexion d'un projet vers un système externe (serveur SSH, base PostgreSQL, site web), utilisable par les agents. Les secrets ne sont jamais renvoyés."
 type Connection {
   id: ID!
   project: Project!
@@ -305,9 +321,16 @@ type Connection {
   name: String!
   kind: ConnectionKind!
   description: String!
-  host: String!
-  port: Int!
-  username: String!
+  "ssh, postgres : hôte (null pour un site web)."
+  host: String
+  "ssh, postgres : port (null pour un site web)."
+  port: Int
+  "ssh, postgres : utilisateur (null pour un site web)."
+  username: String
+  "website : adresse du site ou de sa page de connexion."
+  url: String
+  "website : champs, dans l'ordre de saisie (vide pour les autres types)."
+  fields: [ConnectionField!]!
   "postgres : nom de la base."
   database: String
   "postgres : connexion TLS."
@@ -326,7 +349,7 @@ type Connection {
   "ssh : empreinte de la clé d'hôte mémorisée à la première connexion."
   hostFingerprint: String
   hostKeySeenAt: DateTime
-  "Un secret (clé privée, mot de passe) est enregistré."
+  "Un secret (clé privée, mot de passe, champ secret d'un site) est enregistré."
   hasSecret: Boolean!
   lastTestAt: DateTime
   lastTestOk: Boolean
@@ -353,6 +376,19 @@ input ConnectionInput {
   privateKey: String
   "postgres : mot de passe (chaîne vide pour l'effacer)."
   password: String
+  "website : adresse du site."
+  url: String
+  "website : liste complète des champs (remplace la précédente)."
+  fields: [ConnectionFieldInput!]
+}
+
+input ConnectionFieldInput {
+  key: String!
+  label: String
+  "Secret : chiffré, jamais renvoyé, saisi par le navigateur à la place de l'agent. Défaut : false (ou inchangé en mise à jour)."
+  secret: Boolean
+  "Valeur. Pour un secret existant, absente ou null = inchangée."
+  value: String
 }
 
 type ConnectionTest {
@@ -456,6 +492,38 @@ type RunnerStatus {
 type WorkspaceGit {
   branch: String!
   commit: String!
+}
+
+"Niveau d'accès des agents à un service Google : NONE, READ (lire, chercher) ou WRITE (aussi envoyer / déposer)."
+enum GoogleAccess {
+  NONE
+  READ
+  WRITE
+}
+
+"Compte Google relié à un projet par OAuth : les agents accèdent à sa messagerie et/ou à son Drive via le serveur MCP `google`. Le rattachement se fait par GET /auth/google/connect?projectId=…&gmail=…&drive=… ; les jetons ne sont jamais renvoyés."
+type GoogleAccount {
+  email: String!
+  name: String
+  avatarUrl: String
+  gmailAccess: GoogleAccess!
+  driveAccess: GoogleAccess!
+  "Portées OAuth accordées par Google."
+  scopes: [String!]!
+  connectedBy: User
+  lastCheckAt: DateTime
+  lastCheckOk: Boolean
+  lastCheckError: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type GoogleAccountCheck {
+  account: GoogleAccount!
+  ok: Boolean!
+  error: String
+  "Ce que Google a répondu (adresse, nombre de messages, espace Drive)."
+  detail: String
 }
 
 type Session {
@@ -884,6 +952,10 @@ type Mutation {
   regenerateConnectionKey(id: ID!): Connection!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
   forgetConnectionHostKey(id: ID!): Connection!
+  "Vérifie que le compte Google du projet répond encore (jeton renouvelé, profil, Gmail, Drive)."
+  checkGoogleAccount(projectId: ID!): GoogleAccountCheck!
+  "Détache le compte Google du projet et révoque le jeton côté Google."
+  disconnectGoogleAccount(projectId: ID!): Project!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

@@ -44,12 +44,22 @@ Le port 4000 est celui de l'API Curso : Skipper est sur 4100. Le `.env` fixe aus
 Les utilisateurs se connectent avec Google. La configuration existe dans la console Google Cloud,
 projet **Skipper** (`skipper-510112`, organisation toolso.io, compte de facturation Toolso) :
 
-- **Google Auth Platform → Audience** : « Interne », donc seuls les comptes toolso.io peuvent se
-  connecter, sans validation Google. Passer en « Externe » (avec liste d'utilisateurs test puis
-  vérification) pour inviter des comptes hors organisation.
+- **Google Auth Platform → Audience** : « Externe », statut « En production », depuis le 2026-09-29
+  (auparavant « Interne », ce qui bloquait le rattachement de comptes gmail.com à un projet, erreur
+  `org_internal`). L'application n'est pas validée par Google : l'écran de consentement affiche un
+  avertissement « Google n'a pas validé cette application », à passer par « Paramètres avancés » puis
+  « Accéder à Skipper » ; les jetons n'expirent pas et la limite est de 100 utilisateurs ayant accordé
+  des portées sensibles (compteur sur la page Audience). Ne pas revenir en « Test » : dans ce mode les
+  jetons de rafraîchissement expirent au bout de 7 jours. La connexion à Skipper reste réservée aux
+  adresses invitées sur un projet, quelle que soit l'audience Google.
+- **Google Auth Platform → Branding** : page d'accueil `https://skipper.toolso.io` et politique de
+  confidentialité `https://skipper.toolso.io/privacy.html` (`frontend/public/privacy.html`, servie sans
+  authentification et exclue du repli du service worker), exigées pour le statut « En production ».
 - **Google Auth Platform → Clients** : client « Skipper web » (application Web) avec les URI de
   redirection `https://skipper.toolso.io/auth/google/callback` et
-  `http://localhost:4000/auth/google/callback` (développement).
+  `http://localhost:4000/auth/google/callback` (développement). Le même client et le même callback
+  servent à relier un compte Google à un projet (Gmail, Drive) : pour cela, activer les API **Gmail
+  API** et **Google Drive API** dans « API et services » du projet Google Cloud (fait le 2026-09-29).
 - Le secret du client n'est visible qu'à sa création : il est dans le `.env` du poste de
   développement (jamais versionné). Le reporter dans `~/skipper/.env` sur le serveur
   (`GOOGLE_CLIENT_ID=...`, `GOOGLE_CLIENT_SECRET=...`), puis `pm2 restart skipper --update-env`.

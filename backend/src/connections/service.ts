@@ -15,7 +15,11 @@ import {
   type PostgresSettings,
   type SshCredentials,
   type SshSettings,
+  type WebsiteCredentials,
+  type WebsiteField,
+  type WebsiteSettings,
 } from './types.js';
+import * as website from './website.js';
 
 /**
  * Connexions des projets vers des systèmes externes. Le service est le seul à manipuler les secrets
@@ -26,7 +30,7 @@ import {
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const DEFAULT_PORTS = { ssh: 22, postgres: 5432 } as const;
 
-export const kindLabels: Record<Connection['kind'], string> = { ssh: 'Serveur SSH', postgres: 'Base PostgreSQL' };
+export const kindLabels: Record<Connection['kind'], string> = { ssh: 'Serveur SSH', postgres: 'Base PostgreSQL', website: 'Site web' };
 
 function validateName(name: string): string {
   const n = name.trim().toLowerCase();
@@ -69,18 +73,23 @@ export const connectionService = {
     return c;
   },
 
-  hasSecret: (c: Connection) => Boolean(c.kind === 'ssh' ? c.secrets.privateKey : c.secrets.password),
+  hasSecret: (c: Connection) => {
+    if (c.kind === 'ssh') return Boolean(c.secrets.privateKey);
+    if (c.kind === 'postgres') return Boolean(c.secrets.password);
+    return (c.settings as WebsiteSettings).fields.some((f) => f.secret && c.secrets[f.key]);
+  },
 
   async create(projectId: string, input: ConnectionInput): Promise<Connection> {
     const project = await projectService.get(projectId);
     const kind = input.kind ?? 'ssh';
     if (!CONNECTION_KINDS.includes(kind)) throw new AppError(`Type de connexion inconnu : ${kind}`);
     const name = validateName(input.name ?? '');
+    const web = kind === 'website' ? this.buildWebsite(null, {}, input) : null;
     const record: ConnectionRecordInput = {
       name,
       kind,
       description: input.description?.trim() ?? '',
-      settings: await this.buildSettings(kind, null, input, projectId),
+      settings: web ? web.settings : await this.buildSettings(kind, null, input, projectId),
       secrets: {},
       publicKey: null,
       exposure: this.validateExposure(input.exposure ?? 'mcp'),
@@ -93,8 +102,10 @@ export const connectionService = {
       const pair = input.privateKey?.trim() ? { privateKey: input.privateKey.trim(), publicKey: ssh.publicKeyOf(input.privateKey.trim()) } : ssh.generateKeyPair(`skipper-${project.slug}-${name}`);
       record.secrets = { privateKey: encryptSecret(pair.privateKey) };
       record.publicKey = pair.publicKey;
-    } else if (input.password) {
-      record.secrets = { password: encryptSecret(input.password) };
+    } else if (kind === 'postgres') {
+      if (input.password) record.secrets = { password: encryptSecret(input.password) };
+    } else if (web) {
+      record.secrets = web.secrets;
     }
     try {
       return await connectionRepository.create(projectId, record);
@@ -109,7 +120,9 @@ export const connectionService = {
     const patch: Partial<ConnectionRecordInput> = {};
     if (input.name != null) patch.name = validateName(input.name);
     if (input.description != null) patch.description = input.description.trim();
-    if (input.host != null || input.port != null || input.username != null || input.database != null || input.ssl != null || input.viaConnectionId !== undefined) {
+    if (current.kind === 'website') {
+      if (input.url != null || input.fields != null) Object.assign(patch, this.buildWebsite(current.settings as WebsiteSettings, current.secrets, input));
+    } else if (input.host != null || input.port != null || input.username != null || input.database != null || input.ssl != null || input.viaConnectionId !== undefined) {
       patch.settings = await this.buildSettings(current.kind, current.settings, input, current.projectId);
     }
     if (input.exposure != null) patch.exposure = this.validateExposure(input.exposure);
@@ -169,7 +182,39 @@ export const connectionService = {
     return exposure;
   },
 
+  /**
+   * Site web : adresse et liste de champs. La liste reçue remplace la précédente ; un champ secret
+   * sans valeur conserve le secret déjà enregistré sous la même clé. Renvoie les réglages publics et
+   * les secrets chiffrés (uniquement les clés encore présentes et secrètes).
+   */
+  buildWebsite(current: WebsiteSettings | null, currentSecrets: Record<string, string>, input: ConnectionInput): { settings: WebsiteSettings; secrets: Record<string, string> } {
+    const url = input.url != null || !current ? website.validateUrl(input.url) : current.url;
+    const fields: WebsiteField[] = [];
+    const secrets: Record<string, string> = {};
+    const seen = new Set<string>();
+    const previous = new Map((current?.fields ?? []).map((f) => [f.key, f]));
+    const entries = input.fields ?? current?.fields ?? [];
+    for (const f of entries) {
+      const key = website.validateFieldKey(f.key);
+      if (seen.has(key)) throw new AppError(`Le champ « ${key} » apparaît deux fois`);
+      seen.add(key);
+      const secret = f.secret ?? previous.get(key)?.secret ?? false;
+      const label = f.label?.trim() || previous.get(key)?.label || key;
+      if (secret) {
+        if (f.value) secrets[key] = encryptSecret(f.value);
+        else if (currentSecrets[key] && previous.get(key)?.secret) secrets[key] = currentSecrets[key];
+        else throw new AppError(`Le champ secret « ${label} » n'a pas de valeur`);
+        fields.push({ key, label, secret: true, value: null });
+      } else {
+        // Un champ qui cesse d'être secret doit être ressaisi : on ne déchiffre pas vers l'interface.
+        fields.push({ key, label, secret: false, value: f.value ?? previous.get(key)?.value ?? '' });
+      }
+    }
+    return { settings: { url, fields }, secrets };
+  },
+
   async buildSettings(kind: Connection['kind'], current: Connection['settings'] | null, input: ConnectionInput, projectId: string): Promise<Connection['settings']> {
+    if (kind === 'website') throw new AppError('buildSettings ne concerne pas les sites web');
     const base = (current ?? {}) as Partial<SshSettings & PostgresSettings>;
     const host = requireText(input.host ?? base.host, "L'hôte est");
     const port = validatePort(input.port ?? base.port ?? null, DEFAULT_PORTS[kind]);
@@ -211,6 +256,28 @@ export const connectionService = {
     return { host: s.host, port: s.port, username: s.username, database: s.database, ssl: s.ssl, password: c.secrets.password ? decryptSecret(c.secrets.password) : null, via };
   },
 
+  websiteCredentials(c: Connection): WebsiteCredentials {
+    if (c.kind !== 'website') throw new AppError(`"${c.name}" n'est pas un site web`);
+    const s = c.settings as WebsiteSettings;
+    return {
+      url: s.url,
+      fields: s.fields.map((f) => ({ ...f, value: f.secret ? (c.secrets[f.key] ? decryptSecret(c.secrets[f.key]) : '') : f.value ?? '', variable: website.variableName(c.name, f.key) })),
+    };
+  },
+
+  /**
+   * Secrets des sites web accessibles par les outils (exposure mcp ou both), à donner au navigateur
+   * headless : nom de variable → valeur. Les champs publics n'y figurent pas, l'agent connaît leur valeur.
+   */
+  async browserSecrets(projectId: string): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const c of await connectionRepository.listByProject(projectId)) {
+      if (c.kind !== 'website' || c.exposure === 'direct') continue;
+      for (const f of this.websiteCredentials(c).fields) if (f.secret && f.value) out[f.variable] = f.value;
+    }
+    return out;
+  },
+
   /** Vérifie qu'une commande respecte la liste blanche de préfixes de la connexion (vide = tout). */
   assertCommandAllowed(c: Connection, command: string): void {
     if (c.commandAllowlist.length === 0) return;
@@ -235,10 +302,13 @@ export const connectionService = {
         } finally {
           session.close();
         }
-      } else {
+      } else if (c.kind === 'postgres') {
         const creds = await this.postgresCredentials(c);
         const probe = await postgres.probe(creds);
         if (creds.via) await this.rememberHostKey(creds.via.connection, probe.sshHostKey);
+        result = { ok: true, error: null, detail: probe.detail };
+      } else {
+        const probe = await website.probe((c.settings as WebsiteSettings).url);
         result = { ok: true, error: null, detail: probe.detail };
       }
     } catch (err) {
@@ -251,15 +321,27 @@ export const connectionService = {
   // ---- Prompt des agents ----------------------------------------------------------------------
 
   /** Description des connexions du projet pour le prompt système d'une session. */
-  async promptSummary(project: Pick<Project, 'id'>): Promise<string> {
+  async promptSummary(project: Pick<Project, 'id' | 'runnerConfig'>): Promise<string> {
     const list = await connectionRepository.listByProject(project.id);
     if (list.length === 0) return '';
     const byId = new Map(list.map((c) => [c.id, c]));
     // Dans le conteneur du projet, le shell de l'agent n'a ni agent SSH ni tunnels : seuls les outils sont disponibles.
     const shellAvailable = false;
+    const browserAvailable = Boolean((project.runnerConfig as { browser?: boolean } | null)?.browser);
     const lines = list.map((c) => {
       const viaMcp = c.exposure !== 'direct';
       const direct = c.exposure !== 'mcp' && shellAvailable;
+      if (c.kind === 'website') {
+        const s = c.settings as WebsiteSettings;
+        const publics = s.fields.filter((f) => !f.secret).map((f) => `${f.label} : ${JSON.stringify(f.value ?? '')}`);
+        const secrets = s.fields.filter((f) => f.secret).map((f) => `${f.label} → \`${website.variableName(c.name, f.key)}\``);
+        const how = [
+          viaMcp && (browserAvailable ? `dans le navigateur, tape le nom de la variable dans le champ du formulaire (\`browser_type\`, \`browser_fill_form\`) : il est remplacé par la valeur, que tu ne vois jamais` : "le navigateur headless n'est pas activé sur ce projet : les secrets ne sont pas accessibles"),
+          direct && `dans le shell : variables d'environnement ${s.fields.map((f) => `\`${website.variableName(c.name, f.key)}\``).join(', ')}`,
+        ].filter(Boolean).join(' ; ');
+        if (!how) return `- \`${c.name}\` : site web ${s.url} configuré en accès shell uniquement, indisponible dans cet environnement d'exécution.`;
+        return `- \`${c.name}\` : site web ${s.url}${c.description ? ` — ${c.description}` : ''}. ${publics.length ? `Champs connus : ${publics.join(', ')}. ` : ''}${secrets.length ? `Secrets : ${secrets.join(', ')}. ` : ''}Accès : ${how}.`;
+      }
       if (!viaMcp && !direct) return `- \`${c.name}\` : ${kindLabels[c.kind]} configurée en accès shell uniquement, indisponible dans cet environnement d'exécution.`;
       if (c.kind === 'ssh') {
         const s = c.settings as SshSettings;
@@ -273,7 +355,7 @@ export const connectionService = {
       return `- \`${c.name}\` : base PostgreSQL ${s.database} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${c.description ? ` — ${c.description}` : ''}. ${c.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Accès : ${how}.`;
     });
     return [
-      "Le projet dispose de connexions vers des systèmes externes, utilisables avec les outils du serveur MCP `connections` (le serveur détient les identifiants : tu n'as pas à les connaître). Chaque appel peut être soumis à l'approbation d'un humain. Désigne une connexion par son nom.",
+      "Le projet dispose de connexions vers des systèmes externes, utilisables avec les outils du serveur MCP `connections` (le serveur détient les identifiants : tu n'as pas à les connaître) ou, pour les sites web, avec le navigateur headless. Chaque appel peut être soumis à l'approbation d'un humain. Désigne une connexion par son nom.",
       ...lines,
     ].join('\n');
   },

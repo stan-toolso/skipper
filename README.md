@@ -31,9 +31,11 @@ Trois notions :
 - **Notification** : cloche en haut à droite de l'interface. Signale une demande d'un agent, une
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
   contexte par un agent. Notifications natives du navigateur activables en option.
-- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL) que les agents
-  peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
-  MCP et ne les voit jamais. Voir « Connexions » plus bas.
+- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
+  agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
+  MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
+- **Compte Google** : un compte Google relié à un projet (OAuth) pour donner aux agents accès à sa
+  messagerie Gmail et/ou à son Drive, en lecture ou en écriture. Voir « Compte Google » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -103,10 +105,16 @@ backend/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
+    google/
+      service.ts               # compte Google d'un projet : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
+      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
+      mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     connections/
-      service.ts               # connexions SSH / PostgreSQL d'un projet : CRUD, secrets chiffrés, test, prompt
+      service.ts               # connexions SSH / PostgreSQL / sites web d'un projet : CRUD, secrets chiffrés, test, prompt
       ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
       postgres.ts              # requêtes pg (lecture seule, tunnel), rendu des résultats, schéma
+      website.ts               # sites web : champs libres, noms de variables, fichier --secrets du navigateur, test HTTP
       mcp.ts                   # serveur MCP `connections` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema)
       runtime.ts               # mode « shell » : ssh-agent, enveloppes ssh/scp, pg_service.conf, tunnels par session
     context/
@@ -163,9 +171,10 @@ frontend/
   projets existants.
 ## Connexions
 
-Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Deux types
-pour l'instant : **serveur SSH** et **base PostgreSQL** (éventuellement atteinte à travers une connexion
-SSH du projet, en tunnel). Chaque connexion a un nom court (`prod`, `rds-prod`) que les agents emploient.
+Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Trois types :
+**serveur SSH**, **base PostgreSQL** (éventuellement atteinte à travers une connexion SSH du projet, en
+tunnel) et **site web**. Chaque connexion a un nom court (`prod`, `rds-prod`, `admin-site`) que les agents
+emploient.
 
 **Identifiants.** Les champs publics (hôte, port, utilisateur, base) sont en clair ; la clé privée ou le
 mot de passe sont chiffrés (AES-256-GCM, même clé que les jetons des Paramètres) et jamais renvoyés à
@@ -176,17 +185,33 @@ la première connexion réussie (test depuis l'interface) et vérifiée ensuite 
 Pour une base, on recommande un rôle dédié aux agents ; l'option « lecture seule » force en plus des
 transactions `READ ONLY`.
 
+**Sites web.** Une adresse (de préférence la page de connexion) et autant de champs qu'on veut, chacun
+avec une clé (`username`, `password`, `otp_secret`, `org_code`…), un libellé, et le choix **public** ou
+**secret**. Un champ public est communiqué tel quel à l'agent ; un champ secret est chiffré, jamais
+réaffiché, et désigné par un nom de variable dérivé de la connexion et de la clé (`admin-site` +
+`password` → `ADMIN_SITE_PASSWORD`). Le test depuis l'interface vérifie seulement que l'adresse répond en
+HTTP : les formulaires de connexion sont tous différents, c'est l'agent qui se connecte avec le navigateur.
+
 **Accès des agents**, au choix par connexion :
 
 - **Outils** (par défaut) : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
   `tasks`. Outils `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `sql_query`, `sql_schema`. Le backend
   déchiffre, exécute, tronque les sorties, et journalise chaque usage comme événement `connection` de la
   session (visible dans le transcript). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
+- **Navigateur** (sites web, mode « outils ») : les champs secrets sont écrits, pour la durée de la
+  session, dans un fichier dotenv passé au serveur MCP Playwright (`--secrets`). Quand l'agent tape le nom
+  d'une variable dans un champ de formulaire (`browser_type`, `browser_fill_form`), Playwright saisit la
+  valeur à sa place et la masque dans ses réponses et journaux (`SECRET_ADMIN_SITE_PASSWORD`). Le prompt
+  système décrit chaque site, ses champs publics et les variables de ses secrets. La demande d'autorisation
+  montre le nom de la variable, pas la valeur. Le navigateur headless doit être activé sur le projet. Le
+  fichier vit dans `/tmp/skipper-session-<id>-browser/` (hôte ou conteneur) et disparaît en fin de session.
 - **Shell de la session** : `ssh <nom>`, `scp`, `sftp` et `psql service=<nom>` fonctionnent dans le Bash
   de l'agent. Pour la durée de la session, le backend lance un `ssh-agent` dédié (la clé est utilisable,
   pas lisible), place des enveloppes `ssh`/`scp`/`sftp` en tête du `PATH` qui imposent un fichier de
   configuration et un `known_hosts` propres à la session, ouvre les tunnels nécessaires, et écrit
-  `PGSERVICEFILE` / `PGPASSFILE`. Le mot de passe d'une base est donc lisible par l'agent dans ce mode.
+  `PGSERVICEFILE` / `PGPASSFILE`. Les champs d'un site web deviennent des variables d'environnement
+  (`ADMIN_SITE_USERNAME`, `ADMIN_SITE_PASSWORD`). Le mot de passe d'une base ou d'un site est donc lisible
+  par l'agent dans ce mode.
   Tout est détruit à la fin de la session (`/tmp/skipper-session-<id>`), et les restes d'un arrêt
   brutal sont balayés au démarrage suivant. Ce mode nécessite `ssh`, `ssh-agent`, `ssh-add` et, pour les
   bases, `psql` sur la machine du backend.
@@ -204,15 +229,48 @@ d'agent SSH ni de tunnels dans le conteneur) : seuls les outils restent utilisab
 direct (`connections/runtime.ts`) est conservé mais jamais activé. La gestion des connexions est réservée
 aux administrateurs du projet ; les autres membres les voient sans les modifier.
 
+## Compte Google
+
+Carte « Compte Google » de la fiche d'un projet (administrateurs du projet). On choisit le niveau d'accès
+voulu pour la **messagerie** (aucun, lecture, lecture et envoi) et pour le **Drive** (aucun, lecture,
+lecture et écriture), puis « Connecter un compte Google » ouvre l'écran de consentement Google
+(`GET /auth/google/connect?projectId=…&gmail=…&drive=…`). Le retour passe par le callback de la
+connexion des utilisateurs (`/auth/google/callback`, cookie d'état distinguant les deux flux) : c'est le
+même client OAuth (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) et aucun URI supplémentaire à déclarer ;
+il faut seulement **activer les API Gmail et Google Drive** dans le projet Google Cloud. Un seul compte par
+projet ; le relier de nouveau (autre compte ou autres accès) remplace le précédent et révoque son jeton.
+
+**Jetons.** Le flux demande un accès hors ligne (`access_type=offline`, `prompt=consent`) : Skipper reçoit
+un jeton de rafraîchissement, chiffré en base (`project_google_accounts`, AES-256-GCM comme les autres
+secrets) et jamais renvoyé à l'interface ; les jetons d'accès sont renouvelés en mémoire. Les accès
+enregistrés sont ceux réellement accordés sur l'écran Google (on peut y décocher une portée).
+« Vérifier » renouvelle le jeton et interroge le profil, Gmail et Drive ; « Déconnecter » révoque le jeton
+côté Google et supprime l'enregistrement.
+
+**Accès des agents.** Chaque session Claude du projet reçoit le serveur MCP `google`, dont les outils
+dépendent des accès : `account` ; `gmail_search` (syntaxe de recherche Gmail), `gmail_read`, `gmail_send`
+(envoi ou réponse dans le fil, accès « envoi ») ; `drive_search` (Drive partagés compris), `drive_read`
+(Docs et Slides en texte, Sheets en CSV, fichiers texte), `drive_download` (dans le dossier de travail,
+export des documents Google en docx / xlsx / pptx / pdf…), `drive_upload` (depuis le dossier de travail,
+conversion en Doc / Sheet / Slides possible) et `drive_write` (Google Doc depuis du Markdown, Sheet
+depuis du CSV, ou remplacement du contenu d'un fichier) pour l'accès « écriture ». Les lectures sont
+autorisées d'office ; les écritures passent par les demandes d'autorisation (« toujours » possible), comme
+le navigateur headless. Chaque appel est journalisé comme événement `connection` (kind `gmail` / `drive`)
+de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne les voit jamais.
+
 ## Modèle
 
 - **Project** : `name`, `slug` (nom du dossier, fixé à la création), `description`, `systemPrompt`,
   `gitUrl`, `gitBranch`. Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
-- **Connection** : `projectId`, `name`, `kind` (ssh, postgres), `settings` (hôte, port, utilisateur, base, ssl,
-  tunnel), `secrets` (chiffrés), `publicKey`, `hostKey`, `exposure` (mcp, direct, both), `readOnly`,
-  `requireApproval`, `commandAllowlist`, dernier test.
+- **Connection** : `projectId`, `name`, `kind` (ssh, postgres, website), `settings` (hôte, port, utilisateur,
+  base, ssl, tunnel ; pour un site : `url` et `fields` = clé, libellé, secret, valeur publique), `secrets`
+  (chiffrés, indexés par clé de champ pour un site), `publicKey`, `hostKey`, `exposure` (mcp, direct, both),
+  `readOnly`, `requireApproval`, `commandAllowlist`, dernier test.
+- **GoogleAccount** : `projectId` (un par projet), `email`, `name`, `avatarUrl`, `googleSub`, `gmailAccess`
+  et `driveAccess` (none, read, write), `scopes` accordées, `refreshToken` (chiffré), qui l'a relié, dernière
+  vérification.
 - **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
   créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et

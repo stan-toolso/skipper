@@ -6,7 +6,8 @@ import type { Project } from '../projects/types.js';
 import * as postgres from './postgres.js';
 import { connectionService, kindLabels } from './service.js';
 import * as ssh from './ssh.js';
-import type { Connection, PostgresSettings, SshSettings } from './types.js';
+import type { Connection, PostgresSettings, SshSettings, WebsiteSettings } from './types.js';
+import { describeField } from './website.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
@@ -32,6 +33,11 @@ function describe(c: Connection, byId: Map<string, Connection>): string {
   if (c.kind === 'ssh') {
     const s = c.settings as SshSettings;
     return `- ${c.name} · ${kindLabels.ssh} · ${s.username}@${s.host}:${s.port}${c.description ? ` — ${c.description}` : ''} [${flags.join(', ')}${c.commandAllowlist.length ? `, commandes : ${c.commandAllowlist.join(' | ')}` : ''}]`;
+  }
+  if (c.kind === 'website') {
+    const s = c.settings as WebsiteSettings;
+    const access = [c.exposure !== 'direct' && 'navigateur', c.exposure !== 'mcp' && 'shell (variables d\'environnement)'].filter(Boolean);
+    return `- ${c.name} · ${kindLabels.website} · ${s.url}${c.description ? ` — ${c.description}` : ''} [${access.join(', ')}] champs : ${s.fields.length ? s.fields.map((f) => describeField(c, f)).join(', ') : 'aucun'}`;
   }
   const s = c.settings as PostgresSettings;
   const via = s.viaConnectionId ? byId.get(s.viaConnectionId)?.name : null;
@@ -99,7 +105,7 @@ export function createConnectionsMcpServer(ctx: ConnectionsMcpContext): McpSdkSe
   return createSdkMcpServer({
     name: 'connections',
     version: '1.0.0',
-    instructions: `Connexions du projet "${ctx.project.name}" vers des serveurs SSH et des bases PostgreSQL. Commence par \`list\` pour connaître les noms. Les identifiants sont gérés par le serveur : ne cherche jamais à les obtenir. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT).`,
+    instructions: `Connexions du projet "${ctx.project.name}" vers des serveurs SSH, des bases PostgreSQL et des sites web. Commence par \`list\` pour connaître les noms. Les identifiants sont gérés par le serveur : ne cherche jamais à les obtenir. Pour un site web, utilise le navigateur headless : tape le nom de variable d'un secret dans le champ du formulaire, il est remplacé par la valeur. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT).`,
     tools: [
       tool('list', 'Liste les connexions du projet, leur type, leur cible et leur politique d\'accès.', {}, async () =>
         run(async () => {

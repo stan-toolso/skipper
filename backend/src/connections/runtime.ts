@@ -6,7 +6,8 @@ import { AppError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import { connectionService } from './service.js';
 import * as ssh from './ssh.js';
-import type { Connection, PostgresSettings, SshSettings } from './types.js';
+import type { Connection, PostgresSettings, SshSettings, WebsiteSettings } from './types.js';
+import { variableName } from './website.js';
 
 /**
  * Mode « accès direct » : pour la durée d'une session, l'agent peut utiliser `ssh <nom>`, `scp`,
@@ -18,8 +19,11 @@ import type { Connection, PostgresSettings, SshSettings } from './types.js';
  * - PostgreSQL : un fichier de services (`PGSERVICEFILE`) et un fichier de mots de passe
  *   (`PGPASSFILE`) éphémères ; les bases atteintes par tunnel SSH passent par un port local ouvert
  *   par le backend. Le mot de passe est lisible par l'agent : réserver ce mode aux bases où c'est acceptable.
+ * - Sites web : chaque champ devient une variable d'environnement (`ADMIN_SITE_PASSWORD`), pour curl
+ *   ou des scripts. L'agent lit donc les valeurs : réserver ce mode aux comptes où c'est acceptable.
  *
- * Tout est détruit à la fin de la session (`dispose`).
+ * Tout est détruit à la fin de la session (`dispose`). Le fichier de secrets du navigateur headless
+ * (sites web en mode « outils ») est géré par le runner (`browserMcpCommand`), pas ici.
  */
 
 export interface DirectAccess {
@@ -119,6 +123,11 @@ export async function prepareDirectAccess(project: Project, sessionId: string, b
     if (sshConnections.length) await setupSsh(dir, sshConnections, baseEnv, env, summary, cleanups);
     const pgConnections = direct.filter((c) => c.kind === 'postgres');
     if (pgConnections.length) await setupPostgres(dir, pgConnections, all, env, summary, cleanups);
+    for (const c of direct.filter((c) => c.kind === 'website')) {
+      const creds = connectionService.websiteCredentials(c);
+      for (const f of creds.fields) env[f.variable] = f.value;
+      summary.push(`site ${c.name} (${(c.settings as WebsiteSettings).url}) : ${creds.fields.map((f) => variableName(c.name, f.key)).join(', ')}`);
+    }
   } catch (err) {
     await dispose();
     throw err instanceof AppError ? err : new AppError(`Préparation de l'accès direct impossible : ${(err as Error).message}`);
