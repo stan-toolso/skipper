@@ -331,6 +331,15 @@ fichiers SVG dans `frontend/public/` : `favicon.svg` (pastille sombre), `logo-ma
 sombre), `logo-mark-dark.svg` (fond clair), `logo-mark-mono.svg` (masque CSS, utilisé devant les
 titres `h1`). Mot-symbole : « Skipper » en Fraunces 600 pour les supports hors interface.
 
+## Tâches et worktrees
+
+« Confier à un agent » lance la session dans un **worktree créé pour la tâche** quand le projet est
+relié à un dépôt git : dossier `task-<slug du titre>` et branche `task/<slug>` à partir du checkout
+principal (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà). Le menu du
+bouton permet de préférer le dossier principal ou un worktree existant ; un projet sans dépôt git
+travaille dans son dossier principal. Le worktree apparaît dans la sidebar avec sa session, et la
+tâche affiche sa branche. Il reste après la tâche : fusion ou suppression depuis le panneau git.
+
 ## Explorateur de fichiers et éditeur
 
 Chaque projet (et chaque worktree) a une entrée « Fichiers » dans la sidebar : un onglet

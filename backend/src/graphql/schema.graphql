@@ -836,8 +836,8 @@ type Mutation {
   createTask(input: CreateTaskInput!): Task!
   updateTask(id: ID!, input: UpdateTaskInput!): Task!
   deleteTask(id: ID!): Boolean!
-  "Confie la tâche à un nouvel agent : crée et démarre une session, assigne la tâche et la passe en cours."
-  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID): Session!
+  "Confie la tâche à un agent. Sans worktreeId, un worktree dédié (task/<slug>) est créé si le projet est relié à git, sauf dedicatedWorktree: false (dossier principal)."
+  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID, dedicatedWorktree: Boolean = true): Session!
 
   "git add (paths vide = tout)."
   gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!

@@ -170,7 +170,7 @@ export interface Task {
   updatedAt: string;
   completedAt: string | null;
   project: { id: string; name: string };
-  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null } | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worktree: { id: string; branch: string } | null } | null;
   createdBySession: { id: string; name: string } | null;
 }
 
@@ -933,6 +933,10 @@ export const TASK_FIELDS = gql`
       name
       status
       activity
+      worktree {
+        id
+        branch
+      }
     }
     createdBySession {
       id
@@ -975,9 +979,24 @@ export const DELETE_TASK = gql`
 `;
 
 export const START_TASK_SESSION = gql`
-  mutation StartTaskSession($id: ID!) {
-    startTaskSession(id: $id) {
+  mutation StartTaskSession($id: ID!, $worktreeId: ID, $dedicatedWorktree: Boolean) {
+    startTaskSession(id: $id, worktreeId: $worktreeId, dedicatedWorktree: $dedicatedWorktree) {
       id
+    }
+  }
+`;
+
+/** Où une tâche peut être confiée : projets reliés à git et leurs worktrees existants. */
+export const TASK_LAUNCH_TARGETS = gql`
+  query TaskLaunchTargets {
+    projects {
+      id
+      gitUrl
+      worktrees {
+        id
+        branch
+        exists
+      }
     }
   }
 `;

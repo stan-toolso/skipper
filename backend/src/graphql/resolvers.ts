@@ -552,7 +552,7 @@ export const resolvers = {
       await guardTask(ctx, args.id, 'member');
       return taskService.delete(args.id);
     },
-    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null }, ctx: Ctx) => {
+    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null; dedicatedWorktree?: boolean | null }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
       return startTaskSession(args.id, args);
     },

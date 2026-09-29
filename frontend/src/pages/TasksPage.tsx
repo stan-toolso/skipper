@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, Col, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { Alert, Badge, Button, ButtonGroup, Card, Col, Dropdown, Form, Modal, Row, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASKS, UPDATE_TASK, type Project, type Task, type TaskPriority, type TaskStatus } from '../graphql/operations';
+import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASK_LAUNCH_TARGETS, TASKS, UPDATE_TASK, type Project, type Task, type TaskPriority, type TaskStatus } from '../graphql/operations';
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -99,7 +99,14 @@ function TaskModal({ task, projectId, onClose }: { task: Task | null; projectId:
   );
 }
 
-function TaskCard({ task, showProject, onEdit }: { task: Task; showProject: boolean; onEdit: () => void }) {
+/** Projet relié à git et ses worktrees : détermine où une tâche peut être confiée. */
+interface LaunchTarget {
+  id: string;
+  gitUrl: string | null;
+  worktrees: { id: string; branch: string; exists: boolean }[];
+}
+
+function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProject: boolean; onEdit: () => void; target?: LaunchTarget }) {
   const navigate = useNavigate();
   const [updateTask] = useMutation(UPDATE_TASK, { refetchQueries: ['Tasks'] });
   const [deleteTask] = useMutation(DELETE_TASK, { refetchQueries: ['Tasks'] });
@@ -141,17 +148,52 @@ function TaskCard({ task, showProject, onEdit }: { task: Task; showProject: bool
               {task.session.status === 'RUNNING' && (task.session.activity === 'BUSY' ? ' · travaille' : ' · attend')}
             </Link>
           )}
+          {task.session?.worktree && (
+            <Link to={`/worktrees/${task.session.worktree.id}/files`} title="Worktree dédié à cette tâche">
+              <i className="bi bi-diagram-2 me-1" />
+              {task.session.worktree.branch}
+            </Link>
+          )}
           {task.dueDate && <span className={overdue ? 'text-danger' : ''}>{overdue ? 'En retard : ' : 'Pour le '}{new Date(task.dueDate).toLocaleDateString()}</span>}
           <span title={task.createdBySession ? `Créée par la session ${task.createdBySession.name}` : 'Créée depuis l\'interface'}>
             {task.createdByType === 'agent' ? <i className="bi bi-robot" /> : <i className="bi bi-person" />}
           </span>
         </div>
         <div className="d-flex flex-wrap gap-1 mt-2">
-          {task.status === 'TODO' && (
-            <Button size="sm" variant="primary" disabled={starting} onClick={() => startTaskSession({ variables: { id: task.id } })} title="Lance une session d'agent avec cette tâche">
-              <i className="bi bi-play-fill" /> {starting ? 'Lancement…' : 'Confier à un agent'}
-            </Button>
-          )}
+          {task.status === 'TODO' &&
+            (target?.gitUrl ? (
+              // Projet git : par défaut dans un worktree dédié (branche task/<slug>) ; le menu permet le dossier principal ou un worktree existant.
+              <Dropdown as={ButtonGroup} size="sm">
+                <Button variant="primary" disabled={starting} onClick={() => startTaskSession({ variables: { id: task.id, dedicatedWorktree: true } })} title="Lance un agent dans un worktree créé pour cette tâche">
+                  <i className="bi bi-play-fill" /> {starting ? 'Lancement…' : 'Confier à un agent'}
+                </Button>
+                <Dropdown.Toggle split variant="primary" disabled={starting} title="Choisir où l'agent travaille" />
+                <Dropdown.Menu>
+                  <Dropdown.Header>Où l'agent travaille</Dropdown.Header>
+                  <Dropdown.Item onClick={() => startTaskSession({ variables: { id: task.id, dedicatedWorktree: true } })}>
+                    <i className="bi bi-diagram-2 me-2" />
+                    Nouveau worktree dédié <span className="text-secondary small">(recommandé)</span>
+                  </Dropdown.Item>
+                  <Dropdown.Item onClick={() => startTaskSession({ variables: { id: task.id, dedicatedWorktree: false } })}>
+                    <i className="bi bi-folder2 me-2" />
+                    Dossier principal du projet
+                  </Dropdown.Item>
+                  {target.worktrees.filter((w) => w.exists).length > 0 && <Dropdown.Divider />}
+                  {target.worktrees
+                    .filter((w) => w.exists)
+                    .map((w) => (
+                      <Dropdown.Item key={w.id} onClick={() => startTaskSession({ variables: { id: task.id, worktreeId: w.id } })}>
+                        <i className="bi bi-diagram-2 me-2" />
+                        {w.branch}
+                      </Dropdown.Item>
+                    ))}
+                </Dropdown.Menu>
+              </Dropdown>
+            ) : (
+              <Button size="sm" variant="primary" disabled={starting} onClick={() => startTaskSession({ variables: { id: task.id, dedicatedWorktree: false } })} title="Lance une session d'agent avec cette tâche">
+                <i className="bi bi-play-fill" /> {starting ? 'Lancement…' : 'Confier à un agent'}
+              </Button>
+            ))}
           {task.status === 'TODO' && (
             <Button size="sm" variant="outline-secondary" onClick={() => move('IN_PROGRESS')}>
               En cours
@@ -207,6 +249,8 @@ export default function TasksPage() {
 
   const { data: projectData } = useQuery<{ project: Project | null }>(PROJECT, { variables: { id: routeProjectId }, skip: !routeProjectId });
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
+  const { data: targetsData } = useQuery<{ projects: LaunchTarget[] }>(TASK_LAUNCH_TARGETS, { pollInterval: 10_000 });
+  const targets = useMemo(() => new Map((targetsData?.projects ?? []).map((p) => [p.id, p])), [targetsData]);
   const statuses: TaskStatus[] = showCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : ['TODO', 'IN_PROGRESS', 'DONE'];
   const { data, loading, error } = useQuery<{ tasks: Task[] }>(TASKS, { variables: { projectId: projectId || null, status: statuses }, pollInterval: 3000 });
 
@@ -269,7 +313,7 @@ export default function TasksPage() {
               </div>
               {col.hint && <div className="small text-secondary mb-2">{col.hint}</div>}
               {list.map((t) => (
-                <TaskCard key={t.id} task={t} showProject={!routeProjectId && !projectId} onEdit={() => setEditing(t)} />
+                <TaskCard key={t.id} task={t} showProject={!routeProjectId && !projectId} onEdit={() => setEditing(t)} target={targets.get(t.project.id)} />
               ))}
               {list.length === 0 && <div className="text-secondary small fst-italic">Rien ici.</div>}
             </Col>
