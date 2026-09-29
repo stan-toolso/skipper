@@ -69,6 +69,7 @@ type Project {
   contextChanges(limit: Int): [ContextChange!]!
   terminals: [Terminal!]!
   tasks(status: [TaskStatus!]): [Task!]!
+  worktrees: [Worktree!]!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -203,11 +204,27 @@ enum TerminalStatus {
 type Terminal {
   id: ID!
   project: Project!
+  worktree: Worktree
   name: String!
   status: TerminalStatus!
   exitCode: Int
   createdAt: DateTime!
   closedAt: DateTime
+}
+
+"Worktree git d'un projet : une branche extraite dans son propre dossier, à côté du checkout principal."
+type Worktree {
+  id: ID!
+  project: Project!
+  "Nom du dossier."
+  name: String!
+  branch: String!
+  path: String!
+  exists: Boolean!
+  git: WorkspaceGit
+  createdAt: DateTime!
+  sessions: [Session!]!
+  terminals: [Terminal!]!
 }
 
 type WorkspaceGit {
@@ -218,6 +235,8 @@ type WorkspaceGit {
 type Session {
   id: ID!
   project: Project!
+  "Worktree dans lequel la session s'exécute (null : checkout principal)."
+  worktree: Worktree
   name: String!
   provider: String!
   status: SessionStatus!
@@ -412,6 +431,7 @@ type Query {
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
   terminal(id: ID!): Terminal
+  worktree(id: ID!): Worktree
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
@@ -459,6 +479,7 @@ input UpdateProjectInput {
 
 input CreateSessionInput {
   projectId: ID!
+  worktreeId: ID
   name: String!
   provider: String!
   prompt: String
@@ -514,10 +535,14 @@ type Mutation {
   updateTask(id: ID!, input: UpdateTaskInput!): Task!
   deleteTask(id: ID!): Boolean!
   "Confie la tâche à un nouvel agent : crée et démarre une session, assigne la tâche et la passe en cours."
-  startTaskSession(id: ID!, provider: String, config: JSON): Session!
+  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID): Session!
 
-  "Ouvre un shell dans le workspace du projet."
-  createTerminal(projectId: ID!, name: String): Terminal!
+  "Ouvre un shell dans le workspace du projet (ou dans un worktree)."
+  createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!
+  "Crée un worktree git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal)."
+  createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String): Worktree!
+  "Supprime le dossier du worktree ; la branche est conservée sauf deleteBranch."
+  deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

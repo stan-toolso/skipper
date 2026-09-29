@@ -103,6 +103,12 @@ export default function SessionDetailPage() {
           <span className="cc-meta">
             {' '}
             · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            {session.worktree && (
+              <>
+                {' '}
+                · <i className="bi bi-diagram-2" /> {session.worktree.branch}
+              </>
+            )}
             {technical && (
               <>
                 {' '}
@@ -187,7 +193,7 @@ export default function SessionDetailPage() {
       </div>
       <div className="cc-hint">
         <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>
-        <span title="Dossier de travail de la session">{technical ? session.project.workspacePath : ''}</span>
+        <span title="Dossier de travail de la session">{technical ? (session.worktree?.path ?? session.project.workspacePath) : ''}</span>
       </div>
     </div>
   );

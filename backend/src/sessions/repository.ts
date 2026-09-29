@@ -4,6 +4,7 @@ import type { CreateSessionInput, Session, SessionActivity, SessionEvent, Sessio
 interface SessionRow {
   id: string;
   project_id: string;
+  worktree_id: string | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -31,6 +32,7 @@ function toSession(row: SessionRow): Session {
   return {
     id: row.id,
     projectId: row.project_id,
+    worktreeId: row.worktree_id,
     name: row.name,
     provider: row.provider,
     status: row.status,
@@ -80,10 +82,10 @@ const patchColumns: Record<keyof SessionPatch, string> = {
 export const sessionRepository = {
   async create(input: CreateSessionInput): Promise<Session> {
     const { rows } = await pool.query<SessionRow>(
-      `INSERT INTO sessions (project_id, name, provider, prompt, config)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO sessions (project_id, worktree_id, name, provider, prompt, config)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [input.projectId, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {})],
+      [input.projectId, input.worktreeId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {})],
     );
     return toSession(rows[0]);
   },
@@ -99,6 +101,10 @@ export const sessionRepository = {
     if (filter.projectId) {
       params.push(filter.projectId);
       where.push(`project_id = $${params.length}`);
+    }
+    if (filter.worktreeId) {
+      params.push(filter.worktreeId);
+      where.push(`worktree_id = $${params.length}`);
     }
     if (filter.status) {
       params.push(filter.status);

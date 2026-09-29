@@ -55,6 +55,7 @@ export interface Session {
   startedAt: string | null;
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
+  worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
 }
 
 export interface ContextFolder {
@@ -115,6 +116,7 @@ export interface Terminal {
   createdAt: string;
   closedAt: string | null;
   project: { id: string; name: string; workspacePath: string };
+  worktree: { id: string; name: string; branch: string; path: string } | null;
 }
 
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
@@ -145,6 +147,16 @@ export interface AppNotification {
   readAt: string | null;
   createdAt: string;
   project: { id: string; name: string } | null;
+}
+
+export interface Worktree {
+  id: string;
+  name: string;
+  branch: string;
+  path: string;
+  exists: boolean;
+  git: { branch: string; commit: string } | null;
+  createdAt: string;
 }
 
 export interface SessionEvent {
@@ -210,6 +222,12 @@ export const SESSION_FIELDS = gql`
       name
       slug
       workspacePath
+    }
+    worktree {
+      id
+      name
+      branch
+      path
     }
   }
 `;
@@ -570,6 +588,7 @@ export const SIDEBAR = gql`
       id
       name
       slug
+      gitUrl
       sessions(limit: 50) {
         id
         name
@@ -582,7 +601,66 @@ export const SIDEBAR = gql`
         name
         status
       }
+      worktrees {
+        id
+        name
+        branch
+        exists
+        sessions {
+          id
+          name
+          status
+          activity
+          pendingRequestCount
+        }
+        terminals {
+          id
+          name
+          status
+        }
+      }
     }
+  }
+`;
+
+export const PROJECT_WORKTREES = gql`
+  query ProjectWorktrees($id: ID!) {
+    project(id: $id) {
+      id
+      gitUrl
+      git {
+        branch
+        commit
+      }
+      worktrees {
+        id
+        name
+        branch
+        path
+        exists
+        git {
+          branch
+          commit
+        }
+        createdAt
+      }
+    }
+  }
+`;
+
+export const CREATE_WORKTREE = gql`
+  mutation CreateWorktree($projectId: ID!, $branch: String!, $name: String, $baseRef: String) {
+    createWorktree(projectId: $projectId, branch: $branch, name: $name, baseRef: $baseRef) {
+      id
+      name
+      branch
+    }
+  }
+`;
+
+export const DELETE_WORKTREE = gql`
+  mutation DeleteWorktree($id: ID!, $deleteBranch: Boolean) {
+    deleteWorktree(id: $id, deleteBranch: $deleteBranch)
   }
 `;
 
@@ -600,13 +678,19 @@ export const TERMINAL = gql`
         name
         workspacePath
       }
+      worktree {
+        id
+        name
+        branch
+        path
+      }
     }
   }
 `;
 
 export const CREATE_TERMINAL = gql`
-  mutation CreateTerminal($projectId: ID!, $name: String) {
-    createTerminal(projectId: $projectId, name: $name) {
+  mutation CreateTerminal($projectId: ID!, $name: String, $worktreeId: ID) {
+    createTerminal(projectId: $projectId, name: $name, worktreeId: $worktreeId) {
       id
       name
       status

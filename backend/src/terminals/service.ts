@@ -2,7 +2,7 @@ import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
-import { ensureWorkspace } from '../projects/workspace.js';
+import { worktreeService } from '../worktrees/service.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
 
@@ -36,11 +36,11 @@ export const terminalService = {
   isLive: (id: string) => live.has(id),
 
   /** Ouvre un shell de connexion dans le workspace du projet. */
-  async create(projectId: string, name?: string | null): Promise<TerminalRecord> {
+  async create(projectId: string, name?: string | null, worktreeId?: string | null): Promise<TerminalRecord> {
     const project = await projectService.get(projectId);
-    const cwd = await ensureWorkspace(project);
+    const cwd = await worktreeService.resolveCwd(project, worktreeId);
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
-    const record = await terminalRepository.create(projectId, label);
+    const record = await terminalRepository.create(projectId, label, worktreeId ?? null);
 
     const shell = process.env.SHELL || '/bin/zsh';
     const proc = pty.spawn(shell, ['-l'], {

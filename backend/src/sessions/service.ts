@@ -1,6 +1,6 @@
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
-import { ensureWorkspace } from '../projects/workspace.js';
+import { worktreeService } from '../worktrees/service.js';
 import { pubSub } from '../pubsub.js';
 import { notificationService } from '../notifications/service.js';
 import { requestService } from '../requests/service.js';
@@ -29,7 +29,8 @@ export const sessionService = {
   async create(input: CreateSessionInput & { autoStart?: boolean }): Promise<Session> {
     const provider = getProvider(input.provider);
     provider.validateConfig?.(input.config ?? {});
-    await projectService.get(input.projectId); // lève NotFoundError si le projet n'existe pas
+    const project = await projectService.get(input.projectId); // lève NotFoundError si le projet n'existe pas
+    if (input.worktreeId) await worktreeService.resolveCwd(project, input.worktreeId); // vérifie l'appartenance et l'existence
     const session = await sessionRepository.create(input);
     pubSub.publish('sessionUpdated', session);
     return input.autoStart === false ? session : this.start(session.id);
@@ -57,8 +58,8 @@ export const sessionService = {
 
     let handle: RunningHandle;
     try {
-      // La session s'exécute dans le workspace du projet (créé ou cloné si nécessaire).
-      const cwd = await ensureWorkspace(project);
+      // La session s'exécute dans le worktree choisi, sinon dans le checkout principal du projet.
+      const cwd = await worktreeService.resolveCwd(project, session.worktreeId);
       handle = await provider.start({
         session: started,
         project,

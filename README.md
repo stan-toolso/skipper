@@ -8,8 +8,11 @@ Trois notions :
 
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
+- **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
+  par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
+  on lance sessions et terminaux sans toucher au dossier principal.
 - **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
-  workspace. On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
+  workspace (ou dans l'un de ses worktrees). On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
   terminée est relancée (reprise de la conversation) par un simple message.
 - **Demande** : intervention humaine attendue par un agent (autorisation d'outil, question, saisie).
   La session reste en cours jusqu'à la réponse.
@@ -68,6 +71,8 @@ backend/
       workspace.ts             # dossier du projet, clone git, infos de branche
     requests/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
+    worktrees/
+      service.ts               # worktrees git : création (branche existante ou nouvelle), suppression, cwd
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     notifications/
@@ -107,7 +112,12 @@ frontend/
   `gitUrl`, `gitBranch`. Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
-- **Session** : `projectId`, `name`, `provider`, `status` (`pending`, `running`, `completed`, `failed`,
+- **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
+  créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
+  extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et
+  conserve la branche sauf demande contraire. Sessions et terminaux portent un `worktreeId` optionnel
+  qui fixe leur dossier de travail.
+- **Session** : `projectId`, `worktreeId`, `name`, `provider`, `status` (`pending`, `running`, `completed`, `failed`,
   `stopped`, `interrupted`), `activity` pour une session en cours (`busy` : l'agent travaille, `idle` :
   il attend des instructions), `prompt` (première instruction), `config` (JSON propre au provider),
   `externalId` (ex. `session_id` Claude), `exitCode`, `error`, horodatages. Le provider Claude utilise
@@ -221,6 +231,7 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
 - `notifications(unreadOnly, limit)`, `unreadNotificationCount` ; `markNotificationRead(id)`, `markAllNotificationsRead` ; subscription `notificationCreated`
 - `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
+- `Project.worktrees`, `worktree(id)` avec `sessions` et `terminals` ; `createWorktree(projectId, branch, name, baseRef)`, `deleteWorktree(id, deleteBranch)` ; `CreateSessionInput.worktreeId`, `createTerminal(..., worktreeId)`, `startTaskSession(..., worktreeId)`
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
 

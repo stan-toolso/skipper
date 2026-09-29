@@ -17,6 +17,8 @@ import { settingsService, type ClaudeSettingsPatch } from '../settings/service.j
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { terminalService } from '../terminals/service.js';
+import { worktreePath, worktreeService } from '../worktrees/service.js';
+import type { Worktree } from '../worktrees/types.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
 import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
@@ -95,11 +97,22 @@ export const resolvers = {
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
     project: (t: TerminalRecord) => projectService.get(t.projectId),
+    worktree: (t: TerminalRecord) => (t.worktreeId ? worktreeService.get(t.worktreeId).catch(() => null) : null),
+  },
+
+  Worktree: {
+    project: (w: Worktree) => projectService.get(w.projectId),
+    path: async (w: Worktree) => worktreePath(await projectService.get(w.projectId), w),
+    exists: async (w: Worktree) => worktreeService.exists(await projectService.get(w.projectId), w),
+    git: async (w: Worktree) => worktreeService.gitInfo(await projectService.get(w.projectId), w),
+    sessions: (w: Worktree) => sessionService.list({ projectId: w.projectId, worktreeId: w.id }),
+    terminals: async (w: Worktree) => (await terminalService.listByProject(w.projectId)).filter((t) => t.worktreeId === w.id),
   },
 
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
     terminals: (project: Project) => terminalService.listByProject(project.id),
+    worktrees: (project: Project) => worktreeService.listByProject(project.id),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
@@ -117,6 +130,7 @@ export const resolvers = {
 
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
+    worktree: (session: Session) => (session.worktreeId ? worktreeService.get(session.worktreeId).catch(() => null) : null),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
@@ -150,6 +164,7 @@ export const resolvers = {
       }),
     request: (_: unknown, args: { id: string }) => requestService.get(args.id),
     terminal: (_: unknown, args: { id: string }) => terminalService.get(args.id),
+    worktree: (_: unknown, args: { id: string }) => worktreeService.get(args.id),
     notifications: (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }) => notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined }),
     unreadNotificationCount: () => notificationService.countUnread(),
     tasks: (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }) =>
@@ -195,7 +210,7 @@ export const resolvers = {
     deleteProject: (_: unknown, args: { id: string }) => projectService.delete(args.id),
     createSession: (
       _: unknown,
-      { input }: { input: { projectId: string; name: string; provider: string; prompt?: string | null; config?: Record<string, unknown> | null; autoStart?: boolean | null } },
+      { input }: { input: { projectId: string; worktreeId?: string | null; name: string; provider: string; prompt?: string | null; config?: Record<string, unknown> | null; autoStart?: boolean | null } },
     ) => sessionService.create({ ...input, autoStart: input.autoStart ?? true }),
     startSession: (_: unknown, args: { id: string }) => sessionService.start(args.id),
     stopSession: (_: unknown, args: { id: string }) => sessionService.stop(args.id),
@@ -211,8 +226,10 @@ export const resolvers = {
     createTask: (_: unknown, { input }: { input: GqlTaskInput & { projectId: string; title: string } }) => taskService.create(input.projectId, { ...toTaskInput(input), title: input.title }, HUMAN),
     updateTask: (_: unknown, { id, input }: { id: string; input: GqlTaskInput }) => taskService.update(id, toTaskInput(input)),
     deleteTask: (_: unknown, args: { id: string }) => taskService.delete(args.id),
-    startTaskSession: (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null }) => startTaskSession(args.id, args),
-    createTerminal: (_: unknown, args: { projectId: string; name?: string | null }) => terminalService.create(args.projectId, args.name),
+    startTaskSession: (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null }) => startTaskSession(args.id, args),
+    createTerminal: (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }) => terminalService.create(args.projectId, args.name, args.worktreeId),
+    createWorktree: (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null }) => worktreeService.create(args.projectId, args),
+    deleteWorktree: (_: unknown, args: { id: string; deleteBranch?: boolean | null }) => worktreeService.delete(args.id, args.deleteBranch ?? false),
     closeTerminal: (_: unknown, args: { id: string }) => terminalService.close(args.id),
     deleteTerminal: (_: unknown, args: { id: string }) => terminalService.delete(args.id),
     createContextFolder: (_: unknown, args: { projectId: string; parentId?: string | null; name: string }) =>

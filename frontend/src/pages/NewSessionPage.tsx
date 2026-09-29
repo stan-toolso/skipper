@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Collapse, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CREATE_SESSION, PROJECTS, PROVIDERS, type ConfigField, type Project, type Provider, type Session } from '../graphql/operations';
+import { CREATE_SESSION, PROJECTS, PROJECT_WORKTREES, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worktree } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
 
 function ConfigInput({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
@@ -63,6 +63,10 @@ export default function NewSessionPage() {
 
   const [name, setName] = useState('');
   const [projectId, setProjectId] = useState(searchParams.get('projectId') ?? '');
+  const [worktreeId, setWorktreeId] = useState(searchParams.get('worktreeId') ?? '');
+  const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[]; git: { branch: string } | null } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
+  const worktrees = worktreesData?.project?.worktrees ?? [];
+  const mainBranch = worktreesData?.project?.git?.branch;
   const [providerType, setProviderType] = useState('');
   const [prompt, setPrompt] = useState('');
   const [autoStart, setAutoStart] = useState(true);
@@ -78,6 +82,11 @@ export default function NewSessionPage() {
   useEffect(() => {
     if (!projectId && projects.length) setProjectId(projects[0].id);
   }, [projects, projectId]);
+
+  useEffect(() => {
+    // Le worktree choisi doit appartenir au projet sélectionné.
+    if (worktreeId && worktreesData?.project && !worktrees.some((w) => w.id === worktreeId)) setWorktreeId('');
+  }, [worktreesData, worktrees, worktreeId]);
 
   useEffect(() => {
     if (!providerType && providers.length) setProviderType(providers[0].type);
@@ -97,6 +106,7 @@ export default function NewSessionPage() {
       variables: {
         input: {
           projectId: project.id,
+          worktreeId: worktreeId || null,
           name: name.trim() || prompt.trim().split('\n')[0].slice(0, 60) || 'Session',
           provider: provider.type,
           prompt: prompt || null,
@@ -138,6 +148,22 @@ export default function NewSessionPage() {
               </Form.Select>
               {project && <Form.Text>L'agent travaillera dans le dossier de ce projet{project.systemPrompt ? ', avec ses instructions permanentes.' : '.'}</Form.Text>}
             </Form.Group>
+
+            {worktrees.length > 0 && (
+              <Form.Group className="mb-3">
+                <Form.Label>Branche de travail</Form.Label>
+                <Form.Select value={worktreeId} onChange={(e) => setWorktreeId(e.target.value)}>
+                  <option value="">Dossier principal{mainBranch ? ` (${mainBranch})` : ''}</option>
+                  {worktrees.map((w) => (
+                    <option key={w.id} value={w.id} disabled={!w.exists}>
+                      Worktree {w.branch}
+                      {!w.exists ? ' (absent du disque)' : ''}
+                    </option>
+                  ))}
+                </Form.Select>
+                <Form.Text>Un worktree isole le travail de l'agent sur sa propre branche, sans toucher au dossier principal.</Form.Text>
+              </Form.Group>
+            )}
 
             <Form.Group className="mb-3">
               <Form.Label>Que doit faire l'agent ?</Form.Label>

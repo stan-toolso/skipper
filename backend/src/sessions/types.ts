@@ -5,6 +5,7 @@ export type SessionActivity = 'busy' | 'idle';
 export interface Session {
   id: string;
   projectId: string;
+  worktreeId: string | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -30,6 +31,7 @@ export interface SessionEvent {
 
 export interface CreateSessionInput {
   projectId: string;
+  worktreeId?: string | null;
   name: string;
   provider: string;
   prompt?: string | null;
@@ -38,6 +40,7 @@ export interface CreateSessionInput {
 
 export interface SessionFilter {
   projectId?: string;
+  worktreeId?: string;
   status?: SessionStatus;
   provider?: string;
   limit?: number;

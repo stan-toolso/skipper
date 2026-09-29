@@ -22,7 +22,7 @@ export async function workspaceExists(project: Pick<Project, 'slug'>): Promise<b
   }
 }
 
-async function git(args: string[], cwd?: string): Promise<string> {
+export async function git(args: string[], cwd?: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
     return stdout.trim();

@@ -106,7 +106,14 @@ export default function TerminalPage() {
           <span className="term-title">&gt;_ {terminal.name}</span>
           <span className="term-meta">
             {' '}
-            · <Link to={`/projects/${terminal.project.id}`} className="term-meta">{terminal.project.name}</Link> · {terminal.project.workspacePath}
+            · <Link to={`/projects/${terminal.project.id}`} className="term-meta">{terminal.project.name}</Link>
+            {terminal.worktree && (
+              <>
+                {' '}
+                · <i className="bi bi-diagram-2" /> {terminal.worktree.branch}
+              </>
+            )}{' '}
+            · {terminal.worktree?.path ?? terminal.project.workspacePath}
             {!live && <> · fermé{terminal.exitCode !== null && ` (code ${terminal.exitCode})`}</>}
             {live && connection !== 'open' && <> · {connection === 'connecting' ? 'connexion…' : 'déconnecté'}</>}
           </span>
