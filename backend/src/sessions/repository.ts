@@ -140,7 +140,7 @@ export const sessionRepository = {
     const params: unknown[] = [id];
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
-        params.push(key === 'config' ? JSON.stringify(patch[key]) : patch[key]);
+        params.push(key === 'config' ? toJson(patch[key]) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }
