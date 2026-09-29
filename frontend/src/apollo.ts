@@ -34,6 +34,11 @@ export function googleLoginUrl(next: string): string {
   return `${apiBaseUrl}/auth/google?next=${encodeURIComponent(next)}`;
 }
 
+/** Écran de consentement Google pour relier un compte (Gmail, Drive) à un projet ; le retour ramène sur la page du projet. */
+export function googleConnectUrl(projectId: string, gmail: string, drive: string): string {
+  return `${apiBaseUrl}/auth/google/connect?${new URLSearchParams({ projectId, gmail, drive })}`;
+}
+
 /** Ferme la session côté serveur (le cookie est effacé par la réponse). */
 export async function logoutRequest(): Promise<void> {
   await fetch(`${apiBaseUrl}/auth/logout`, { method: 'POST', credentials: 'include' });

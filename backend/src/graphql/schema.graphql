@@ -87,9 +87,7 @@ type Project {
   systemPrompt: String!
   gitUrl: String
   gitBranch: String
-  "Environnement d'exécution : local (sur le serveur) ou docker (conteneur dédié)."
-  runner: String!
-  "Réglages du runner docker : { image, memory, cpus }."
+  "Réglages du conteneur Docker du projet : { image, memory, cpus, browser }."
   runnerConfig: JSON!
   runnerStatus: RunnerStatus!
   "Chemin absolu du workspace sur le serveur."
@@ -108,9 +106,27 @@ type Project {
   tasks(status: [TaskStatus!]): [Task!]!
   worktrees: [Worktree!]!
   connections: [Connection!]!
+  "Compte Google relié au projet (Gmail, Drive), null si aucun."
+  googleAccount: GoogleAccount
   members: [ProjectMember!]!
   "Rôle de l'utilisateur connecté sur ce projet."
   myRole: ProjectRole!
+  "Autorisations d'outils mémorisées pour le projet (« ne plus demander dans ce projet »)."
+  permissionRules: [PermissionRule!]!
+}
+
+"Règle d'autorisation d'outil mémorisée pour un projet, au format des permissions Claude Code (Read, Bash(git status:*)...)."
+type PermissionRule {
+  id: ID!
+  projectId: ID!
+  toolName: String!
+  "Motif propre à l'outil ; null = tout l'outil."
+  ruleContent: String
+  "Forme textuelle : toolName ou toolName(ruleContent)."
+  rule: String!
+  "Session pendant laquelle la règle a été mémorisée, le cas échéant."
+  createdBySession: Session
+  createdAt: DateTime!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -274,16 +290,30 @@ type Worktree {
 enum ConnectionKind {
   ssh
   postgres
+  "Site web : une adresse et autant de champs qu'on veut (identifiant, mot de passe...), utilisés par le navigateur headless des agents."
+  website
 }
 
-"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants), shell de la session (ssh, psql), ou les deux."
+"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants ; pour un site web, le navigateur headless saisit les secrets), shell de la session (ssh, psql, variables d'environnement), ou les deux."
 enum ConnectionExposure {
   mcp
   direct
   both
 }
 
-"Connexion d'un projet vers un système externe (serveur SSH, base PostgreSQL), utilisable par les agents. Les secrets ne sont jamais renvoyés."
+"Champ d'un site web (identifiant, mot de passe, code d'organisation...)."
+type ConnectionField {
+  "Clé technique (minuscules, chiffres, soulignés)."
+  key: String!
+  label: String!
+  secret: Boolean!
+  "Valeur d'un champ public ; null pour un secret (jamais renvoyé)."
+  value: String
+  "Nom de variable sous lequel le navigateur et le shell des agents désignent le champ (ex. ADMIN_SITE_PASSWORD)."
+  variable: String!
+}
+
+"Connexion d'un projet vers un système externe (serveur SSH, base PostgreSQL, site web), utilisable par les agents. Les secrets ne sont jamais renvoyés."
 type Connection {
   id: ID!
   project: Project!
@@ -291,9 +321,16 @@ type Connection {
   name: String!
   kind: ConnectionKind!
   description: String!
-  host: String!
-  port: Int!
-  username: String!
+  "ssh, postgres : hôte (null pour un site web)."
+  host: String
+  "ssh, postgres : port (null pour un site web)."
+  port: Int
+  "ssh, postgres : utilisateur (null pour un site web)."
+  username: String
+  "website : adresse du site ou de sa page de connexion."
+  url: String
+  "website : champs, dans l'ordre de saisie (vide pour les autres types)."
+  fields: [ConnectionField!]!
   "postgres : nom de la base."
   database: String
   "postgres : connexion TLS."
@@ -312,7 +349,7 @@ type Connection {
   "ssh : empreinte de la clé d'hôte mémorisée à la première connexion."
   hostFingerprint: String
   hostKeySeenAt: DateTime
-  "Un secret (clé privée, mot de passe) est enregistré."
+  "Un secret (clé privée, mot de passe, champ secret d'un site) est enregistré."
   hasSecret: Boolean!
   lastTestAt: DateTime
   lastTestOk: Boolean
@@ -339,6 +376,19 @@ input ConnectionInput {
   privateKey: String
   "postgres : mot de passe (chaîne vide pour l'effacer)."
   password: String
+  "website : adresse du site."
+  url: String
+  "website : liste complète des champs (remplace la précédente)."
+  fields: [ConnectionFieldInput!]
+}
+
+input ConnectionFieldInput {
+  key: String!
+  label: String
+  "Secret : chiffré, jamais renvoyé, saisi par le navigateur à la place de l'agent. Défaut : false (ou inchangé en mise à jour)."
+  secret: Boolean
+  "Valeur. Pour un secret existant, absente ou null = inchangée."
+  value: String
 }
 
 type ConnectionTest {
@@ -444,6 +494,38 @@ type WorkspaceGit {
   commit: String!
 }
 
+"Niveau d'accès des agents à un service Google : NONE, READ (lire, chercher) ou WRITE (aussi envoyer / déposer)."
+enum GoogleAccess {
+  NONE
+  READ
+  WRITE
+}
+
+"Compte Google relié à un projet par OAuth : les agents accèdent à sa messagerie et/ou à son Drive via le serveur MCP `google`. Le rattachement se fait par GET /auth/google/connect?projectId=…&gmail=…&drive=… ; les jetons ne sont jamais renvoyés."
+type GoogleAccount {
+  email: String!
+  name: String
+  avatarUrl: String
+  gmailAccess: GoogleAccess!
+  driveAccess: GoogleAccess!
+  "Portées OAuth accordées par Google."
+  scopes: [String!]!
+  connectedBy: User
+  lastCheckAt: DateTime
+  lastCheckOk: Boolean
+  lastCheckError: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type GoogleAccountCheck {
+  account: GoogleAccount!
+  ok: Boolean!
+  error: String
+  "Ce que Google a répondu (adresse, nombre de messages, espace Drive)."
+  detail: String
+}
+
 type Session {
   id: ID!
   project: Project!
@@ -459,6 +541,8 @@ type Session {
   externalId: String
   exitCode: Int
   error: String
+  "Coût estimé cumulé de la session (USD, tarif API)."
+  costUsd: Float!
   createdAt: DateTime!
   updatedAt: DateTime!
   startedAt: DateTime
@@ -602,6 +686,83 @@ type UsageSummary {
   bySession: [UsageBySession!]!
 }
 
+# ---- Tableau de bord ----------------------------------------------------------------------------
+
+"Compteurs globaux du tableau de bord, sur les projets de l'utilisateur."
+type DashboardCounts {
+  pendingRequests: Int!
+  "Sessions en cours dont l'agent travaille."
+  busySessions: Int!
+  "Sessions en cours dont l'agent attend des instructions."
+  idleSessions: Int!
+  "Sessions en erreur ou interrompues depuis 24 h."
+  failedSessions24h: Int!
+  "Sessions arrivées à un état final depuis 24 h."
+  endedSessions24h: Int!
+  todoTasks: Int!
+  inProgressTasks: Int!
+  "Tâches ouvertes dont l'échéance est dépassée."
+  overdueTasks: Int!
+  "Tâches terminées depuis 7 jours."
+  doneTasks7d: Int!
+  unreadNotifications: Int!
+}
+
+type DashboardUsageDay {
+  "AAAA-MM-JJ (jour du serveur)."
+  day: String!
+  usd: Float!
+}
+
+"Consommation estimée (tarif API) vue du tableau de bord."
+type DashboardUsage {
+  monthStart: DateTime!
+  "Ce mois, sur les projets de l'utilisateur."
+  monthUsd: Float!
+  "Ce mois, toutes sessions confondues : c'est ce total que le plafond mensuel compare."
+  globalMonthUsd: Float!
+  monthlyBudgetUsd: Float
+  todayUsd: Float!
+  last7DaysUsd: Float!
+  "Les 7 jours précédant les 7 derniers, pour comparer."
+  previous7DaysUsd: Float!
+  "Coût par jour sur les 30 derniers jours, jours vides compris."
+  byDay: [DashboardUsageDay!]!
+  "Sessions les plus coûteuses du mois."
+  topSessions: [UsageBySession!]!
+}
+
+"Indicateurs d'un projet sur le tableau de bord."
+type DashboardProject {
+  project: Project!
+  busySessions: Int!
+  idleSessions: Int!
+  pendingRequests: Int!
+  todoTasks: Int!
+  inProgressTasks: Int!
+  overdueTasks: Int!
+  monthUsd: Float!
+  "Dernière session ou tâche mise à jour."
+  lastActivityAt: DateTime
+}
+
+"Vue d'ensemble pour l'accueil : ce qui attend l'utilisateur, ce qui tourne et ce que ça coûte, sur ses projets."
+type Dashboard {
+  generatedAt: DateTime!
+  counts: DashboardCounts!
+  usage: DashboardUsage!
+  "Projets de l'utilisateur, ceux qui réclament une réponse d'abord."
+  projects: [DashboardProject!]!
+  "Demandes en attente, les plus anciennes d'abord."
+  pendingRequests: [Request!]!
+  "Sessions en cours (agent au travail ou en attente d'instructions)."
+  runningSessions: [Session!]!
+  "Dernières sessions arrivées à un état final."
+  recentSessions: [Session!]!
+  "Tâches ouvertes à surveiller : en retard, urgentes ou hautes."
+  attentionTasks: [Task!]!
+}
+
 "Connexion GitHub en cours (device flow) : saisir userCode sur verificationUri."
 type GithubLogin {
   id: ID!
@@ -704,6 +865,8 @@ type Query {
   gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
+  "Tableau de bord de l'utilisateur connecté."
+  dashboard: Dashboard!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
   tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, limit: Int): [Task!]!
   task(id: ID!): Task
@@ -737,8 +900,6 @@ input CreateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
-  "local (défaut) ou docker."
-  runner: String
   runnerConfig: JSON
 }
 
@@ -748,7 +909,6 @@ input UpdateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
-  runner: String
   runnerConfig: JSON
 }
 
@@ -800,6 +960,10 @@ type Mutation {
   inviteProjectMember(projectId: ID!, email: String!, role: ProjectRole = MEMBER): ProjectMember!
   updateProjectMemberRole(projectId: ID!, userId: ID!, role: ProjectRole!): ProjectMember!
   removeProjectMember(projectId: ID!, userId: ID!): Boolean!
+  "Ajoute une autorisation mémorisée au projet (membres). ruleContent vide = tout l'outil."
+  addProjectPermissionRule(projectId: ID!, toolName: String!, ruleContent: String): PermissionRule!
+  "Retire une autorisation mémorisée : les prochaines sessions redemanderont."
+  deleteProjectPermissionRule(id: ID!): Boolean!
 
   "Crée le projet et prépare son workspace (clone git si une URL est fournie). Le créateur en devient administrateur."
   createProject(input: CreateProjectInput!): Project!
@@ -812,7 +976,7 @@ type Mutation {
   stopProjectRunner(id: ID!): Project!
   "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
   resetProjectRunner(id: ID!): Project!
-  "Supprime le projet et ses sessions en base ; le dossier sur disque est conservé."
+  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, worktrees, conteneur, dossier de travail. Irréversible."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
   startSession(id: ID!): Session!
@@ -861,7 +1025,7 @@ type Mutation {
   createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!
   "Crée un worktree git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal)."
   createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String): Worktree!
-  "Supprime le dossier du worktree ; la branche est conservée sauf deleteBranch."
+  "Supprime le worktree et tout ce qui y est rattaché (sessions arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
   deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
   "Crée une connexion ; pour ssh sans privateKey, génère une paire de clés (la clé publique est à installer sur le serveur)."
   createConnection(projectId: ID!, input: ConnectionInput!): Connection!
@@ -874,6 +1038,10 @@ type Mutation {
   regenerateConnectionKey(id: ID!): Connection!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
   forgetConnectionHostKey(id: ID!): Connection!
+  "Vérifie que le compte Google du projet répond encore (jeton renouvelé, profil, Gmail, Drive)."
+  checkGoogleAccount(projectId: ID!): GoogleAccountCheck!
+  "Détache le compte Google du projet et révoque le jeton côté Google."
+  disconnectGoogleAccount(projectId: ID!): Project!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

@@ -17,8 +17,12 @@ import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
+import { createGoogleMcpServer } from '../../google/mcp.js';
+import { googleAccountService, googleReadTools } from '../../google/service.js';
+import { permissionRuleService } from '../../permissions/service.js';
+import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
-import { runnerFor } from '../../runners/index.js';
+import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
@@ -156,18 +160,44 @@ export class ClaudeProvider implements SessionProvider {
     Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
-    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches et des connexions.
+    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
+    const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
+    // Compte Google du projet (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
+    const googleAccount = await googleAccountService.find(ctx.project.id);
+    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches, des connexions et du compte Google.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
       await contextService.promptSummary(ctx.project.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
+      await googleAccountService.promptSummary(ctx.project),
+      browserEnabled
+        ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du projet (connexions de type « site web »), tape le nom de variable d'un secret tel quel dans le champ du formulaire : le navigateur le remplace par la valeur."
+        : '',
     ]
       .filter(Boolean)
       .join('\n\n');
     // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
     const pluginDir = await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
+    // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
+    const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
+    // Les secrets des sites web (connexions « site web » en mode outils) sont fournis au navigateur, jamais à l'agent.
+    let browserServer: Awaited<ReturnType<typeof runner.browserMcpCommand>> | null = null;
+    if (browserEnabled) {
+      try {
+        browserServer = await runner.browserMcpCommand(ctx.project, ctx.cwd, { sessionId: ctx.session.id, secrets: await connectionService.browserSecrets(ctx.project.id) });
+      } catch (err) {
+        await direct?.dispose().catch(() => undefined);
+        throw err;
+      }
+    }
+    const disposeAll = async () => {
+      await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
+      await browserServer?.dispose().catch((e) => console.error('[browser] nettoyage des secrets du navigateur', e));
+    };
+    // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
+    const browserReadTools = ['mcp__playwright__browser_snapshot', 'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_console_messages', 'mcp__playwright__browser_network_requests', 'mcp__playwright__browser_wait_for'];
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
@@ -175,6 +205,10 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
+        ...(googleAccount ? { google: createGoogleMcpServer({ project: ctx.project, account: googleAccount, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
+        // Le serveur hérite de l'environnement du CLI (dans le conteneur). La configuration MCP passe sur la ligne
+        // de commande du CLI, visible de tout utilisateur du serveur (ps) : l'environnement du backend n'y figure jamais.
+        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, ...(browserServer.env ? { env: browserServer.env } : {}) } } : {}),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
@@ -189,11 +223,11 @@ export class ClaudeProvider implements SessionProvider {
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
-      allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', ...(browserServer ? browserReadTools : []), ...(googleAccount ? googleReadTools(googleAccount) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
-      // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
-      pathToClaudeCodeExecutable: await runnerFor(ctx.project).claudeExecutable(ctx.project),
+      // Script de relais qui exécute le CLI dans le conteneur du projet.
+      pathToClaudeCodeExecutable: await runner.claudeExecutable(ctx.project),
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
@@ -202,7 +236,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccount: googleAccount?.email ?? null, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();
@@ -214,7 +248,7 @@ export class ClaudeProvider implements SessionProvider {
     try {
       stream = query({ prompt: queue, options });
     } catch (err) {
-      await direct?.dispose().catch(() => undefined);
+      await disposeAll();
       throw err;
     }
     let stopped = false;
@@ -236,7 +270,7 @@ export class ClaudeProvider implements SessionProvider {
         if (stopped || err instanceof AbortError) return { exitCode: null };
         return { exitCode: 1, error: (err as Error).message };
       } finally {
-        await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
+        await disposeAll();
       }
       if (stopped) return { exitCode: null };
       if (!lastResult) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };
@@ -329,10 +363,17 @@ export class ClaudeProvider implements SessionProvider {
         )) as Partial<PermissionResponse>;
 
         if (response.decision === 'allow') {
+          const remember = response.scope === 'project' || response.scope === 'session' || response.always === true;
+          if (response.scope === 'project') {
+            // Mémorisé pour le projet : les prochaines sessions reçoivent la règle dans allowedTools ;
+            // la session courante l'applique tout de suite via updatedPermissions.
+            const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
+            if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+          }
           return {
             behavior: 'allow',
             updatedInput: input,
-            updatedPermissions: response.always ? options.suggestions : undefined,
+            updatedPermissions: remember ? options.suggestions : undefined,
             toolUseID: options.toolUseID,
           };
         }

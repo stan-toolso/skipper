@@ -35,6 +35,16 @@ export interface User {
   lastLoginAt: string | null;
 }
 
+export interface PermissionRule {
+  id: string;
+  projectId: string;
+  toolName: string;
+  ruleContent: string | null;
+  rule: string;
+  createdBySession: { id: string; name: string } | null;
+  createdAt: string;
+}
+
 export interface ProjectMember {
   user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'>;
   role: ProjectRole;
@@ -63,8 +73,7 @@ export interface Project {
   systemPrompt: string;
   gitUrl: string | null;
   gitBranch: string | null;
-  runner: 'local' | 'docker';
-  runnerConfig: { image?: string; memory?: string; cpus?: string };
+  runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean };
   runnerStatus: RunnerStatus;
   workspacePath: string;
   workspaceExists: boolean;
@@ -85,6 +94,7 @@ export interface Session {
   externalId: string | null;
   exitCode: number | null;
   error: string | null;
+  costUsd: number;
   pendingRequestCount: number;
   createdAt: string;
   updatedAt: string;
@@ -266,7 +276,6 @@ export const PROJECT_FIELDS = gql`
     systemPrompt
     gitUrl
     gitBranch
-    runner
     runnerConfig
     runnerStatus {
       kind
@@ -377,6 +386,7 @@ export const SESSION_FIELDS = gql`
     externalId
     exitCode
     error
+    costUsd
     pendingRequestCount
     createdAt
     updatedAt
@@ -1653,7 +1663,23 @@ export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $cre
 
 // ---- Connexions ---------------------------------------------------------------------------------
 
-export type ConnectionKind = 'ssh' | 'postgres';
+export type ConnectionKind = 'ssh' | 'postgres' | 'website';
+
+/** Champ d'un site web ; `value` est null pour un secret, `variable` le nom sous lequel les agents le désignent. */
+export interface ConnectionField {
+  key: string;
+  label: string;
+  secret: boolean;
+  value: string | null;
+  variable: string;
+}
+
+export interface ConnectionFieldInput {
+  key: string;
+  label?: string | null;
+  secret?: boolean | null;
+  value?: string | null;
+}
 export type ConnectionExposure = 'mcp' | 'direct' | 'both';
 
 export interface Connection {
@@ -1661,9 +1687,11 @@ export interface Connection {
   name: string;
   kind: ConnectionKind;
   description: string;
-  host: string;
-  port: number;
-  username: string;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  url: string | null;
+  fields: ConnectionField[];
   database: string | null;
   ssl: boolean | null;
   viaConnection: { id: string; name: string } | null;
@@ -1698,6 +1726,8 @@ export interface ConnectionInput {
   commandAllowlist?: string[] | null;
   privateKey?: string | null;
   password?: string | null;
+  url?: string | null;
+  fields?: ConnectionFieldInput[] | null;
 }
 
 const CONNECTION_FIELDS = gql`
@@ -1709,6 +1739,14 @@ const CONNECTION_FIELDS = gql`
     host
     port
     username
+    url
+    fields {
+      key
+      label
+      secret
+      value
+      variable
+    }
     database
     ssl
     viaConnection {
@@ -1731,6 +1769,83 @@ const CONNECTION_FIELDS = gql`
   }
 `;
 
+// ---- Compte Google du projet ---------------------------------------------------------------------
+
+export type GoogleAccess = 'NONE' | 'READ' | 'WRITE';
+
+export interface GoogleAccount {
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  gmailAccess: GoogleAccess;
+  driveAccess: GoogleAccess;
+  scopes: string[];
+  connectedBy: { id: string; name: string; email: string } | null;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const GOOGLE_ACCOUNT_FIELDS = gql`
+  fragment GoogleAccountFields on GoogleAccount {
+    email
+    name
+    avatarUrl
+    gmailAccess
+    driveAccess
+    scopes
+    connectedBy {
+      id
+      name
+      email
+    }
+    lastCheckAt
+    lastCheckOk
+    lastCheckError
+    createdAt
+    updatedAt
+  }
+`;
+
+export const PROJECT_GOOGLE_ACCOUNT = gql`
+  ${GOOGLE_ACCOUNT_FIELDS}
+  query ProjectGoogleAccount($id: ID!) {
+    project(id: $id) {
+      id
+      googleAccount {
+        ...GoogleAccountFields
+      }
+    }
+  }
+`;
+
+export const CHECK_GOOGLE_ACCOUNT = gql`
+  ${GOOGLE_ACCOUNT_FIELDS}
+  mutation CheckGoogleAccount($projectId: ID!) {
+    checkGoogleAccount(projectId: $projectId) {
+      ok
+      error
+      detail
+      account {
+        ...GoogleAccountFields
+      }
+    }
+  }
+`;
+
+export const DISCONNECT_GOOGLE_ACCOUNT = gql`
+  mutation DisconnectGoogleAccount($projectId: ID!) {
+    disconnectGoogleAccount(projectId: $projectId) {
+      id
+      googleAccount {
+        email
+      }
+    }
+  }
+`;
+
 export const PROJECT_CONNECTIONS = gql`
   ${CONNECTION_FIELDS}
   query ProjectConnections($id: ID!) {
@@ -1738,7 +1853,7 @@ export const PROJECT_CONNECTIONS = gql`
       id
       name
       slug
-      runner
+      runnerConfig
       myRole
       connections {
         ...ConnectionFields
@@ -1800,5 +1915,164 @@ export const FORGET_CONNECTION_HOST_KEY = gql`
     forgetConnectionHostKey(id: $id) {
       ...ConnectionFields
     }
+  }
+`;
+
+// ---- Tableau de bord ----------------------------------------------------------------------------
+
+export interface DashboardCounts {
+  pendingRequests: number;
+  busySessions: number;
+  idleSessions: number;
+  failedSessions24h: number;
+  endedSessions24h: number;
+  todoTasks: number;
+  inProgressTasks: number;
+  overdueTasks: number;
+  doneTasks7d: number;
+  unreadNotifications: number;
+}
+
+export interface DashboardUsage {
+  monthStart: string;
+  monthUsd: number;
+  globalMonthUsd: number;
+  monthlyBudgetUsd: number | null;
+  todayUsd: number;
+  last7DaysUsd: number;
+  previous7DaysUsd: number;
+  byDay: { day: string; usd: number }[];
+  topSessions: { sessionId: string | null; sessionName: string | null; projectName: string | null; usd: number }[];
+}
+
+export interface DashboardProject {
+  project: Pick<Project, 'id' | 'name' | 'slug' | 'gitUrl' | 'myRole'> & { git: { branch: string } | null };
+  busySessions: number;
+  idleSessions: number;
+  pendingRequests: number;
+  todoTasks: number;
+  inProgressTasks: number;
+  overdueTasks: number;
+  monthUsd: number;
+  lastActivityAt: string | null;
+}
+
+export interface Dashboard {
+  generatedAt: string;
+  counts: DashboardCounts;
+  usage: DashboardUsage;
+  projects: DashboardProject[];
+  pendingRequests: HumanRequest[];
+  runningSessions: Session[];
+  recentSessions: Session[];
+  attentionTasks: Task[];
+}
+
+export const DASHBOARD = gql`
+  ${SESSION_FIELDS}
+  ${REQUEST_FIELDS}
+  ${TASK_FIELDS}
+  query Dashboard {
+    dashboard {
+      generatedAt
+      counts {
+        pendingRequests
+        busySessions
+        idleSessions
+        failedSessions24h
+        endedSessions24h
+        todoTasks
+        inProgressTasks
+        overdueTasks
+        doneTasks7d
+        unreadNotifications
+      }
+      usage {
+        monthStart
+        monthUsd
+        globalMonthUsd
+        monthlyBudgetUsd
+        todayUsd
+        last7DaysUsd
+        previous7DaysUsd
+        byDay {
+          day
+          usd
+        }
+        topSessions {
+          sessionId
+          sessionName
+          projectName
+          usd
+        }
+      }
+      projects {
+        project {
+          id
+          name
+          slug
+          gitUrl
+          myRole
+          git {
+            branch
+          }
+        }
+        busySessions
+        idleSessions
+        pendingRequests
+        todoTasks
+        inProgressTasks
+        overdueTasks
+        monthUsd
+        lastActivityAt
+      }
+      pendingRequests {
+        ...RequestFields
+      }
+      runningSessions {
+        ...SessionFields
+      }
+      recentSessions {
+        ...SessionFields
+      }
+      attentionTasks {
+        ...TaskFields
+      }
+    }
+  }
+`;
+
+export const PROJECT_PERMISSION_RULES = gql`
+  query ProjectPermissionRules($id: ID!) {
+    project(id: $id) {
+      id
+      permissionRules {
+        id
+        projectId
+        toolName
+        ruleContent
+        rule
+        createdAt
+        createdBySession {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+export const ADD_PROJECT_PERMISSION_RULE = gql`
+  mutation AddProjectPermissionRule($projectId: ID!, $toolName: String!, $ruleContent: String) {
+    addProjectPermissionRule(projectId: $projectId, toolName: $toolName, ruleContent: $ruleContent) {
+      id
+      rule
+    }
+  }
+`;
+
+export const DELETE_PROJECT_PERMISSION_RULE = gql`
+  mutation DeleteProjectPermissionRule($id: ID!) {
+    deleteProjectPermissionRule(id: $id)
   }
 `;

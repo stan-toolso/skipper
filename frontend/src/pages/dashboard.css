@@ -1,0 +1,90 @@
+/* Tableau de bord : tuiles d'indicateurs, listes compactes et graphique de consommation. */
+
+.dash-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 991px) { .dash-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .dash-tiles { grid-template-columns: minmax(0, 1fr); } }
+
+.dash-tile {
+  display: block;
+  padding: 12px 14px;
+  background: var(--cc-bg-elevated);
+  border: 1px solid var(--cc-border);
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  min-height: 92px;
+}
+a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
+.dash-tile.alert { border-color: #e3b341; }
+.dash-tile-label { font-size: 12px; color: var(--cc-dim); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.dash-tile-value { font-size: 28px; font-weight: 600; line-height: 1.1; }
+.dash-tile-value small { font-size: 14px; font-weight: 400; color: var(--cc-dim); margin-left: 6px; }
+.dash-tile-sub { font-size: 12px; color: var(--cc-dim); margin-top: 4px; }
+.dash-tile-sub .up { color: #e5534b; }
+.dash-tile-sub .down { color: #57ab5a; }
+
+.dash-section { margin-bottom: 20px; }
+.dash-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cc-dim);
+}
+.dash-section-title a { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 12px; }
+
+.dash-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--cc-border); border-radius: 6px; background: var(--cc-bg-elevated); }
+.dash-list li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--cc-border); min-width: 0; }
+.dash-list li:first-child { border-top: 0; }
+.dash-list li.empty { color: var(--cc-dim); font-style: italic; font-size: 13px; }
+.dash-list .icon { width: 18px; text-align: center; color: var(--cc-dim); flex: none; }
+.dash-list .icon.warn { color: #e3b341; }
+.dash-list .icon.bad { color: #e5534b; }
+.dash-list .icon.busy { color: var(--cc-accent); }
+.dash-list .main { flex: 1; min-width: 0; }
+.dash-list .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-fg); text-decoration: none; }
+.dash-list a.title:hover { color: var(--cc-accent); }
+.dash-list .meta { font-size: 12px; color: var(--cc-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-list .side { flex: none; font-size: 12px; color: var(--cc-dim); text-align: right; }
+
+.dash-meter { height: 6px; background: var(--cc-bg-hover); border-radius: 3px; overflow: hidden; margin: 6px 0; }
+.dash-meter > div { height: 100%; background: var(--cc-accent); border-radius: 3px; }
+.dash-meter > div.warn { background: #e3b341; }
+.dash-meter > div.over { background: #e5534b; }
+
+.dash-chart { display: block; width: 100%; height: 96px; margin-top: 8px; }
+.dash-chart rect { fill: var(--cc-accent); opacity: 0.85; }
+.dash-chart rect:hover { opacity: 1; }
+.dash-chart rect.today { opacity: 1; }
+.dash-chart text { fill: var(--cc-dim); font-size: 10px; }
+.dash-chart line { stroke: var(--cc-border); stroke-width: 1; }
+
+.dash-projects td, .dash-projects th { white-space: nowrap; }
+.dash-projects td.name { white-space: normal; min-width: 160px; }
+.dash-projects .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dash-projects .zero { color: var(--cc-dimmer, #555); }
+
+.dash-chart-wrap { width: 100%; margin-top: 8px; }
+.dash-chart { display: block; margin-top: 0; }
+.dash-list .meta.wrap { white-space: normal; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.dash-project-cards { display: none; }
+
+/* ---- Mobile ---------------------------------------------------------------------------------- */
+@media (max-width: 767.98px) {
+  .dash-tiles { gap: 8px; }
+  .dash-tile { padding: 10px 12px; min-height: 0; }
+  .dash-tile-value { font-size: 22px; }
+  .dash-tile-sub { display: none; }
+  .dash-tile.alert .dash-tile-sub { display: block; }
+  /* Les projets : une carte par projet au lieu d'un tableau à huit colonnes. */
+  .dash-project-table { display: none; }
+  .dash-project-cards { display: block; }
+  .dash-list li { padding: 8px 10px; }
+  .dash-list .side { max-width: 40%; }
+  .dash-section { margin-bottom: 16px; }
+}
