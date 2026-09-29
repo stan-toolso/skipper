@@ -6,6 +6,9 @@ export interface Project {
   systemPrompt: string;
   gitUrl: string | null;
   gitBranch: string | null;
+  /** 'local' : sur le serveur ; 'docker' : conteneur dédié au projet. */
+  runner: 'local' | 'docker';
+  runnerConfig: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -17,6 +20,8 @@ export interface CreateProjectInput {
   systemPrompt?: string | null;
   gitUrl?: string | null;
   gitBranch?: string | null;
+  runner?: 'local' | 'docker' | null;
+  runnerConfig?: Record<string, unknown> | null;
 }
 
 export interface UpdateProjectInput {
@@ -25,4 +30,6 @@ export interface UpdateProjectInput {
   systemPrompt?: string | null;
   gitUrl?: string | null;
   gitBranch?: string | null;
+  runner?: 'local' | 'docker' | null;
+  runnerConfig?: Record<string, unknown> | null;
 }

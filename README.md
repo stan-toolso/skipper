@@ -11,6 +11,9 @@ Trois notions :
   ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
+- **Environnement d'exécution (runner)** : par projet, `local` (les agents, terminaux et commandes
+  tournent sur le serveur avec l'utilisateur de Skipper) ou `docker` (un conteneur dédié au projet,
+  avec limites de mémoire et de CPU, qui ne voit que le code de ce projet).
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal.
@@ -202,6 +205,21 @@ frontend/
   ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
   cours ; l'agent la passe en `done` quand il a fini.
+
+- **Runner** (`backend/src/runners/`) : `local` ou `docker` par projet (`projects.runner`,
+  `projects.runner_config` = `{ image, memory, cpus }`). Le runner fournit l'exécutable Claude Code
+  donné au SDK, la commande du terminal web et celle du provider shell. En mode docker, un conteneur
+  `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
+  construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
+  worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
+  de l'utilisateur de Skipper, donc aucune traduction de chemin. Le SDK reste dans le backend : il
+  reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
+  du CLI dans le conteneur, stdio relayés ; demandes d'autorisation, outils MCP (contexte, tâches)
+  et skills fonctionnent donc sans changement. L'authentification Claude (jeton OAuth ou clé API des
+  Paramètres) et le jeton GitHub sont transmis par variables d'environnement à chaque `docker exec` ;
+  le dossier `~/.claude` de l'hôte est monté s'il existe (mode « compte du serveur »). Le terminal
+  web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
+  page du projet (démarrer, arrêter, recréer).
 
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
 demandes en attente à `expired` et les terminaux à `closed`.

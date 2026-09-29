@@ -103,6 +103,24 @@ Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<r
 l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
 dossier ou création de worktree.
 
+## Environnements isolés (runner docker)
+
+Un projet en mode « Conteneur Docker » a besoin de Docker sur le serveur et de l'image de base.
+**Non installé à ce jour** (et le disque de l'instance est presque plein : à agrandir ou nettoyer
+avant, l'image pèse ~600 Mo plus les caches des projets). Mise en place :
+
+```bash
+# Sur le serveur, en tant que skipper (sudoer)
+sudo apt-get update && sudo apt-get install -y docker.io
+sudo usermod -aG docker skipper        # puis se reconnecter
+cd ~/skipper && docker build -t skipper-runner:latest deploy/runner
+```
+
+Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env` ;
+sur cette instance de 1,8 Go, viser 512m à 768m par conteneur et peu de projets isolés en parallèle.
+Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
+projet applique la nouvelle image.
+
 ## Procédure de déploiement
 
 ```bash

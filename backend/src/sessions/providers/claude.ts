@@ -15,6 +15,7 @@ import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { RequestCancelledError } from '../../requests/service.js';
+import { runnerFor } from '../../runners/index.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
 import { settingsService } from '../../settings/service.js';
@@ -166,8 +167,8 @@ export class ClaudeProvider implements SessionProvider {
       allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
-      // Par défaut le SDK utilise le binaire Claude Code qu'il embarque.
-      pathToClaudeCodeExecutable: config.claudeBin,
+      // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
+      pathToClaudeCodeExecutable: await runnerFor(ctx.project).claudeExecutable(ctx.project),
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.

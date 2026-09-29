@@ -4,6 +4,7 @@ import { contextService, HUMAN } from '../context/service.js';
 import { NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { gitService } from '../git/service.js';
+import { runnerFor } from '../runners/index.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -145,6 +146,7 @@ export const resolvers = {
 
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
+    runnerStatus: (project: Project) => runnerFor(project).status(project),
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     terminals: (project: Project) => terminalService.listByProject(project.id),
@@ -443,6 +445,24 @@ export const resolvers = {
     prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
       return projectService.prepareWorkspace(args.id);
+    },
+    startProjectRunner: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.id, 'admin');
+      const project = await projectService.get(args.id);
+      await runnerFor(project).ensureReady(project);
+      return project;
+    },
+    stopProjectRunner: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.id, 'admin');
+      const project = await projectService.get(args.id);
+      await runnerFor(project).stop(project);
+      return project;
+    },
+    resetProjectRunner: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.id, 'admin');
+      const project = await projectService.get(args.id);
+      await runnerFor(project).remove(project);
+      return project;
     },
     deleteProject: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');

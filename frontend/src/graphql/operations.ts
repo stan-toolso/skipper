@@ -43,6 +43,18 @@ export interface ProjectMember {
   createdAt: string;
 }
 
+export interface RunnerStatus {
+  kind: string;
+  ready: boolean;
+  state: string;
+  containerName: string | null;
+  image: string | null;
+  memory: string | null;
+  cpus: string | null;
+  startedAt: string | null;
+  error: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -51,6 +63,9 @@ export interface Project {
   systemPrompt: string;
   gitUrl: string | null;
   gitBranch: string | null;
+  runner: 'local' | 'docker';
+  runnerConfig: { image?: string; memory?: string; cpus?: string };
+  runnerStatus: RunnerStatus;
   workspacePath: string;
   workspaceExists: boolean;
   git: { branch: string; commit: string } | null;
@@ -251,6 +266,19 @@ export const PROJECT_FIELDS = gql`
     systemPrompt
     gitUrl
     gitBranch
+    runner
+    runnerConfig
+    runnerStatus {
+      kind
+      ready
+      state
+      containerName
+      image
+      memory
+      cpus
+      startedAt
+      error
+    }
     workspacePath
     workspaceExists
     git {
@@ -460,6 +488,33 @@ export const PREPARE_PROJECT_WORKSPACE = gql`
   ${PROJECT_FIELDS}
   mutation PrepareProjectWorkspace($id: ID!) {
     prepareProjectWorkspace(id: $id) {
+      ...ProjectFields
+    }
+  }
+`;
+
+export const START_PROJECT_RUNNER = gql`
+  ${PROJECT_FIELDS}
+  mutation StartProjectRunner($id: ID!) {
+    startProjectRunner(id: $id) {
+      ...ProjectFields
+    }
+  }
+`;
+
+export const STOP_PROJECT_RUNNER = gql`
+  ${PROJECT_FIELDS}
+  mutation StopProjectRunner($id: ID!) {
+    stopProjectRunner(id: $id) {
+      ...ProjectFields
+    }
+  }
+`;
+
+export const RESET_PROJECT_RUNNER = gql`
+  ${PROJECT_FIELDS}
+  mutation ResetProjectRunner($id: ID!) {
+    resetProjectRunner(id: $id) {
       ...ProjectFields
     }
   }

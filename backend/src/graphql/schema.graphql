@@ -87,6 +87,11 @@ type Project {
   systemPrompt: String!
   gitUrl: String
   gitBranch: String
+  "Environnement d'exécution : local (sur le serveur) ou docker (conteneur dédié)."
+  runner: String!
+  "Réglages du runner docker : { image, memory, cpus }."
+  runnerConfig: JSON!
+  runnerStatus: RunnerStatus!
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
   workspaceExists: Boolean!
@@ -336,6 +341,20 @@ type GitDiff {
   text: String!
   binary: Boolean!
   truncated: Boolean!
+}
+
+"État de l'environnement d'exécution d'un projet."
+type RunnerStatus {
+  kind: String!
+  ready: Boolean!
+  "running, stopped, absent, unavailable..."
+  state: String!
+  containerName: String
+  image: String
+  memory: String
+  cpus: String
+  startedAt: DateTime
+  error: String
 }
 
 type WorkspaceGit {
@@ -635,6 +654,9 @@ input CreateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
+  "local (défaut) ou docker."
+  runner: String
+  runnerConfig: JSON
 }
 
 input UpdateProjectInput {
@@ -643,6 +665,8 @@ input UpdateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
+  runner: String
+  runnerConfig: JSON
 }
 
 input CreateSessionInput {
@@ -699,6 +723,12 @@ type Mutation {
   updateProject(id: ID!, input: UpdateProjectInput!): Project!
   "(Re)crée le workspace s'il n'existe pas sur disque."
   prepareProjectWorkspace(id: ID!): Project!
+  "Démarre l'environnement d'exécution (conteneur) du projet."
+  startProjectRunner(id: ID!): Project!
+  "Arrête l'environnement d'exécution ; les sessions en cours sont interrompues."
+  stopProjectRunner(id: ID!): Project!
+  "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
+  resetProjectRunner(id: ID!): Project!
   "Supprime le projet et ses sessions en base ; le dossier sur disque est conservé."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
