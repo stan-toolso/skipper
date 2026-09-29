@@ -229,6 +229,14 @@ réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
 
+## Mobile
+
+Sous 768 px (`workbench.css`, `terminal.css`) : la sidebar devient un tiroir ouvert par le bouton
+menu de la barre du haut et refermé à chaque navigation ; les onglets défilent sans barre de
+défilement (ombres de débordement, onglet actif ramené en vue, menu listant tous les onglets) ; les
+en-têtes de page passent à la ligne ; la page de session a un bouton d'envoi ; sur écran tactile les
+actions au survol de l'explorateur sont toujours visibles et les cibles sont agrandies.
+
 ## Identité visuelle
 
 Le pictogramme est une rose des vents à huit pointes, héritière de l'astérisque ✻ de Claude Code,

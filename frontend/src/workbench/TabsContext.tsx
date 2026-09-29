@@ -17,6 +17,9 @@ interface TabsState {
   activeKey: string;
   closeTab: (key: string) => void;
   closeOthers: (key: string) => void;
+  /** Ferme les onglets situés à droite de celui-ci. */
+  closeRight: (key: string) => void;
+  closeAll: () => void;
   setTitle: (key: string, title: string) => void;
 }
 
@@ -112,11 +115,31 @@ export function TabsProvider({ children }: { children: ReactNode }) {
     [activeKey, navigate],
   );
 
+  const closeRight = useCallback(
+    (key: string) => {
+      const current = tabsRef.current;
+      const index = current.findIndex((t) => t.key === key);
+      if (index < 0) return;
+      const keep = current.slice(0, index + 1);
+      setTabs(keep);
+      if (!keep.some((t) => t.key === activeKey)) navigate(keep[index].url);
+    },
+    [activeKey, navigate],
+  );
+
+  const closeAll = useCallback(() => {
+    setTabs([]);
+    navigate('/');
+  }, [navigate]);
+
   const setTitle = useCallback((key: string, title: string) => {
     setTabs((prev) => (prev.some((t) => t.key === key && t.title !== title) ? prev.map((t) => (t.key === key ? { ...t, title } : t)) : prev));
   }, []);
 
-  const value = useMemo(() => ({ tabs, activeKey, closeTab, closeOthers, setTitle }), [tabs, activeKey, closeTab, closeOthers, setTitle]);
+  const value = useMemo(
+    () => ({ tabs, activeKey, closeTab, closeOthers, closeRight, closeAll, setTitle }),
+    [tabs, activeKey, closeTab, closeOthers, closeRight, closeAll, setTitle],
+  );
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;
 }
 

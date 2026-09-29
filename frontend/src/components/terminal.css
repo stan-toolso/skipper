@@ -182,3 +182,25 @@
 .cc-tool .cc-raw { color: var(--cc-dimmer); font-family: var(--bs-font-monospace); font-size: 11.5px; margin-left: 6px; }
 .cc-toggle { display: flex; justify-content: flex-end; gap: 6px; padding: 4px 16px 0; font-family: var(--bs-font-sans-serif); font-size: 12px; color: var(--cc-dimmer); }
 .cc-toggle label { cursor: pointer; }
+
+/* Bouton d'envoi : discret au clavier, visible sur mobile où Entrée ne suffit pas. */
+.cc-send {
+  display: none; flex: 0 0 auto; align-self: flex-end; background: none; border: 0; color: var(--cc-accent); font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer;
+}
+.cc-send:disabled { color: var(--cc-dimmer); cursor: default; }
+@media (hover: none), (max-width: 767.98px) {
+  .cc-send { display: inline-flex; }
+}
+@media (max-width: 767.98px) {
+  .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; }
+  .cc-header { padding: 8px 10px; gap: 6px; }
+  .cc-actions { width: 100%; flex-wrap: wrap; }
+  .cc-actions .cc-btn { flex: 1 1 auto; text-align: center; padding: 5px 8px; }
+  .cc-transcript { padding: 10px 10px; }
+  .cc-toggle { padding: 4px 10px 0; }
+  .cc-status { padding: 4px 10px; flex-direction: column; gap: 2px; font-size: 12px; }
+  .cc-input { margin: 0 8px 8px; }
+  .cc-hint { display: none; }
+  .cc-prompt { margin: 10px 8px; padding: 8px 10px; }
+  .cc-tool .cc-result { margin-left: 12px; }
+}

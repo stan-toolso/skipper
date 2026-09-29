@@ -131,6 +131,7 @@
   background: #0f0f0f;
   border-bottom: 1px solid var(--cc-border);
 }
+.wb-tabbar-wrap { flex: 1; min-width: 0; position: relative; display: flex; }
 .wb-tabbar {
   flex: 1;
   min-width: 0;
@@ -138,8 +139,19 @@
   align-items: stretch;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  /* Pas de barre de défilement : molette, trackpad, onglet actif ramené en vue et menu de la liste. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
 }
+.wb-tabbar::-webkit-scrollbar { display: none; }
+/* Ombres signalant qu'il y a des onglets cachés à gauche ou à droite. */
+.wb-tabbar-wrap::before, .wb-tabbar-wrap::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 28px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 1;
+}
+.wb-tabbar-wrap::before { left: 0; background: linear-gradient(to right, #0f0f0f 30%, rgba(15,15,15,0)); }
+.wb-tabbar-wrap::after { right: 0; background: linear-gradient(to left, #0f0f0f 30%, rgba(15,15,15,0)); }
+.wb-tabbar-wrap.can-left::before, .wb-tabbar-wrap.can-right::after { opacity: 1; }
 .wb-tab {
   display: flex;
   align-items: center;
@@ -190,7 +202,45 @@
 .term-body .xterm .xterm-viewport { scrollbar-width: thin; }
 
 /* Cloche de notifications, à droite de la barre d'onglets */
-.wb-tabbar-right { flex: 0 0 auto; display: flex; align-items: center; padding: 0 8px; border-left: 1px solid var(--cc-border); }
+.wb-tabbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 8px; border-left: 1px solid var(--cc-border); }
+
+/* Menu contextuel d'un onglet */
+.wb-ctx-menu {
+  position: fixed; z-index: 40; min-width: 200px; padding: 4px 0;
+  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  font-family: var(--bs-font-sans-serif); font-size: 13px;
+}
+.wb-ctx-menu button {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 6px 12px;
+  background: none; border: 0; color: var(--cc-fg); font: inherit; text-align: left; cursor: pointer;
+}
+.wb-ctx-menu button:hover:not(:disabled) { background: var(--cc-bg-hover); color: var(--cc-accent); }
+.wb-ctx-menu button:disabled { color: var(--cc-dimmer); cursor: default; }
+.wb-ctx-menu kbd { font: inherit; font-size: 11px; color: var(--cc-dimmer); background: none; padding: 0; box-shadow: none; }
+.wb-ctx-sep { height: 1px; margin: 4px 0; background: var(--cc-border); }
+
+/* Menu de la liste des onglets */
+.wb-tabs-menu-anchor { position: relative; }
+.wb-tabs-count { margin-left: 4px; font-size: 11px; color: var(--cc-dimmer); }
+.wb-tabs-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 320px; max-height: 70vh; display: flex; flex-direction: column;
+  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  font-family: var(--bs-font-sans-serif); font-size: 13px;
+}
+.wb-tabs-menu-list { overflow-y: auto; padding: 4px 0; }
+.wb-tabs-menu-item { display: flex; align-items: center; color: var(--cc-dim); }
+.wb-tabs-menu-item:hover { background: var(--cc-bg-hover); color: var(--cc-fg); }
+.wb-tabs-menu-item.active { color: var(--cc-fg); box-shadow: inset 2px 0 0 var(--cc-accent); }
+.wb-tabs-menu-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.wb-tabs-menu-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-tabs-menu-close { background: none; border: 0; color: var(--cc-dimmer); font-size: 15px; line-height: 1; padding: 4px 10px; cursor: pointer; }
+.wb-tabs-menu-close:hover { color: var(--cc-fg); }
+.wb-tabs-menu-foot { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--cc-border); }
+.wb-tabs-menu-foot button { flex: 1; background: none; border: 1px solid var(--cc-border); border-radius: 4px; color: var(--cc-dim); font: inherit; font-size: 12px; padding: 3px 8px; cursor: pointer; }
+.wb-tabs-menu-foot button:hover:not(:disabled) { color: var(--cc-fg); border-color: var(--cc-dim); }
+.wb-tabs-menu-foot button:disabled { opacity: .4; cursor: default; }
 .wb-bell { position: relative; }
 .wb-bell-btn {
   background: none; border: 0; color: var(--cc-dim); font-size: 16px; padding: 4px 8px; border-radius: 4px; cursor: pointer; position: relative;
@@ -340,3 +390,63 @@
 .diff-file { color: var(--cc-dim); font-weight: 600; }
 .diff-meta { color: var(--cc-dimmer); }
 .diff-empty { padding: 16px; color: var(--cc-dim); }
+
+/* ---- Bouton menu (tiroir de la sidebar) ------------------------------------------------------ */
+.wb-burger {
+  display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 44px;
+  background: none; border: 0; border-right: 1px solid var(--cc-border); color: var(--cc-dim); font-size: 20px; cursor: pointer;
+}
+.wb-burger:hover, .wb-burger.open { color: var(--cc-fg); background: var(--cc-bg-hover); }
+.wb-backdrop { display: none; }
+
+/* ---- Écrans tactiles : cibles plus grandes, actions toujours visibles ------------------------- */
+@media (hover: none) {
+  .wb-menu-item { padding: 9px 14px; }
+  .wb-row { padding-top: 7px; padding-bottom: 7px; }
+  .wb-tab-close { color: var(--cc-dim); }
+  .fx-row { padding-top: 7px; padding-bottom: 7px; }
+  .fx-actions { display: inline-flex; }
+  .fx-actions button { padding: 0 8px; font-size: 14px; }
+}
+
+/* ---- Mobile : la sidebar devient un tiroir, tout le reste prend la largeur -------------------- */
+@media (max-width: 767.98px) {
+  .wb { height: 100dvh; }
+  .wb-sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 50; width: min(300px, 85vw); flex-basis: auto;
+    transform: translateX(-100%); transition: transform .2s ease; box-shadow: none;
+  }
+  .wb.sidebar-open .wb-sidebar { transform: none; box-shadow: 12px 0 40px rgba(0,0,0,.6); }
+  .wb-backdrop { display: block; position: fixed; inset: 0; z-index: 45; background: rgba(0,0,0,.5); }
+  .wb-burger { display: flex; }
+  .wb-hint { display: none; }
+  .wb-main { width: 100%; }
+  .wb-topbar { height: 44px; }
+  .wb-tab { max-width: 170px; padding-left: 10px; }
+  .wb-tab-title { font-size: 13px; }
+  .wb-tabbar-right { padding: 0 4px; }
+  .wb-content { padding: 14px 12px; }
+  .wb-content h1.h3 { font-size: 1.35rem; }
+  .wb-notif-panel, .wb-tabs-menu { width: min(380px, calc(100vw - 16px)); }
+  .wb-ctx-menu { min-width: 180px; }
+  /* Explorateur et éditeur */
+  .fx-header { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+  .fx-header-actions .btn { flex: 1; }
+  .fe-header { flex-wrap: wrap; padding: 6px 10px; }
+  .fe-meta { margin-left: auto; }
+  .fe-meta .fx-muted { display: none; }
+}
+@media (max-width: 767.98px) {
+  /* En-têtes de page (titre à gauche, actions à droite) : passent à la ligne au lieu de déborder. */
+  .wb-content .d-flex.justify-content-between { flex-wrap: wrap; row-gap: 8px; }
+  .wb-content .d-flex.justify-content-between > .d-flex { flex-wrap: wrap; }
+}
+@media (max-width: 767.98px) {
+  /* Panneaux déroulants de la barre du haut : pleine largeur, ancrés sous la barre. */
+  .wb-notif-panel, .wb-tabs-menu { position: fixed; left: 8px; right: 8px; top: 50px; width: auto; }
+}
+
+@media (max-width: 767.98px) {
+  /* Panneau git : replié, une fine bande à droite ; déplié, il recouvre le contenu. */
+  .git-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(340px, 92vw); box-shadow: -12px 0 40px rgba(0,0,0,.6); }
+}

@@ -193,6 +193,9 @@ export default function SessionDetailPage() {
             }
           }}
         />
+        <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={sending || !text.trim()} onClick={submit}>
+          <i className="bi bi-send" />
+        </button>
       </div>
       <div className="cc-hint">
         <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>
