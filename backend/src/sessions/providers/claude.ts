@@ -142,7 +142,8 @@ export class ClaudeProvider implements SessionProvider {
     // Réglages généraux : authentification, modèle par défaut, budgets, plafond mensuel.
     const general = settingsService.claude;
     await settingsService.assertBudgetAvailable();
-    const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
+    // Modèle courant : modifiable en cours de session (updateConfig), d'où la variable.
+    let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
@@ -180,8 +181,10 @@ export class ClaudeProvider implements SessionProvider {
       fallbackModel: general.fallbackModel ?? undefined,
       env,
       permissionMode: cfg.permissionMode || 'default',
-      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé.
-      allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
+      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé. Toujours vrai ici, car il rend
+      // ce mode *disponible* sans l'activer (drapeau --allow-dangerously-skip-permissions du CLI) : c'est la
+      // condition pour pouvoir y passer en cours de session (setPermissionMode), choix explicite de l'humain.
+      allowDangerouslySkipPermissions: true,
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
@@ -264,6 +267,25 @@ export class ClaudeProvider implements SessionProvider {
       },
       async interrupt() {
         await stream.interrupt();
+      },
+      // Changements à chaud pris en charge par le SDK : mode d'autorisation et modèle (les autres clés
+      // valent pour le prochain lancement).
+      async updateConfig(patch) {
+        const applied: string[] = [];
+        if ('permissionMode' in patch) {
+          const mode = (patch.permissionMode || 'default') as PermissionMode;
+          if (!permissionModes.includes(mode)) throw new AppError(`permissionMode invalide : ${String(mode)}`);
+          await stream.setPermissionMode(mode);
+          applied.push('permissionMode');
+        }
+        if ('model' in patch) {
+          const next = patch.model ? String(patch.model) : settingsService.claude.defaultModel ?? undefined;
+          settingsService.assertModelAllowed(next);
+          await stream.setModel(next);
+          model = next;
+          applied.push('model');
+        }
+        return applied;
       },
     };
   }

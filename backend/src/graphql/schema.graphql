@@ -825,6 +825,11 @@ type Mutation {
   endSession(id: ID!): Session!
   "Interrompt le tour en cours ; la session reste ouverte aux instructions."
   interruptSession(id: ID!): Session!
+  """
+  Modifie la configuration d'une session (fusion clé par clé ; null retire une clé). Une session en cours applique
+  immédiatement ce qu'elle peut (Claude : modèle et autorisations) ; le reste vaut pour son prochain lancement.
+  """
+  updateSessionConfig(id: ID!, config: JSON!): Session!
   "Répond à une demande en attente ; la session reprend avec cette réponse."
   answerRequest(id: ID!, response: JSON!): Request!
   "Abandonne une demande : l'agent reçoit un refus."

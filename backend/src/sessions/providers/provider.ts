@@ -68,6 +68,11 @@ export interface RunningHandle {
   end?(): Promise<void>;
   /** Interrompt le tour en cours sans terminer la session. */
   interrupt?(): Promise<void>;
+  /**
+   * Applique en cours d'exécution une partie de la configuration (ex. modèle, mode d'autorisation).
+   * Ne reçoit que les clés modifiées et renvoie celles qu'il a appliquées ; les autres valent pour le prochain lancement.
+   */
+  updateConfig?(patch: Record<string, unknown>): Promise<string[]>;
 }
 
 /**
