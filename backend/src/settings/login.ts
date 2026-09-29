@@ -54,10 +54,16 @@ function publicView(l: LiveLogin): ClaudeLogin {
   return { id: l.id, url: l.url, status: l.status, error: l.error, createdAt: l.createdAt };
 }
 
+/** Sortie du CLI pour le journal du serveur : sans séquences ANSI, jeton masqué. */
+function redactedTail(l: LiveLogin, chars = 1500): string {
+  return stripAnsi(l.output).replace(/sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]+/g, 'sk-ant-oat**-[masqué]').replace(/\n{3,}/g, '\n\n').slice(-chars);
+}
+
 function finish(l: LiveLogin, status: 'done' | 'failed', error: string | null = null): void {
   if (l.status === 'done' || l.status === 'failed') return;
   l.status = status;
   l.error = error;
+  console.log(`[login] ${l.id} ${status}${error ? ` : ${error}` : ''}\n--- sortie du CLI ---\n${redactedTail(l)}\n---`);
   clearTimeout(l.timer);
   try {
     l.proc.kill();
@@ -116,6 +122,7 @@ export const loginService = {
         if (m) {
           login.url = m[0];
           login.status = 'awaiting_code';
+          console.log(`[login] ${login.id} URL d'autorisation obtenue`);
           resolveUrl(login.url);
         }
       }
@@ -166,6 +173,7 @@ export const loginService = {
     const trimmed = code.trim();
     if (!trimmed) throw new AppError('Le code est vide');
     l.status = 'exchanging';
+    console.log(`[login] ${l.id} code reçu (${trimmed.length} caractères), transmis au CLI`);
     l.proc.write(trimmed + '\r');
 
     const deadline = Date.now() + 60_000;
