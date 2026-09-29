@@ -86,6 +86,23 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
         const [label, action] = verbs[op] ?? [`Contexte : ${op}`, `utiliser le contexte (${op})`];
         return { label, action };
       }
+      if (name.startsWith('mcp__connections__')) {
+        const op = name.slice('mcp__connections__'.length);
+        const conn = str(input, 'connection') ?? '';
+        const cmd = str(input, 'command') ?? '';
+        const sql = str(input, 'sql') ?? '';
+        const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
+        const verbs: Record<string, [string, string | undefined, string]> = {
+          list: ['Consultation des connexions du projet', undefined, 'consulter les connexions du projet'],
+          ssh_run: [`Commande sur ${conn} (SSH)`, cmd, `exécuter sur ${conn} : ${short(cmd)}`],
+          ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
+          ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
+          sql_query: [`Requête SQL sur ${conn}`, sql, `exécuter sur ${conn} : ${short(sql)}`],
+          sql_schema: [`Schéma de ${conn}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}`],
+        };
+        const [label, detail, action] = verbs[op] ?? [`Connexions : ${op}`, undefined, `utiliser une connexion (${op})`];
+        return { label, detail, action };
+      }
       const json = JSON.stringify(input);
       return { label: `Outil ${name}`, detail: json.length > 200 ? `${json.slice(0, 197)}…` : json, action: `utiliser l'outil ${name}` };
     }

@@ -117,3 +117,10 @@ curl -s -u stan https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]
 - **Ne jamais lire ni copier le `.env` du serveur** dans une conversation ou un dépôt.
 - **Retirer l'accès** : `sudo deluser skipper` ne suffit pas, penser au rôle RDS, à la clé de
   déploiement GitHub et au fichier `.htpasswd-skipper`.
+- **Connexions des projets (SSH, PostgreSQL)** : le mode « outils » n'a besoin de rien de plus (client
+  SSH et pg intégrés au backend). Le mode « shell de la session » utilise `ssh`, `ssh-agent`, `ssh-add`
+  (paquet `openssh-client`, déjà présent) et, pour les bases, `psql` (`sudo apt install postgresql-client`).
+  Les fichiers éphémères de session vont dans `/tmp/skipper-session-<id>` et sont supprimés à la fin de
+  la session ou balayés au redémarrage du backend. Les identifiants sont chiffrés avec la même clé que les
+  jetons des Paramètres (`SKIPPER_SECRET_KEY` ou `WORKSPACES_ROOT/.secret-key`) : sauvegarder cette clé
+  avec la base, sinon les secrets deviennent illisibles.

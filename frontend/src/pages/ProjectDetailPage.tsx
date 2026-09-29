@@ -133,6 +133,9 @@ export default function ProjectDetailPage() {
           <Button as={Link as any} to={`/projects/${project.id}/context`} size="sm" variant="outline-primary">
             Contexte
           </Button>
+          <Button as={Link as any} to={`/projects/${project.id}/connections`} size="sm" variant="outline-primary">
+            Connexions
+          </Button>
           <Button as={Link as any} to={`/projects/${project.id}/edit`} size="sm" variant="outline-secondary">
             Modifier
           </Button>

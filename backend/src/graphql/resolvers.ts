@@ -1,4 +1,7 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
+import { connectionService } from '../connections/service.js';
+import { fingerprint } from '../connections/ssh.js';
+import type { Connection, ConnectionInput, PostgresSettings } from '../connections/types.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
@@ -97,6 +100,21 @@ export const resolvers = {
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
   },
 
+  Connection: {
+    project: (c: Connection) => projectService.get(c.projectId),
+    host: (c: Connection) => c.settings.host,
+    port: (c: Connection) => c.settings.port,
+    username: (c: Connection) => c.settings.username,
+    database: (c: Connection) => (c.kind === 'postgres' ? (c.settings as PostgresSettings).database : null),
+    ssl: (c: Connection) => (c.kind === 'postgres' ? (c.settings as PostgresSettings).ssl : null),
+    viaConnection: (c: Connection) => {
+      const via = c.kind === 'postgres' ? (c.settings as PostgresSettings).viaConnectionId : null;
+      return via ? connectionService.get(via).catch(() => null) : null;
+    },
+    hostFingerprint: (c: Connection) => (c.hostKey ? fingerprint(c.hostKey) : null),
+    hasSecret: (c: Connection) => connectionService.hasSecret(c),
+  },
+
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
     project: (t: TerminalRecord) => projectService.get(t.projectId),
@@ -116,6 +134,7 @@ export const resolvers = {
     workspacePath: (project: Project) => workspacePath(project),
     terminals: (project: Project) => terminalService.listByProject(project.id),
     worktrees: (project: Project) => worktreeService.listByProject(project.id),
+    connections: (project: Project) => connectionService.listByProject(project.id),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
@@ -171,6 +190,7 @@ export const resolvers = {
     request: (_: unknown, args: { id: string }) => requestService.get(args.id),
     terminal: (_: unknown, args: { id: string }) => terminalService.get(args.id),
     worktree: (_: unknown, args: { id: string }) => worktreeService.get(args.id),
+    connection: (_: unknown, args: { id: string }) => connectionService.get(args.id),
     notifications: (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }) => notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined }),
     unreadNotificationCount: () => notificationService.countUnread(),
     tasks: (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }) =>
@@ -258,6 +278,15 @@ export const resolvers = {
     createTerminal: (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }) => terminalService.create(args.projectId, args.name, args.worktreeId),
     createWorktree: (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null }) => worktreeService.create(args.projectId, args),
     deleteWorktree: (_: unknown, args: { id: string; deleteBranch?: boolean | null }) => worktreeService.delete(args.id, args.deleteBranch ?? false),
+    createConnection: (_: unknown, args: { projectId: string; input: ConnectionInput }) => connectionService.create(args.projectId, args.input),
+    updateConnection: (_: unknown, args: { id: string; input: ConnectionInput }) => connectionService.update(args.id, args.input),
+    deleteConnection: (_: unknown, args: { id: string }) => connectionService.delete(args.id),
+    testConnection: async (_: unknown, args: { id: string }) => {
+      const { connection, result } = await connectionService.test(args.id);
+      return { connection, ...result };
+    },
+    regenerateConnectionKey: (_: unknown, args: { id: string }) => connectionService.regenerateKey(args.id),
+    forgetConnectionHostKey: (_: unknown, args: { id: string }) => connectionService.forgetHostKey(args.id),
     closeTerminal: (_: unknown, args: { id: string }) => terminalService.close(args.id),
     deleteTerminal: (_: unknown, args: { id: string }) => terminalService.delete(args.id),
     createContextFolder: (_: unknown, args: { projectId: string; parentId?: string | null; name: string }) =>

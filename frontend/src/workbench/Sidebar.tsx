@@ -76,6 +76,9 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
           <Link to={`/projects/${projectId}/tasks`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-check2-square wb-icon" /> Tâches du projet
           </Link>
+          <Link to={`/projects/${projectId}/connections`} className="wb-pop-item" onClick={onClose}>
+            <i className="bi bi-hdd-network wb-icon" /> Connexions du projet
+          </Link>
           <Link to={`/projects/${projectId}/context`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-journal-text wb-icon" /> Contexte du projet
           </Link>

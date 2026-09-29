@@ -1317,3 +1317,153 @@ export const DELETE_WORKSPACE_ENTRY = gql`
     deleteWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path)
   }
 `;
+
+// ---- Connexions ---------------------------------------------------------------------------------
+
+export type ConnectionKind = 'ssh' | 'postgres';
+export type ConnectionExposure = 'mcp' | 'direct' | 'both';
+
+export interface Connection {
+  id: string;
+  name: string;
+  kind: ConnectionKind;
+  description: string;
+  host: string;
+  port: number;
+  username: string;
+  database: string | null;
+  ssl: boolean | null;
+  viaConnection: { id: string; name: string } | null;
+  exposure: ConnectionExposure;
+  readOnly: boolean;
+  requireApproval: boolean;
+  commandAllowlist: string[];
+  publicKey: string | null;
+  hostFingerprint: string | null;
+  hostKeySeenAt: string | null;
+  hasSecret: boolean;
+  lastTestAt: string | null;
+  lastTestOk: boolean | null;
+  lastTestError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConnectionInput {
+  name?: string | null;
+  kind?: ConnectionKind | null;
+  description?: string | null;
+  host?: string | null;
+  port?: number | null;
+  username?: string | null;
+  database?: string | null;
+  ssl?: boolean | null;
+  viaConnectionId?: string | null;
+  exposure?: ConnectionExposure | null;
+  readOnly?: boolean | null;
+  requireApproval?: boolean | null;
+  commandAllowlist?: string[] | null;
+  privateKey?: string | null;
+  password?: string | null;
+}
+
+const CONNECTION_FIELDS = gql`
+  fragment ConnectionFields on Connection {
+    id
+    name
+    kind
+    description
+    host
+    port
+    username
+    database
+    ssl
+    viaConnection {
+      id
+      name
+    }
+    exposure
+    readOnly
+    requireApproval
+    commandAllowlist
+    publicKey
+    hostFingerprint
+    hostKeySeenAt
+    hasSecret
+    lastTestAt
+    lastTestOk
+    lastTestError
+    createdAt
+    updatedAt
+  }
+`;
+
+export const PROJECT_CONNECTIONS = gql`
+  ${CONNECTION_FIELDS}
+  query ProjectConnections($id: ID!) {
+    project(id: $id) {
+      id
+      name
+      slug
+      connections {
+        ...ConnectionFields
+      }
+    }
+  }
+`;
+
+export const CREATE_CONNECTION = gql`
+  ${CONNECTION_FIELDS}
+  mutation CreateConnection($projectId: ID!, $input: ConnectionInput!) {
+    createConnection(projectId: $projectId, input: $input) {
+      ...ConnectionFields
+    }
+  }
+`;
+
+export const UPDATE_CONNECTION = gql`
+  ${CONNECTION_FIELDS}
+  mutation UpdateConnection($id: ID!, $input: ConnectionInput!) {
+    updateConnection(id: $id, input: $input) {
+      ...ConnectionFields
+    }
+  }
+`;
+
+export const DELETE_CONNECTION = gql`
+  mutation DeleteConnection($id: ID!) {
+    deleteConnection(id: $id)
+  }
+`;
+
+export const TEST_CONNECTION = gql`
+  ${CONNECTION_FIELDS}
+  mutation TestConnection($id: ID!) {
+    testConnection(id: $id) {
+      ok
+      error
+      detail
+      connection {
+        ...ConnectionFields
+      }
+    }
+  }
+`;
+
+export const REGENERATE_CONNECTION_KEY = gql`
+  ${CONNECTION_FIELDS}
+  mutation RegenerateConnectionKey($id: ID!) {
+    regenerateConnectionKey(id: $id) {
+      ...ConnectionFields
+    }
+  }
+`;
+
+export const FORGET_CONNECTION_HOST_KEY = gql`
+  ${CONNECTION_FIELDS}
+  mutation ForgetConnectionHostKey($id: ID!) {
+    forgetConnectionHostKey(id: $id) {
+      ...ConnectionFields
+    }
+  }
+`;

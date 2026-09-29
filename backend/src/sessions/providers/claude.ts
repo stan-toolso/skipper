@@ -10,6 +10,9 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../../config.js';
+import { createConnectionsMcpServer } from '../../connections/mcp.js';
+import { prepareDirectAccess, type DirectAccess } from '../../connections/runtime.js';
+import { connectionService } from '../../connections/service.js';
 import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
@@ -140,10 +143,23 @@ export class ClaudeProvider implements SessionProvider {
     const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = settingsService.authEnv();
+    // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
+    let direct: DirectAccess | null = null;
+    try {
+      direct = await prepareDirectAccess(ctx.project, ctx.session.id, env);
+    } catch (err) {
+      await ctx.emit('system', { message: `Accès direct aux connexions indisponible : ${(err as Error).message}` });
+    }
+    Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
-    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte.
-    const systemPrompt = [ctx.project.systemPrompt.trim(), await contextService.promptSummary(ctx.project.id), await taskService.promptSummary(ctx.project.id, ctx.session.id)]
+    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches et des connexions.
+    const systemPrompt = [
+      ctx.project.systemPrompt.trim(),
+      await contextService.promptSummary(ctx.project.id),
+      await taskService.promptSummary(ctx.project.id, ctx.session.id),
+      await connectionService.promptSummary(ctx.project.id),
+    ]
       .filter(Boolean)
       .join('\n\n');
     // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
@@ -152,7 +168,11 @@ export class ClaudeProvider implements SessionProvider {
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
-      mcpServers: { context: createContextMcpServer(ctx.project, ctx.session.id), tasks: createTasksMcpServer(ctx.project, ctx.session.id) },
+      mcpServers: {
+        context: createContextMcpServer(ctx.project, ctx.session.id),
+        tasks: createTasksMcpServer(ctx.project, ctx.session.id),
+        connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
+      },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
       fallbackModel: general.fallbackModel ?? undefined,
@@ -162,7 +182,8 @@ export class ClaudeProvider implements SessionProvider {
       allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
-      // Les outils du contexte sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
+      // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
+      // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
       allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
@@ -176,7 +197,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();
@@ -184,7 +205,13 @@ export class ClaudeProvider implements SessionProvider {
     queue.push(ctx.initialMessage);
     await ctx.setActivity('busy');
 
-    const stream = query({ prompt: queue, options });
+    let stream: ReturnType<typeof query>;
+    try {
+      stream = query({ prompt: queue, options });
+    } catch (err) {
+      await direct?.dispose().catch(() => undefined);
+      throw err;
+    }
     let stopped = false;
 
     const done: Promise<RunResult> = (async () => {
@@ -203,6 +230,8 @@ export class ClaudeProvider implements SessionProvider {
       } catch (err) {
         if (stopped || err instanceof AbortError) return { exitCode: null };
         return { exitCode: 1, error: (err as Error).message };
+      } finally {
+        await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
       }
       if (stopped) return { exitCode: null };
       if (!lastResult) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };
@@ -258,6 +287,13 @@ export class ClaudeProvider implements SessionProvider {
           return { behavior: 'allow', updatedInput: { ...input, answers: response.answers ?? {} }, toolUseID: options.toolUseID };
         }
 
+        // Outils des connexions : la politique de la connexion décide s'il faut demander.
+        if (toolName.startsWith('mcp__connections__')) {
+          const decision = await this.connectionPolicy(ctx, toolName, input);
+          if (decision === 'allow') return { behavior: 'allow', updatedInput: input, toolUseID: options.toolUseID };
+          if (decision !== 'ask') return { behavior: 'deny', message: decision.message, toolUseID: options.toolUseID };
+        }
+
         const response = (await ctx.ask(
           {
             type: 'permission',
@@ -284,6 +320,24 @@ export class ClaudeProvider implements SessionProvider {
         throw err;
       }
     };
+  }
+
+  /**
+   * Politique d'une connexion pour un appel d'outil `mcp__connections__*` : `list` est libre ; les
+   * autres outils sont autorisés d'office si la connexion n'exige pas d'approbation, sinon soumis à l'humain.
+   */
+  private async connectionPolicy(ctx: RunContext, toolName: string, input: Record<string, unknown>): Promise<'allow' | 'ask' | { message: string }> {
+    const op = toolName.slice('mcp__connections__'.length);
+    if (op === 'list') return 'allow';
+    const name = typeof input.connection === 'string' ? input.connection : '';
+    try {
+      const connection = await connectionService.getByName(ctx.project.id, name);
+      if (op === 'ssh_run' && typeof input.command === 'string') connectionService.assertCommandAllowed(connection, input.command);
+      return connection.requireApproval ? 'ask' : 'allow';
+    } catch (err) {
+      // Connexion inconnue ou commande hors politique : inutile de déranger l'humain, l'outil renverra l'erreur.
+      return { message: (err as Error).message };
+    }
   }
 
   /**

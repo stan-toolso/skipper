@@ -14,6 +14,7 @@ import TasksPage from './pages/TasksPage';
 import SettingsPage from './pages/SettingsPage';
 import FilesPage from './pages/FilesPage';
 import FileEditorPage from './pages/FileEditorPage';
+import ConnectionsPage from './pages/ConnectionsPage';
 
 export default function App() {
   return (
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/projects/:id/edit" element={<ProjectFormPage />} />
         <Route path="/projects/:id/context" element={<ContextPage />} />
         <Route path="/projects/:id/tasks" element={<TasksPage />} />
+        <Route path="/projects/:id/connections" element={<ConnectionsPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/new" element={<NewSessionPage />} />

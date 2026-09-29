@@ -70,6 +70,7 @@ type Project {
   terminals: [Terminal!]!
   tasks(status: [TaskStatus!]): [Task!]!
   worktrees: [Worktree!]!
+  connections: [Connection!]!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -225,6 +226,87 @@ type Worktree {
   createdAt: DateTime!
   sessions: [Session!]!
   terminals: [Terminal!]!
+}
+
+# ---- Connexions ------------------------------------------------------------------------------------
+
+"Type de système distant."
+enum ConnectionKind {
+  ssh
+  postgres
+}
+
+"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants), shell de la session (ssh, psql), ou les deux."
+enum ConnectionExposure {
+  mcp
+  direct
+  both
+}
+
+"Connexion d'un projet vers un système externe (serveur SSH, base PostgreSQL), utilisable par les agents. Les secrets ne sont jamais renvoyés."
+type Connection {
+  id: ID!
+  project: Project!
+  "Nom court employé par les agents (ex. prod, rds-prod)."
+  name: String!
+  kind: ConnectionKind!
+  description: String!
+  host: String!
+  port: Int!
+  username: String!
+  "postgres : nom de la base."
+  database: String
+  "postgres : connexion TLS."
+  ssl: Boolean
+  "postgres : connexion SSH traversée (tunnel)."
+  viaConnection: Connection
+  exposure: ConnectionExposure!
+  "postgres : transactions en lecture seule."
+  readOnly: Boolean!
+  "Chaque appel d'outil est soumis à l'approbation d'un humain."
+  requireApproval: Boolean!
+  "ssh : préfixes de commandes autorisés par les outils (vide = tout)."
+  commandAllowlist: [String!]!
+  "ssh : clé publique à ajouter dans authorized_keys du serveur."
+  publicKey: String
+  "ssh : empreinte de la clé d'hôte mémorisée à la première connexion."
+  hostFingerprint: String
+  hostKeySeenAt: DateTime
+  "Un secret (clé privée, mot de passe) est enregistré."
+  hasSecret: Boolean!
+  lastTestAt: DateTime
+  lastTestOk: Boolean
+  lastTestError: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+input ConnectionInput {
+  name: String
+  kind: ConnectionKind
+  description: String
+  host: String
+  port: Int
+  username: String
+  database: String
+  ssl: Boolean
+  viaConnectionId: ID
+  exposure: ConnectionExposure
+  readOnly: Boolean
+  requireApproval: Boolean
+  commandAllowlist: [String!]
+  "ssh : clé privée à importer (sinon une paire est générée à la création et la clé privée ne quitte jamais le serveur)."
+  privateKey: String
+  "postgres : mot de passe (chaîne vide pour l'effacer)."
+  password: String
+}
+
+type ConnectionTest {
+  connection: Connection!
+  ok: Boolean!
+  error: String
+  "Réponse de la cible (système, version de PostgreSQL...)."
+  detail: String
 }
 
 # ---- Explorateur de fichiers ---------------------------------------------------------------------
@@ -507,6 +589,7 @@ type Query {
   request(id: ID!): Request
   terminal(id: ID!): Terminal
   worktree(id: ID!): Worktree
+  connection(id: ID!): Connection
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
@@ -634,6 +717,17 @@ type Mutation {
   createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String): Worktree!
   "Supprime le dossier du worktree ; la branche est conservée sauf deleteBranch."
   deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
+  "Crée une connexion ; pour ssh sans privateKey, génère une paire de clés (la clé publique est à installer sur le serveur)."
+  createConnection(projectId: ID!, input: ConnectionInput!): Connection!
+  "Met à jour une connexion (les champs absents sont inchangés)."
+  updateConnection(id: ID!, input: ConnectionInput!): Connection!
+  deleteConnection(id: ID!): Boolean!
+  "Vérifie la connexion depuis le serveur ; mémorise la clé d'hôte SSH à la première réussite."
+  testConnection(id: ID!): ConnectionTest!
+  "ssh : nouvelle paire de clés (l'ancienne clé publique est à retirer du serveur)."
+  regenerateConnectionKey(id: ID!): Connection!
+  "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
+  forgetConnectionHostKey(id: ID!): Connection!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

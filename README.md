@@ -25,6 +25,9 @@ Trois notions :
 - **Notification** : cloche en haut à droite de l'interface. Signale une demande d'un agent, une
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
   contexte par un agent. Notifications natives du navigateur activables en option.
+- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL) que les agents
+  peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
+  MCP et ne les voit jamais. Voir « Connexions » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -86,6 +89,12 @@ backend/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
+    connections/
+      service.ts               # connexions SSH / PostgreSQL d'un projet : CRUD, secrets chiffrés, test, prompt
+      ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
+      postgres.ts              # requêtes pg (lecture seule, tunnel), rendu des résultats, schéma
+      mcp.ts                   # serveur MCP `connections` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema)
+      runtime.ts               # mode « shell » : ssh-agent, enveloppes ssh/scp, pg_service.conf, tunnels par session
     context/
       service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
       mcp.ts                   # serveur MCP in-process exposé aux sessions Claude (tree, read, write...)
@@ -111,12 +120,57 @@ frontend/
     components/                # layout, badge de statut, journal, carte de demande
 ```
 
+## Connexions
+
+Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Deux types
+pour l'instant : **serveur SSH** et **base PostgreSQL** (éventuellement atteinte à travers une connexion
+SSH du projet, en tunnel). Chaque connexion a un nom court (`prod`, `rds-prod`) que les agents emploient.
+
+**Identifiants.** Les champs publics (hôte, port, utilisateur, base) sont en clair ; la clé privée ou le
+mot de passe sont chiffrés (AES-256-GCM, même clé que les jetons des Paramètres) et jamais renvoyés à
+l'interface. Pour un serveur SSH, Skipper **génère une paire de clés ed25519** : on installe la clé
+publique dans `authorized_keys` du serveur (au besoin avec `restrict,command="…"`), la clé privée ne
+quitte pas le serveur Skipper. Importer une clé existante reste possible. La clé d'hôte est mémorisée à
+la première connexion réussie (test depuis l'interface) et vérifiée ensuite ; « oublier » la réapprend.
+Pour une base, on recommande un rôle dédié aux agents ; l'option « lecture seule » force en plus des
+transactions `READ ONLY`.
+
+**Accès des agents**, au choix par connexion :
+
+- **Outils** (par défaut) : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
+  `tasks`. Outils `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `sql_query`, `sql_schema`. Le backend
+  déchiffre, exécute, tronque les sorties, et journalise chaque usage comme événement `connection` de la
+  session (visible dans le transcript). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
+- **Shell de la session** : `ssh <nom>`, `scp`, `sftp` et `psql service=<nom>` fonctionnent dans le Bash
+  de l'agent. Pour la durée de la session, le backend lance un `ssh-agent` dédié (la clé est utilisable,
+  pas lisible), place des enveloppes `ssh`/`scp`/`sftp` en tête du `PATH` qui imposent un fichier de
+  configuration et un `known_hosts` propres à la session, ouvre les tunnels nécessaires, et écrit
+  `PGSERVICEFILE` / `PGPASSFILE`. Le mot de passe d'une base est donc lisible par l'agent dans ce mode.
+  Tout est détruit à la fin de la session (`/tmp/skipper-session-<id>`), et les restes d'un arrêt
+  brutal sont balayés au démarrage suivant. Ce mode nécessite `ssh`, `ssh-agent`, `ssh-add` et, pour les
+  bases, `psql` sur la machine du backend.
+- **Les deux**.
+
+**Approbation.** Par défaut, chaque appel d'outil sur une connexion devient une demande d'intervention
+humaine (comme les autres permissions) ; on peut la désactiver par connexion (« sans approbation »).
+`list` est toujours libre. En mode d'autorisation « tout autoriser » de la session, aucune demande n'est
+faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
+shell suit le mode d'autorisation de la session (permission Bash).
+
+**Limite à connaître.** Les sessions tournent sur la machine du backend, sous le même utilisateur
+système : un agent à qui l'on a tout autorisé peut lire ce que le backend lit. Le mode « outils » et les
+demandes d'approbation réduisent la surface, mais l'isolation réelle passerait par l'exécution des
+sessions sous un autre utilisateur ou dans un conteneur.
+
 ## Modèle
 
 - **Project** : `name`, `slug` (nom du dossier, fixé à la création), `description`, `systemPrompt`,
   `gitUrl`, `gitBranch`. Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
+- **Connection** : `projectId`, `name`, `kind` (ssh, postgres), `settings` (hôte, port, utilisateur, base, ssl,
+  tunnel), `secrets` (chiffrés), `publicKey`, `hostKey`, `exposure` (mcp, direct, both), `readOnly`,
+  `requireApproval`, `commandAllowlist`, dernier test.
 - **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
   créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et

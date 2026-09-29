@@ -201,6 +201,18 @@ export default function Transcript({ events, autoScroll = true, technical = fals
           );
         }
         break;
+      case 'connection': {
+        // Audit d'un accès à un système externe (outil MCP `connections`).
+        const summary = String(p.summary ?? '');
+        nodes.push(
+          <div key={e.id} className={`cc-note${p.ok ? '' : ' error'}`} title={summary}>
+            <i className={`bi ${p.kind === 'ssh' ? 'bi-hdd-network' : 'bi-database'} me-1`} />
+            {String(p.action)} · {String(p.connection)} · {summary.length > 100 ? `${summary.slice(0, 97)}…` : summary}
+            {p.ok ? ` — ${p.note ? `${String(p.note)}, ` : ''}${String(p.durationMs)} ms` : ` — échec : ${String(p.error ?? '')}`}
+          </div>,
+        );
+        break;
+      }
       case 'stdout':
         nodes.push(
           <div key={e.id} className="cc-line">

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createSchema, createYoga, maskError } from 'graphql-yoga';
 import { GraphQLError } from 'graphql';
+import { sweepStaleSessionDirs } from './connections/runtime.js';
 import { AppError } from './errors.js';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
@@ -28,6 +29,8 @@ async function main() {
   const recovered = await sessionService.recoverAfterRestart();
   if (recovered.sessions) console.log(`[sessions] ${recovered.sessions} session(s) marquée(s) comme interrompue(s)`);
   if (recovered.requests) console.log(`[requests] ${recovered.requests} demande(s) expirée(s)`);
+  const staleDirs = await sweepStaleSessionDirs();
+  if (staleDirs) console.log(`[connections] ${staleDirs} dossier(s) de session orphelin(s) nettoyé(s)`);
   const closedTerminals = await terminalService.recoverAfterRestart();
   if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
 
