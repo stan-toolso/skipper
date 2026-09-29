@@ -1209,3 +1209,111 @@ export const CANCEL_CLAUDE_LOGIN = gql`
     cancelClaudeLogin(id: $id)
   }
 `;
+
+// ---- Explorateur de fichiers ---------------------------------------------------------------------
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  kind: 'dir' | 'file' | 'symlink' | 'other';
+  size: number | null;
+  modifiedAt: string | null;
+}
+
+export interface FileContent {
+  path: string;
+  name: string;
+  size: number;
+  modifiedAt: string;
+  binary: boolean;
+  content: string | null;
+}
+
+export const WORKTREE = gql`
+  query Worktree($id: ID!) {
+    worktree(id: $id) {
+      id
+      name
+      branch
+      path
+      exists
+      project {
+        id
+        name
+        slug
+      }
+    }
+  }
+`;
+
+const FILE_ENTRY_FIELDS = gql`
+  fragment FileEntryFields on FileEntry {
+    name
+    path
+    kind
+    size
+    modifiedAt
+  }
+`;
+
+const FILE_CONTENT_FIELDS = gql`
+  fragment FileContentFields on FileContent {
+    path
+    name
+    size
+    modifiedAt
+    binary
+    content
+  }
+`;
+
+export const WORKSPACE_ENTRIES = gql`
+  ${FILE_ENTRY_FIELDS}
+  query WorkspaceEntries($projectId: ID!, $worktreeId: ID, $path: String) {
+    workspaceEntries(projectId: $projectId, worktreeId: $worktreeId, path: $path) {
+      ...FileEntryFields
+    }
+  }
+`;
+
+export const WORKSPACE_FILE = gql`
+  ${FILE_CONTENT_FIELDS}
+  query WorkspaceFile($projectId: ID!, $worktreeId: ID, $path: String!) {
+    workspaceFile(projectId: $projectId, worktreeId: $worktreeId, path: $path) {
+      ...FileContentFields
+    }
+  }
+`;
+
+export const WRITE_WORKSPACE_FILE = gql`
+  ${FILE_CONTENT_FIELDS}
+  mutation WriteWorkspaceFile($projectId: ID!, $worktreeId: ID, $path: String!, $content: String!, $expectedModifiedAt: DateTime) {
+    writeWorkspaceFile(projectId: $projectId, worktreeId: $worktreeId, path: $path, content: $content, expectedModifiedAt: $expectedModifiedAt) {
+      ...FileContentFields
+    }
+  }
+`;
+
+export const CREATE_WORKSPACE_ENTRY = gql`
+  ${FILE_ENTRY_FIELDS}
+  mutation CreateWorkspaceEntry($projectId: ID!, $worktreeId: ID, $path: String!, $kind: FileEntryKind!) {
+    createWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path, kind: $kind) {
+      ...FileEntryFields
+    }
+  }
+`;
+
+export const RENAME_WORKSPACE_ENTRY = gql`
+  ${FILE_ENTRY_FIELDS}
+  mutation RenameWorkspaceEntry($projectId: ID!, $worktreeId: ID, $path: String!, $newPath: String!) {
+    renameWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path, newPath: $newPath) {
+      ...FileEntryFields
+    }
+  }
+`;
+
+export const DELETE_WORKSPACE_ENTRY = gql`
+  mutation DeleteWorkspaceEntry($projectId: ID!, $worktreeId: ID, $path: String!) {
+    deleteWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path)
+  }
+`;

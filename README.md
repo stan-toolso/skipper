@@ -183,6 +183,23 @@ réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
 
+## Explorateur de fichiers et éditeur
+
+Chaque projet (et chaque worktree) a une entrée « Fichiers » dans la sidebar : un onglet
+explorateur (`frontend/src/pages/FilesPage.tsx`) montre l'arborescence du workspace, dossiers
+dépliables chargés à la demande, avec création, renommage et suppression au survol. Un clic sur un
+fichier l'ouvre dans son propre onglet d'éditeur (`FileEditorPage.tsx`, CodeMirror 6 : coloration
+selon l'extension chargée à la demande, Ctrl/Cmd+S ou bouton pour enregistrer, point orange dans
+l'onglet tant que ce n'est pas enregistré). L'enregistrement transmet la date de modification lue à
+l'ouverture : si le fichier a changé entre-temps (agent, autre onglet), le serveur refuse
+(`FILE_CONFLICT`) et l'éditeur propose de recharger ou d'écraser.
+
+Côté serveur (`backend/src/files/service.ts`), tout chemin est normalisé puis vérifié à l'intérieur
+de la racine du workspace, liens symboliques résolus compris ; les fichiers de plus de 2 Mo ou
+binaires ne sont pas ouverts. API : `workspaceEntries`, `workspaceFile`, `writeWorkspaceFile`,
+`createWorkspaceEntry`, `renameWorkspaceEntry`, `deleteWorkspaceEntry` (arguments `projectId` et
+`worktreeId` optionnel).
+
 ## Paramètres généraux (Claude)
 
 Page « Paramètres » (menu du bas de la sidebar), stockée en base (`app_settings`) et chargée en

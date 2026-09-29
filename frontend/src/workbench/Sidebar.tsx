@@ -84,6 +84,16 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
   );
 }
 
+/** Ligne « Fichiers » : ouvre l'explorateur du workspace (projet ou worktree) dans un onglet. */
+function FilesRow({ to, active, indent }: { to: string; active: boolean; indent: number }) {
+  return (
+    <Link to={to} className={`wb-row wb-session-row${active ? ' active' : ''}`} style={{ paddingLeft: indent }} title="Explorer et modifier les fichiers">
+      <i className="bi bi-folder2-open wb-term-icon" />
+      <span className="wb-row-label">Fichiers</span>
+    </Link>
+  );
+}
+
 function SessionRows({ sessions, terminals, activeSessionId, activeTerminalId, indent }: { sessions: SidebarSession[]; terminals: SidebarTerminal[]; activeSessionId?: string; activeTerminalId?: string; indent: number }) {
   return (
     <>
@@ -135,6 +145,8 @@ export default function Sidebar() {
   const activeSessionId = location.pathname.match(/^\/sessions\/([^/]+)$/)?.[1];
   const activeTerminalId = location.pathname.match(/^\/terminals\/([^/]+)$/)?.[1];
   const activeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  const activeFilesProject = location.pathname.match(/^\/projects\/([^/]+)\/files(?:\/|$)/)?.[1];
+  const activeFilesWorktree = location.pathname.match(/^\/worktrees\/([^/]+)\/files(?:\/|$)/)?.[1];
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
   return (
@@ -201,6 +213,7 @@ export default function Sidebar() {
                   {menuFor === p.id && <AddMenu projectId={p.id} canWorktree={Boolean(p.gitUrl)} onClose={() => setMenuFor(null)} />}
                 </span>
               </div>
+              {open && <FilesRow to={`/projects/${p.id}/files`} active={activeFilesProject === p.id} indent={30} />}
               {open && <SessionRows sessions={p.sessions} terminals={p.terminals} activeSessionId={activeSessionId} activeTerminalId={activeTerminalId} indent={30} />}
               {open &&
                 p.worktrees.map((w) => {
@@ -229,6 +242,7 @@ export default function Sidebar() {
                           {menuFor === w.id && <AddMenu projectId={p.id} worktreeId={w.id} canWorktree={false} onClose={() => setMenuFor(null)} />}
                         </span>
                       </div>
+                      {wOpen && w.exists && <FilesRow to={`/worktrees/${w.id}/files`} active={activeFilesWorktree === w.id} indent={48} />}
                       {wOpen && <SessionRows sessions={w.sessions} terminals={w.terminals} activeSessionId={activeSessionId} activeTerminalId={activeTerminalId} indent={48} />}
                       {wOpen && w.sessions.length === 0 && w.terminals.length === 0 && (
                         <div className="wb-row wb-empty" style={{ paddingLeft: 48 }}>
@@ -238,7 +252,7 @@ export default function Sidebar() {
                     </div>
                   );
                 })}
-              {open && empty && <div className="wb-row wb-empty">aucune session pour l'instant</div>}
+              {open && empty && <div className="wb-row wb-empty" style={{ paddingLeft: 30 }}>aucune session pour l'instant</div>}
             </div>
           );
         })}

@@ -12,6 +12,8 @@ import TerminalPage from './pages/TerminalPage';
 import WelcomePage from './pages/WelcomePage';
 import TasksPage from './pages/TasksPage';
 import SettingsPage from './pages/SettingsPage';
+import FilesPage from './pages/FilesPage';
+import FileEditorPage from './pages/FileEditorPage';
 
 export default function App() {
   return (
@@ -31,6 +33,10 @@ export default function App() {
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/terminals/:id" element={<TerminalPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/projects/:id/files" element={<FilesPage />} />
+        <Route path="/projects/:id/files/*" element={<FileEditorPage />} />
+        <Route path="/worktrees/:wid/files" element={<FilesPage />} />
+        <Route path="/worktrees/:wid/files/*" element={<FileEditorPage />} />
       </Routes>
     </Layout>
   );

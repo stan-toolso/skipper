@@ -14,6 +14,8 @@ const icons: Record<TabKind, string> = {
   terminal: 'bi-terminal',
   tasks: 'bi-check2-square',
   settings: 'bi-gear',
+  files: 'bi-folder2-open',
+  file: 'bi-file-earmark-code',
   other: 'bi-file-earmark',
 };
 

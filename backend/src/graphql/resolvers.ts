@@ -1,5 +1,6 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { contextService, HUMAN } from '../context/service.js';
+import { fileService, type WorkspaceRef } from '../files/service.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -143,6 +144,8 @@ export const resolvers = {
   },
 
   Query: {
+    workspaceEntries: (_: unknown, args: WorkspaceRef & { path?: string | null }) => fileService.list(args, args.path ?? ''),
+    workspaceFile: (_: unknown, args: WorkspaceRef & { path: string }) => fileService.read(args, args.path),
     settings: () => appSettings(),
     githubRepositories: (_: unknown, args: { query?: string | null }) => githubService.listRepositories(args.query),
     claudeLogin: (_: unknown, args: { id: string }) => loginService.get(args.id),
@@ -183,6 +186,11 @@ export const resolvers = {
   },
 
   Mutation: {
+    writeWorkspaceFile: (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }) =>
+      fileService.write(args, args.path, args.content, args.expectedModifiedAt ?? null),
+    createWorkspaceEntry: (_: unknown, args: WorkspaceRef & { path: string; kind: 'dir' | 'file' }) => fileService.create(args, args.path, args.kind),
+    renameWorkspaceEntry: (_: unknown, args: WorkspaceRef & { path: string; newPath: string }) => fileService.rename(args, args.path, args.newPath),
+    deleteWorkspaceEntry: (_: unknown, args: WorkspaceRef & { path: string }) => fileService.delete(args, args.path),
     setGithubClientId: async (_: unknown, args: { clientId?: string | null }) => {
       await githubService.setClientId(args.clientId ?? null);
       return appSettings();

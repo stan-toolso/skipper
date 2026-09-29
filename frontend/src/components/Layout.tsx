@@ -8,7 +8,8 @@ import '../workbench/workbench.css';
 /** Workbench : sidebar (menus + explorateur) et panneau principal à onglets. */
 export default function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  const flush = (/^\/sessions\/[^/]+$/.test(pathname) && pathname !== '/sessions/new') || /^\/terminals\/[^/]+$/.test(pathname);
+  const flush =
+    (/^\/sessions\/[^/]+$/.test(pathname) && pathname !== '/sessions/new') || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|worktrees)\/[^/]+\/files(?:\/|$)/.test(pathname);
   return (
     <TabsProvider>
       <div className="wb">

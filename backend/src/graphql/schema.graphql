@@ -227,6 +227,34 @@ type Worktree {
   terminals: [Terminal!]!
 }
 
+# ---- Explorateur de fichiers ---------------------------------------------------------------------
+
+"Entrée d'un dossier du workspace (checkout principal ou worktree)."
+type FileEntry {
+  name: String!
+  "Chemin relatif à la racine du workspace, séparateur /."
+  path: String!
+  "dir, file, symlink ou other."
+  kind: String!
+  size: Int
+  modifiedAt: DateTime
+}
+
+type FileContent {
+  path: String!
+  name: String!
+  size: Int!
+  modifiedAt: DateTime!
+  "true si le fichier semble binaire : content est alors null."
+  binary: Boolean!
+  content: String
+}
+
+enum FileEntryKind {
+  dir
+  file
+}
+
 type WorkspaceGit {
   branch: String!
   commit: String!
@@ -461,6 +489,10 @@ input ClaudeSettingsInput {
 }
 
 type Query {
+  "Contenu d'un dossier du workspace du projet (ou du worktree). path vide = racine."
+  workspaceEntries(projectId: ID!, worktreeId: ID, path: String = ""): [FileEntry!]!
+  "Lecture d'un fichier texte (2 Mo maximum)."
+  workspaceFile(projectId: ID!, worktreeId: ID, path: String!): FileContent!
   settings: AppSettings!
   claudeLogin(id: ID!): ClaudeLogin!
   "Dépôts GitHub accessibles avec la connexion GitHub (les plus récents d'abord)."
@@ -532,6 +564,13 @@ input CreateSessionInput {
 }
 
 type Mutation {
+  "Écrit un fichier. Avec expectedModifiedAt, refuse (FILE_CONFLICT) si le fichier a changé depuis."
+  writeWorkspaceFile(projectId: ID!, worktreeId: ID, path: String!, content: String!, expectedModifiedAt: DateTime): FileContent!
+  createWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, kind: FileEntryKind!): FileEntry!
+  renameWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, newPath: String!): FileEntry!
+  "Supprime un fichier ou un dossier (récursivement)."
+  deleteWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!): Boolean!
+
   "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
   updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
   "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."

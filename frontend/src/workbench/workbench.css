@@ -227,3 +227,47 @@
 
 /* Menu du bas de la sidebar (Paramètres). */
 .wb-menu.wb-menu-bottom { border-bottom: 0; border-top: 1px solid var(--cc-border); }
+
+/* Explorateur de fichiers */
+.fx-page { display: flex; flex-direction: column; height: 100%; }
+.fx-header {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--cc-border);
+}
+.fx-header-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.fx-title { color: var(--cc-accent); font-weight: 600; }
+.fx-muted { color: var(--cc-dimmer); }
+.fx-tree { flex: 1; overflow: auto; padding: 6px 0 16px; font-family: var(--bs-font-monospace); font-size: 12.5px; }
+.fx-row {
+  display: flex; align-items: center; gap: 6px; padding: 2px 12px 2px 0; white-space: nowrap;
+  color: var(--cc-fg); text-decoration: none; cursor: pointer; user-select: none;
+}
+.fx-row:hover { background: var(--cc-bg-hover); color: var(--cc-fg); }
+.fx-row.fx-hidden { color: var(--cc-dim); }
+.fx-chevron { width: 12px; font-size: 10px; color: var(--cc-dim); flex: 0 0 12px; }
+.fx-icon { color: var(--cc-dim); width: 1.2em; text-align: center; }
+.fx-dir .fx-icon { color: #e3b341; }
+.fx-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.fx-size { color: var(--cc-dimmer); font-size: 11px; }
+.fx-actions { display: none; gap: 2px; margin-left: 8px; }
+.fx-row:hover .fx-actions { display: inline-flex; }
+.fx-actions button { background: none; border: 0; color: var(--cc-dim); padding: 0 4px; font-size: 12px; cursor: pointer; }
+.fx-actions button:hover { color: var(--cc-accent); }
+
+/* Éditeur de fichier */
+.fe-page { display: flex; flex-direction: column; height: 100%; background: #141414; }
+.fe-header {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 6px 14px; border-bottom: 1px solid var(--cc-border); font-family: var(--bs-font-monospace); font-size: 12.5px;
+}
+.fe-path { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.fe-crumb { color: var(--cc-dim); text-decoration: none; white-space: nowrap; }
+.fe-crumb:hover { color: var(--cc-accent); }
+.fe-sep { color: var(--cc-dimmer); }
+.fe-name { color: var(--cc-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fe-dirty { color: var(--cc-accent); margin-left: 4px; }
+.fe-meta { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; font-size: 12px; }
+.fe-alert { margin: 8px 14px 0; padding: 6px 12px; }
+.fe-editor { flex: 1; min-height: 0; }
+.fe-editor .cm-editor { height: 100%; }
+.fe-editor > div { height: 100%; }
