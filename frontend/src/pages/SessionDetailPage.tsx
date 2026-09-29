@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useTabTitle } from '../workbench/TabsContext';
 import RequestPrompt from '../components/RequestPrompt';
 import Transcript from '../components/Transcript';
 import '../components/terminal.css';
@@ -42,6 +43,7 @@ export default function SessionDetailPage() {
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const session = data?.session;
+  useTabTitle(session?.name);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
@@ -95,9 +97,6 @@ export default function SessionDetailPage() {
           </span>
         </div>
         <div className="cc-actions">
-          <Link to="/sessions" className="cc-btn">
-            ← Sessions
-          </Link>
           {busy && (
             <button type="button" className="cc-btn" onClick={() => interruptSession({ variables: { id } })}>
               Interrompre

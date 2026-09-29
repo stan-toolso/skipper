@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CREATE_PROJECT, PROJECT, PROJECTS, UPDATE_PROJECT, type Project } from '../graphql/operations';
+import { useTabTitle } from '../workbench/TabsContext';
+
 
 /** Création (sans id) ou édition (avec id) d'un projet. */
 export default function ProjectFormPage() {
@@ -11,6 +13,7 @@ export default function ProjectFormPage() {
   const navigate = useNavigate();
 
   const { data, loading, error } = useQuery<{ project: Project | null }>(PROJECT, { variables: { id }, skip: !isEdit });
+  useTabTitle(isEdit ? (data?.project ? `Modifier · ${data.project.name}` : null) : 'Nouveau projet');
   const [createProject, { loading: creating, error: createError }] = useMutation<{ createProject: Project }>(CREATE_PROJECT, {
     refetchQueries: [{ query: PROJECTS }],
     onCompleted: (res) => navigate(`/projects/${res.createProject.id}`),

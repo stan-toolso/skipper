@@ -16,6 +16,9 @@ Trois notions :
 - **Contexte** : bibliothèque d'instructions propre à chaque projet, rangée en dossiers, stockée en
   base et versionnée. Les agents la consultent (skills) et la gèrent (outils MCP) ; elle est
   administrable dans l'application.
+- **Terminal** : un shell interactif (pty) ouvert dans le workspace d'un projet et piloté depuis le
+  navigateur (xterm.js relié par WebSocket), pour travailler comme dans un terminal, y compris avec
+  le CLI `claude`.
 
 ## Stack
 
@@ -56,6 +59,8 @@ backend/
       workspace.ts             # dossier du projet, clone git, infos de branche
     requests/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
+    terminals/
+      service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     context/
       service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
       mcp.ts                   # serveur MCP in-process exposé aux sessions Claude (tree, read, write...)
@@ -119,10 +124,21 @@ frontend/
     `history`. Les écritures sont attribuées à la session ;
   - **prompt système** : un résumé de l'arborescence est ajouté au prompt du projet.
 
-Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted` et les
-demandes en attente à `expired`.
+- **Terminal** : `projectId`, `name`, `status` (`running`, `closed`), `exitCode`. Le processus vit en
+  mémoire du serveur ; la sortie récente est rejouée à chaque connexion WebSocket. Le menu « + » d'un
+  projet dans la sidebar propose d'ouvrir une session d'agent ou un terminal.
+
+Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
+demandes en attente à `expired` et les terminaux à `closed`.
+
+`node-pty` a besoin que son binaire `spawn-helper` soit exécutable : le script `postinstall` s'en charge.
 
 ## Interface
+
+Disposition façon Cursor (`frontend/src/workbench/`) : à gauche une sidebar avec les menus (Projets,
+Sessions, Demandes) et un explorateur des projets dépliables avec leurs sessions (état en couleur,
+demandes en attente) ; à droite un panneau à onglets où chaque page ouverte (session, projet,
+contexte, listes) est un onglet fermable. Les onglets ouverts sont mémorisés dans le navigateur.
 
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
 (`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
@@ -149,6 +165,7 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
+- `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
 
 ## Scripts

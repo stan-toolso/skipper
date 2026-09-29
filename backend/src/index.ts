@@ -10,6 +10,8 @@ import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
 import { sessionService } from './sessions/service.js';
+import { terminalService } from './terminals/service.js';
+import { attachTerminalWebSockets } from './terminals/ws.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const typeDefs = readFileSync(path.join(here, 'graphql/schema.graphql'), 'utf8');
@@ -21,6 +23,8 @@ async function main() {
   const recovered = await sessionService.recoverAfterRestart();
   if (recovered.sessions) console.log(`[sessions] ${recovered.sessions} session(s) marquée(s) comme interrompue(s)`);
   if (recovered.requests) console.log(`[requests] ${recovered.requests} demande(s) expirée(s)`);
+  const closedTerminals = await terminalService.recoverAfterRestart();
+  if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
 
   const yoga = createYoga({
     schema: createSchema({ typeDefs, resolvers }),
@@ -40,6 +44,7 @@ async function main() {
   });
 
   const server = createServer(yoga);
+  attachTerminalWebSockets(server);
   server.listen(config.port, () => {
     console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
   });
@@ -48,6 +53,7 @@ async function main() {
     console.log(`[http] ${signal} reçu, arrêt en cours...`);
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
+    await terminalService.shutdown();
     await sessionService.shutdown();
     await pool.end();
     process.exit(0);

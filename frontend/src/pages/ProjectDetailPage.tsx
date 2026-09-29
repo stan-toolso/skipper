@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { Alert, Button, Card, Col, Row, Spinner, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useTabTitle } from '../workbench/TabsContext';
 import StatusBadge from '../components/StatusBadge';
 import { DELETE_PROJECT, PREPARE_PROJECT_WORKSPACE, PROJECT, PROJECTS, type Project, type Session } from '../graphql/operations';
 
@@ -10,6 +11,7 @@ export default function ProjectDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { data, loading, error } = useQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
+  useTabTitle(data?.project?.name);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
   const [deleteProject, { error: deleteError }] = useMutation(DELETE_PROJECT, {
     refetchQueries: [{ query: PROJECTS }],

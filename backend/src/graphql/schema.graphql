@@ -59,6 +59,7 @@ type Project {
   contextFolders: [ContextFolder!]!
   contextInstructions: [ContextInstruction!]!
   contextChanges(limit: Int): [ContextChange!]!
+  terminals: [Terminal!]!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -113,6 +114,22 @@ type ContextChange {
   authorType: String!
   authorSession: Session
   createdAt: DateTime!
+}
+
+enum TerminalStatus {
+  RUNNING
+  CLOSED
+}
+
+"Terminal web : un shell interactif lancé dans le workspace du projet, relié par WebSocket (/terminals/<id>)."
+type Terminal {
+  id: ID!
+  project: Project!
+  name: String!
+  status: TerminalStatus!
+  exitCode: Int
+  createdAt: DateTime!
+  closedAt: DateTime
 }
 
 type WorkspaceGit {
@@ -185,6 +202,7 @@ type Query {
   "Demandes, toutes sessions confondues. `status` à null renvoie tout l'historique (par défaut : celles en attente)."
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
+  terminal(id: ID!): Terminal
   contextInstruction(id: ID!): ContextInstruction
   searchContext(projectId: ID!, query: String!): [ContextInstruction!]!
 }
@@ -258,6 +276,12 @@ type Mutation {
   answerRequest(id: ID!, response: JSON!): Request!
   "Abandonne une demande : l'agent reçoit un refus."
   cancelRequest(id: ID!): Request!
+
+  "Ouvre un shell dans le workspace du projet."
+  createTerminal(projectId: ID!, name: String): Terminal!
+  "Termine le shell."
+  closeTerminal(id: ID!): Terminal!
+  deleteTerminal(id: ID!): Boolean!
 
   createContextFolder(projectId: ID!, parentId: ID, name: String!): ContextFolder!
   renameContextFolder(id: ID!, name: String!): ContextFolder!

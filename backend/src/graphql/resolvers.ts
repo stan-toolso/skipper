@@ -9,6 +9,8 @@ import { requestService } from '../requests/service.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
 import { sessionService } from '../sessions/service.js';
+import { terminalService } from '../terminals/service.js';
+import type { TerminalRecord } from '../terminals/types.js';
 import type { Session, SessionStatus } from '../sessions/types.js';
 
 type GqlStatus = Uppercase<SessionStatus>;
@@ -34,8 +36,14 @@ export const resolvers = {
     authorSession: (c: ContextChange) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
   },
 
+  Terminal: {
+    status: (t: TerminalRecord) => t.status.toUpperCase(),
+    project: (t: TerminalRecord) => projectService.get(t.projectId),
+  },
+
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
+    terminals: (project: Project) => terminalService.listByProject(project.id),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
     contextChanges: (project: Project, args: { limit?: number | null }) => contextService.changes(project.id, args.limit ?? undefined),
@@ -82,6 +90,7 @@ export const resolvers = {
         newestFirst: args.newestFirst ?? false,
       }),
     request: (_: unknown, args: { id: string }) => requestService.get(args.id),
+    terminal: (_: unknown, args: { id: string }) => terminalService.get(args.id),
     contextInstruction: (_: unknown, args: { id: string }) => contextService.getInstruction(args.id),
     searchContext: (_: unknown, args: { projectId: string; query: string }) => contextService.search(args.projectId, args.query),
   },
@@ -104,6 +113,9 @@ export const resolvers = {
     answerRequest: (_: unknown, args: { id: string; response: Record<string, unknown> }) => requestService.answer(args.id, args.response ?? {}),
     cancelRequest: (_: unknown, args: { id: string }) => requestService.cancel(args.id),
 
+    createTerminal: (_: unknown, args: { projectId: string; name?: string | null }) => terminalService.create(args.projectId, args.name),
+    closeTerminal: (_: unknown, args: { id: string }) => terminalService.close(args.id),
+    deleteTerminal: (_: unknown, args: { id: string }) => terminalService.delete(args.id),
     createContextFolder: (_: unknown, args: { projectId: string; parentId?: string | null; name: string }) =>
       contextService.createFolder(args.projectId, { parentId: args.parentId ?? null, name: args.name }, HUMAN),
     renameContextFolder: (_: unknown, args: { id: string; name: string }) => contextService.renameFolder(args.id, args.name, HUMAN),

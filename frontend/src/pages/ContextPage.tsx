@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, ButtonGroup, Col, Form, Nav, Row, Spinner, Table } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useTabTitle } from '../workbench/TabsContext';
 import {
   CONTEXT_INSTRUCTION,
   CREATE_CONTEXT_FOLDER,
@@ -273,6 +274,7 @@ export default function ContextPage() {
   });
 
   const project = data?.project;
+  useTabTitle(project ? `Contexte · ${project.name}` : null);
   const folders = useMemo(() => project?.contextFolders ?? [], [project]);
   const instructions = useMemo(() => project?.contextInstructions ?? [], [project]);
 

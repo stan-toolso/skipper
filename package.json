@@ -13,7 +13,8 @@
     "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
-    "db:migrate": "npm run migrate -w backend"
+    "db:migrate": "npm run migrate -w backend",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CREATE_SESSION, PROJECTS, PROVIDERS, type ConfigField, type Project, type Provider, type Session } from '../graphql/operations';
+import { useTabTitle } from '../workbench/TabsContext';
+
 
 function ConfigInput({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
   if (field.type === 'boolean') {
@@ -54,6 +56,7 @@ export default function NewSessionPage() {
   const provider = providers.find((p) => p.type === providerType);
   const projects = projectsData?.projects ?? [];
   const project = projects.find((p) => p.id === projectId);
+  useTabTitle(project ? `Nouvelle session · ${project.name}` : 'Nouvelle session');
 
   useEffect(() => {
     if (!projectId && projects.length) setProjectId(projects[0].id);

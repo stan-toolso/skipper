@@ -8,6 +8,7 @@ import SessionsPage from './pages/SessionsPage';
 import NewSessionPage from './pages/NewSessionPage';
 import SessionDetailPage from './pages/SessionDetailPage';
 import RequestsPage from './pages/RequestsPage';
+import TerminalPage from './pages/TerminalPage';
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/sessions/new" element={<NewSessionPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/requests" element={<RequestsPage />} />
+        <Route path="/terminals/:id" element={<TerminalPage />} />
       </Routes>
     </Layout>
   );

@@ -104,6 +104,18 @@ export interface ContextChange {
   createdAt: string;
 }
 
+export type TerminalStatus = 'RUNNING' | 'CLOSED';
+
+export interface Terminal {
+  id: string;
+  name: string;
+  status: TerminalStatus;
+  exitCode: number | null;
+  createdAt: string;
+  closedAt: string | null;
+  project: { id: string; name: string; workspacePath: string };
+}
+
 export interface SessionEvent {
   id: string;
   sessionId: string;
@@ -512,5 +524,72 @@ export const RESTORE_CONTEXT_INSTRUCTION_VERSION = gql`
     restoreContextInstructionVersion(id: $id, version: $version) {
       ...ContextInstructionFields
     }
+  }
+`;
+
+/** Explorateur de la sidebar : projets et leurs sessions. */
+export const SIDEBAR = gql`
+  query Sidebar {
+    projects {
+      id
+      name
+      slug
+      sessions(limit: 50) {
+        id
+        name
+        status
+        activity
+        pendingRequestCount
+      }
+      terminals {
+        id
+        name
+        status
+      }
+    }
+  }
+`;
+
+export const TERMINAL = gql`
+  query Terminal($id: ID!) {
+    terminal(id: $id) {
+      id
+      name
+      status
+      exitCode
+      createdAt
+      closedAt
+      project {
+        id
+        name
+        workspacePath
+      }
+    }
+  }
+`;
+
+export const CREATE_TERMINAL = gql`
+  mutation CreateTerminal($projectId: ID!, $name: String) {
+    createTerminal(projectId: $projectId, name: $name) {
+      id
+      name
+      status
+    }
+  }
+`;
+
+export const CLOSE_TERMINAL = gql`
+  mutation CloseTerminal($id: ID!) {
+    closeTerminal(id: $id) {
+      id
+      status
+      exitCode
+    }
+  }
+`;
+
+export const DELETE_TERMINAL = gql`
+  mutation DeleteTerminal($id: ID!) {
+    deleteTerminal(id: $id)
   }
 `;
