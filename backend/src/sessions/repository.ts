@@ -14,6 +14,7 @@ interface SessionRow {
   external_id: string | null;
   exit_code: number | null;
   error: string | null;
+  cost_usd: string | number | null;
   created_at: Date;
   updated_at: Date;
   started_at: Date | null;
@@ -42,6 +43,7 @@ function toSession(row: SessionRow): Session {
     externalId: row.external_id,
     exitCode: row.exit_code,
     error: row.error,
+    costUsd: Number(row.cost_usd ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,

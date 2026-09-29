@@ -459,6 +459,8 @@ type Session {
   externalId: String
   exitCode: Int
   error: String
+  "Coût estimé cumulé de la session (USD, tarif API)."
+  costUsd: Float!
   createdAt: DateTime!
   updatedAt: DateTime!
   startedAt: DateTime
@@ -602,6 +604,83 @@ type UsageSummary {
   bySession: [UsageBySession!]!
 }
 
+# ---- Tableau de bord ----------------------------------------------------------------------------
+
+"Compteurs globaux du tableau de bord, sur les projets de l'utilisateur."
+type DashboardCounts {
+  pendingRequests: Int!
+  "Sessions en cours dont l'agent travaille."
+  busySessions: Int!
+  "Sessions en cours dont l'agent attend des instructions."
+  idleSessions: Int!
+  "Sessions en erreur ou interrompues depuis 24 h."
+  failedSessions24h: Int!
+  "Sessions arrivées à un état final depuis 24 h."
+  endedSessions24h: Int!
+  todoTasks: Int!
+  inProgressTasks: Int!
+  "Tâches ouvertes dont l'échéance est dépassée."
+  overdueTasks: Int!
+  "Tâches terminées depuis 7 jours."
+  doneTasks7d: Int!
+  unreadNotifications: Int!
+}
+
+type DashboardUsageDay {
+  "AAAA-MM-JJ (jour du serveur)."
+  day: String!
+  usd: Float!
+}
+
+"Consommation estimée (tarif API) vue du tableau de bord."
+type DashboardUsage {
+  monthStart: DateTime!
+  "Ce mois, sur les projets de l'utilisateur."
+  monthUsd: Float!
+  "Ce mois, toutes sessions confondues : c'est ce total que le plafond mensuel compare."
+  globalMonthUsd: Float!
+  monthlyBudgetUsd: Float
+  todayUsd: Float!
+  last7DaysUsd: Float!
+  "Les 7 jours précédant les 7 derniers, pour comparer."
+  previous7DaysUsd: Float!
+  "Coût par jour sur les 30 derniers jours, jours vides compris."
+  byDay: [DashboardUsageDay!]!
+  "Sessions les plus coûteuses du mois."
+  topSessions: [UsageBySession!]!
+}
+
+"Indicateurs d'un projet sur le tableau de bord."
+type DashboardProject {
+  project: Project!
+  busySessions: Int!
+  idleSessions: Int!
+  pendingRequests: Int!
+  todoTasks: Int!
+  inProgressTasks: Int!
+  overdueTasks: Int!
+  monthUsd: Float!
+  "Dernière session ou tâche mise à jour."
+  lastActivityAt: DateTime
+}
+
+"Vue d'ensemble pour l'accueil : ce qui attend l'utilisateur, ce qui tourne et ce que ça coûte, sur ses projets."
+type Dashboard {
+  generatedAt: DateTime!
+  counts: DashboardCounts!
+  usage: DashboardUsage!
+  "Projets de l'utilisateur, ceux qui réclament une réponse d'abord."
+  projects: [DashboardProject!]!
+  "Demandes en attente, les plus anciennes d'abord."
+  pendingRequests: [Request!]!
+  "Sessions en cours (agent au travail ou en attente d'instructions)."
+  runningSessions: [Session!]!
+  "Dernières sessions arrivées à un état final."
+  recentSessions: [Session!]!
+  "Tâches ouvertes à surveiller : en retard, urgentes ou hautes."
+  attentionTasks: [Task!]!
+}
+
 "Connexion GitHub en cours (device flow) : saisir userCode sur verificationUri."
 type GithubLogin {
   id: ID!
@@ -704,6 +783,8 @@ type Query {
   gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
+  "Tableau de bord de l'utilisateur connecté."
+  dashboard: Dashboard!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
   tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, limit: Int): [Task!]!
   task(id: ID!): Task

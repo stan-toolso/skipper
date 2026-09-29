@@ -288,6 +288,17 @@ Sessions, Demandes) et un explorateur des projets dépliables avec leurs session
 demandes en attente) ; à droite un panneau à onglets où chaque page ouverte (session, projet,
 contexte, listes) est un onglet fermable. Les onglets ouverts sont mémorisés dans le navigateur.
 
+**Tableau de bord** (page d'accueil, `frontend/src/pages/DashboardPage.tsx`) : ce qui attend
+l'utilisateur sur l'ensemble de ses projets. Quatre tuiles (demandes en attente, agents au travail
+et en attente d'instructions, tâches ouvertes avec les retards, consommation du mois avec le
+plafond), puis la liste « À traiter » (demandes, sessions qui attendent des instructions, sessions
+en erreur depuis 24 h), les agents au travail, les tâches à surveiller (urgentes, hautes, en retard
+ou à échéance proche), la consommation (par jour sur 30 jours, sessions les plus coûteuses du
+mois), l'activité récente et une ligne par projet. Tout vient de la query `dashboard`
+(`backend/src/dashboard/service.ts`), agrégée en SQL et restreinte aux projets de l'utilisateur ;
+la page se rafraîchit toutes les dix secondes. Sur mobile, le tableau des projets devient une
+liste de cartes. Sans projet, la page redevient le parcours d'accueil en trois étapes.
+
 Sur les pages d'un projet ou d'un worktree (projet, session, terminal, fichiers, tâches, contexte),
 un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
 avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,

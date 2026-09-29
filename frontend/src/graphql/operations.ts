@@ -85,6 +85,7 @@ export interface Session {
   externalId: string | null;
   exitCode: number | null;
   error: string | null;
+  costUsd: number;
   pendingRequestCount: number;
   createdAt: string;
   updatedAt: string;
@@ -377,6 +378,7 @@ export const SESSION_FIELDS = gql`
     externalId
     exitCode
     error
+    costUsd
     pendingRequestCount
     createdAt
     updatedAt
@@ -1790,6 +1792,131 @@ export const FORGET_CONNECTION_HOST_KEY = gql`
   mutation ForgetConnectionHostKey($id: ID!) {
     forgetConnectionHostKey(id: $id) {
       ...ConnectionFields
+    }
+  }
+`;
+
+// ---- Tableau de bord ----------------------------------------------------------------------------
+
+export interface DashboardCounts {
+  pendingRequests: number;
+  busySessions: number;
+  idleSessions: number;
+  failedSessions24h: number;
+  endedSessions24h: number;
+  todoTasks: number;
+  inProgressTasks: number;
+  overdueTasks: number;
+  doneTasks7d: number;
+  unreadNotifications: number;
+}
+
+export interface DashboardUsage {
+  monthStart: string;
+  monthUsd: number;
+  globalMonthUsd: number;
+  monthlyBudgetUsd: number | null;
+  todayUsd: number;
+  last7DaysUsd: number;
+  previous7DaysUsd: number;
+  byDay: { day: string; usd: number }[];
+  topSessions: { sessionId: string | null; sessionName: string | null; projectName: string | null; usd: number }[];
+}
+
+export interface DashboardProject {
+  project: Pick<Project, 'id' | 'name' | 'slug' | 'gitUrl' | 'runner' | 'myRole'> & { git: { branch: string } | null };
+  busySessions: number;
+  idleSessions: number;
+  pendingRequests: number;
+  todoTasks: number;
+  inProgressTasks: number;
+  overdueTasks: number;
+  monthUsd: number;
+  lastActivityAt: string | null;
+}
+
+export interface Dashboard {
+  generatedAt: string;
+  counts: DashboardCounts;
+  usage: DashboardUsage;
+  projects: DashboardProject[];
+  pendingRequests: HumanRequest[];
+  runningSessions: Session[];
+  recentSessions: Session[];
+  attentionTasks: Task[];
+}
+
+export const DASHBOARD = gql`
+  ${SESSION_FIELDS}
+  ${REQUEST_FIELDS}
+  ${TASK_FIELDS}
+  query Dashboard {
+    dashboard {
+      generatedAt
+      counts {
+        pendingRequests
+        busySessions
+        idleSessions
+        failedSessions24h
+        endedSessions24h
+        todoTasks
+        inProgressTasks
+        overdueTasks
+        doneTasks7d
+        unreadNotifications
+      }
+      usage {
+        monthStart
+        monthUsd
+        globalMonthUsd
+        monthlyBudgetUsd
+        todayUsd
+        last7DaysUsd
+        previous7DaysUsd
+        byDay {
+          day
+          usd
+        }
+        topSessions {
+          sessionId
+          sessionName
+          projectName
+          usd
+        }
+      }
+      projects {
+        project {
+          id
+          name
+          slug
+          gitUrl
+          runner
+          myRole
+          git {
+            branch
+          }
+        }
+        busySessions
+        idleSessions
+        pendingRequests
+        todoTasks
+        inProgressTasks
+        overdueTasks
+        monthUsd
+        lastActivityAt
+      }
+      pendingRequests {
+        ...RequestFields
+      }
+      runningSessions {
+        ...SessionFields
+      }
+      recentSessions {
+        ...SessionFields
+      }
+      attentionTasks {
+        ...TaskFields
+      }
     }
   }
 `;

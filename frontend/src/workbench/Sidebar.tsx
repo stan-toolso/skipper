@@ -346,7 +346,7 @@ export default function Sidebar() {
   return (
     <aside className="wb-sidebar">
       <div className="wb-brand">
-        <Link to="/" title="Accueil">
+        <Link to="/" title="Tableau de bord">
           <Logo size={18} />
           Skipper
         </Link>
@@ -354,7 +354,7 @@ export default function Sidebar() {
 
       <nav className="wb-menu">
         <NavLink to="/" end className="wb-menu-item">
-          <i className="bi bi-house wb-icon" /> Accueil
+          <i className="bi bi-speedometer2 wb-icon" /> Tableau de bord
         </NavLink>
         <NavLink to="/projects" end className="wb-menu-item">
           <i className="bi bi-folder2 wb-icon" /> Projets
