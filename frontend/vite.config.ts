@@ -34,7 +34,7 @@ export default defineConfig({
         // Les routes de l'application renvoient index.html ; tout ce qui est serveur (API, WebSocket,
         // authentification) est exclu.
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/graphql/, /^\/terminals\//, /^\/auth\//, /^\/api\//],
+        navigateFallbackDenylist: [/^\/graphql/, /^\/terminals\//, /^\/auth\//, /^\/api\//, /^\/privacy\.html$/],
         cleanupOutdatedCaches: true,
       },
     }),
