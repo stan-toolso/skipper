@@ -177,6 +177,14 @@ Sessions, Demandes) et un explorateur des projets dépliables avec leurs session
 demandes en attente) ; à droite un panneau à onglets où chaque page ouverte (session, projet,
 contexte, listes) est un onglet fermable. Les onglets ouverts sont mémorisés dans le navigateur.
 
+Sur les pages d'un projet ou d'un worktree (projet, session, terminal, fichiers, tâches, contexte),
+un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
+avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,
+abandonner), une zone de commit, les branches (bascule, création) et l'historique (clic : diff du
+commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queries `gitStatus`,
+`gitDiff`, `gitCommitDiff`, `gitBranches`, `gitLog` ; mutations `gitStage`, `gitUnstage`,
+`gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
+
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
 (`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
 réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à

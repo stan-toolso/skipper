@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import RequestPrompt from '../components/RequestPrompt';
 import Transcript from '../components/Transcript';
@@ -55,6 +57,7 @@ export default function SessionDetailPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const session = data?.session;
   useTabTitle(session?.name);
+  useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.branch}` : session.project.name } : null);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];

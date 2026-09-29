@@ -255,6 +255,54 @@ enum FileEntryKind {
   file
 }
 
+type GitCommit {
+  hash: String!
+  shortHash: String!
+  subject: String!
+  author: String!
+  date: DateTime!
+}
+
+"Fichier modifié dans un workspace ou un worktree (statuts git : M, A, D, R, ?, U...)."
+type GitFileChange {
+  path: String!
+  origPath: String
+  indexStatus: String!
+  worktreeStatus: String!
+  staged: Boolean!
+  unstaged: Boolean!
+  untracked: Boolean!
+  conflicted: Boolean!
+}
+
+type GitStatus {
+  branch: String
+  upstream: String
+  ahead: Int!
+  behind: Int!
+  detached: Boolean!
+  changes: [GitFileChange!]!
+  headCommit: GitCommit
+}
+
+type GitBranch {
+  name: String!
+  current: Boolean!
+  remote: Boolean!
+  upstream: String
+  commit: GitCommit
+}
+
+type GitDiff {
+  "Chemin du fichier, ou hash pour un commit."
+  path: String!
+  staged: Boolean!
+  "Diff unifié."
+  text: String!
+  binary: Boolean!
+  truncated: Boolean!
+}
+
 type WorkspaceGit {
   branch: String!
   commit: String!
@@ -507,6 +555,12 @@ type Query {
   request(id: ID!): Request
   terminal(id: ID!): Terminal
   worktree(id: ID!): Worktree
+  "Suivi git d'un workspace (checkout principal) ou d'un worktree."
+  gitStatus(projectId: ID!, worktreeId: ID): GitStatus!
+  gitDiff(projectId: ID!, worktreeId: ID, path: String!, staged: Boolean = false): GitDiff!
+  gitCommitDiff(projectId: ID!, worktreeId: ID, hash: String!): GitDiff!
+  gitBranches(projectId: ID!, worktreeId: ID): [GitBranch!]!
+  gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
@@ -627,6 +681,19 @@ type Mutation {
   deleteTask(id: ID!): Boolean!
   "Confie la tâche à un nouvel agent : crée et démarre une session, assigne la tâche et la passe en cours."
   startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID): Session!
+
+  "git add (paths vide = tout)."
+  gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "git reset (paths vide = tout)."
+  gitUnstage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "Abandonne les modifications non indexées ; supprime un fichier non suivi."
+  gitDiscard(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitCommit(projectId: ID!, worktreeId: ID, message: String!, stageAll: Boolean = false): GitStatus!
+  gitFetch(projectId: ID!, worktreeId: ID): GitStatus!
+  gitPull(projectId: ID!, worktreeId: ID): GitStatus!
+  gitPush(projectId: ID!, worktreeId: ID): GitStatus!
+  "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
+  gitCheckout(projectId: ID!, worktreeId: ID, branch: String!, create: Boolean = false): GitStatus!
 
   "Ouvre un shell dans le workspace du projet (ou dans un worktree)."
   createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!

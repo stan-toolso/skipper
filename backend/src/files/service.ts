@@ -49,7 +49,7 @@ async function exists(p: string): Promise<boolean> {
 }
 
 /** Racine (chemin réel) du workspace ou du worktree. */
-async function resolveRoot(ref: WorkspaceRef): Promise<string> {
+export async function resolveRoot(ref: WorkspaceRef): Promise<string> {
   const project = await projectService.get(ref.projectId);
   let dir: string;
   if (ref.worktreeId) {

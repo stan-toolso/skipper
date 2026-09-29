@@ -159,6 +159,47 @@ export interface Worktree {
   createdAt: string;
 }
 
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+export interface GitFileChange {
+  path: string;
+  origPath: string | null;
+  indexStatus: string;
+  worktreeStatus: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+}
+export interface GitStatus {
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  changes: GitFileChange[];
+  headCommit: GitCommit | null;
+}
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream: string | null;
+  commit: GitCommit | null;
+}
+export interface GitDiff {
+  path: string;
+  staged: boolean;
+  text: string;
+  binary: boolean;
+  truncated: boolean;
+}
+
 export interface SessionEvent {
   id: string;
   sessionId: string;
@@ -1317,3 +1358,110 @@ export const DELETE_WORKSPACE_ENTRY = gql`
     deleteWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path)
   }
 `;
+
+export const GIT_STATUS_FIELDS = gql`
+  fragment GitStatusFields on GitStatus {
+    branch
+    upstream
+    ahead
+    behind
+    detached
+    changes {
+      path
+      origPath
+      indexStatus
+      worktreeStatus
+      staged
+      unstaged
+      untracked
+      conflicted
+    }
+    headCommit {
+      hash
+      shortHash
+      subject
+      author
+      date
+    }
+  }
+`;
+
+export const GIT_STATUS = gql`
+  ${GIT_STATUS_FIELDS}
+  query GitStatus($projectId: ID!, $worktreeId: ID) {
+    gitStatus(projectId: $projectId, worktreeId: $worktreeId) {
+      ...GitStatusFields
+    }
+  }
+`;
+
+export const GIT_DIFF = gql`
+  query GitDiff($projectId: ID!, $worktreeId: ID, $path: String!, $staged: Boolean) {
+    gitDiff(projectId: $projectId, worktreeId: $worktreeId, path: $path, staged: $staged) {
+      path
+      staged
+      text
+      binary
+      truncated
+    }
+  }
+`;
+
+export const GIT_COMMIT_DIFF = gql`
+  query GitCommitDiff($projectId: ID!, $worktreeId: ID, $hash: String!) {
+    gitCommitDiff(projectId: $projectId, worktreeId: $worktreeId, hash: $hash) {
+      path
+      staged
+      text
+      binary
+      truncated
+    }
+  }
+`;
+
+export const GIT_BRANCHES = gql`
+  query GitBranches($projectId: ID!, $worktreeId: ID) {
+    gitBranches(projectId: $projectId, worktreeId: $worktreeId) {
+      name
+      current
+      remote
+      upstream
+      commit {
+        hash
+        shortHash
+        subject
+        author
+        date
+      }
+    }
+  }
+`;
+
+export const GIT_LOG = gql`
+  query GitLog($projectId: ID!, $worktreeId: ID, $limit: Int) {
+    gitLog(projectId: $projectId, worktreeId: $worktreeId, limit: $limit) {
+      hash
+      shortHash
+      subject
+      author
+      date
+    }
+  }
+`;
+
+const gitMutation = (name: string, args: string, call: string) => gql`
+  ${GIT_STATUS_FIELDS}
+  mutation ${name}($projectId: ID!, $worktreeId: ID${args}) {
+    ${call} {
+      ...GitStatusFields
+    }
+  }
+`;
+export const GIT_STAGE = gitMutation('GitStage', ', $paths: [String!]!', 'gitStage(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
+export const GIT_UNSTAGE = gitMutation('GitUnstage', ', $paths: [String!]!', 'gitUnstage(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
+export const GIT_DISCARD = gitMutation('GitDiscard', ', $paths: [String!]!', 'gitDiscard(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
+export const GIT_COMMIT = gitMutation('GitCommit', ', $message: String!, $stageAll: Boolean', 'gitCommit(projectId: $projectId, worktreeId: $worktreeId, message: $message, stageAll: $stageAll)');
+export const GIT_FETCH = gitMutation('GitFetch', '', 'gitFetch(projectId: $projectId, worktreeId: $worktreeId)');
+export const GIT_PULL = gitMutation('GitPull', '', 'gitPull(projectId: $projectId, worktreeId: $worktreeId)');
+export const GIT_PUSH = gitMutation('GitPush', '', 'gitPush(projectId: $projectId, worktreeId: $worktreeId)');
+export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $create: Boolean', 'gitCheckout(projectId: $projectId, worktreeId: $worktreeId, branch: $branch, create: $create)');

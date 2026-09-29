@@ -1,6 +1,7 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { contextService, HUMAN } from '../context/service.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
+import { gitService } from '../git/service.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -144,6 +145,11 @@ export const resolvers = {
   },
 
   Query: {
+    gitStatus: (_: unknown, args: WorkspaceRef) => gitService.status(args),
+    gitDiff: (_: unknown, args: WorkspaceRef & { path: string; staged?: boolean | null }) => gitService.diff(args, args.path, args.staged ?? false),
+    gitCommitDiff: (_: unknown, args: WorkspaceRef & { hash: string }) => gitService.show(args, args.hash),
+    gitBranches: (_: unknown, args: WorkspaceRef) => gitService.branches(args),
+    gitLog: (_: unknown, args: WorkspaceRef & { limit?: number | null }) => gitService.log(args, args.limit ?? undefined),
     workspaceEntries: (_: unknown, args: WorkspaceRef & { path?: string | null }) => fileService.list(args, args.path ?? ''),
     workspaceFile: (_: unknown, args: WorkspaceRef & { path: string }) => fileService.read(args, args.path),
     settings: () => appSettings(),
@@ -186,6 +192,38 @@ export const resolvers = {
   },
 
   Mutation: {
+    gitStage: async (_: unknown, args: WorkspaceRef & { paths: string[] }) => {
+      await gitService.stage(args, args.paths);
+      return gitService.status(args);
+    },
+    gitUnstage: async (_: unknown, args: WorkspaceRef & { paths: string[] }) => {
+      await gitService.unstage(args, args.paths);
+      return gitService.status(args);
+    },
+    gitDiscard: async (_: unknown, args: WorkspaceRef & { paths: string[] }) => {
+      await gitService.discard(args, args.paths);
+      return gitService.status(args);
+    },
+    gitCommit: async (_: unknown, args: WorkspaceRef & { message: string; stageAll?: boolean | null }) => {
+      await gitService.commit(args, args.message, args.stageAll ?? false);
+      return gitService.status(args);
+    },
+    gitFetch: async (_: unknown, args: WorkspaceRef) => {
+      await gitService.fetch(args);
+      return gitService.status(args);
+    },
+    gitPull: async (_: unknown, args: WorkspaceRef) => {
+      await gitService.pull(args);
+      return gitService.status(args);
+    },
+    gitPush: async (_: unknown, args: WorkspaceRef) => {
+      await gitService.push(args);
+      return gitService.status(args);
+    },
+    gitCheckout: async (_: unknown, args: WorkspaceRef & { branch: string; create?: boolean | null }) => {
+      await gitService.checkout(args, args.branch, args.create ?? false);
+      return gitService.status(args);
+    },
     writeWorkspaceFile: (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }) =>
       fileService.write(args, args.path, args.content, args.expectedModifiedAt ?? null),
     createWorkspaceEntry: (_: unknown, args: WorkspaceRef & { path: string; kind: 'dir' | 'file' }) => fileService.create(args, args.path, args.kind),

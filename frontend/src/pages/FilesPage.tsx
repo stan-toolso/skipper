@@ -5,6 +5,8 @@ import { Link } from 'react-router-dom';
 import { CREATE_WORKSPACE_ENTRY, DELETE_WORKSPACE_ENTRY, RENAME_WORKSPACE_ENTRY, WORKSPACE_ENTRIES, type FileEntry } from '../graphql/operations';
 import { fileIcon, filesUrl, formatSize, useWorkspaceFromRoute, type WorkspaceRef } from '../lib/files';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 
 interface TreeActions {
   createEntry: (dir: string, kind: 'file' | 'dir') => void;
@@ -77,6 +79,7 @@ function DirTree({ wsRef, path, depth, expanded, toggle, actions }: { wsRef: Wor
 /** Explorateur de fichiers du workspace d'un projet ou d'un worktree. */
 export default function FilesPage() {
   const { info, loading, error } = useWorkspaceFromRoute();
+  useGitTarget(info ? { projectId: info.projectId, worktreeId: info.worktreeId, label: info.label } : null);
   useTabTitle(info ? `Fichiers · ${info.label}` : null);
   const storageKey = info ? `skipper.files.expanded.${info.worktreeId ?? info.projectId}` : null;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

@@ -2,6 +2,8 @@ import { useMutation, useQuery } from '@apollo/client';
 import { Alert, Button, Card, Col, Form, Row, Spinner, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 import StatusBadge from '../components/StatusBadge';
 import { useState } from 'react';
 import { CREATE_WORKTREE, DELETE_PROJECT, DELETE_WORKTREE, PREPARE_PROJECT_WORKSPACE, PROJECT, PROJECTS, PROJECT_WORKTREES, type Project, type Session, type Worktree } from '../graphql/operations';
@@ -101,6 +103,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
   const { data, loading, error } = useQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
   useTabTitle(data?.project?.name);
+  useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
   const [deleteProject, { error: deleteError }] = useMutation(DELETE_PROJECT, {
     refetchQueries: [{ query: PROJECTS }],
