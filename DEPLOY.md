@@ -9,11 +9,10 @@ pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
 - **SSH** : `ssh skipper@skipper.toolso.io` (clé `~/.ssh/id_rsa` du poste, ou la clé EC2
   `app-paris.pem`). `skipper` est sudoer sans mot de passe.
 - **Web** : https://skipper.toolso.io. Connexion des utilisateurs par **Google OAuth** (voir
-  « Connexion des utilisateurs ») ; en plus, une **authentification HTTP basic** nginx
-  (`/etc/nginx/.htpasswd-skipper`, identifiants dans `/home/skipper/.skipper-credentials`) qui peut
-  être conservée en défense supplémentaire ou retirée (commenter les deux lignes `auth_basic` du
-  site nginx) maintenant que l'application authentifie elle-même. Ajouter un utilisateur basic :
-  `sudo htpasswd /etc/nginx/.htpasswd-skipper <nom>`.
+  « Connexion des utilisateurs »). L'ancienne **authentification HTTP basic** nginx est désactivée
+  (lignes `auth_basic` commentées dans le site nginx) ; le fichier `/etc/nginx/.htpasswd-skipper` et
+  les identifiants dans `/home/skipper/.skipper-credentials` existent toujours pour la réactiver en
+  cas de besoin.
 - **Base** : PostgreSQL 14 sur l'instance RDS `toolso-campaign-manager` (compte AWS Toolso
   Emailing, `eu-west-1`), base `skipper`, rôle `skipper`. Connexion en TLS vérifié
   (`sslmode=verify-full`, bundle CA `~/rds-eu-west-1-bundle.pem`). Le mot de passe est dans
@@ -127,9 +126,9 @@ Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 ```bash
 pm2 list                                     # skipper « online », uptime remis à zéro
 pm2 logs skipper --nostream --lines 20       # « [http] GraphQL prêt sur http://localhost:4100/graphql »
-curl -s -u stan -X POST https://skipper.toolso.io/graphql \
+curl -s -X POST https://skipper.toolso.io/graphql \
   -H 'content-type: application/json' -d '{"query":"{ providers { type label } }"}'
-curl -s -u stan https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
+curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 ```
 
 ## Bon à savoir
