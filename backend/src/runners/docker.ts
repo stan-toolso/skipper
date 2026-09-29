@@ -90,6 +90,10 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       const args = [
         'run', '-d', '--name', name, '--restart', 'unless-stopped', '--memory', s.memory, '--cpus', s.cpus,
         '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
+        // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de
+        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; les montages
+        // ci-dessous (~/.claude, ~/.claude.json, ~/.gitconfig) viennent s'y superposer.
+        '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0750,size=512m`,
         // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
         '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
         // Le code, les worktrees et les skills du projet, au même chemin que sur l'hôte.
@@ -139,9 +143,13 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     return { command: 'docker', args: ['exec', '-i', '-w', cwd, ...PASSTHROUGH_ENV.flatMap((v) => ['-e', v]), this.containerName(project), 'sh', '-c', script] };
   }
 
-  /** Playwright MCP installé dans l'image (`playwright-mcp`), captures d'écran dans le dossier de travail. */
+  /**
+   * Playwright MCP installé dans l'image (`playwright-mcp`), captures d'écran dans le dossier de travail.
+   * C'est le CLI qui lance ce serveur, et le CLI tourne déjà dans le conteneur (où `docker` n'existe pas) :
+   * la commande s'exécute donc directement, sans `docker exec`.
+   */
   async browserMcpCommand(project: Project, cwd: string): Promise<SpawnSpec> {
     await this.ensureReady(project);
-    return { command: 'docker', args: ['exec', '-i', '-w', cwd, this.containerName(project), 'playwright-mcp', ...PLAYWRIGHT_MCP_ARGS, '--output-dir', `${cwd}/.playwright-mcp`] };
+    return { command: 'playwright-mcp', args: [...PLAYWRIGHT_MCP_ARGS, '--output-dir', `${cwd}/.playwright-mcp`] };
   }
 }

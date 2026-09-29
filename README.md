@@ -273,7 +273,10 @@ aux administrateurs du projet ; les autres membres les voient sans les modifier.
   Un conteneur `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
   worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
-  de l'utilisateur de Skipper, donc aucune traduction de chemin. Le SDK reste dans le backend : il
+  de l'utilisateur de Skipper, donc aucune traduction de chemin. Le dossier personnel est un tmpfs
+  inscriptible (512 Mo) dans lequel `~/.claude`, `~/.claude.json` et `~/.gitconfig` de l'hôte sont
+  montés : Chromium (rapports de plantage, profil) et npm (cache) exigent un dossier personnel
+  inscriptible. Le SDK reste dans le backend : il
   reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
   du CLI dans le conteneur, stdio relayés ; demandes d'autorisation, outils MCP (contexte, tâches)
   et skills fonctionnent donc sans changement. L'authentification Claude (jeton OAuth ou clé API des
@@ -284,10 +287,11 @@ aux administrateurs du projet ; les autres membres les voient sans les modifier.
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : un serveur MCP Playwright (`@playwright/mcp`, Chromium sans fenêtre)
-  est déclaré à chaque session sous le nom `playwright`, lancé par `docker exec` dans le conteneur
-  (image `skipper-runner` : Playwright et Chromium sont dans `/opt/ms-playwright`). Sa configuration
-  passe sur la ligne de commande du CLI : elle ne reçoit qu'un environnement minimal (`PATH`, `HOME`),
-  jamais celui du backend. Les outils d'observation (instantané de la page,
+  est déclaré à chaque session sous le nom `playwright`. C'est le CLI qui le lance, et le CLI tourne
+  dans le conteneur : la commande est donc directement `playwright-mcp` (image `skipper-runner` :
+  Playwright et Chromium sont dans `/opt/ms-playwright`), sans `docker exec`. Sa configuration passe
+  sur la ligne de commande du CLI et ne contient aucune variable d'environnement du backend. Les
+  outils d'observation (instantané de la page,
   capture d'écran, console, réseau, attente) sont autorisés d'office ; navigation, clics et saisies
   passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
   `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.

@@ -186,9 +186,9 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
-        // Environnement minimal : la configuration MCP est passée au CLI sur sa ligne de commande, visible de tout
-        // utilisateur du serveur (ps) ; l'environnement du backend (secrets) ne doit jamais y figurer.
-        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...browserServer.env } } } : {}),
+        // Le serveur hérite de l'environnement du CLI (dans le conteneur). La configuration MCP passe sur la ligne
+        // de commande du CLI, visible de tout utilisateur du serveur (ps) : l'environnement du backend n'y figure jamais.
+        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, ...(browserServer.env ? { env: browserServer.env } : {}) } } : {}),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
