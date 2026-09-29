@@ -86,8 +86,15 @@ en base (même clé que les secrets Claude) et injecté dans les commandes git p
 github.com. Les projets utilisent alors l'URL
 https du dépôt, et le formulaire de projet propose la liste des dépôts du compte.
 
+Les agents reçoivent ce jeton via un credential helper git (variables `GIT_CONFIG_*`) ainsi qu'une
+identité de commit (config git globale de l'utilisateur `skipper`, sinon le compte GitHub connecté) :
+ils peuvent donc commiter et pousser en https, y compris dans un conteneur. **Curso est passé en
+https** (`https://github.com/stan-toolso/Curso.git`) ; la deploy key ci-dessous reste installée mais
+n'est plus utilisée.
+
 **Clé de déploiement par dépôt (repli)** : pour un dépôt hors du compte connecté ou sans OAuth App.
-Il faut une **clé de déploiement en lecture seule** dédiée, avec un alias SSH. Exemple pour Curso (déjà en place : clé `~/.ssh/curso-deploy`, alias
+Il faut une **clé de déploiement en lecture seule** dédiée, avec un alias SSH. Attention : un projet
+en **conteneur Docker** n'a pas accès aux clés SSH de l'hôte ; utiliser l'https avec le jeton. Exemple pour Curso (déjà en place : clé `~/.ssh/curso-deploy`, alias
 `github-curso`) :
 
 ```bash
