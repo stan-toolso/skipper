@@ -44,12 +44,16 @@ export const requestRepository = {
     return rows[0] ? toRequest(rows[0]) : null;
   },
 
-  async list(filter: { sessionId?: string; status?: RequestStatus; limit?: number; newestFirst?: boolean } = {}): Promise<HumanRequest[]> {
+  async list(filter: { sessionId?: string; projectIds?: string[]; status?: RequestStatus; limit?: number; newestFirst?: boolean } = {}): Promise<HumanRequest[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.sessionId) {
       params.push(filter.sessionId);
       where.push(`session_id = $${params.length}`);
+    }
+    if (filter.projectIds) {
+      params.push(filter.projectIds);
+      where.push(`session_id IN (SELECT id FROM sessions WHERE project_id = ANY($${params.length}::uuid[]))`);
     }
     if (filter.status) {
       params.push(filter.status);

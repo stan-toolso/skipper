@@ -60,6 +60,15 @@ export const projectRepository = {
     return rows.map(toProject);
   },
 
+  /** Projets dont l'utilisateur est membre. */
+  async listForUser(userId: string): Promise<Project[]> {
+    const { rows } = await pool.query<ProjectRow>(
+      'SELECT p.* FROM projects p JOIN project_members m ON m.project_id = p.id WHERE m.user_id = $1 ORDER BY p.name ASC',
+      [userId],
+    );
+    return rows.map(toProject);
+  },
+
   async update(id: string, input: UpdateProjectInput): Promise<Project | null> {
     const sets: string[] = ['updated_at = now()'];
     const params: unknown[] = [id];

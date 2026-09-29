@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import { CREATE_TERMINAL, CREATE_WORKTREE, REQUESTS, SIDEBAR, type HumanRequest, type Session, type SessionActivity, type SessionStatus, type Terminal } from '../graphql/operations';
 import { sessionStateHint } from '../lib/humanize';
 
@@ -108,9 +109,34 @@ function SessionRows({ sessions, terminals, activeSessionId, activeTerminalId, i
   );
 }
 
+/** Utilisateur connecté (avatar, nom) et déconnexion, en bas de la sidebar. */
+function UserBlock() {
+  const { user, logout } = useAuth();
+  if (!user) return null;
+  const initials = user.name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  return (
+    <div className="wb-user" title={user.email}>
+      {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initials}</span>}
+      <span className="wb-user-name">
+        {user.name}
+        <span className="wb-user-email">{user.email}</span>
+      </span>
+      <button type="button" className="wb-plus" title="Se déconnecter" onClick={() => void logout()}>
+        <i className="bi bi-box-arrow-right" />
+      </button>
+    </div>
+  );
+}
+
 /** Sidebar : menus principaux, puis les projets avec leurs sessions, terminaux et worktrees. */
 export default function Sidebar() {
   const location = useLocation();
+  const { user } = useAuth();
   const { data } = useQuery<{ projects: SidebarProject[] }>(SIDEBAR, { pollInterval: 3000 });
   const { data: pendingData } = useQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
@@ -252,9 +278,12 @@ export default function Sidebar() {
         Un point orange qui clignote : l'agent travaille. Vert : il attend vos instructions. Un badge jaune : il a besoin de vous.
       </div>
       <nav className="wb-menu wb-menu-bottom">
-        <NavLink to="/settings" className="wb-menu-item">
-          <i className="bi bi-gear wb-icon" /> Paramètres
-        </NavLink>
+        {user?.isAdmin && (
+          <NavLink to="/settings" className="wb-menu-item">
+            <i className="bi bi-gear wb-icon" /> Paramètres
+          </NavLink>
+        )}
+        <UserBlock />
       </nav>
     </aside>
   );

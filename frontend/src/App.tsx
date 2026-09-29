@@ -1,9 +1,12 @@
+import { Spinner } from 'react-bootstrap';
 import { Route, Routes } from 'react-router-dom';
+import { AuthProvider, useAuth } from './auth/AuthContext';
 import Layout from './components/Layout';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectFormPage from './pages/ProjectFormPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import ContextPage from './pages/ContextPage';
+import LoginPage from './pages/LoginPage';
 import SessionsPage from './pages/SessionsPage';
 import NewSessionPage from './pages/NewSessionPage';
 import SessionDetailPage from './pages/SessionDetailPage';
@@ -13,7 +16,24 @@ import WelcomePage from './pages/WelcomePage';
 import TasksPage from './pages/TasksPage';
 import SettingsPage from './pages/SettingsPage';
 
-export default function App() {
+/** Sans utilisateur connecté, seule la page de connexion est affichée. */
+function Gate() {
+  const { user, loading, error } = useAuth();
+  if (loading && !user) {
+    return (
+      <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '100vh' }}>
+        <Spinner animation="border" size="sm" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="d-flex align-items-center justify-content-center text-secondary" style={{ minHeight: '100vh' }}>
+        Le serveur ne répond pas ({error.message}).
+      </div>
+    );
+  }
+  if (!user) return <LoginPage />;
   return (
     <Layout>
       <Routes>
@@ -30,8 +50,16 @@ export default function App() {
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/terminals/:id" element={<TerminalPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        {user.isAdmin && <Route path="/settings" element={<SettingsPage />} />}
       </Routes>
     </Layout>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
   );
 }

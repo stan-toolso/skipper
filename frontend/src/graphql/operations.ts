@@ -23,6 +23,26 @@ export interface Provider {
   configFields: ConfigField[];
 }
 
+export type ProjectRole = 'ADMIN' | 'MEMBER' | 'VIEWER';
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  isAdmin: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface ProjectMember {
+  user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'>;
+  role: ProjectRole;
+  invitedBy: Pick<User, 'id' | 'name'> | null;
+  pending: boolean;
+  createdAt: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -34,6 +54,7 @@ export interface Project {
   workspacePath: string;
   workspaceExists: boolean;
   git: { branch: string; commit: string } | null;
+  myRole: ProjectRole;
   createdAt: string;
   updatedAt: string;
 }
@@ -195,8 +216,83 @@ export const PROJECT_FIELDS = gql`
       branch
       commit
     }
+    myRole
     createdAt
     updatedAt
+  }
+`;
+
+export const USER_FIELDS = gql`
+  fragment UserFields on User {
+    id
+    email
+    name
+    avatarUrl
+    isAdmin
+    createdAt
+    lastLoginAt
+  }
+`;
+
+export const ME = gql`
+  ${USER_FIELDS}
+  query Me {
+    me {
+      ...UserFields
+    }
+  }
+`;
+
+export const PROJECT_MEMBERS = gql`
+  query ProjectMembers($id: ID!) {
+    project(id: $id) {
+      id
+      myRole
+      members {
+        role
+        pending
+        createdAt
+        user {
+          id
+          email
+          name
+          avatarUrl
+        }
+        invitedBy {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+export const INVITE_PROJECT_MEMBER = gql`
+  mutation InviteProjectMember($projectId: ID!, $email: String!, $role: ProjectRole) {
+    inviteProjectMember(projectId: $projectId, email: $email, role: $role) {
+      role
+      user {
+        id
+        email
+      }
+    }
+  }
+`;
+
+export const UPDATE_PROJECT_MEMBER_ROLE = gql`
+  mutation UpdateProjectMemberRole($projectId: ID!, $userId: ID!, $role: ProjectRole!) {
+    updateProjectMemberRole(projectId: $projectId, userId: $userId, role: $role) {
+      role
+      user {
+        id
+      }
+    }
+  }
+`;
+
+export const REMOVE_PROJECT_MEMBER = gql`
+  mutation RemoveProjectMember($projectId: ID!, $userId: ID!) {
+    removeProjectMember(projectId: $projectId, userId: $userId)
   }
 `;
 

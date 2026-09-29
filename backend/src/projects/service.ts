@@ -22,6 +22,7 @@ function validateSlug(slug: string): void {
 
 export const projectService = {
   list: () => projectRepository.list(),
+  listForUser: (userId: string) => projectRepository.listForUser(userId),
 
   async get(id: string): Promise<Project> {
     const project = await projectRepository.findById(id);

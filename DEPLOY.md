@@ -8,10 +8,12 @@ pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
 
 - **SSH** : `ssh skipper@skipper.toolso.io` (clé `~/.ssh/id_rsa` du poste, ou la clé EC2
   `app-paris.pem`). `skipper` est sudoer sans mot de passe.
-- **Web** : https://skipper.toolso.io, protégé par une **authentification HTTP basic** nginx
-  (`/etc/nginx/.htpasswd-skipper`, identifiants dans `/home/skipper/.skipper-credentials`).
-  Cette protection est indispensable : l'application ouvre des terminaux sur le serveur.
-  Ajouter un utilisateur : `sudo htpasswd /etc/nginx/.htpasswd-skipper <nom>`.
+- **Web** : https://skipper.toolso.io. Connexion des utilisateurs par **Google OAuth** (voir
+  « Connexion des utilisateurs ») ; en plus, une **authentification HTTP basic** nginx
+  (`/etc/nginx/.htpasswd-skipper`, identifiants dans `/home/skipper/.skipper-credentials`) qui peut
+  être conservée en défense supplémentaire ou retirée (commenter les deux lignes `auth_basic` du
+  site nginx) maintenant que l'application authentifie elle-même. Ajouter un utilisateur basic :
+  `sudo htpasswd /etc/nginx/.htpasswd-skipper <nom>`.
 - **Base** : PostgreSQL 14 sur l'instance RDS `toolso-campaign-manager` (compte AWS Toolso
   Emailing, `eu-west-1`), base `skipper`, rôle `skipper`. Connexion en TLS vérifié
   (`sslmode=verify-full`, bundle CA `~/rds-eu-west-1-bundle.pem`). Le mot de passe est dans
@@ -34,8 +36,30 @@ pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
 | Claude Code CLI    | `~/.local/bin/claude` (pour se connecter : `claude` puis `/login`) |
 
 Le port 4000 est celui de l'API Curso : Skipper est sur 4100. Le `.env` fixe aussi
-`SHELL=/bin/bash` (les terminaux web utilisent zsh par défaut, absent du serveur) et
-`VITE_GRAPHQL_URL=https://skipper.toolso.io/graphql` (lu par Vite au build).
+`SHELL=/bin/bash` (les terminaux web utilisent zsh par défaut, absent du serveur),
+`VITE_GRAPHQL_URL=https://skipper.toolso.io/graphql` (lu par Vite au build),
+`APP_URL=https://skipper.toolso.io`, `API_URL=https://skipper.toolso.io` et les identifiants Google.
+
+## Connexion des utilisateurs
+
+Les utilisateurs se connectent avec Google. La configuration existe dans la console Google Cloud,
+projet **Skipper** (`skipper-510112`, organisation toolso.io, compte de facturation Toolso) :
+
+- **Google Auth Platform → Audience** : « Interne », donc seuls les comptes toolso.io peuvent se
+  connecter, sans validation Google. Passer en « Externe » (avec liste d'utilisateurs test puis
+  vérification) pour inviter des comptes hors organisation.
+- **Google Auth Platform → Clients** : client « Skipper web » (application Web) avec les URI de
+  redirection `https://skipper.toolso.io/auth/google/callback` et
+  `http://localhost:4000/auth/google/callback` (développement).
+- Le secret du client n'est visible qu'à sa création : il est dans le `.env` du poste de
+  développement (jamais versionné). Le reporter dans `~/skipper/.env` sur le serveur
+  (`GOOGLE_CLIENT_ID=...`, `GOOGLE_CLIENT_SECRET=...`), puis `pm2 restart skipper --update-env`.
+  S'il est perdu : dans le client, « Add secret » en génère un nouveau.
+
+Seules les adresses invitées sur un projet peuvent se connecter. La migration `011_users.sql` crée
+`stan@toolso.io` administrateur de l'application et de tous les projets existants ; les autres
+utilisateurs sont invités depuis la page d'un projet (bloc « Membres »). Le site nginx doit
+proxifier `/auth/` vers le backend (bloc présent dans `deploy/nginx-skipper.conf`).
 
 ## Authentification Claude
 

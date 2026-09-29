@@ -16,4 +16,11 @@ export const config = {
   claudeBin: process.env.CLAUDE_BIN || undefined,
   /** Dossier commun contenant un sous-dossier par projet (workspace). */
   workspacesRoot: path.resolve(env('WORKSPACES_ROOT', path.join(os.homedir(), 'skipper-workspaces'))),
+  /** URL publique de l'application (front) : cible des redirections après connexion, origine autorisée en CORS. */
+  appUrl: env('APP_URL', 'http://localhost:5173').replace(/\/+$/, ''),
+  /** URL publique de l'API (callback OAuth `${API_URL}/auth/google/callback`, attribut Secure des cookies). */
+  apiUrl: env('API_URL', `http://localhost:${env('PORT', '4000')}`).replace(/\/+$/, ''),
+  /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
 };

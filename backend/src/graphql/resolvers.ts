@@ -1,5 +1,7 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
+import { accessibleProjectIds, canAccessProject, filterAsync, requireAdmin, requireProject, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { contextService, HUMAN } from '../context/service.js';
+import { NotFoundError } from '../errors.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -24,6 +26,27 @@ import { taskService } from '../tasks/service.js';
 import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
 import type { Session, SessionStatus } from '../sessions/types.js';
+import { userService } from '../users/service.js';
+import type { ProjectMember, ProjectRole } from '../users/types.js';
+
+type Ctx = AuthContext;
+type GqlRole = Uppercase<ProjectRole>;
+const fromGqlRole = (r?: GqlRole | null): ProjectRole => ((r ?? 'MEMBER').toLowerCase() as ProjectRole);
+
+// ---- Accès : rôle minimal requis sur le projet auquel appartient l'objet visé -------------------
+const projectOfSession = async (id: string) => {
+  const session = await sessionService.get(id);
+  if (!session) throw new NotFoundError('Session introuvable');
+  return session.projectId;
+};
+const projectOfRequest = async (id: string) => projectOfSession((await requestService.get(id)).sessionId);
+const guardSession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfSession(id), min);
+const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
+const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
+const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
+const guardWorktree = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worktreeService.get(id)).projectId, min);
+const guardFolder = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await contextService.getFolder(id)).projectId, min);
+const guardInstruction = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await contextService.getInstruction(id)).projectId, min);
 
 type GqlStatus = Uppercase<SessionStatus>;
 type GqlRequestStatus = Uppercase<RequestStatus>;
@@ -66,6 +89,13 @@ const appSettings = () => ({
 export const resolvers = {
   JSON: JSONResolver,
   DateTime: DateTimeResolver,
+
+  ProjectMember: {
+    user: (m: ProjectMember) => userService.get(m.userId),
+    role: (m: ProjectMember) => m.role.toUpperCase(),
+    invitedBy: (m: ProjectMember) => (m.invitedById ? userService.get(m.invitedById).catch(() => null) : null),
+    pending: async (m: ProjectMember) => (await userService.get(m.userId)).lastLoginAt === null,
+  },
 
   ClaudeAuthStatus: {
     server: () => serverAuthStatus(),
@@ -111,6 +141,8 @@ export const resolvers = {
 
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
+    members: (project: Project) => userService.members(project.id),
+    myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     terminals: (project: Project) => terminalService.listByProject(project.id),
     worktrees: (project: Project) => worktreeService.listByProject(project.id),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
@@ -141,133 +173,325 @@ export const resolvers = {
   },
 
   Query: {
-    settings: () => appSettings(),
-    claudeLogin: (_: unknown, args: { id: string }) => loginService.get(args.id),
-    providers: () => listProviders(),
-    sessions: (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; limit?: number | null; offset?: number | null }) =>
-      sessionService.list({
+    me: (_: unknown, __: unknown, ctx: Ctx) => ctx.user,
+    users: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return userService.list();
+    },
+    settings: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return appSettings();
+    },
+    claudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return loginService.get(args.id);
+    },
+    providers: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireUser(ctx);
+      return listProviders();
+    },
+    sessions: async (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return sessionService.list({
         projectId: args.projectId ?? undefined,
+        projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
         status: fromGqlStatus(args.status),
         provider: args.provider ?? undefined,
         limit: args.limit ?? undefined,
         offset: args.offset ?? undefined,
-      }),
-    session: (_: unknown, args: { id: string }) => sessionService.get(args.id),
-    projects: () => projectService.list(),
-    project: (_: unknown, args: { id: string }) => projectService.get(args.id),
-    requests: (_: unknown, args: { status?: GqlRequestStatus | null; sessionId?: string | null; limit?: number | null; newestFirst?: boolean | null }) =>
-      requestService.list({
+      });
+    },
+    session: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const session = await sessionService.get(args.id);
+      if (session) await requireProject(ctx, session.projectId);
+      return session;
+    },
+    projects: (_: unknown, __: unknown, ctx: Ctx) => projectService.listForUser(requireUser(ctx).id),
+    project: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.id);
+      return projectService.get(args.id);
+    },
+    requests: async (_: unknown, args: { status?: GqlRequestStatus | null; sessionId?: string | null; limit?: number | null; newestFirst?: boolean | null }, ctx: Ctx) => {
+      if (args.sessionId) await guardSession(ctx, args.sessionId, 'viewer');
+      return requestService.list({
         status: fromGqlRequestStatus(args.status),
         sessionId: args.sessionId ?? undefined,
+        projectIds: args.sessionId ? undefined : await accessibleProjectIds(ctx),
         limit: args.limit ?? undefined,
         newestFirst: args.newestFirst ?? false,
-      }),
-    request: (_: unknown, args: { id: string }) => requestService.get(args.id),
-    terminal: (_: unknown, args: { id: string }) => terminalService.get(args.id),
-    worktree: (_: unknown, args: { id: string }) => worktreeService.get(args.id),
-    notifications: (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }) => notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined }),
-    unreadNotificationCount: () => notificationService.countUnread(),
-    tasks: (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }) =>
-      taskService.list({
+      });
+    },
+    request: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardRequest(ctx, args.id, 'viewer');
+      return requestService.get(args.id);
+    },
+    terminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardTerminal(ctx, args.id, 'viewer');
+      return terminalService.get(args.id);
+    },
+    worktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorktree(ctx, args.id, 'viewer');
+      return worktreeService.get(args.id);
+    },
+    notifications: async (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }, ctx: Ctx) =>
+      notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx) }),
+    unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread(await accessibleProjectIds(ctx)),
+    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return taskService.list({
         projectId: args.projectId ?? undefined,
+        projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
         status: fromGqlTaskStatuses(args.status) ?? ['todo', 'in_progress'],
         priority: fromGqlTaskPriority(args.priority),
         limit: args.limit ?? undefined,
-      }),
-    task: (_: unknown, args: { id: string }) => taskService.get(args.id),
-    contextInstruction: (_: unknown, args: { id: string }) => contextService.getInstruction(args.id),
-    searchContext: (_: unknown, args: { projectId: string; query: string }) => contextService.search(args.projectId, args.query),
+      });
+    },
+    task: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.id, 'viewer');
+      return taskService.get(args.id);
+    },
+    contextInstruction: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardInstruction(ctx, args.id, 'viewer');
+      return contextService.getInstruction(args.id);
+    },
+    searchContext: async (_: unknown, args: { projectId: string; query: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return contextService.search(args.projectId, args.query);
+    },
   },
 
   Mutation: {
-    updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }) => {
+    updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {
+      requireAdmin(ctx);
       await settingsService.update(input);
       return appSettings();
     },
-    setClaudeApiKey: async (_: unknown, args: { apiKey?: string | null }) => {
+    setClaudeApiKey: async (_: unknown, args: { apiKey?: string | null }, ctx: Ctx) => {
+      requireAdmin(ctx);
       await settingsService.setApiKey(args.apiKey ?? null);
       return appSettings();
     },
-    clearClaudeOauthToken: async () => {
+    clearClaudeOauthToken: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
       await settingsService.clearOauthToken();
       return appSettings();
     },
-    startClaudeLogin: (_: unknown, args: { kind?: ClaudeLoginKind | null }) => loginService.start(args.kind ?? 'oauth'),
-    logoutServerClaude: async () => {
+    startClaudeLogin: (_: unknown, args: { kind?: ClaudeLoginKind | null }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return loginService.start(args.kind ?? 'oauth');
+    },
+    logoutServerClaude: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
       await serverLogout();
       settingsService.invalidateVerification();
       return appSettings();
     },
-    completeClaudeLogin: (_: unknown, args: { id: string; code: string }) => loginService.complete(args.id, args.code),
-    cancelClaudeLogin: (_: unknown, args: { id: string }) => loginService.cancel(args.id),
-    verifyClaudeAuth: async (_: unknown, args: { mode?: ClaudeAuthMode | null }) => {
+    completeClaudeLogin: (_: unknown, args: { id: string; code: string }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return loginService.complete(args.id, args.code);
+    },
+    cancelClaudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return loginService.cancel(args.id);
+    },
+    verifyClaudeAuth: async (_: unknown, args: { mode?: ClaudeAuthMode | null }, ctx: Ctx) => {
+      requireAdmin(ctx);
       await settingsService.verify(args.mode ?? undefined);
       return appSettings();
     },
-    createProject: (_: unknown, { input }: { input: CreateProjectInput }) => projectService.create(input),
-    updateProject: (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }) => projectService.update(id, input),
-    prepareProjectWorkspace: (_: unknown, args: { id: string }) => projectService.prepareWorkspace(args.id),
-    deleteProject: (_: unknown, args: { id: string }) => projectService.delete(args.id),
-    createSession: (
+
+    inviteProjectMember: async (_: unknown, args: { projectId: string; email: string; role?: GqlRole | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await requireProject(ctx, args.projectId, 'admin');
+      return userService.invite(args.projectId, args.email, fromGqlRole(args.role), user);
+    },
+    updateProjectMemberRole: async (_: unknown, args: { projectId: string; userId: string; role: GqlRole }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'admin');
+      return userService.setRole(args.projectId, args.userId, fromGqlRole(args.role));
+    },
+    removeProjectMember: async (_: unknown, args: { projectId: string; userId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'admin');
+      return userService.remove(args.projectId, args.userId);
+    },
+
+    createProject: async (_: unknown, { input }: { input: CreateProjectInput }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      const project = await projectService.create(input);
+      await userService.addCreator(project.id, user);
+      return project;
+    },
+    updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {
+      await requireProject(ctx, id, 'admin');
+      return projectService.update(id, input);
+    },
+    prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.id, 'admin');
+      return projectService.prepareWorkspace(args.id);
+    },
+    deleteProject: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.id, 'admin');
+      return projectService.delete(args.id);
+    },
+    createSession: async (
       _: unknown,
       { input }: { input: { projectId: string; worktreeId?: string | null; name: string; provider: string; prompt?: string | null; config?: Record<string, unknown> | null; autoStart?: boolean | null } },
-    ) => sessionService.create({ ...input, autoStart: input.autoStart ?? true }),
-    startSession: (_: unknown, args: { id: string }) => sessionService.start(args.id),
-    stopSession: (_: unknown, args: { id: string }) => sessionService.stop(args.id),
-    deleteSession: (_: unknown, args: { id: string }) => sessionService.delete(args.id),
-    sendSessionMessage: (_: unknown, args: { id: string; text: string }) => sessionService.sendMessage(args.id, args.text),
-    endSession: (_: unknown, args: { id: string }) => sessionService.end(args.id),
-    interruptSession: (_: unknown, args: { id: string }) => sessionService.interrupt(args.id),
-    answerRequest: (_: unknown, args: { id: string; response: Record<string, unknown> }) => requestService.answer(args.id, args.response ?? {}),
-    cancelRequest: (_: unknown, args: { id: string }) => requestService.cancel(args.id),
+      ctx: Ctx,
+    ) => {
+      await requireProject(ctx, input.projectId, 'member');
+      return sessionService.create({ ...input, autoStart: input.autoStart ?? true });
+    },
+    startSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.start(args.id);
+    },
+    stopSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.stop(args.id);
+    },
+    deleteSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.delete(args.id);
+    },
+    sendSessionMessage: async (_: unknown, args: { id: string; text: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.sendMessage(args.id, args.text);
+    },
+    endSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.end(args.id);
+    },
+    interruptSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.interrupt(args.id);
+    },
+    answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
+      await guardRequest(ctx, args.id, 'member');
+      return requestService.answer(args.id, args.response ?? {});
+    },
+    cancelRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardRequest(ctx, args.id, 'member');
+      return requestService.cancel(args.id);
+    },
 
-    markNotificationRead: (_: unknown, args: { id: string }) => notificationService.markRead(args.id),
-    markAllNotificationsRead: () => notificationService.markAllRead(),
-    createTask: (_: unknown, { input }: { input: GqlTaskInput & { projectId: string; title: string } }) => taskService.create(input.projectId, { ...toTaskInput(input), title: input.title }, HUMAN),
-    updateTask: (_: unknown, { id, input }: { id: string; input: GqlTaskInput }) => taskService.update(id, toTaskInput(input)),
-    deleteTask: (_: unknown, args: { id: string }) => taskService.delete(args.id),
-    startTaskSession: (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null }) => startTaskSession(args.id, args),
-    createTerminal: (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }) => terminalService.create(args.projectId, args.name, args.worktreeId),
-    createWorktree: (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null }) => worktreeService.create(args.projectId, args),
-    deleteWorktree: (_: unknown, args: { id: string; deleteBranch?: boolean | null }) => worktreeService.delete(args.id, args.deleteBranch ?? false),
-    closeTerminal: (_: unknown, args: { id: string }) => terminalService.close(args.id),
-    deleteTerminal: (_: unknown, args: { id: string }) => terminalService.delete(args.id),
-    createContextFolder: (_: unknown, args: { projectId: string; parentId?: string | null; name: string }) =>
-      contextService.createFolder(args.projectId, { parentId: args.parentId ?? null, name: args.name }, HUMAN),
-    renameContextFolder: (_: unknown, args: { id: string; name: string }) => contextService.renameFolder(args.id, args.name, HUMAN),
-    moveContextFolder: (_: unknown, args: { id: string; parentId?: string | null }) => contextService.moveFolder(args.id, args.parentId ?? null, HUMAN),
-    deleteContextFolder: (_: unknown, args: { id: string }) => contextService.deleteFolder(args.id, HUMAN),
-    createContextInstruction: (
+    markNotificationRead: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const n = await notificationService.get(args.id);
+      if (n.projectId) await requireProject(ctx, n.projectId);
+      else requireUser(ctx);
+      return notificationService.markRead(args.id);
+    },
+    markAllNotificationsRead: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.markAllRead(await accessibleProjectIds(ctx)),
+    createTask: async (_: unknown, { input }: { input: GqlTaskInput & { projectId: string; title: string } }, ctx: Ctx) => {
+      await requireProject(ctx, input.projectId, 'member');
+      return taskService.create(input.projectId, { ...toTaskInput(input), title: input.title }, HUMAN);
+    },
+    updateTask: async (_: unknown, { id, input }: { id: string; input: GqlTaskInput }, ctx: Ctx) => {
+      await guardTask(ctx, id, 'member');
+      return taskService.update(id, toTaskInput(input));
+    },
+    deleteTask: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.id, 'member');
+      return taskService.delete(args.id);
+    },
+    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null }, ctx: Ctx) => {
+      await guardTask(ctx, args.id, 'member');
+      return startTaskSession(args.id, args);
+    },
+    createTerminal: async (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return terminalService.create(args.projectId, args.name, args.worktreeId);
+    },
+    createWorktree: async (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return worktreeService.create(args.projectId, args);
+    },
+    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
+      await guardWorktree(ctx, args.id, 'member');
+      return worktreeService.delete(args.id, args.deleteBranch ?? false);
+    },
+    closeTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardTerminal(ctx, args.id, 'member');
+      return terminalService.close(args.id);
+    },
+    deleteTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardTerminal(ctx, args.id, 'member');
+      return terminalService.delete(args.id);
+    },
+    createContextFolder: async (_: unknown, args: { projectId: string; parentId?: string | null; name: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return contextService.createFolder(args.projectId, { parentId: args.parentId ?? null, name: args.name }, HUMAN);
+    },
+    renameContextFolder: async (_: unknown, args: { id: string; name: string }, ctx: Ctx) => {
+      await guardFolder(ctx, args.id, 'member');
+      return contextService.renameFolder(args.id, args.name, HUMAN);
+    },
+    moveContextFolder: async (_: unknown, args: { id: string; parentId?: string | null }, ctx: Ctx) => {
+      await guardFolder(ctx, args.id, 'member');
+      return contextService.moveFolder(args.id, args.parentId ?? null, HUMAN);
+    },
+    deleteContextFolder: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardFolder(ctx, args.id, 'member');
+      return contextService.deleteFolder(args.id, HUMAN);
+    },
+    createContextInstruction: async (
       _: unknown,
       { input }: { input: { projectId: string; folderId?: string | null; name: string; description?: string | null; content?: string | null; changeNote?: string | null } },
-    ) => contextService.createInstruction(input.projectId, input, HUMAN),
-    updateContextInstruction: (
+      ctx: Ctx,
+    ) => {
+      await requireProject(ctx, input.projectId, 'member');
+      return contextService.createInstruction(input.projectId, input, HUMAN);
+    },
+    updateContextInstruction: async (
       _: unknown,
       { id, input }: { id: string; input: { name?: string | null; description?: string | null; content?: string | null; folderId?: string | null; changeNote?: string | null } },
-    ) => contextService.updateInstruction(id, input, HUMAN),
-    deleteContextInstruction: (_: unknown, args: { id: string }) => contextService.deleteInstruction(args.id, HUMAN),
-    restoreContextInstructionVersion: (_: unknown, args: { id: string; version: number }) => contextService.restoreVersion(args.id, args.version, HUMAN),
+      ctx: Ctx,
+    ) => {
+      await guardInstruction(ctx, id, 'member');
+      return contextService.updateInstruction(id, input, HUMAN);
+    },
+    deleteContextInstruction: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardInstruction(ctx, args.id, 'member');
+      return contextService.deleteInstruction(args.id, HUMAN);
+    },
+    restoreContextInstructionVersion: async (_: unknown, args: { id: string; version: number }, ctx: Ctx) => {
+      await guardInstruction(ctx, args.id, 'member');
+      return contextService.restoreVersion(args.id, args.version, HUMAN);
+    },
   },
 
   Subscription: {
     sessionEvents: {
-      subscribe: (_: unknown, args: { sessionId: string }) => pubSub.subscribe('sessionEvent', args.sessionId),
+      subscribe: async (_: unknown, args: { sessionId: string }, ctx: Ctx) => {
+        await guardSession(ctx, args.sessionId, 'viewer');
+        return pubSub.subscribe('sessionEvent', args.sessionId);
+      },
       resolve: (payload: unknown) => payload,
     },
     sessionUpdated: {
-      subscribe: () => pubSub.subscribe('sessionUpdated'),
+      subscribe: (_: unknown, __: unknown, ctx: Ctx) => {
+        requireUser(ctx);
+        return filterAsync(pubSub.subscribe('sessionUpdated'), (s: Session) => canAccessProject(ctx, s.projectId));
+      },
       resolve: (payload: unknown) => payload,
     },
     requestCreated: {
-      subscribe: () => pubSub.subscribe('requestCreated'),
+      subscribe: (_: unknown, __: unknown, ctx: Ctx) => {
+        requireUser(ctx);
+        return filterAsync(pubSub.subscribe('requestCreated'), async (r: HumanRequest) => canAccessProject(ctx, await projectOfSession(r.sessionId)));
+      },
       resolve: (payload: unknown) => payload,
     },
     requestUpdated: {
-      subscribe: () => pubSub.subscribe('requestUpdated'),
+      subscribe: (_: unknown, __: unknown, ctx: Ctx) => {
+        requireUser(ctx);
+        return filterAsync(pubSub.subscribe('requestUpdated'), async (r: HumanRequest) => canAccessProject(ctx, await projectOfSession(r.sessionId)));
+      },
       resolve: (payload: unknown) => payload,
     },
     notificationCreated: {
-      subscribe: () => pubSub.subscribe('notificationCreated'),
+      subscribe: (_: unknown, __: unknown, ctx: Ctx) => {
+        requireUser(ctx);
+        return filterAsync(pubSub.subscribe('notificationCreated'), (n: Notification) => canAccessProject(ctx, n.projectId));
+      },
       resolve: (payload: unknown) => payload,
     },
   },

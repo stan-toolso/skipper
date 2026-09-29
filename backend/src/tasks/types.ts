@@ -42,6 +42,7 @@ export interface UpdateTaskInput {
 
 export interface TaskFilter {
   projectId?: string;
+  projectIds?: string[];
   status?: TaskStatus[];
   priority?: TaskPriority;
   sessionId?: string;

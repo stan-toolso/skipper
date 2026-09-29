@@ -6,6 +6,9 @@ comme second exemple).
 
 Trois notions :
 
+- **Utilisateur** : connexion uniquement avec un compte Google. Personne ne s'inscrit seul : un
+  utilisateur existe parce qu'il a été **invité sur un projet** (par e-mail), avec un rôle propre à
+  ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
@@ -32,7 +35,7 @@ Trois notions :
 
 ## Stack
 
-- **Backend** : Node.js 20, TypeScript, GraphQL ([graphql-yoga](https://the-guild.dev/graphql/yoga-server)), PostgreSQL (`pg`, migrations SQL), [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk)
+- **Backend** : Node.js 20, TypeScript, GraphQL ([graphql-yoga](https://the-guild.dev/graphql/yoga-server)), PostgreSQL (`pg`, migrations SQL), [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk), Google OAuth (sans dépendance)
 - **Frontend** : React 18, Vite, Bootstrap 5 (react-bootstrap), Apollo Client, React Router
 - **Infra locale** : Docker Compose (PostgreSQL 16)
 
@@ -41,7 +44,7 @@ Trois notions :
 Mise en production (serveur, nginx, base RDS, pm2) : voir `DEPLOY.md`.
 
 ```bash
-cp .env.example .env        # ajuster si besoin
+cp .env.example .env        # renseigner GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (voir « Utilisateurs »)
 npm install
 npm run db:up               # lance PostgreSQL dans Docker
 npm run dev                 # backend (http://localhost:4000/graphql) + frontend (http://localhost:5173)
@@ -61,11 +64,18 @@ Claude Code sur la machine qui héberge le backend (connexion `claude` ou `ANTHR
 ```
 backend/
   src/
-    index.ts                   # serveur HTTP + GraphQL
+    index.ts                   # serveur HTTP + GraphQL (contexte = utilisateur du cookie de session)
     config.ts                  # variables d'environnement
     errors.ts                  # erreurs métier renvoyées au client
     pubsub.ts                  # canaux temps réel (subscriptions)
     db/                        # pool pg, runner de migrations, migrations SQL
+    auth/
+      routes.ts                # /auth/google, /auth/google/callback, /auth/logout
+      google.ts                # flux OAuth Google (URL d'autorisation, échange du code, profil)
+      session.ts               # sessions de connexion : jeton dans un cookie HttpOnly, hachage en base
+      access.ts                # contexte GraphQL et gardes : requireUser, requireAdmin, requireProject(role)
+    users/
+      service.ts               # connexion Google, invitations et rôles par projet
     projects/
       service.ts               # création / édition, slug, préparation du workspace
       workspace.ts             # dossier du projet, clone git, infos de branche
@@ -105,6 +115,34 @@ frontend/
     pages/                     # projets, sessions, demandes en attente
     components/                # layout, badge de statut, journal, carte de demande
 ```
+
+## Utilisateurs et droits
+
+- **Connexion** : Google uniquement (`GET /auth/google` redirige vers Google, le retour ouvre une
+  session de 30 jours dans un cookie `skipper_session` HttpOnly, `POST /auth/logout` la ferme).
+  Configuration : `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (console Google Cloud, identifiant
+  OAuth « application Web », URI de redirection `API_URL/auth/google/callback`), `APP_URL` (front,
+  cible des redirections et origine autorisée en CORS) et `API_URL`. Un compte Google dont l'adresse
+  ne correspond à aucun utilisateur est refusé (`Aucune invitation pour …`) : il n'y a pas
+  d'inscription libre.
+- **User** : `email` (unique, minuscules), `name`, `avatarUrl`, `googleSub` (relié à la première
+  connexion), `isAdmin` (administrateur de l'application : page Paramètres, liste des
+  utilisateurs ; n'ouvre aucun projet), `lastLoginAt` (null = invité jamais connecté).
+- **ProjectMember** : `(projectId, userId)`, `role` et qui a invité. Rôles, du plus au moins
+  puissant :
+  - `admin` : modifier / supprimer le projet, gérer les membres, et tout ce qui suit ;
+  - `member` : sessions, terminaux, worktrees, tâches, contexte, réponses aux demandes ;
+  - `viewer` : lecture seule.
+  Le créateur d'un projet en est administrateur. Un projet garde toujours au moins un
+  administrateur. Inviter une adresse crée l'utilisateur s'il n'existe pas (« en attente » jusqu'à sa
+  première connexion) ; réinviter change le rôle.
+- **Contrôle d'accès** : chaque requête et mutation GraphQL vérifie le rôle sur le projet de l'objet
+  visé (`backend/src/auth/access.ts`) ; les listes globales (projets, sessions, demandes, tâches,
+  notifications) sont restreintes aux projets de l'utilisateur ; les subscriptions filtrent de même ;
+  la WebSocket d'un terminal exige le cookie de session et le rôle `member`. Les notifications sont
+  partagées entre les membres d'un projet (état lu / non lu commun).
+- Première migration : `stan@toolso.io` est créé administrateur de l'application et de tous les
+  projets existants.
 
 ## Modèle
 
@@ -219,7 +257,12 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 
 ## API GraphQL
 
-- `settings` (réglages Claude, statut d'authentification, modèles connus, consommation) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
+Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de droits portent le code
+`UNAUTHENTICATED` (pas connecté) ou `FORBIDDEN` (rôle insuffisant).
+
+- `me` (utilisateur connecté, null sinon) ; `users` (administrateurs de l'application)
+- `Project.members`, `Project.myRole` ; `inviteProjectMember(projectId, email, role)`, `updateProjectMemberRole(projectId, userId, role)`, `removeProjectMember(projectId, userId)` (administrateurs du projet)
+- `settings` (réglages Claude, statut d'authentification, modèles connus, consommation ; administrateurs de l'application) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
 - Connexion OAuth : `startClaudeLogin` (URL à ouvrir), `completeClaudeLogin(id, code)`, `cancelClaudeLogin`, `claudeLogin(id)`
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`

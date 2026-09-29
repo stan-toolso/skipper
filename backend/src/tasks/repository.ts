@@ -57,6 +57,7 @@ export const taskRepository = {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.projectId) where.push(`project_id = $${params.push(filter.projectId)}`);
+    if (filter.projectIds) where.push(`project_id = ANY($${params.push(filter.projectIds)}::uuid[])`);
     if (filter.status?.length) where.push(`status = ANY($${params.push(filter.status)}::task_status[])`);
     if (filter.priority) where.push(`priority = $${params.push(filter.priority)}`);
     if (filter.sessionId) where.push(`session_id = $${params.push(filter.sessionId)}`);

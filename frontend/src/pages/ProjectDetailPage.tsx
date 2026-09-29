@@ -4,7 +4,127 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import StatusBadge from '../components/StatusBadge';
 import { useState } from 'react';
-import { CREATE_WORKTREE, DELETE_PROJECT, DELETE_WORKTREE, PREPARE_PROJECT_WORKSPACE, PROJECT, PROJECTS, PROJECT_WORKTREES, type Project, type Session, type Worktree } from '../graphql/operations';
+import {
+  CREATE_WORKTREE,
+  DELETE_PROJECT,
+  DELETE_WORKTREE,
+  INVITE_PROJECT_MEMBER,
+  PREPARE_PROJECT_WORKSPACE,
+  PROJECT,
+  PROJECTS,
+  PROJECT_MEMBERS,
+  PROJECT_WORKTREES,
+  REMOVE_PROJECT_MEMBER,
+  UPDATE_PROJECT_MEMBER_ROLE,
+  type Project,
+  type ProjectMember,
+  type ProjectRole,
+  type Session,
+  type Worktree,
+} from '../graphql/operations';
+import { projectRoleLabels } from '../lib/humanize';
+import { useAuth } from '../auth/AuthContext';
+
+const ROLES: ProjectRole[] = ['ADMIN', 'MEMBER', 'VIEWER'];
+
+/** Membres du projet : liste avec rôle, invitation par e-mail et retrait (administrateurs du projet). */
+function MembersCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const { user: me } = useAuth();
+  const { data } = useQuery<{ project: { members: ProjectMember[] } | null }>(PROJECT_MEMBERS, { variables: { id: projectId }, pollInterval: 10000 });
+  const refetch = { refetchQueries: ['ProjectMembers'] };
+  const [invite, { loading: inviting, error: inviteError }] = useMutation(INVITE_PROJECT_MEMBER, refetch);
+  const [setRole, { error: roleError }] = useMutation(UPDATE_PROJECT_MEMBER_ROLE, refetch);
+  const [remove, { error: removeError }] = useMutation(REMOVE_PROJECT_MEMBER, refetch);
+  const [email, setEmail] = useState('');
+  const [role, setRoleInput] = useState<ProjectRole>('MEMBER');
+  const members = data?.project?.members ?? [];
+  const error = inviteError ?? roleError ?? removeError;
+  return (
+    <Card className="mt-3">
+      <Card.Header>Membres</Card.Header>
+      <Card.Body className="small">
+        <Table size="sm" className="mb-3 align-middle">
+          <tbody>
+            {members.map((m) => (
+              <tr key={m.user.id}>
+                <td>
+                  <strong>{m.user.name}</strong>
+                  {m.user.id === me?.id && <span className="text-secondary"> (vous)</span>}
+                  {m.pending && (
+                    <span className="badge text-bg-secondary ms-2" title="Invité, ne s'est pas encore connecté">
+                      en attente
+                    </span>
+                  )}
+                  <div className="text-secondary">{m.user.email}</div>
+                </td>
+                <td style={{ width: 180 }}>
+                  {canManage ? (
+                    <Form.Select size="sm" value={m.role} title={projectRoleLabels[m.role]?.hint} onChange={(e) => setRole({ variables: { projectId, userId: m.user.id, role: e.target.value } })}>
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {projectRoleLabels[r].label}
+                        </option>
+                      ))}
+                    </Form.Select>
+                  ) : (
+                    <span title={projectRoleLabels[m.role]?.hint}>{projectRoleLabels[m.role]?.label ?? m.role}</span>
+                  )}
+                </td>
+                {canManage && (
+                  <td className="text-end" style={{ width: 90 }}>
+                    <Button
+                      size="sm"
+                      variant="outline-danger"
+                      onClick={() => {
+                        if (window.confirm(`Retirer ${m.user.name} du projet ?`)) remove({ variables: { projectId, userId: m.user.id } });
+                      }}
+                    >
+                      Retirer
+                    </Button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+        {canManage && (
+          <Form
+            className="d-flex gap-2 align-items-end flex-wrap"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!email.trim()) return;
+              invite({ variables: { projectId, email: email.trim(), role } }).then(() => setEmail(''));
+            }}
+          >
+            <Form.Group>
+              <Form.Label className="mb-1">Inviter par e-mail (compte Google)</Form.Label>
+              <Form.Control size="sm" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="prenom@exemple.com" style={{ width: 260 }} />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label className="mb-1">Rôle</Form.Label>
+              <Form.Select size="sm" value={role} onChange={(e) => setRoleInput(e.target.value as ProjectRole)} style={{ width: 160 }}>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {projectRoleLabels[r].label}
+                  </option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+            <Button type="submit" size="sm" disabled={inviting || !email.trim()}>
+              {inviting ? 'Invitation…' : 'Inviter'}
+            </Button>
+            <div className="text-secondary w-100">{projectRoleLabels[role].hint} La personne pourra se connecter avec ce compte Google.</div>
+          </Form>
+        )}
+        {error && (
+          <Alert variant="danger" className="mt-2 mb-0">
+            {error.message}
+          </Alert>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
 
 /** Worktrees git du projet : liste, création (branche existante ou nouvelle), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
@@ -112,6 +232,8 @@ export default function ProjectDetailPage() {
   const project = data?.project;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const actionError = prepareError ?? deleteError;
+  const isAdmin = project.myRole === 'ADMIN';
+  const canWrite = isAdmin || project.myRole === 'MEMBER';
 
   return (
     <>
@@ -124,29 +246,35 @@ export default function ProjectDetailPage() {
           {project.description && <div className="text-secondary">{project.description}</div>}
         </div>
         <div className="d-flex gap-2">
-          <Button as={Link as any} to={`/sessions/new?projectId=${project.id}`} size="sm">
-            Nouvelle session
-          </Button>
+          {canWrite && (
+            <Button as={Link as any} to={`/sessions/new?projectId=${project.id}`} size="sm">
+              Nouvelle session
+            </Button>
+          )}
           <Button as={Link as any} to={`/projects/${project.id}/tasks`} size="sm" variant="outline-primary">
             Tâches
           </Button>
           <Button as={Link as any} to={`/projects/${project.id}/context`} size="sm" variant="outline-primary">
             Contexte
           </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/edit`} size="sm" variant="outline-secondary">
-            Modifier
-          </Button>
-          <Button
-            size="sm"
-            variant="outline-danger"
-            onClick={() => {
-              if (window.confirm(`Supprimer le projet « ${project.name} » et ses sessions ? Le dossier sur disque sera conservé.`)) {
-                deleteProject({ variables: { id } });
-              }
-            }}
-          >
-            Supprimer
-          </Button>
+          {isAdmin && (
+            <>
+              <Button as={Link as any} to={`/projects/${project.id}/edit`} size="sm" variant="outline-secondary">
+                Modifier
+              </Button>
+              <Button
+                size="sm"
+                variant="outline-danger"
+                onClick={() => {
+                  if (window.confirm(`Supprimer le projet « ${project.name} » et ses sessions ? Le dossier sur disque sera conservé.`)) {
+                    deleteProject({ variables: { id } });
+                  }
+                }}
+              >
+                Supprimer
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -173,9 +301,11 @@ export default function ProjectDetailPage() {
                   ) : (
                     <>
                       <span className="text-warning">absent</span>{' '}
-                      <Button size="sm" variant="outline-primary" className="ms-2" disabled={preparing} onClick={() => prepareWorkspace({ variables: { id } })}>
-                        {preparing ? 'Création…' : 'Créer le dossier'}
-                      </Button>
+                      {isAdmin && (
+                        <Button size="sm" variant="outline-primary" className="ms-2" disabled={preparing} onClick={() => prepareWorkspace({ variables: { id } })}>
+                          {preparing ? 'Création…' : 'Créer le dossier'}
+                        </Button>
+                      )}
                     </>
                   )}
                 </dd>
@@ -207,6 +337,7 @@ export default function ProjectDetailPage() {
         </Col>
       </Row>
 
+      <MembersCard projectId={project.id} canManage={isAdmin} />
       <WorktreesCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>

@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createSchema, createYoga, maskError } from 'graphql-yoga';
 import { GraphQLError } from 'graphql';
+import { createAuthContext } from './auth/access.js';
+import { googleAuth } from './auth/google.js';
+import { handleAuthRoute } from './auth/routes.js';
+import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
 import { AppError } from './errors.js';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
@@ -30,12 +34,24 @@ async function main() {
   if (recovered.requests) console.log(`[requests] ${recovered.requests} demande(s) expirée(s)`);
   const closedTerminals = await terminalService.recoverAfterRestart();
   if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
+  const purged = await authSession.purgeExpired();
+  if (purged) console.log(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
+  console.log(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
+
+  // Origines autorisées à appeler l'API avec le cookie de session : l'application, et le poste de développement.
+  const appOrigin = new URL(config.appUrl).origin;
+  const isAllowedOrigin = (origin: string | null) => Boolean(origin) && (origin === appOrigin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin!));
 
   const yoga = createYoga({
     schema: createSchema({ typeDefs, resolvers }),
     graphqlEndpoint: '/graphql',
     landingPage: false,
-    cors: { origin: '*', credentials: false },
+    cors: (request) => {
+      const origin = request.headers.get('origin');
+      return isAllowedOrigin(origin) ? { origin: origin!, credentials: true } : { origin: appOrigin, credentials: true };
+    },
+    // Utilisateur connecté, lu dans le cookie de session ; les résolveurs vérifient ses droits.
+    context: async ({ request }) => createAuthContext(await authSession.resolve(readCookie(request.headers.get('cookie'), SESSION_COOKIE))),
     maskedErrors: {
       // Les erreurs métier (AppError) sont renvoyées au client avec leur message et leur code.
       maskError: (error, message, isDev) => {
@@ -48,7 +64,17 @@ async function main() {
     },
   });
 
-  const server = createServer(yoga);
+  const server = createServer((req, res) => {
+    handleAuthRoute(req, res)
+      .then((handled) => {
+        if (!handled) return yoga(req, res);
+      })
+      .catch((err) => {
+        console.error('[auth]', err);
+        if (!res.headersSent) res.writeHead(500);
+        res.end();
+      });
+  });
   attachTerminalWebSockets(server);
   server.listen(config.port, () => {
     console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);

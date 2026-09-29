@@ -44,6 +44,38 @@ enum SessionActivity {
   IDLE
 }
 
+# ---- Utilisateurs et accès ----------------------------------------------------------------------
+
+"Rôle d'un utilisateur sur un projet : ADMIN gère le projet et ses membres, MEMBER lance sessions et terminaux, VIEWER consulte seulement."
+enum ProjectRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+"Utilisateur de l'application (connexion Google). Il n'existe que s'il a été invité sur un projet."
+type User {
+  id: ID!
+  email: String!
+  name: String!
+  avatarUrl: String
+  "Administrateur de l'application : accès aux paramètres généraux."
+  isAdmin: Boolean!
+  createdAt: DateTime!
+  "Null tant que l'utilisateur ne s'est jamais connecté."
+  lastLoginAt: DateTime
+}
+
+"Appartenance d'un utilisateur à un projet."
+type ProjectMember {
+  user: User!
+  role: ProjectRole!
+  invitedBy: User
+  createdAt: DateTime!
+  "Invité mais jamais connecté."
+  pending: Boolean!
+}
+
 "Un projet regroupe des sessions ; chacune s'exécute dans le workspace du projet."
 type Project {
   id: ID!
@@ -70,6 +102,9 @@ type Project {
   terminals: [Terminal!]!
   tasks(status: [TaskStatus!]): [Task!]!
   worktrees: [Worktree!]!
+  members: [ProjectMember!]!
+  "Rôle de l'utilisateur connecté sur ce projet."
+  myRole: ProjectRole!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -420,6 +455,10 @@ input ClaudeSettingsInput {
 }
 
 type Query {
+  "Utilisateur connecté (null sinon). Seule requête accessible sans session."
+  me: User
+  "Tous les utilisateurs (administrateurs de l'application)."
+  users: [User!]!
   settings: AppSettings!
   claudeLogin(id: ID!): ClaudeLogin!
   providers: [Provider!]!
@@ -505,7 +544,12 @@ type Mutation {
   "Interroge Claude Code avec l'authentification du mode indiqué (défaut : mode courant) : compte et modèles."
   verifyClaudeAuth(mode: ClaudeAuthMode): AppSettings!
 
-  "Crée le projet et prépare son workspace (clone git si une URL est fournie)."
+  "Invite un e-mail sur le projet (l'utilisateur est créé s'il n'existe pas) ou change son rôle. Réservé aux administrateurs du projet."
+  inviteProjectMember(projectId: ID!, email: String!, role: ProjectRole = MEMBER): ProjectMember!
+  updateProjectMemberRole(projectId: ID!, userId: ID!, role: ProjectRole!): ProjectMember!
+  removeProjectMember(projectId: ID!, userId: ID!): Boolean!
+
+  "Crée le projet et prépare son workspace (clone git si une URL est fournie). Le créateur en devient administrateur."
   createProject(input: CreateProjectInput!): Project!
   updateProject(id: ID!, input: UpdateProjectInput!): Project!
   "(Re)crée le workspace s'il n'existe pas sur disque."
