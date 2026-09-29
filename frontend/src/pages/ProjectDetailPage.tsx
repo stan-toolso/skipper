@@ -7,7 +7,7 @@ import { useGitTarget } from '../workbench/GitTargetContext';
 import GoogleAccountCard from '../components/GoogleAccountCard';
 import StatusBadge from '../components/StatusBadge';
 
-/** Environnement d'exécution du projet : local, ou conteneur Docker avec son état et ses commandes. */
+/** Conteneur Docker du projet : son état et ses commandes. */
 function RunnerCard({ project }: { project: Project }) {
   const [start, { loading: starting, error: startError }] = useMutation(START_PROJECT_RUNNER, { refetchQueries: ['Project'] });
   const [stop, { loading: stopping, error: stopError }] = useMutation(STOP_PROJECT_RUNNER, { refetchQueries: ['Project'] });
@@ -20,58 +20,50 @@ function RunnerCard({ project }: { project: Project }) {
     <Card className="mt-3">
       <Card.Header>Environnement d'exécution</Card.Header>
       <Card.Body className="small">
-        {project.runner === 'local' ? (
-          <p className="mb-0 text-secondary">
-            Sur le serveur, avec l'utilisateur de Skipper. Pour isoler ce projet dans un conteneur, choisissez « Conteneur Docker » via « Modifier ».
-          </p>
-        ) : (
-          <>
-            <dl className="row mb-2">
-              <dt className="col-3">Conteneur</dt>
-              <dd className="col-9">
-                <code>{s.containerName}</code>{' '}
-                <span className={s.ready ? 'text-success' : s.state === 'unavailable' ? 'text-danger' : 'text-warning'}>· {stateLabels[s.state] ?? s.state}</span>
-                {s.startedAt && <span className="text-secondary"> depuis le {new Date(s.startedAt).toLocaleString()}</span>}
-              </dd>
-              <dt className="col-3">Image</dt>
-              <dd className="col-9">
-                <code>{s.image}</code>
-              </dd>
-              <dt className="col-3">Limites</dt>
-              <dd className="col-9">
-                mémoire {s.memory} · CPU {s.cpus}
-              </dd>
-            </dl>
-            {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
-            <div className="d-flex gap-2">
-              {!s.ready && s.state !== 'unavailable' && (
-                <Button size="sm" disabled={busy} onClick={() => start({ variables: { id: project.id } })}>
-                  {starting ? 'Démarrage…' : 'Démarrer'}
-                </Button>
-              )}
-              {s.ready && (
-                <Button size="sm" variant="outline-warning" disabled={busy} onClick={() => stop({ variables: { id: project.id } })}>
-                  {stopping ? 'Arrêt…' : 'Arrêter'}
-                </Button>
-              )}
-              {s.state !== 'absent' && s.state !== 'unavailable' && (
-                <Button
-                  size="sm"
-                  variant="outline-secondary"
-                  disabled={busy}
-                  title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
-                  onClick={() => {
-                    if (window.confirm('Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.')) reset({ variables: { id: project.id } });
-                  }}
-                >
-                  {resetting ? 'Suppression…' : 'Recréer'}
-                </Button>
-              )}
-            </div>
-            <div className="text-secondary mt-2">Le conteneur démarre automatiquement à la première session ou au premier terminal.</div>
-            {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
-          </>
-        )}
+        <dl className="row mb-2">
+          <dt className="col-3">Conteneur</dt>
+          <dd className="col-9">
+            <code>{s.containerName}</code>{' '}
+            <span className={s.ready ? 'text-success' : s.state === 'unavailable' ? 'text-danger' : 'text-warning'}>· {stateLabels[s.state] ?? s.state}</span>
+            {s.startedAt && <span className="text-secondary"> depuis le {new Date(s.startedAt).toLocaleString()}</span>}
+          </dd>
+          <dt className="col-3">Image</dt>
+          <dd className="col-9">
+            <code>{s.image}</code>
+          </dd>
+          <dt className="col-3">Limites</dt>
+          <dd className="col-9">
+            mémoire {s.memory} · CPU {s.cpus}
+          </dd>
+        </dl>
+        {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
+        <div className="d-flex gap-2">
+          {!s.ready && s.state !== 'unavailable' && (
+            <Button size="sm" disabled={busy} onClick={() => start({ variables: { id: project.id } })}>
+              {starting ? 'Démarrage…' : 'Démarrer'}
+            </Button>
+          )}
+          {s.ready && (
+            <Button size="sm" variant="outline-warning" disabled={busy} onClick={() => stop({ variables: { id: project.id } })}>
+              {stopping ? 'Arrêt…' : 'Arrêter'}
+            </Button>
+          )}
+          {s.state !== 'absent' && s.state !== 'unavailable' && (
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              disabled={busy}
+              title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
+              onClick={() => {
+                if (window.confirm('Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.')) reset({ variables: { id: project.id } });
+              }}
+            >
+              {resetting ? 'Suppression…' : 'Recréer'}
+            </Button>
+          )}
+        </div>
+        <div className="text-secondary mt-2">Le conteneur démarre automatiquement à la première session ou au premier terminal.</div>
+        {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
       </Card.Body>
     </Card>
   );

@@ -1,6 +1,7 @@
 import type { Project } from '../projects/types.js';
 
-export type RunnerKind = 'local' | 'docker';
+/** Un seul environnement d'exécution : le conteneur Docker du projet. Rien ne tourne sur le serveur. */
+export type RunnerKind = 'docker';
 
 /** Réglages propres au runner Docker, stockés dans projects.runner_config. */
 export interface RunnerConfig {
@@ -35,9 +36,9 @@ export interface SpawnSpec {
 }
 
 /**
- * Un runner sait où et comment exécuter les processus d'un projet : CLI Claude Code des sessions,
- * shell des terminaux, commandes du provider shell. Le code du projet reste au même chemin absolu
- * quel que soit le runner.
+ * Le runner sait où et comment exécuter les processus d'un projet : CLI Claude Code des sessions,
+ * shell des terminaux, commandes du provider shell. Le code du projet est monté dans le conteneur au
+ * même chemin absolu que sur l'hôte.
  */
 export interface Runner {
   readonly kind: RunnerKind;

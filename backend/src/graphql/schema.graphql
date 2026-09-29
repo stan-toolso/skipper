@@ -87,9 +87,7 @@ type Project {
   systemPrompt: String!
   gitUrl: String
   gitBranch: String
-  "Environnement d'exécution : local (sur le serveur) ou docker (conteneur dédié)."
-  runner: String!
-  "Réglages du runner docker : { image, memory, cpus }."
+  "Réglages du conteneur Docker du projet : { image, memory, cpus, browser }."
   runnerConfig: JSON!
   runnerStatus: RunnerStatus!
   "Chemin absolu du workspace sur le serveur."
@@ -787,8 +785,6 @@ input CreateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
-  "local (défaut) ou docker."
-  runner: String
   runnerConfig: JSON
 }
 
@@ -798,7 +794,6 @@ input UpdateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
-  runner: String
   runnerConfig: JSON
 }
 

@@ -73,7 +73,6 @@ export interface Project {
   systemPrompt: string;
   gitUrl: string | null;
   gitBranch: string | null;
-  runner: 'local' | 'docker';
   runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean };
   runnerStatus: RunnerStatus;
   workspacePath: string;
@@ -276,7 +275,6 @@ export const PROJECT_FIELDS = gql`
     systemPrompt
     gitUrl
     gitBranch
-    runner
     runnerConfig
     runnerStatus {
       kind
@@ -1816,7 +1814,6 @@ export const PROJECT_CONNECTIONS = gql`
       id
       name
       slug
-      runner
       myRole
       connections {
         ...ConnectionFields
