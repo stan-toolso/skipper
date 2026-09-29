@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { contextPluginDir } from '../context/skills.js';
-import { runnerFor } from '../runners/index.js';
+import { runner } from '../runners/index.js';
 import { sessionService } from '../sessions/service.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreeService, worktreesRoot } from '../worktrees/service.js';
@@ -41,7 +41,7 @@ export async function deleteProjectCascade(id: string): Promise<boolean> {
   for (const w of await worktreeService.listByProject(id)) {
     await worktreeService.delete(w.id, false).catch((err) => console.error('[projects] suppression du worktree', w.name, err));
   }
-  await runnerFor(project).remove(project).catch((err) => console.error('[projects] suppression du conteneur', err));
+  await runner.remove(project).catch((err) => console.error('[projects] suppression du conteneur', err));
   for (const dir of [workspacePath(project), worktreesRoot(project), contextPluginDir(project), path.join(config.workspacesRoot, '.runners', project.slug)]) {
     await rm(dir, { recursive: true, force: true }).catch((err) => console.error('[projects] suppression de', dir, err));
   }

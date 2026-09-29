@@ -11,9 +11,9 @@ Trois notions :
   ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
-- **Environnement d'exécution (runner)** : par projet, `local` (les agents, terminaux et commandes
-  tournent sur le serveur avec l'utilisateur de Skipper) ou `docker` (un conteneur dédié au projet,
-  avec limites de mémoire et de CPU, qui ne voit que le code de ce projet).
+- **Environnement d'exécution** : chaque projet a son conteneur Docker (limites de mémoire et de CPU,
+  ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
+  s'exécute directement sur le serveur avec l'utilisateur de Skipper.
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal.
@@ -34,6 +34,8 @@ Trois notions :
 - **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
   agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
   MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
+- **Compte Google** : un compte Google relié à un projet (OAuth) pour donner aux agents accès à sa
+  messagerie Gmail et/ou à son Drive, en lecture ou en écriture. Voir « Compte Google » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -68,7 +70,8 @@ Le provider Claude s'appuie sur le [Claude Agent SDK](https://code.claude.com/do
 (`@anthropic-ai/claude-agent-sdk`), qui embarque son propre binaire Claude Code : chaque message du
 flux `query()` est journalisé comme événement `claude.<type>`. L'authentification est celle de
 Claude Code sur la machine qui héberge le backend (connexion `claude` ou `ANTHROPIC_API_KEY`).
-`CLAUDE_BIN` permet, si besoin, d'imposer un binaire Claude Code spécifique.
+`CLAUDE_BIN` permet, si besoin, d'imposer le binaire utilisé pour les commandes d'authentification du
+compte ; les sessions utilisent toujours le CLI de l'image Docker du projet.
 
 ## Structure
 
@@ -102,6 +105,11 @@ backend/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
+    google/
+      service.ts               # compte Google d'un projet : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
+      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
+      mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     connections/
       service.ts               # connexions SSH / PostgreSQL / sites web d'un projet : CRUD, secrets chiffrés, test, prompt
       ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
@@ -215,12 +223,40 @@ humaine (comme les autres permissions) ; on peut la désactiver par connexion (�
 faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
 shell suit le mode d'autorisation de la session (permission Bash).
 
-**Runner et isolation.** Avec le runner local, les sessions tournent sur la machine du backend, sous le
-même utilisateur système : un agent à qui l'on a tout autorisé peut lire ce que le backend lit. Le mode
-« outils » et les demandes d'approbation réduisent la surface ; le runner Docker isole réellement la
-session, mais l'accès « shell » n'y est pas disponible (pas d'agent SSH ni de tunnels dans le conteneur) :
-seuls les outils restent utilisables. La gestion des connexions est réservée aux administrateurs du
-projet ; les autres membres les voient sans les modifier.
+**Isolation.** Les sessions tournent dans le conteneur du projet, jamais sur la machine du backend : un
+agent ne peut pas lire ce que le backend lit. En contrepartie l'accès « shell » n'est pas disponible (pas
+d'agent SSH ni de tunnels dans le conteneur) : seuls les outils restent utilisables ; le code de l'accès
+direct (`connections/runtime.ts`) est conservé mais jamais activé. La gestion des connexions est réservée
+aux administrateurs du projet ; les autres membres les voient sans les modifier.
+
+## Compte Google
+
+Carte « Compte Google » de la fiche d'un projet (administrateurs du projet). On choisit le niveau d'accès
+voulu pour la **messagerie** (aucun, lecture, lecture et envoi) et pour le **Drive** (aucun, lecture,
+lecture et écriture), puis « Connecter un compte Google » ouvre l'écran de consentement Google
+(`GET /auth/google/connect?projectId=…&gmail=…&drive=…`). Le retour passe par le callback de la
+connexion des utilisateurs (`/auth/google/callback`, cookie d'état distinguant les deux flux) : c'est le
+même client OAuth (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) et aucun URI supplémentaire à déclarer ;
+il faut seulement **activer les API Gmail et Google Drive** dans le projet Google Cloud. Un seul compte par
+projet ; le relier de nouveau (autre compte ou autres accès) remplace le précédent et révoque son jeton.
+
+**Jetons.** Le flux demande un accès hors ligne (`access_type=offline`, `prompt=consent`) : Skipper reçoit
+un jeton de rafraîchissement, chiffré en base (`project_google_accounts`, AES-256-GCM comme les autres
+secrets) et jamais renvoyé à l'interface ; les jetons d'accès sont renouvelés en mémoire. Les accès
+enregistrés sont ceux réellement accordés sur l'écran Google (on peut y décocher une portée).
+« Vérifier » renouvelle le jeton et interroge le profil, Gmail et Drive ; « Déconnecter » révoque le jeton
+côté Google et supprime l'enregistrement.
+
+**Accès des agents.** Chaque session Claude du projet reçoit le serveur MCP `google`, dont les outils
+dépendent des accès : `account` ; `gmail_search` (syntaxe de recherche Gmail), `gmail_read`, `gmail_send`
+(envoi ou réponse dans le fil, accès « envoi ») ; `drive_search` (Drive partagés compris), `drive_read`
+(Docs et Slides en texte, Sheets en CSV, fichiers texte), `drive_download` (dans le dossier de travail,
+export des documents Google en docx / xlsx / pptx / pdf…), `drive_upload` (depuis le dossier de travail,
+conversion en Doc / Sheet / Slides possible) et `drive_write` (Google Doc depuis du Markdown, Sheet
+depuis du CSV, ou remplacement du contenu d'un fichier) pour l'accès « écriture ». Les lectures sont
+autorisées d'office ; les écritures passent par les demandes d'autorisation (« toujours » possible), comme
+le navigateur headless. Chaque appel est journalisé comme événement `connection` (kind `gmail` / `drive`)
+de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne les voit jamais.
 
 ## Modèle
 
@@ -232,6 +268,9 @@ projet ; les autres membres les voient sans les modifier.
   base, ssl, tunnel ; pour un site : `url` et `fields` = clé, libellé, secret, valeur publique), `secrets`
   (chiffrés, indexés par clé de champ pour un site), `publicKey`, `hostKey`, `exposure` (mcp, direct, both),
   `readOnly`, `requireApproval`, `commandAllowlist`, dernier test.
+- **GoogleAccount** : `projectId` (un par projet), `email`, `name`, `avatarUrl`, `googleSub`, `gmailAccess`
+  et `driveAccess` (none, read, write), `scopes` accordées, `refreshToken` (chiffré), qui l'a relié, dernière
+  vérification.
 - **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
   créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et
@@ -286,10 +325,10 @@ projet ; les autres membres les voient sans les modifier.
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
   cours ; l'agent la passe en `done` quand il a fini.
 
-- **Runner** (`backend/src/runners/`) : `local` ou `docker` par projet (`projects.runner`,
-  `projects.runner_config` = `{ image, memory, cpus }`). Le runner fournit l'exécutable Claude Code
-  donné au SDK, la commande du terminal web et celle du provider shell. En mode docker, un conteneur
-  `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
+- **Runner** (`backend/src/runners/`) : un seul, Docker, pour tous les projets (`projects.runner_config`
+  = `{ image, memory, cpus, browser }`). Le runner fournit l'exécutable Claude Code donné au SDK, la
+  commande du terminal web et celle du provider shell ; aucun de ces processus ne tourne sur l'hôte.
+  Un conteneur `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
   worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
   de l'utilisateur de Skipper, donc aucune traduction de chemin. Le SDK reste dans le backend : il
@@ -303,10 +342,10 @@ projet ; les autres membres les voient sans les modifier.
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : un serveur MCP Playwright (`@playwright/mcp`, Chromium sans fenêtre)
-  est déclaré à chaque session sous le nom `playwright`. Avec le runner docker il est lancé par
-  `docker exec` dans le conteneur (image `skipper-runner` : Playwright et Chromium sont dans
-  `/opt/ms-playwright`) ; avec le runner local via `npx @playwright/mcp` (installer Chromium sur le
-  serveur : `npx playwright install chromium`). Les outils d'observation (instantané de la page,
+  est déclaré à chaque session sous le nom `playwright`, lancé par `docker exec` dans le conteneur
+  (image `skipper-runner` : Playwright et Chromium sont dans `/opt/ms-playwright`). Sa configuration
+  passe sur la ligne de commande du CLI : elle ne reçoit qu'un environnement minimal (`PATH`, `HOME`),
+  jamais celui du backend. Les outils d'observation (instantané de la page,
   capture d'écran, console, réseau, attente) sont autorisés d'office ; navigation, clics et saisies
   passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
   `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.

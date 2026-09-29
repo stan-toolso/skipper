@@ -17,10 +17,12 @@ import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
+import { createGoogleMcpServer } from '../../google/mcp.js';
+import { googleAccountService, googleReadTools } from '../../google/service.js';
 import { permissionRuleService } from '../../permissions/service.js';
 import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
-import { runnerFor } from '../../runners/index.js';
+import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
@@ -157,15 +159,17 @@ export class ClaudeProvider implements SessionProvider {
     Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
-    const runner = runnerFor(ctx.project);
-    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans l'environnement du runner.
+    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
     const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
-    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches et des connexions.
+    // Compte Google du projet (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
+    const googleAccount = await googleAccountService.find(ctx.project.id);
+    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches, des connexions et du compte Google.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
       await contextService.promptSummary(ctx.project.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
+      await googleAccountService.promptSummary(ctx.project),
       browserEnabled
         ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du projet (connexions de type « site web »), tape le nom de variable d'un secret tel quel dans le champ du formulaire : le navigateur le remplace par la valeur."
         : '',
@@ -200,7 +204,10 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
-        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, env: { ...process.env, ...browserServer.env } as Record<string, string> } } : {}),
+        ...(googleAccount ? { google: createGoogleMcpServer({ project: ctx.project, account: googleAccount, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
+        // Environnement minimal : la configuration MCP est passée au CLI sur sa ligne de commande, visible de tout
+        // utilisateur du serveur (ps) ; l'environnement du backend (secrets) ne doit jamais y figurer.
+        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...browserServer.env } } } : {}),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
@@ -213,10 +220,10 @@ export class ClaudeProvider implements SessionProvider {
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
-      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', ...(browserServer ? browserReadTools : [])],
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', ...(browserServer ? browserReadTools : []), ...(googleAccount ? googleReadTools(googleAccount) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
-      // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
+      // Script de relais qui exécute le CLI dans le conteneur du projet.
       pathToClaudeCodeExecutable: await runner.claudeExecutable(ctx.project),
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
@@ -226,7 +233,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccount: googleAccount?.email ?? null, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();

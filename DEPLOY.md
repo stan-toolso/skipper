@@ -49,7 +49,10 @@ projet **Skipper** (`skipper-510112`, organisation toolso.io, compte de facturat
   vérification) pour inviter des comptes hors organisation.
 - **Google Auth Platform → Clients** : client « Skipper web » (application Web) avec les URI de
   redirection `https://skipper.toolso.io/auth/google/callback` et
-  `http://localhost:4000/auth/google/callback` (développement).
+  `http://localhost:4000/auth/google/callback` (développement). Le même client et le même callback
+  servent à relier un compte Google à un projet (Gmail, Drive) : pour cela, activer les API **Gmail
+  API** et **Google Drive API** dans « API et services » du projet Google Cloud. En audience
+  « Interne », les portées Gmail et Drive (dites sensibles) n'exigent aucune validation Google.
 - Le secret du client n'est visible qu'à sa création : il est dans le `.env` du poste de
   développement (jamais versionné). Le reporter dans `~/skipper/.env` sur le serveur
   (`GOOGLE_CLIENT_ID=...`, `GOOGLE_CLIENT_SECRET=...`), puis `pm2 restart skipper --update-env`.
@@ -110,11 +113,11 @@ Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<r
 l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
 dossier ou création de worktree.
 
-## Environnements isolés (runner docker)
+## Conteneurs des projets (Docker obligatoire)
 
-Un projet en mode « Conteneur Docker » a besoin de Docker sur le serveur et de l'image de base.
-**Non installé à ce jour** (et le disque de l'instance est presque plein : à agrandir ou nettoyer
-avant, l'image pèse ~600 Mo plus les caches des projets). Mise en place :
+Tout projet tourne dans son conteneur Docker : sessions, terminaux et commandes n'ont aucun mode
+d'exécution directe sur le serveur. Docker et l'image de base sont donc indispensables (installés
+depuis le 29/09/2026 ; l'image pèse ~1 Go plus les caches des projets). Mise en place :
 
 ```bash
 # Sur le serveur, en tant que skipper (sudoer)

@@ -49,7 +49,6 @@ export const projectService = {
 
   async update(id: string, input: UpdateProjectInput): Promise<Project> {
     if (input.name !== undefined && !input.name?.trim()) throw new AppError('Le nom du projet est obligatoire');
-    if (input.runner != null && !['local', 'docker'].includes(input.runner)) throw new AppError(`Runner inconnu : ${input.runner}`);
     const project = await projectRepository.update(id, { ...input, name: input.name?.trim() });
     if (!project) throw new NotFoundError('Projet introuvable');
     return project;

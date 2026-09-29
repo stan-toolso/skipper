@@ -321,12 +321,12 @@ export const connectionService = {
   // ---- Prompt des agents ----------------------------------------------------------------------
 
   /** Description des connexions du projet pour le prompt système d'une session. */
-  async promptSummary(project: Pick<Project, 'id' | 'runner' | 'runnerConfig'>): Promise<string> {
+  async promptSummary(project: Pick<Project, 'id' | 'runnerConfig'>): Promise<string> {
     const list = await connectionRepository.listByProject(project.id);
     if (list.length === 0) return '';
     const byId = new Map(list.map((c) => [c.id, c]));
-    // Dans un conteneur Docker, le shell de l'agent n'a ni agent SSH ni tunnels : seuls les outils sont disponibles.
-    const shellAvailable = project.runner === 'local';
+    // Dans le conteneur du projet, le shell de l'agent n'a ni agent SSH ni tunnels : seuls les outils sont disponibles.
+    const shellAvailable = false;
     const browserAvailable = Boolean((project.runnerConfig as { browser?: boolean } | null)?.browser);
     const lines = list.map((c) => {
       const viaMcp = c.exposure !== 'direct';
