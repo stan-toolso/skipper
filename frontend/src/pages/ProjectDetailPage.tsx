@@ -99,6 +99,92 @@ import {
 } from '../graphql/operations';
 import { projectRoleLabels } from '../lib/humanize';
 import { useAuth } from '../auth/AuthContext';
+import { ADD_PROJECT_PERMISSION_RULE, DELETE_PROJECT_PERMISSION_RULE, PROJECT_PERMISSION_RULES, type PermissionRule } from '../graphql/operations';
+
+/** Autorisations d'outils mémorisées pour le projet (réponse « ne plus demander dans ce projet »), avec ajout et retrait. */
+function PermissionRulesCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const { data } = useQuery<{ project: { permissionRules: PermissionRule[] } | null }>(PROJECT_PERMISSION_RULES, { variables: { id: projectId }, pollInterval: 10000 });
+  const refetch = { refetchQueries: ['ProjectPermissionRules'] };
+  const [addRule, { loading: adding, error: addError }] = useMutation(ADD_PROJECT_PERMISSION_RULE, refetch);
+  const [deleteRule, { error: deleteError }] = useMutation(DELETE_PROJECT_PERMISSION_RULE, refetch);
+  const [toolName, setToolName] = useState('');
+  const [ruleContent, setRuleContent] = useState('');
+  const rules = data?.project?.permissionRules ?? [];
+  const error = addError ?? deleteError;
+  return (
+    <Card className="mt-3">
+      <Card.Header>Autorisations mémorisées</Card.Header>
+      <Card.Body className="small">
+        <p className="text-secondary">
+          Quand un agent demande une autorisation, « ne plus demander dans ce projet » enregistre la règle ici : toutes les sessions du projet l'appliquent sans redemander. Retirer une règle ne
+          concerne que les prochaines sessions.
+        </p>
+        <Table size="sm" className="mb-3 align-middle">
+          <tbody>
+            {rules.length === 0 && (
+              <tr>
+                <td className="text-secondary">Aucune autorisation mémorisée.</td>
+              </tr>
+            )}
+            {rules.map((r) => (
+              <tr key={r.id}>
+                <td>
+                  <code>{r.rule}</code>
+                  <div className="text-secondary">
+                    {new Date(r.createdAt).toLocaleDateString()}
+                    {r.createdBySession && (
+                      <>
+                        {' '}
+                        · session <Link to={`/sessions/${r.createdBySession.id}`}>{r.createdBySession.name}</Link>
+                      </>
+                    )}
+                  </div>
+                </td>
+                {canManage && (
+                  <td className="text-end" style={{ width: 90 }}>
+                    <Button size="sm" variant="outline-danger" onClick={() => deleteRule({ variables: { id: r.id } })}>
+                      Retirer
+                    </Button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+        {canManage && (
+          <Form
+            className="d-flex gap-2 align-items-end flex-wrap"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!toolName.trim()) return;
+              addRule({ variables: { projectId, toolName: toolName.trim(), ruleContent: ruleContent.trim() || null } }).then(() => {
+                setToolName('');
+                setRuleContent('');
+              });
+            }}
+          >
+            <Form.Group>
+              <Form.Label className="mb-1">Outil</Form.Label>
+              <Form.Control size="sm" value={toolName} onChange={(e) => setToolName(e.target.value)} placeholder="ex. Bash, Read, WebFetch" style={{ width: 180 }} />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label className="mb-1">Motif (optionnel)</Form.Label>
+              <Form.Control size="sm" value={ruleContent} onChange={(e) => setRuleContent(e.target.value)} placeholder="ex. git status:* ou npm test:*" style={{ width: 260 }} />
+            </Form.Group>
+            <Button type="submit" size="sm" variant="outline-primary" disabled={adding || !toolName.trim()}>
+              {adding ? 'Ajout…' : 'Ajouter'}
+            </Button>
+          </Form>
+        )}
+        {error && (
+          <Alert variant="danger" className="mt-2 mb-0">
+            {error.message}
+          </Alert>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
 
 const ROLES: ProjectRole[] = ['ADMIN', 'MEMBER', 'VIEWER'];
 
@@ -425,6 +511,7 @@ export default function ProjectDetailPage() {
       </Row>
 
       <MembersCard projectId={project.id} canManage={isAdmin} />
+      <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
       <WorktreesCard projectId={project.id} />
 

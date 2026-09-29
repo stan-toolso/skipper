@@ -34,6 +34,8 @@ import { taskService } from '../tasks/service.js';
 import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
 import type { Session, SessionStatus } from '../sessions/types.js';
+import { permissionRuleService } from '../permissions/service.js';
+import { formatRule, type PermissionRule } from '../permissions/types.js';
 import { userService } from '../users/service.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
 
@@ -164,8 +166,14 @@ export const resolvers = {
     terminals: async (w: Worktree) => (await terminalService.listByProject(w.projectId)).filter((t) => t.worktreeId === w.id),
   },
 
+  PermissionRule: {
+    rule: (r: PermissionRule) => formatRule(r),
+    createdBySession: (r: PermissionRule) => (r.createdBySessionId ? sessionService.get(r.createdBySessionId) : null),
+  },
+
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
+    permissionRules: (project: Project) => permissionRuleService.list(project.id),
     runnerStatus: (project: Project) => runnerFor(project).status(project),
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
@@ -451,6 +459,14 @@ export const resolvers = {
     updateProjectMemberRole: async (_: unknown, args: { projectId: string; userId: string; role: GqlRole }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');
       return userService.setRole(args.projectId, args.userId, fromGqlRole(args.role));
+    },
+    addProjectPermissionRule: async (_: unknown, args: { projectId: string; toolName: string; ruleContent?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return permissionRuleService.add(args.projectId, args.toolName, args.ruleContent ?? null);
+    },
+    deleteProjectPermissionRule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, (await permissionRuleService.get(args.id)).projectId, 'member');
+      return permissionRuleService.remove(args.id);
     },
     removeProjectMember: async (_: unknown, args: { projectId: string; userId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');

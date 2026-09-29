@@ -111,6 +111,22 @@ type Project {
   members: [ProjectMember!]!
   "Rôle de l'utilisateur connecté sur ce projet."
   myRole: ProjectRole!
+  "Autorisations d'outils mémorisées pour le projet (« ne plus demander dans ce projet »)."
+  permissionRules: [PermissionRule!]!
+}
+
+"Règle d'autorisation d'outil mémorisée pour un projet, au format des permissions Claude Code (Read, Bash(git status:*)...)."
+type PermissionRule {
+  id: ID!
+  projectId: ID!
+  toolName: String!
+  "Motif propre à l'outil ; null = tout l'outil."
+  ruleContent: String
+  "Forme textuelle : toolName ou toolName(ruleContent)."
+  rule: String!
+  "Session pendant laquelle la règle a été mémorisée, le cas échéant."
+  createdBySession: Session
+  createdAt: DateTime!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -800,6 +816,10 @@ type Mutation {
   inviteProjectMember(projectId: ID!, email: String!, role: ProjectRole = MEMBER): ProjectMember!
   updateProjectMemberRole(projectId: ID!, userId: ID!, role: ProjectRole!): ProjectMember!
   removeProjectMember(projectId: ID!, userId: ID!): Boolean!
+  "Ajoute une autorisation mémorisée au projet (membres). ruleContent vide = tout l'outil."
+  addProjectPermissionRule(projectId: ID!, toolName: String!, ruleContent: String): PermissionRule!
+  "Retire une autorisation mémorisée : les prochaines sessions redemanderont."
+  deleteProjectPermissionRule(id: ID!): Boolean!
 
   "Crée le projet et prépare son workspace (clone git si une URL est fournie). Le créateur en devient administrateur."
   createProject(input: CreateProjectInput!): Project!

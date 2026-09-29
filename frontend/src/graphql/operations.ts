@@ -35,6 +35,16 @@ export interface User {
   lastLoginAt: string | null;
 }
 
+export interface PermissionRule {
+  id: string;
+  projectId: string;
+  toolName: string;
+  ruleContent: string | null;
+  rule: string;
+  createdBySession: { id: string; name: string } | null;
+  createdAt: string;
+}
+
 export interface ProjectMember {
   user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'>;
   role: ProjectRole;
@@ -1791,5 +1801,40 @@ export const FORGET_CONNECTION_HOST_KEY = gql`
     forgetConnectionHostKey(id: $id) {
       ...ConnectionFields
     }
+  }
+`;
+
+export const PROJECT_PERMISSION_RULES = gql`
+  query ProjectPermissionRules($id: ID!) {
+    project(id: $id) {
+      id
+      permissionRules {
+        id
+        projectId
+        toolName
+        ruleContent
+        rule
+        createdAt
+        createdBySession {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+export const ADD_PROJECT_PERMISSION_RULE = gql`
+  mutation AddProjectPermissionRule($projectId: ID!, $toolName: String!, $ruleContent: String) {
+    addProjectPermissionRule(projectId: $projectId, toolName: $toolName, ruleContent: $ruleContent) {
+      id
+      rule
+    }
+  }
+`;
+
+export const DELETE_PROJECT_PERMISSION_RULE = gql`
+  mutation DeleteProjectPermissionRule($id: ID!) {
+    deleteProjectPermissionRule(id: $id)
   }
 `;

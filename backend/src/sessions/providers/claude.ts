@@ -17,6 +17,8 @@ import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
+import { permissionRuleService } from '../../permissions/service.js';
+import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runnerFor } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
@@ -167,6 +169,8 @@ export class ClaudeProvider implements SessionProvider {
     // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
     const pluginDir = await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
+    // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
+    const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
@@ -186,7 +190,7 @@ export class ClaudeProvider implements SessionProvider {
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
-      allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks'],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
@@ -307,10 +311,17 @@ export class ClaudeProvider implements SessionProvider {
         )) as Partial<PermissionResponse>;
 
         if (response.decision === 'allow') {
+          const remember = response.scope === 'project' || response.scope === 'session' || response.always === true;
+          if (response.scope === 'project') {
+            // Mémorisé pour le projet : les prochaines sessions reçoivent la règle dans allowedTools ;
+            // la session courante l'applique tout de suite via updatedPermissions.
+            const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
+            if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+          }
           return {
             behavior: 'allow',
             updatedInput: input,
-            updatedPermissions: response.always ? options.suggestions : undefined,
+            updatedPermissions: remember ? options.suggestions : undefined,
             toolUseID: options.toolUseID,
           };
         }

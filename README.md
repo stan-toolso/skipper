@@ -225,11 +225,17 @@ projet ; les autres membres les voient sans les modifier.
   le mode « streaming input » du SDK : la session reste ouverte entre les tours, `sendSessionMessage`
   envoie une instruction, `interruptSession` interrompt le tour en cours (échap dans l'interface),
   `endSession` termine proprement, `stopSession` tue le processus.
+- **PermissionRule** : autorisation d'outil mémorisée pour un projet (`toolName`, `ruleContent`
+  optionnel, ex. `Bash(git status:*)`). Créée en répondant « ne plus demander dans ce projet » à une
+  demande d'autorisation (les règles suggérées par le SDK sont enregistrées) ou à la main sur la page
+  du projet ; chaque session Claude du projet les reçoit dans `allowedTools`, donc ne redemande pas.
+  Retirer une règle ne concerne que les prochaines sessions.
 - **Request** : `sessionId`, `type` (`permission`, `question`, `input`, ... extensible), `status`
   (`pending`, `answered`, `cancelled`, `expired`), `title`, `message`, `payload`, `response`. Un
   provider appelle `ctx.ask(...)` et reçoit la réponse humaine sous forme de JSON libre. Le provider
   Claude convertit les demandes de permission du SDK (`canUseTool`) en demandes `permission`
-  (réponse `{ decision: "allow" | "deny", always?, message? }`) et l'outil `AskUserQuestion` en
+  (réponse `{ decision: "allow" | "deny", scope?: "session" | "project", message? }` : `scope` applique
+  les règles suggérées à la session ou les mémorise pour le projet) et l'outil `AskUserQuestion` en
   demandes `question` (réponse `{ answers: { "<question>": "<réponse>" } }`). Arrêter une session
   annule ses demandes en attente ; au redémarrage du serveur elles passent à `expired`.
 - **SessionEvent** : journal ordonné d'une session (`stdout`, `stderr`, `system`, `status`,
@@ -402,6 +408,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 `UNAUTHENTICATED` (pas connecté) ou `FORBIDDEN` (rôle insuffisant).
 
 - `me` (utilisateur connecté, null sinon) ; `users` (administrateurs de l'application)
+- `Project.permissionRules` ; `addProjectPermissionRule(projectId, toolName, ruleContent)`, `deleteProjectPermissionRule(id)` (membres)
 - `Project.members`, `Project.myRole` ; `inviteProjectMember(projectId, email, role)`, `updateProjectMemberRole(projectId, userId, role)`, `removeProjectMember(projectId, userId)` (administrateurs du projet)
 - `settings` (réglages Claude, statut d'authentification, modèles connus, consommation ; administrateurs de l'application) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
 - Connexion OAuth : `startClaudeLogin` (URL à ouvrir), `completeClaudeLogin(id, code)`, `cancelClaudeLogin`, `claudeLogin(id)`
