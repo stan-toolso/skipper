@@ -29,6 +29,10 @@ interface LiveLogin extends ClaudeLogin {
   proc: pty.IPty;
   output: string;
   timer: NodeJS.Timeout;
+  /** Position dans `output` au moment de l'envoi du code : seule la sortie suivante est analysée. */
+  submittedAt: number;
+  /** Jeton repéré dans la sortie (l'enregistrement, asynchrone, suit). */
+  tokenSeen: boolean;
 }
 
 const URL_RE = /https:\/\/claude\.com\/[^\s\x07\x1b]*oauth\/authorize\?[^\s\x07\x1b]+/;
@@ -103,6 +107,8 @@ export const loginService = {
       createdAt: new Date(),
       proc,
       output: '',
+      submittedAt: 0,
+      tokenSeen: false,
       timer: setTimeout(() => finish(login, 'failed', 'Délai dépassé : recommencez la connexion'), LOGIN_TTL_MS),
     };
     logins.set(login.id, login);
@@ -126,21 +132,24 @@ export const loginService = {
           resolveUrl(login.url);
         }
       }
-      if (login.status === 'exchanging') {
-        const t = clean.match(TOKEN_RE);
+      if (login.status === 'exchanging' && !login.tokenSeen) {
+        const after = stripAnsi(login.output.slice(login.submittedAt));
+        const t = after.match(TOKEN_RE);
         if (t) {
+          login.tokenSeen = true;
           void settingsService
             .setOauthToken(t[0])
             .then(() => settingsService.update({ authMode: 'oauth' }))
             .then(() => finish(login, 'done'))
             .catch((err) => finish(login, 'failed', (err as Error).message));
-        } else if (/invalid|expired|error|échec|failed/i.test(clean.slice(-600))) {
+        } else if (/invalid|expired|failed|error/i.test(after)) {
           finish(login, 'failed', 'Code refusé par Claude : relancez la connexion et collez le code sans le modifier');
         }
       }
     });
     proc.onExit(({ exitCode }) => {
-      if (login.status === 'done' || login.status === 'failed') return;
+      // Le CLI se termine juste après avoir imprimé le jeton : son enregistrement est en cours.
+      if (login.status === 'done' || login.status === 'failed' || login.tokenSeen) return;
       const tail = stripAnsi(login.output).trim().split('\n').slice(-3).join(' ').trim();
       const msg = `Le CLI s'est arrêté (code ${exitCode})${tail ? ` : ${tail.slice(0, 300)}` : ''}`;
       finish(login, 'failed', msg);
@@ -172,6 +181,7 @@ export const loginService = {
     if (l.status !== 'awaiting_code') throw new AppError(`Cette connexion n'attend pas de code (état : ${l.status})`);
     const trimmed = code.trim();
     if (!trimmed) throw new AppError('Le code est vide');
+    l.submittedAt = l.output.length;
     l.status = 'exchanging';
     console.log(`[login] ${l.id} code reçu (${trimmed.length} caractères), transmis au CLI`);
     l.proc.write(trimmed + '\r');
