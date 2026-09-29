@@ -19,6 +19,7 @@ import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runnerFor } from '../../runners/index.js';
+import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
 import { settingsService } from '../../settings/service.js';
@@ -143,7 +144,7 @@ export class ClaudeProvider implements SessionProvider {
     await settingsService.assertBudgetAvailable();
     const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
-    const env = settingsService.authEnv();
+    const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
     let direct: DirectAccess | null = null;
     try {

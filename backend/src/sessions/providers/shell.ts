@@ -1,5 +1,6 @@
 import { AppError } from '../../errors.js';
 import { runnerFor } from '../../runners/index.js';
+import { agentGitEnv } from '../../git/agentEnv.js';
 import type { ProviderDescription, RunContext, RunningHandle, SessionProvider } from './provider.js';
 import { spawnProcess } from './process.js';
 
@@ -36,7 +37,7 @@ export class ShellProvider implements SessionProvider {
     return spawnProcess({
       command: spec.command,
       args: spec.args,
-      env: spec.env,
+      env: { ...(await agentGitEnv()), ...spec.env },
       cwd: ctx.cwd,
       interactive: true,
       // Une session shell relancée par un message reçoit ce message sur stdin.

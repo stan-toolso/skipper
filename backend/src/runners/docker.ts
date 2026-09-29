@@ -10,11 +10,12 @@ import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { worktreesRoot } from '../worktrees/service.js';
 import type { Runner, RunnerConfig, RunnerStatus, SpawnSpec } from './types.js';
+import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 
 const execFileAsync = promisify(execFile);
 
 /** Variables transmises du backend au CLI dans le conteneur (authentification Claude et GitHub). */
-const PASSTHROUGH_ENV = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'];
+const PASSTHROUGH_ENV = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', ...AGENT_GIT_ENV_KEYS];
 
 async function docker(args: string[], opts: { allowFail?: boolean } = {}): Promise<{ stdout: string; code: number }> {
   try {
@@ -89,12 +90,14 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       const args = [
         'run', '-d', '--name', name, '--restart', 'unless-stopped', '--memory', s.memory, '--cpus', s.cpus,
         '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
+        // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
+        '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
         // Le code, les worktrees et les skills du projet, au même chemin que sur l'hôte.
         '-v', `${workspace}:${workspace}`, '-v', `${worktrees}:${worktrees}`, '-v', `${plugin}:${plugin}`,
       ];
       // Configuration et identifiants Claude Code de l'utilisateur système (dossier ~/.claude et fichier
       // ~/.claude.json), s'ils existent : le CLI du conteneur retrouve ainsi le compte du serveur.
-      for (const entry of [path.join(home, '.claude'), path.join(home, '.claude.json')]) {
+      for (const entry of [path.join(home, '.claude'), path.join(home, '.claude.json'), path.join(home, '.gitconfig')]) {
         try {
           await execFileAsync('test', ['-e', entry]);
           args.push('-v', `${entry}:${entry}`);
