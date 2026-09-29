@@ -4,6 +4,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
+import { githubService } from '../settings/github.js';
 import type { Project } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -23,12 +24,16 @@ export async function workspaceExists(project: Pick<Project, 'slug'>): Promise<b
 }
 
 export async function git(args: string[], cwd?: string): Promise<string> {
+  // Les dépôts GitHub en https utilisent le jeton de la connexion GitHub (Paramètres), s'il existe.
+  const auth = await githubService.gitConfigArgs().catch(() => []);
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    const { stdout } = await execFileAsync('git', [...auth, ...args], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
     return stdout.trim();
   } catch (err) {
     const e = err as { stderr?: string; message: string };
-    throw new AppError(`git ${args[0]} a échoué : ${(e.stderr || e.message).trim()}`);
+    // Le jeton ne doit jamais apparaître dans un message d'erreur.
+    const text = (e.stderr || e.message).replace(/AUTHORIZATION: basic \S+/g, 'AUTHORIZATION: basic ***');
+    throw new AppError(`git ${args[0]} a échoué : ${text.trim()}`);
   }
 }
 

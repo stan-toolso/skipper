@@ -40,6 +40,11 @@ Trois notions :
 
 Mise en production (serveur, nginx, base RDS, pm2) : voir `DEPLOY.md`.
 
+Paramètres (menu en bas de la sidebar) : une section par service. **Claude** (authentification,
+modèles, budgets et consommation) et **GitHub** (connexion OAuth par device flow avec une OAuth App à
+vous, jeton chiffré en base, dépôts privés en https sans clé de déploiement, liste des dépôts dans le
+formulaire de projet).
+
 ```bash
 cp .env.example .env        # ajuster si besoin
 npm install

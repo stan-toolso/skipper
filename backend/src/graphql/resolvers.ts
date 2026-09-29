@@ -13,6 +13,7 @@ import { listProviders } from '../sessions/providers/registry.js';
 import { sessionService } from '../sessions/service.js';
 import { serverAuthStatus, serverLogout } from '../settings/cli.js';
 import { loginService, type ClaudeLoginKind } from '../settings/login.js';
+import { githubService } from '../settings/github.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
@@ -59,6 +60,7 @@ const fromGqlStatus = (s?: GqlStatus | null): SessionStatus | undefined =>
 const appSettings = () => ({
   claude: settingsService.claude,
   claudeAuth: settingsService.authStatus(),
+  github: githubService.status(),
   models: settingsService.models(),
   usage: () => usageService.summary(),
 });
@@ -142,6 +144,7 @@ export const resolvers = {
 
   Query: {
     settings: () => appSettings(),
+    githubRepositories: (_: unknown, args: { query?: string | null }) => githubService.listRepositories(args.query),
     claudeLogin: (_: unknown, args: { id: string }) => loginService.get(args.id),
     providers: () => listProviders(),
     sessions: (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; limit?: number | null; offset?: number | null }) =>
@@ -180,6 +183,19 @@ export const resolvers = {
   },
 
   Mutation: {
+    setGithubClientId: async (_: unknown, args: { clientId?: string | null }) => {
+      await githubService.setClientId(args.clientId ?? null);
+      return appSettings();
+    },
+    startGithubLogin: () => githubService.startLogin(),
+    cancelGithubLogin: async () => {
+      githubService.cancelLogin();
+      return appSettings();
+    },
+    disconnectGithub: async () => {
+      await githubService.disconnect();
+      return appSettings();
+    },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }) => {
       await settingsService.update(input);
       return appSettings();

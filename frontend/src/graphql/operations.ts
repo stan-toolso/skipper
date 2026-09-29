@@ -886,9 +886,44 @@ export interface UsageSummary {
   bySession: { sessionId: string | null; sessionName: string | null; projectName: string | null; usd: number }[];
 }
 
+export interface GithubLogin {
+  id: string;
+  userCode: string;
+  verificationUri: string;
+  expiresAt: string;
+  intervalSeconds: number;
+  status: 'pending' | 'done' | 'failed' | 'expired' | 'cancelled';
+  error: string | null;
+  createdAt: string;
+}
+
+export interface GithubAuthStatus {
+  clientId: string | null;
+  clientIdSource: 'env' | 'settings' | null;
+  connected: boolean;
+  login: string | null;
+  avatarUrl: string | null;
+  scopes: string[];
+  tokenSetAt: string | null;
+  currentLogin: GithubLogin | null;
+}
+
+export interface GithubRepository {
+  fullName: string;
+  name: string;
+  owner: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+  cloneUrl: string;
+  htmlUrl: string;
+  pushedAt: string | null;
+}
+
 export interface AppSettings {
   claude: ClaudeSettings;
   claudeAuth: ClaudeAuthStatus;
+  github: GithubAuthStatus;
   models: ClaudeModel[];
   usage: UsageSummary;
 }
@@ -972,11 +1007,112 @@ export const APP_SETTINGS_FIELDS = gql`
   }
 `;
 
+export const GITHUB_AUTH_FIELDS = gql`
+  fragment GithubAuthFields on GithubAuthStatus {
+    clientId
+    clientIdSource
+    connected
+    login
+    avatarUrl
+    scopes
+    tokenSetAt
+    currentLogin {
+      id
+      userCode
+      verificationUri
+      expiresAt
+      intervalSeconds
+      status
+      error
+      createdAt
+    }
+  }
+`;
+
 export const SETTINGS = gql`
   ${APP_SETTINGS_FIELDS}
+  ${GITHUB_AUTH_FIELDS}
   query Settings {
     settings {
       ...AppSettingsFields
+      github {
+        ...GithubAuthFields
+      }
+    }
+  }
+`;
+
+export const GITHUB_STATUS = gql`
+  ${GITHUB_AUTH_FIELDS}
+  query GithubStatus {
+    settings {
+      github {
+        ...GithubAuthFields
+      }
+    }
+  }
+`;
+
+export const GITHUB_REPOSITORIES = gql`
+  query GithubRepositories($query: String) {
+    githubRepositories(query: $query) {
+      fullName
+      name
+      owner
+      description
+      private
+      defaultBranch
+      cloneUrl
+      htmlUrl
+      pushedAt
+    }
+  }
+`;
+
+export const SET_GITHUB_CLIENT_ID = gql`
+  ${GITHUB_AUTH_FIELDS}
+  mutation SetGithubClientId($clientId: String) {
+    setGithubClientId(clientId: $clientId) {
+      github {
+        ...GithubAuthFields
+      }
+    }
+  }
+`;
+
+export const START_GITHUB_LOGIN = gql`
+  mutation StartGithubLogin {
+    startGithubLogin {
+      id
+      userCode
+      verificationUri
+      expiresAt
+      intervalSeconds
+      status
+      error
+      createdAt
+    }
+  }
+`;
+
+export const CANCEL_GITHUB_LOGIN = gql`
+  ${GITHUB_AUTH_FIELDS}
+  mutation CancelGithubLogin {
+    cancelGithubLogin {
+      github {
+        ...GithubAuthFields
+      }
+    }
+  }
+`;
+
+export const DISCONNECT_GITHUB = gql`
+  ${GITHUB_AUTH_FIELDS}
+  mutation DisconnectGithub {
+    disconnectGithub {
+      github {
+        ...GithubAuthFields
+      }
     }
   }
 `;
