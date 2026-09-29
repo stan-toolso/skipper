@@ -22,6 +22,8 @@ import { runnerFor } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
+import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
+import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { settingsService } from '../../settings/service.js';
 import { usageService } from '../../settings/usage.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
@@ -161,6 +163,7 @@ export class ClaudeProvider implements SessionProvider {
       await contextService.promptSummary(ctx.project.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
+      sessionsPromptSummary(ctx.project),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -174,6 +177,8 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
+        worktrees: createWorktreesMcpServer(ctx.project, ctx.session.id),
+        sessions: createSessionsMcpServer(ctx.project, ctx.session.id),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
@@ -186,7 +191,10 @@ export class ClaudeProvider implements SessionProvider {
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
-      allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
+      // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
+      // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
+      // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
+      allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end'],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.

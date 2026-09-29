@@ -8,7 +8,6 @@ import ProjectDetailPage from './pages/ProjectDetailPage';
 import ContextPage from './pages/ContextPage';
 import LoginPage from './pages/LoginPage';
 import SessionsPage from './pages/SessionsPage';
-import NewSessionPage from './pages/NewSessionPage';
 import SessionDetailPage from './pages/SessionDetailPage';
 import RequestsPage from './pages/RequestsPage';
 import TerminalPage from './pages/TerminalPage';
@@ -50,7 +49,6 @@ function Gate() {
         <Route path="/projects/:id/connections" element={<ConnectionsPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
-        <Route path="/sessions/new" element={<NewSessionPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/terminals/:id" element={<TerminalPage />} />

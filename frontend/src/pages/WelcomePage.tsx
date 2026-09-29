@@ -3,10 +3,12 @@ import { Button, Card, Col, Row } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { PROJECTS, REQUESTS, type HumanRequest, type Project } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useSessionLauncher } from '../components/SessionLauncher';
 
 /** Page d'accueil : explique le parcours en trois étapes et oriente vers l'action suivante. */
 export default function WelcomePage() {
   useTabTitle('Accueil');
+  const { openNewSession } = useSessionLauncher();
   const { data } = useQuery<{ projects: Project[] }>(PROJECTS);
   const { data: pending } = useQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const projects = data?.projects ?? [];
@@ -61,7 +63,7 @@ export default function WelcomePage() {
               <Card.Text className="text-secondary small">
                 Décrivez ce que l'agent doit faire. Il travaille en arrière-plan, vous suivez ses actions en direct et pouvez lui écrire à tout moment.
               </Card.Text>
-              <Button as={Link as any} to="/sessions/new" size="sm" variant={projects.length ? 'primary' : 'outline-secondary'} disabled={!projects.length}>
+              <Button size="sm" variant={projects.length ? 'primary' : 'outline-secondary'} disabled={!projects.length} onClick={() => openNewSession()}>
                 Nouvelle session
               </Button>
             </Card.Body>

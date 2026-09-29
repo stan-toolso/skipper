@@ -4,10 +4,12 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
 import { DELETE_SESSION, PROJECTS, SESSIONS, STOP_SESSION, type Project, type Session, type SessionStatus } from '../graphql/operations';
+import { useSessionLauncher } from '../components/SessionLauncher';
 
 const statuses: SessionStatus[] = ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'STOPPED', 'INTERRUPTED'];
 
 export default function SessionsPage() {
+  const { openNewSession } = useSessionLauncher();
   const [status, setStatus] = useState<SessionStatus | ''>('');
   const [projectId, setProjectId] = useState('');
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
@@ -39,7 +41,7 @@ export default function SessionsPage() {
               </option>
             ))}
           </Form.Select>
-          <Button as={Link as any} to="/sessions/new" size="sm">
+          <Button size="sm" onClick={() => openNewSession({ projectId: projectId || null })}>
             Nouvelle session
           </Button>
         </div>

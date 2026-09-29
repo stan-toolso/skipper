@@ -92,6 +92,8 @@ export interface Session {
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
+  /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
+  parentSession: { id: string; name: string } | null;
 }
 
 export interface ContextFolder {
@@ -393,6 +395,10 @@ export const SESSION_FIELDS = gql`
       name
       branch
       path
+    }
+    parentSession {
+      id
+      name
     }
   }
 `;

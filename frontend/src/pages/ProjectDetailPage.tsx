@@ -3,6 +3,7 @@ import { Alert, Button, Card, Col, Form, Row, Spinner, Table } from 'react-boots
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useSessionLauncher } from '../components/SessionLauncher';
 
 import StatusBadge from '../components/StatusBadge';
 
@@ -77,7 +78,6 @@ function RunnerCard({ project }: { project: Project }) {
 }
 import { useState } from 'react';
 import {
-  CREATE_WORKTREE,
   DELETE_PROJECT,
   DELETE_WORKTREE,
   INVITE_PROJECT_MEMBER,
@@ -201,16 +201,13 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
   );
 }
 
-/** Worktrees git du projet : liste, création (branche existante ou nouvelle), suppression. */
+/** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
   const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
-  const [createWorktree, { loading: creating, error: createError }] = useMutation(CREATE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
-  const [deleteWorktree, { error: deleteError }] = useMutation(DELETE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
-  const [branch, setBranch] = useState('');
-  const [baseRef, setBaseRef] = useState('');
+  const [deleteWorktree, { error }] = useMutation(DELETE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
+  const { openNewSession, openNewWorktree } = useSessionLauncher();
   const project = data?.project;
   if (!project?.gitUrl) return null;
-  const error = createError ?? deleteError;
   return (
     <Card className="mt-3">
       <Card.Header>Branches de travail (worktrees)</Card.Header>
@@ -238,7 +235,7 @@ function WorktreesCard({ projectId }: { projectId: string }) {
                   </div>
                 </td>
                 <td className="text-end text-nowrap">
-                  <Button as={Link as any} to={`/sessions/new?projectId=${projectId}&worktreeId=${w.id}`} size="sm" variant="outline-primary" className="me-1">
+                  <Button size="sm" variant="outline-primary" className="me-1" disabled={!w.exists} onClick={() => openNewSession({ projectId, worktreeId: w.id })}>
                     Session
                   </Button>
                   <Button
@@ -256,29 +253,10 @@ function WorktreesCard({ projectId }: { projectId: string }) {
             ))}
           </tbody>
         </Table>
-        <Form
-          className="d-flex gap-2 align-items-end flex-wrap"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!branch.trim()) return;
-            createWorktree({ variables: { projectId, branch: branch.trim(), baseRef: baseRef.trim() || null } }).then(() => {
-              setBranch('');
-              setBaseRef('');
-            });
-          }}
-        >
-          <Form.Group>
-            <Form.Label className="mb-1">Branche</Form.Label>
-            <Form.Control size="sm" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="ex. feature/contact (créée si absente)" style={{ width: 260 }} />
-          </Form.Group>
-          <Form.Group>
-            <Form.Label className="mb-1">À partir de</Form.Label>
-            <Form.Control size="sm" value={baseRef} onChange={(e) => setBaseRef(e.target.value)} placeholder="HEAD par défaut" style={{ width: 160 }} />
-          </Form.Group>
-          <Button type="submit" size="sm" disabled={creating || !branch.trim()}>
-            {creating ? 'Création…' : 'Créer le worktree'}
-          </Button>
-        </Form>
+        <Button size="sm" onClick={() => openNewWorktree({ projectId })}>
+          <i className="bi bi-diagram-2 me-1" />
+          Nouveau worktree
+        </Button>
         {error && (
           <Alert variant="danger" className="mt-2 mb-0">
             {error.message}
@@ -292,6 +270,7 @@ function WorktreesCard({ projectId }: { projectId: string }) {
 type ProjectWithSessions = Project & { sessions: Session[] };
 
 export default function ProjectDetailPage() {
+  const { openNewSession } = useSessionLauncher();
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { data, loading, error } = useQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
@@ -323,7 +302,7 @@ export default function ProjectDetailPage() {
         </div>
         <div className="d-flex gap-2">
           {canWrite && (
-            <Button as={Link as any} to={`/sessions/new?projectId=${project.id}`} size="sm">
+            <Button size="sm" onClick={() => openNewSession({ projectId: project.id })}>
               Nouvelle session
             </Button>
           )}

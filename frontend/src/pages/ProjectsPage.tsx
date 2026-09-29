@@ -2,9 +2,11 @@ import { useQuery } from '@apollo/client';
 import { Alert, Button, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { PROJECTS, type Project } from '../graphql/operations';
+import { useSessionLauncher } from '../components/SessionLauncher';
 
 export default function ProjectsPage() {
   const { data, loading, error } = useQuery<{ projects: Project[] }>(PROJECTS, { pollInterval: 10000 });
+  const { openNewSession } = useSessionLauncher();
 
   return (
     <>
@@ -63,7 +65,7 @@ export default function ProjectsPage() {
                   )}
                 </td>
                 <td className="text-end">
-                  <Button as={Link as any} to={`/sessions/new?projectId=${p.id}`} size="sm" variant="outline-primary">
+                  <Button size="sm" variant="outline-primary" onClick={() => openNewSession({ projectId: p.id })}>
                     Nouvelle session
                   </Button>
                 </td>

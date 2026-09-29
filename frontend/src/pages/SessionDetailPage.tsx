@@ -114,6 +114,15 @@ export default function SessionDetailPage() {
                 · <i className="bi bi-diagram-2" /> {session.worktree.branch}
               </>
             )}
+            {session.parentSession && (
+              <>
+                {' '}
+                · lancée par{' '}
+                <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title="Session d'agent qui a lancé celle-ci">
+                  <i className="bi bi-robot" /> {session.parentSession.name}
+                </Link>
+              </>
+            )}
             {technical && (
               <>
                 {' '}

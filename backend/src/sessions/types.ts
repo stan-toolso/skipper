@@ -6,6 +6,8 @@ export interface Session {
   id: string;
   projectId: string;
   worktreeId: string | null;
+  /** Session d'agent qui a lancé celle-ci (outil `sessions.create`), null pour une session lancée par un humain. */
+  parentSessionId: string | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -29,9 +31,19 @@ export interface SessionEvent {
   createdAt: Date;
 }
 
+/** Worktree à créer en même temps que la session, qui s'y exécutera. */
+export interface NewWorktreeInput {
+  branch: string;
+  name?: string | null;
+  baseRef?: string | null;
+}
+
 export interface CreateSessionInput {
   projectId: string;
   worktreeId?: string | null;
+  /** Crée d'abord ce worktree et y lance la session (exclusif avec worktreeId). */
+  newWorktree?: NewWorktreeInput | null;
+  parentSessionId?: string | null;
   name: string;
   provider: string;
   prompt?: string | null;
@@ -43,6 +55,7 @@ export interface SessionFilter {
   /** Restreint aux projets listés (projets accessibles à l'utilisateur). */
   projectIds?: string[];
   worktreeId?: string;
+  parentSessionId?: string;
   status?: SessionStatus;
   provider?: string;
   limit?: number;

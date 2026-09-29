@@ -1,3 +1,4 @@
+import type { Actor } from '../context/types.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { worktreeService } from '../worktrees/service.js';
@@ -14,6 +15,22 @@ const running = new Map<string, RunningHandle>();
 /** Traitement de fin de session (mise à jour du statut) en cours, par id de session. */
 const finishing = new Map<string, Promise<void>>();
 
+/** Profondeur maximale d'imbrication des sessions lancées par des agents : une session humaine peut lancer des sessions, qui peuvent en lancer à leur tour, puis c'est fini. */
+const MAX_AGENT_DEPTH = 2;
+/** Nombre maximal de sessions en cours lancées par une même session d'agent (le serveur a peu de mémoire). */
+const MAX_RUNNING_CHILDREN = 3;
+
+/** Nombre d'ancêtres d'une session (0 pour une session lancée par un humain). */
+async function depthOf(sessionId: string): Promise<number> {
+  let depth = 0;
+  let current = await sessionRepository.findById(sessionId);
+  while (current?.parentSessionId && depth <= MAX_AGENT_DEPTH) {
+    depth += 1;
+    current = await sessionRepository.findById(current.parentSessionId);
+  }
+  return depth;
+}
+
 async function publishSession(session: Session | null): Promise<Session> {
   if (!session) throw new NotFoundError('Session introuvable');
   pubSub.publish('sessionUpdated', session);
@@ -26,14 +43,86 @@ export const sessionService = {
   events: (sessionId: string, opts?: { after?: string; limit?: number }) => sessionRepository.listEvents(sessionId, opts),
   isRunning: (id: string) => running.has(id),
 
-  async create(input: CreateSessionInput & { autoStart?: boolean }): Promise<Session> {
+  /**
+   * Crée une session, éventuellement dans un worktree créé pour l'occasion (`newWorktree`).
+   * `actor` agent : la session est rattachée à la session qui la lance (profondeur et nombre limités) et les membres sont notifiés.
+   */
+  async create(input: CreateSessionInput & { autoStart?: boolean }, actor: Actor = { type: 'human' }): Promise<Session> {
     const provider = getProvider(input.provider);
     provider.validateConfig?.(input.config ?? {});
     const project = await projectService.get(input.projectId); // lève NotFoundError si le projet n'existe pas
+    if (input.worktreeId && input.newWorktree) throw new AppError('Choisissez un worktree existant ou un nouveau worktree, pas les deux');
     if (input.worktreeId) await worktreeService.resolveCwd(project, input.worktreeId); // vérifie l'appartenance et l'existence
-    const session = await sessionRepository.create(input);
+
+    let parentSessionId: string | null = null;
+    if (actor.type === 'agent' && actor.sessionId) {
+      const parent = await sessionRepository.findById(actor.sessionId);
+      if (!parent) throw new NotFoundError('Session parente introuvable');
+      if (parent.projectId !== project.id) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
+      if ((await depthOf(parent.id)) >= MAX_AGENT_DEPTH) throw new AppError(`Imbrication maximale atteinte : une session lancée par un agent lancé par un agent ne peut pas en lancer d'autres`);
+      const children = await sessionRepository.list({ parentSessionId: parent.id, status: 'running', limit: MAX_RUNNING_CHILDREN + 1 });
+      if (children.length >= MAX_RUNNING_CHILDREN) {
+        throw new AppError(`Au plus ${MAX_RUNNING_CHILDREN} sessions lancées par cette session peuvent tourner en même temps : termine-en une (sessions.end) avant d'en lancer une autre`);
+      }
+      parentSessionId = parent.id;
+    }
+
+    let worktreeId = input.worktreeId ?? null;
+    let createdWorktreeId: string | null = null;
+    if (input.newWorktree) {
+      const worktree = await worktreeService.create(project.id, input.newWorktree);
+      worktreeId = createdWorktreeId = worktree.id;
+    }
+    let session: Session;
+    try {
+      session = await sessionRepository.create({ ...input, worktreeId, parentSessionId });
+    } catch (err) {
+      if (createdWorktreeId) await worktreeService.delete(createdWorktreeId, true).catch(() => undefined);
+      throw err;
+    }
     pubSub.publish('sessionUpdated', session);
+    if (parentSessionId) {
+      void notificationService.notify({
+        type: 'session.created',
+        title: 'Session lancée par un agent',
+        message: `${session.name} · ${project.name}`,
+        link: `/sessions/${session.id}`,
+        projectId: project.id,
+        sessionId: parentSessionId,
+        payload: { childSessionId: session.id },
+      });
+    }
     return input.autoStart === false ? session : this.start(session.id);
+  },
+
+  /**
+   * Attend que la session ait fini son tour (agent en attente d'instructions) ou ne tourne plus,
+   * au plus `timeoutMs`. Renvoie l'état courant de la session dans tous les cas.
+   */
+  async waitForIdle(id: string, timeoutMs: number): Promise<Session> {
+    const settled = (s: Session) => s.status !== 'running' || s.activity === 'idle';
+    const current = await sessionRepository.findById(id);
+    if (!current) throw new NotFoundError('Session introuvable');
+    if (settled(current)) return current;
+    const updates = pubSub.subscribe('sessionUpdated');
+    let timerHandle: NodeJS.Timeout | undefined;
+    const timer = new Promise<null>((resolve) => {
+      timerHandle = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      // Relit l'état après l'abonnement : la mise à jour a pu survenir entre les deux.
+      const fresh = await sessionRepository.findById(id);
+      if (fresh && settled(fresh)) return fresh;
+      while (true) {
+        const next = await Promise.race([updates.next(), timer]);
+        if (next === null || next.done) break;
+        if (next.value.id === id && settled(next.value)) return next.value;
+      }
+    } finally {
+      clearTimeout(timerHandle);
+      await updates.return?.(undefined);
+    }
+    return (await sessionRepository.findById(id)) ?? current;
   },
 
   /**
