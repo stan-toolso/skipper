@@ -787,11 +787,17 @@ export const SIDEBAR = gql`
         status
         activity
         pendingRequestCount
+        worktree {
+          id
+        }
       }
       terminals {
         id
         name
         status
+        worktree {
+          id
+        }
       }
       worktrees {
         id

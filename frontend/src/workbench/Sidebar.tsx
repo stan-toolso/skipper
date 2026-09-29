@@ -23,8 +23,8 @@ import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
 
-type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'>;
-type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'>;
+type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'> & { worktree?: { id: string } | null };
+type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'> & { worktree?: { id: string } | null };
 interface SidebarWorktree {
   id: string;
   name: string;
@@ -410,7 +410,15 @@ export default function Sidebar() {
                   {menuFor === p.id && <AddMenu projectId={p.id} canWorktree={Boolean(p.gitUrl)} onClose={() => setMenuFor(null)} />}
                 </span>
               </div>
-              {open && <SessionRows sessions={p.sessions} terminals={p.terminals} activeSessionId={activeSessionId} activeTerminalId={activeTerminalId} indent={30} />}
+              {open && (
+                <SessionRows
+                  sessions={p.sessions.filter((s) => !s.worktree)}
+                  terminals={p.terminals.filter((t) => !t.worktree)}
+                  activeSessionId={activeSessionId}
+                  activeTerminalId={activeTerminalId}
+                  indent={30}
+                />
+              )}
               {open &&
                 p.worktrees.map((w) => {
                   const wOpen = !collapsed[w.id];
