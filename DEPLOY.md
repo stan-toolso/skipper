@@ -49,7 +49,10 @@ projet **Skipper** (`skipper-510112`, organisation toolso.io, compte de facturat
   vérification) pour inviter des comptes hors organisation.
 - **Google Auth Platform → Clients** : client « Skipper web » (application Web) avec les URI de
   redirection `https://skipper.toolso.io/auth/google/callback` et
-  `http://localhost:4000/auth/google/callback` (développement).
+  `http://localhost:4000/auth/google/callback` (développement). Le même client et le même callback
+  servent à relier un compte Google à un projet (Gmail, Drive) : pour cela, activer les API **Gmail
+  API** et **Google Drive API** dans « API et services » du projet Google Cloud. En audience
+  « Interne », les portées Gmail et Drive (dites sensibles) n'exigent aucune validation Google.
 - Le secret du client n'est visible qu'à sa création : il est dans le `.env` du poste de
   développement (jamais versionné). Le reporter dans `~/skipper/.env` sur le serveur
   (`GOOGLE_CLIENT_ID=...`, `GOOGLE_CLIENT_SECRET=...`), puis `pm2 restart skipper --update-env`.

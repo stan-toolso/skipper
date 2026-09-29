@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 
+import GoogleAccountCard from '../components/GoogleAccountCard';
 import StatusBadge from '../components/StatusBadge';
 
 /** Environnement d'exécution du projet : local, ou conteneur Docker avec son état et ses commandes. */
@@ -513,6 +514,7 @@ export default function ProjectDetailPage() {
       <MembersCard projectId={project.id} canManage={isAdmin} />
       <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
+      <GoogleAccountCard projectId={project.id} canManage={isAdmin} />
       <WorktreesCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>

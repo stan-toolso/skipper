@@ -1732,6 +1732,83 @@ const CONNECTION_FIELDS = gql`
   }
 `;
 
+// ---- Compte Google du projet ---------------------------------------------------------------------
+
+export type GoogleAccess = 'NONE' | 'READ' | 'WRITE';
+
+export interface GoogleAccount {
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  gmailAccess: GoogleAccess;
+  driveAccess: GoogleAccess;
+  scopes: string[];
+  connectedBy: { id: string; name: string; email: string } | null;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastCheckError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const GOOGLE_ACCOUNT_FIELDS = gql`
+  fragment GoogleAccountFields on GoogleAccount {
+    email
+    name
+    avatarUrl
+    gmailAccess
+    driveAccess
+    scopes
+    connectedBy {
+      id
+      name
+      email
+    }
+    lastCheckAt
+    lastCheckOk
+    lastCheckError
+    createdAt
+    updatedAt
+  }
+`;
+
+export const PROJECT_GOOGLE_ACCOUNT = gql`
+  ${GOOGLE_ACCOUNT_FIELDS}
+  query ProjectGoogleAccount($id: ID!) {
+    project(id: $id) {
+      id
+      googleAccount {
+        ...GoogleAccountFields
+      }
+    }
+  }
+`;
+
+export const CHECK_GOOGLE_ACCOUNT = gql`
+  ${GOOGLE_ACCOUNT_FIELDS}
+  mutation CheckGoogleAccount($projectId: ID!) {
+    checkGoogleAccount(projectId: $projectId) {
+      ok
+      error
+      detail
+      account {
+        ...GoogleAccountFields
+      }
+    }
+  }
+`;
+
+export const DISCONNECT_GOOGLE_ACCOUNT = gql`
+  mutation DisconnectGoogleAccount($projectId: ID!) {
+    disconnectGoogleAccount(projectId: $projectId) {
+      id
+      googleAccount {
+        email
+      }
+    }
+  }
+`;
+
 export const PROJECT_CONNECTIONS = gql`
   ${CONNECTION_FIELDS}
   query ProjectConnections($id: ID!) {

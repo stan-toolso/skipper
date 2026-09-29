@@ -34,6 +34,8 @@ Trois notions :
 - **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL) que les agents
   peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
   MCP et ne les voit jamais. Voir « Connexions » plus bas.
+- **Compte Google** : un compte Google relié à un projet (OAuth) pour donner aux agents accès à sa
+  messagerie Gmail et/ou à son Drive, en lecture ou en écriture. Voir « Compte Google » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -102,6 +104,11 @@ backend/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
+    google/
+      service.ts               # compte Google d'un projet : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
+      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
+      mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     connections/
       service.ts               # connexions SSH / PostgreSQL d'un projet : CRUD, secrets chiffrés, test, prompt
       ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
@@ -204,6 +211,35 @@ session, mais l'accès « shell » n'y est pas disponible (pas d'agent SSH ni de
 seuls les outils restent utilisables. La gestion des connexions est réservée aux administrateurs du
 projet ; les autres membres les voient sans les modifier.
 
+## Compte Google
+
+Carte « Compte Google » de la fiche d'un projet (administrateurs du projet). On choisit le niveau d'accès
+voulu pour la **messagerie** (aucun, lecture, lecture et envoi) et pour le **Drive** (aucun, lecture,
+lecture et écriture), puis « Connecter un compte Google » ouvre l'écran de consentement Google
+(`GET /auth/google/connect?projectId=…&gmail=…&drive=…`). Le retour passe par le callback de la
+connexion des utilisateurs (`/auth/google/callback`, cookie d'état distinguant les deux flux) : c'est le
+même client OAuth (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) et aucun URI supplémentaire à déclarer ;
+il faut seulement **activer les API Gmail et Google Drive** dans le projet Google Cloud. Un seul compte par
+projet ; le relier de nouveau (autre compte ou autres accès) remplace le précédent et révoque son jeton.
+
+**Jetons.** Le flux demande un accès hors ligne (`access_type=offline`, `prompt=consent`) : Skipper reçoit
+un jeton de rafraîchissement, chiffré en base (`project_google_accounts`, AES-256-GCM comme les autres
+secrets) et jamais renvoyé à l'interface ; les jetons d'accès sont renouvelés en mémoire. Les accès
+enregistrés sont ceux réellement accordés sur l'écran Google (on peut y décocher une portée).
+« Vérifier » renouvelle le jeton et interroge le profil, Gmail et Drive ; « Déconnecter » révoque le jeton
+côté Google et supprime l'enregistrement.
+
+**Accès des agents.** Chaque session Claude du projet reçoit le serveur MCP `google`, dont les outils
+dépendent des accès : `account` ; `gmail_search` (syntaxe de recherche Gmail), `gmail_read`, `gmail_send`
+(envoi ou réponse dans le fil, accès « envoi ») ; `drive_search` (Drive partagés compris), `drive_read`
+(Docs et Slides en texte, Sheets en CSV, fichiers texte), `drive_download` (dans le dossier de travail,
+export des documents Google en docx / xlsx / pptx / pdf…), `drive_upload` (depuis le dossier de travail,
+conversion en Doc / Sheet / Slides possible) et `drive_write` (Google Doc depuis du Markdown, Sheet
+depuis du CSV, ou remplacement du contenu d'un fichier) pour l'accès « écriture ». Les lectures sont
+autorisées d'office ; les écritures passent par les demandes d'autorisation (« toujours » possible), comme
+le navigateur headless. Chaque appel est journalisé comme événement `connection` (kind `gmail` / `drive`)
+de la session. Le backend détient les jetons : l'agent ne les voit jamais, quel que soit le runner.
+
 ## Modèle
 
 - **Project** : `name`, `slug` (nom du dossier, fixé à la création), `description`, `systemPrompt`,
@@ -213,6 +249,9 @@ projet ; les autres membres les voient sans les modifier.
 - **Connection** : `projectId`, `name`, `kind` (ssh, postgres), `settings` (hôte, port, utilisateur, base, ssl,
   tunnel), `secrets` (chiffrés), `publicKey`, `hostKey`, `exposure` (mcp, direct, both), `readOnly`,
   `requireApproval`, `commandAllowlist`, dernier test.
+- **GoogleAccount** : `projectId` (un par projet), `email`, `name`, `avatarUrl`, `googleSub`, `gmailAccess`
+  et `driveAccess` (none, read, write), `scopes` accordées, `refreshToken` (chiffré), qui l'a relié, dernière
+  vérification.
 - **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
   créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et

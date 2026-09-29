@@ -7,6 +7,8 @@ import { contextService, HUMAN } from '../context/service.js';
 import { NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { gitService } from '../git/service.js';
+import { googleAccountService } from '../google/service.js';
+import type { GoogleAccount } from '../google/types.js';
 import { deleteProjectCascade, deleteWorktreeCascade } from '../projects/cleanup.js';
 import { runnerFor } from '../runners/index.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
@@ -166,6 +168,12 @@ export const resolvers = {
     terminals: async (w: Worktree) => (await terminalService.listByProject(w.projectId)).filter((t) => t.worktreeId === w.id),
   },
 
+  GoogleAccount: {
+    gmailAccess: (a: GoogleAccount) => a.gmailAccess.toUpperCase(),
+    driveAccess: (a: GoogleAccount) => a.driveAccess.toUpperCase(),
+    connectedBy: (a: GoogleAccount) => (a.connectedById ? userService.get(a.connectedById).catch(() => null) : null),
+  },
+
   PermissionRule: {
     rule: (r: PermissionRule) => formatRule(r),
     createdBySession: (r: PermissionRule) => (r.createdBySessionId ? sessionService.get(r.createdBySessionId) : null),
@@ -180,6 +188,7 @@ export const resolvers = {
     terminals: (project: Project) => terminalService.listByProject(project.id),
     worktrees: (project: Project) => worktreeService.listByProject(project.id),
     connections: (project: Project) => connectionService.listByProject(project.id),
+    googleAccount: (project: Project) => googleAccountService.find(project.id),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
@@ -610,6 +619,16 @@ export const resolvers = {
     forgetConnectionHostKey: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardConnection(ctx, args.id, 'admin');
       return connectionService.forgetHostKey(args.id);
+    },
+    checkGoogleAccount: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'admin');
+      const { account, result } = await googleAccountService.check(args.projectId);
+      return { account, ...result };
+    },
+    disconnectGoogleAccount: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'admin');
+      await googleAccountService.disconnect(args.projectId);
+      return projectService.get(args.projectId);
     },
     closeTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTerminal(ctx, args.id, 'member');
