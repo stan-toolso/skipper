@@ -92,13 +92,15 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
         // Le code, les worktrees et les skills du projet, au même chemin que sur l'hôte.
         '-v', `${workspace}:${workspace}`, '-v', `${worktrees}:${worktrees}`, '-v', `${plugin}:${plugin}`,
       ];
-      // Identifiants Claude Code de l'utilisateur système (mode « compte du serveur »), s'ils existent.
-      const claudeDir = path.join(home, '.claude');
-      try {
-        await execFileAsync('test', ['-d', claudeDir]);
-        args.push('-v', `${claudeDir}:${claudeDir}`);
-      } catch {
-        /* pas de dossier ~/.claude : l'authentification passe par les variables d'environnement */
+      // Configuration et identifiants Claude Code de l'utilisateur système (dossier ~/.claude et fichier
+      // ~/.claude.json), s'ils existent : le CLI du conteneur retrouve ainsi le compte du serveur.
+      for (const entry of [path.join(home, '.claude'), path.join(home, '.claude.json')]) {
+        try {
+          await execFileAsync('test', ['-e', entry]);
+          args.push('-v', `${entry}:${entry}`);
+        } catch {
+          /* absent : l'authentification passe par les variables d'environnement */
+        }
       }
       args.push(s.image, 'sleep', 'infinity');
       await docker(args);
