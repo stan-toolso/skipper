@@ -187,6 +187,10 @@ export const resolvers = {
       await githubService.setClientId(args.clientId ?? null);
       return appSettings();
     },
+    setGithubPersonalToken: async (_: unknown, args: { token: string }) => {
+      await githubService.setPersonalToken(args.token);
+      return appSettings();
+    },
     startGithubLogin: () => githubService.startLogin(),
     cancelGithubLogin: async () => {
       githubService.cancelLogin();

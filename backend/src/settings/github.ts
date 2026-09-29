@@ -22,6 +22,8 @@ interface GithubSecrets {
   login: string;
   scopes: string[];
   avatarUrl?: string | null;
+  /** 'pat' (jeton personnel collé) ou 'oauth' (device flow). */
+  method?: 'pat' | 'oauth';
 }
 
 export interface GithubLogin {
@@ -41,6 +43,7 @@ export interface GithubAuthStatus {
   /** 'env' (GITHUB_CLIENT_ID), 'settings' (saisi dans l'interface) ou null. */
   clientIdSource: 'env' | 'settings' | null;
   connected: boolean;
+  method: 'pat' | 'oauth' | null;
   login: string | null;
   avatarUrl: string | null;
   scopes: string[];
@@ -120,6 +123,7 @@ export const githubService = {
       clientId,
       clientIdSource: source,
       connected: Boolean(secrets),
+      method: secrets?.method ?? (secrets ? 'oauth' : null),
       login: secrets?.login ?? null,
       avatarUrl: secrets?.avatarUrl ?? null,
       scopes: secrets?.scopes ?? [],
@@ -182,6 +186,7 @@ export const githubService = {
             login: user.login,
             avatarUrl: user.avatarUrl,
             scopes: (data.scope ?? '').split(/[ ,]+/).filter(Boolean),
+            method: 'oauth',
           });
           state.status = 'done';
           return;
@@ -214,6 +219,29 @@ export const githubService = {
     };
     state.timer = setInterval(() => void poll(), state.intervalSeconds * 1000);
     return publicLogin(state);
+  },
+
+  /** Jeton d'accès personnel (classique ou à granularité fine) collé par l'utilisateur : vérifié puis stocké chiffré. */
+  async setPersonalToken(rawToken: string): Promise<void> {
+    const token = rawToken.trim();
+    if (!/^(ghp_|github_pat_|gho_|ghu_)[A-Za-z0-9_]{20,}$/.test(token)) {
+      throw new AppError("Ce n'est pas un jeton GitHub (attendu : ghp_… ou github_pat_…)");
+    }
+    const res = await githubFetch('https://api.github.com/user', { token });
+    if (res.status === 401) throw new AppError('GitHub refuse ce jeton (invalide, expiré ou révoqué)');
+    if (!res.ok) throw new AppError(`GitHub : vérification impossible (${res.status})`);
+    const u = (await res.json()) as { login: string; avatar_url?: string };
+    // Les jetons classiques annoncent leurs portées ; les jetons à granularité fine n'en ont pas.
+    const scopes = (res.headers.get('x-oauth-scopes') ?? '').split(/[ ,]+/).filter(Boolean);
+    this.cancelLogin();
+    await settingsRepository.set<GithubSecrets>(SECRETS_KEY, {
+      token: encryptSecret(token),
+      tokenSetAt: new Date().toISOString(),
+      login: u.login,
+      avatarUrl: u.avatar_url ?? null,
+      scopes: scopes.length ? scopes : ['(jeton à granularité fine)'],
+      method: 'pat',
+    });
   },
 
   cancelLogin(): void {

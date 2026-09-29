@@ -901,6 +901,7 @@ export interface GithubAuthStatus {
   clientId: string | null;
   clientIdSource: 'env' | 'settings' | null;
   connected: boolean;
+  method: 'pat' | 'oauth' | null;
   login: string | null;
   avatarUrl: string | null;
   scopes: string[];
@@ -1012,6 +1013,7 @@ export const GITHUB_AUTH_FIELDS = gql`
     clientId
     clientIdSource
     connected
+    method
     login
     avatarUrl
     scopes
@@ -1073,6 +1075,17 @@ export const SET_GITHUB_CLIENT_ID = gql`
   ${GITHUB_AUTH_FIELDS}
   mutation SetGithubClientId($clientId: String) {
     setGithubClientId(clientId: $clientId) {
+      github {
+        ...GithubAuthFields
+      }
+    }
+  }
+`;
+
+export const SET_GITHUB_PERSONAL_TOKEN = gql`
+  ${GITHUB_AUTH_FIELDS}
+  mutation SetGithubPersonalToken($token: String!) {
+    setGithubPersonalToken(token: $token) {
       github {
         ...GithubAuthFields
       }

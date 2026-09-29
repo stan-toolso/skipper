@@ -409,6 +409,8 @@ type GithubAuthStatus {
   "'env' (GITHUB_CLIENT_ID), 'settings' (saisi dans l'interface) ou null."
   clientIdSource: String
   connected: Boolean!
+  "'pat' (jeton personnel) ou 'oauth' (device flow)."
+  method: String
   login: String
   avatarUrl: String
   scopes: [String!]!
@@ -540,6 +542,8 @@ type Mutation {
   startClaudeLogin(kind: ClaudeLoginKind = oauth): ClaudeLogin!
   "GitHub : enregistre l'identifiant de l'OAuth App (null pour effacer)."
   setGithubClientId(clientId: String): AppSettings!
+  "GitHub : enregistre un jeton d'accès personnel après vérification auprès de GitHub."
+  setGithubPersonalToken(token: String!): AppSettings!
   "GitHub : démarre la connexion par device flow."
   startGithubLogin: GithubLogin!
   cancelGithubLogin: AppSettings!
