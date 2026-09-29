@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
 import { describeTool } from '../lib/humanize';
 import { canAutoFocus } from '../lib/device';
+import Markdown from './Markdown';
 
 interface Option {
   label: string;
@@ -68,7 +69,7 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
       <div className="cc-prompt-title">L'agent souhaite {desc.action}</div>
       {detail && <div className="cc-prompt-body">{detail}</div>}
       {content && <div className="cc-prompt-body">{content.length > 1500 ? `${content.slice(0, 1500)}\n…` : content}</div>}
-      {request.message && <div className="cc-prompt-body">{request.message}</div>}
+      {request.message && <Markdown className="cc-prompt-body" text={request.message} />}
       <div>Êtes-vous d'accord ?</div>
       {!denying ? (
         <OptionList
@@ -122,7 +123,7 @@ function QuestionPrompt({ request, answer, busy }: { request: HumanRequest; answ
         {q.header ?? 'Question'}
         {questions.length > 1 && <span className="cc-desc"> ({index + 1}/{questions.length})</span>}
       </div>
-      <div className="cc-question">{q.question}</div>
+      <Markdown className="cc-question" text={q.question} />
       <OptionList options={options} disabled={busy} onPick={(o) => commit(o.label)} />
       <form
         onSubmit={(ev) => {
@@ -141,7 +142,7 @@ function InputPrompt({ request, answer, busy }: { request: HumanRequest; answer:
   return (
     <div className="cc-prompt">
       <div className="cc-prompt-title">{request.title}</div>
-      {request.message && <div className="cc-prompt-body">{request.message}</div>}
+      {request.message && <Markdown className="cc-prompt-body" text={request.message} />}
       <form
         onSubmit={(ev) => {
           ev.preventDefault();

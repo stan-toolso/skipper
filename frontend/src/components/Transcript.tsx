@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionEvent } from '../graphql/operations';
 import { describeTool, formatCost, formatDuration } from '../lib/humanize';
+import Markdown from './Markdown';
 
 interface ContentBlock {
   type: string;
@@ -154,7 +155,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
             nodes.push(
               <div key={key} className="cc-assistant">
                 <span className="cc-dot">⏺</span>
-                <span className="cc-body">{block.text}</span>
+                <Markdown className="cc-body" text={block.text} />
               </div>,
             );
           } else if (block.type === 'tool_use') {

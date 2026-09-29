@@ -4,6 +4,7 @@ import { Alert, Button, Card, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
 import { describeTool } from '../lib/humanize';
+import Markdown from './Markdown';
 
 interface Question {
   question: string;
@@ -76,7 +77,7 @@ function QuestionForm({ request, onAnswer, busy }: { request: HumanRequest; onAn
         <div key={q.question} className="mb-3">
           <div className="fw-semibold">
             {q.header && <span className="badge bg-secondary me-2">{q.header}</span>}
-            {q.question}
+            <Markdown text={q.question} />
           </div>
           {q.options.map((o) => (
             <Form.Check
