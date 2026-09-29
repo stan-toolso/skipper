@@ -15,6 +15,8 @@ import TerminalPage from './pages/TerminalPage';
 import WelcomePage from './pages/WelcomePage';
 import TasksPage from './pages/TasksPage';
 import SettingsPage from './pages/SettingsPage';
+import FilesPage from './pages/FilesPage';
+import FileEditorPage from './pages/FileEditorPage';
 
 /** Sans utilisateur connecté, seule la page de connexion est affichée. */
 function Gate() {
@@ -51,6 +53,10 @@ function Gate() {
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/terminals/:id" element={<TerminalPage />} />
         {user.isAdmin && <Route path="/settings" element={<SettingsPage />} />}
+        <Route path="/projects/:id/files" element={<FilesPage />} />
+        <Route path="/projects/:id/files/*" element={<FileEditorPage />} />
+        <Route path="/worktrees/:wid/files" element={<FilesPage />} />
+        <Route path="/worktrees/:wid/files/*" element={<FileEditorPage />} />
       </Routes>
     </Layout>
   );

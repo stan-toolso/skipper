@@ -2,6 +2,8 @@ import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { accessibleProjectIds, canAccessProject, filterAsync, requireAdmin, requireProject, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { NotFoundError } from '../errors.js';
+import { fileService, type WorkspaceRef } from '../files/service.js';
+import { gitService } from '../git/service.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -15,6 +17,7 @@ import { listProviders } from '../sessions/providers/registry.js';
 import { sessionService } from '../sessions/service.js';
 import { serverAuthStatus, serverLogout } from '../settings/cli.js';
 import { loginService, type ClaudeLoginKind } from '../settings/login.js';
+import { githubService } from '../settings/github.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
@@ -82,6 +85,7 @@ const fromGqlStatus = (s?: GqlStatus | null): SessionStatus | undefined =>
 const appSettings = () => ({
   claude: settingsService.claude,
   claudeAuth: settingsService.authStatus(),
+  github: githubService.status(),
   models: settingsService.models(),
   usage: () => usageService.summary(),
 });
@@ -173,6 +177,38 @@ export const resolvers = {
   },
 
   Query: {
+    gitStatus: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.status(args);
+    },
+    gitDiff: async (_: unknown, args: WorkspaceRef & { path: string; staged?: boolean | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.diff(args, args.path, args.staged ?? false);
+    },
+    gitCommitDiff: async (_: unknown, args: WorkspaceRef & { hash: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.show(args, args.hash);
+    },
+    gitBranches: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.branches(args);
+    },
+    gitLog: async (_: unknown, args: WorkspaceRef & { limit?: number | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.log(args, args.limit ?? undefined);
+    },
+    workspaceEntries: async (_: unknown, args: WorkspaceRef & { path?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return fileService.list(args, args.path ?? '');
+    },
+    workspaceFile: async (_: unknown, args: WorkspaceRef & { path: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return fileService.read(args, args.path);
+    },
+    githubRepositories: (_: unknown, args: { query?: string | null }, ctx: Ctx) => {
+      requireUser(ctx);
+      return githubService.listRepositories(args.query);
+    },
     me: (_: unknown, __: unknown, ctx: Ctx) => ctx.user,
     users: (_: unknown, __: unknown, ctx: Ctx) => {
       requireAdmin(ctx);
@@ -261,6 +297,86 @@ export const resolvers = {
   },
 
   Mutation: {
+    gitStage: async (_: unknown, args: WorkspaceRef & { paths: string[] }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.stage(args, args.paths);
+      return gitService.status(args);
+    },
+    gitUnstage: async (_: unknown, args: WorkspaceRef & { paths: string[] }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.unstage(args, args.paths);
+      return gitService.status(args);
+    },
+    gitDiscard: async (_: unknown, args: WorkspaceRef & { paths: string[] }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.discard(args, args.paths);
+      return gitService.status(args);
+    },
+    gitCommit: async (_: unknown, args: WorkspaceRef & { message: string; stageAll?: boolean | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.commit(args, args.message, args.stageAll ?? false);
+      return gitService.status(args);
+    },
+    gitFetch: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.fetch(args);
+      return gitService.status(args);
+    },
+    gitPull: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.pull(args);
+      return gitService.status(args);
+    },
+    gitPush: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.push(args);
+      return gitService.status(args);
+    },
+    gitCheckout: async (_: unknown, args: WorkspaceRef & { branch: string; create?: boolean | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.checkout(args, args.branch, args.create ?? false);
+      return gitService.status(args);
+    },
+    writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return fileService.write(args, args.path, args.content, args.expectedModifiedAt ?? null);
+    },
+    createWorkspaceEntry: async (_: unknown, args: WorkspaceRef & { path: string; kind: 'dir' | 'file' }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return fileService.create(args, args.path, args.kind);
+    },
+    renameWorkspaceEntry: async (_: unknown, args: WorkspaceRef & { path: string; newPath: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return fileService.rename(args, args.path, args.newPath);
+    },
+    deleteWorkspaceEntry: async (_: unknown, args: WorkspaceRef & { path: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return fileService.delete(args, args.path);
+    },
+    setGithubClientId: async (_: unknown, args: { clientId?: string | null }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      await githubService.setClientId(args.clientId ?? null);
+      return appSettings();
+    },
+    setGithubPersonalToken: async (_: unknown, args: { token: string }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      await githubService.setPersonalToken(args.token);
+      return appSettings();
+    },
+    startGithubLogin: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return githubService.startLogin();
+    },
+    cancelGithubLogin: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
+      githubService.cancelLogin();
+      return appSettings();
+    },
+    disconnectGithub: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
+      await githubService.disconnect();
+      return appSettings();
+    },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {
       requireAdmin(ctx);
       await settingsService.update(input);

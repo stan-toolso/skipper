@@ -2,6 +2,8 @@ import { useMutation, useQuery } from '@apollo/client';
 import { Alert, Button, Card, Col, Form, Row, Spinner, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 import StatusBadge from '../components/StatusBadge';
 import { useState } from 'react';
 import {
@@ -221,6 +223,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
   const { data, loading, error } = useQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
   useTabTitle(data?.project?.name);
+  useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
   const [deleteProject, { error: deleteError }] = useMutation(DELETE_PROJECT, {
     refetchQueries: [{ query: PROJECTS }],
@@ -296,7 +299,15 @@ export default function ProjectDetailPage() {
                 </dd>
                 <dt className="col-4">État</dt>
                 <dd className="col-8">
-                  {project.workspaceExists ? (
+                  {project.workspaceExists && project.gitUrl && !project.git ? (
+                    <>
+                      <span className="text-warning">dépôt non récupéré</span>{' '}
+                      <Button size="sm" variant="outline-primary" className="ms-2" disabled={preparing} onClick={() => prepareWorkspace({ variables: { id } })}>
+                        {preparing ? 'Récupération…' : 'Récupérer le dépôt'}
+                      </Button>
+                      <div className="text-secondary mt-1">Le dossier existe mais ne contient pas le dépôt. S'il est vide, la récupération le clone.</div>
+                    </>
+                  ) : project.workspaceExists ? (
                     <span className="text-success">prêt</span>
                   ) : (
                     <>

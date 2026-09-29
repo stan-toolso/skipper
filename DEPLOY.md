@@ -73,6 +73,37 @@ OAuth d'un an (`claude setup-token`, chiffré en base avec la clé
 mode « compte du serveur » accepte aussi `ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un
 `pm2 restart skipper --update-env`.
 
+## Dépôts git privés des projets
+
+Deux possibilités.
+
+**Connexion GitHub depuis l'interface (recommandé)** : Paramètres → GitHub. Le plus simple est de
+coller un **jeton d'accès personnel** (Settings → Developer settings → Personal access tokens ;
+« fine-grained » limité aux dépôts voulus avec *Contents : Read and write*, ou « classic » avec la
+portée `repo`). Alternative sans jeton à copier : une OAuth App GitHub (Settings → Developer
+settings → OAuth Apps, « Enable Device Flow » coché) dont le client id se saisit dans la page ou dans
+`GITHUB_CLIENT_ID` du `.env`, puis connexion par device flow. Dans les deux cas le jeton est chiffré
+en base (même clé que les secrets Claude) et injecté dans les commandes git pour les URL https de
+github.com. Les projets utilisent alors l'URL
+https du dépôt, et le formulaire de projet propose la liste des dépôts du compte.
+
+**Clé de déploiement par dépôt (repli)** : pour un dépôt hors du compte connecté ou sans OAuth App.
+Il faut une **clé de déploiement en lecture seule** dédiée, avec un alias SSH. Exemple pour Curso (déjà en place : clé `~/.ssh/curso-deploy`, alias
+`github-curso`) :
+
+```bash
+# Sur le serveur
+ssh-keygen -t ed25519 -N "" -C "skipper-server-<projet>-deploy" -f ~/.ssh/<projet>-deploy
+printf "\nHost github-<projet>\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/<projet>-deploy\n  IdentitiesOnly yes\n" >> ~/.ssh/config
+cat ~/.ssh/<projet>-deploy.pub
+# Depuis le poste (droits admin sur le dépôt)
+gh repo deploy-key add <clé>.pub --repo <org>/<repo> --title "Skipper (skipper.toolso.io, lecture seule)"
+```
+
+Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<repo>.git` (pas
+l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
+dossier ou création de worktree.
+
 ## Procédure de déploiement
 
 ```bash

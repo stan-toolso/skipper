@@ -20,6 +20,9 @@ import {
 } from '../graphql/operations';
 import { formatCost } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
+import GithubSection from '../components/GithubSection';
+import { Nav } from 'react-bootstrap';
+import { useSearchParams } from 'react-router-dom';
 
 const modeLabels: Record<ClaudeAuthMode, { title: string; hint: string }> = {
   server: { title: 'Compte du serveur', hint: "Le compte connecté dans Claude Code pour l'utilisateur système qui fait tourner Skipper (connexion depuis cette page ou par SSH), ou les variables d'environnement du serveur. Recommandé : les identifiants se renouvellent seuls." },
@@ -485,9 +488,13 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
   );
 }
 
-/** Configuration générale : authentification Claude, modèles, budgets et consommation. */
+type SettingsSection = 'claude' | 'github';
+
+/** Configuration générale, par service : Claude (authentification, modèles, budgets) et GitHub (connexion, dépôts). */
 export default function SettingsPage() {
   useTabTitle('Paramètres');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const section = (searchParams.get('section') as SettingsSection | null) ?? 'claude';
   const { data, loading, error } = useQuery<{ settings: AppSettings }>(SETTINGS, { pollInterval: 15_000 });
   if (loading && !data) return <Spinner animation="border" size="sm" />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
@@ -495,10 +502,29 @@ export default function SettingsPage() {
   return (
     <>
       <h1 className="h3 mb-3">Paramètres</h1>
+      <Nav variant="tabs" activeKey={section} onSelect={(k) => setSearchParams({ section: k ?? 'claude' })} className="mb-3">
+        <Nav.Item>
+          <Nav.Link eventKey="claude">
+            <i className="bi bi-stars me-1" /> Claude
+            {data.settings.claudeAuth.verification?.ok === false && <Badge bg="danger" className="ms-2">à vérifier</Badge>}
+          </Nav.Link>
+        </Nav.Item>
+        <Nav.Item>
+          <Nav.Link eventKey="github">
+            <i className="bi bi-github me-1" /> GitHub
+            {data.settings.github.connected ? <Badge bg="success" className="ms-2">connecté</Badge> : <Badge bg="secondary" className="ms-2">non connecté</Badge>}
+          </Nav.Link>
+        </Nav.Item>
+      </Nav>
       <div style={{ maxWidth: 1100 }}>
-        <AuthCard settings={data.settings} />
-        <ModelsCard settings={data.settings} />
-        <BudgetCard settings={data.settings} />
+        {section === 'claude' && (
+          <>
+            <AuthCard settings={data.settings} />
+            <ModelsCard settings={data.settings} />
+            <BudgetCard settings={data.settings} />
+          </>
+        )}
+        {section === 'github' && <GithubSection />}
       </div>
     </>
   );

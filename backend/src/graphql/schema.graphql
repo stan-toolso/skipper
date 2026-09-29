@@ -262,6 +262,82 @@ type Worktree {
   terminals: [Terminal!]!
 }
 
+# ---- Explorateur de fichiers ---------------------------------------------------------------------
+
+"Entrée d'un dossier du workspace (checkout principal ou worktree)."
+type FileEntry {
+  name: String!
+  "Chemin relatif à la racine du workspace, séparateur /."
+  path: String!
+  "dir, file, symlink ou other."
+  kind: String!
+  size: Int
+  modifiedAt: DateTime
+}
+
+type FileContent {
+  path: String!
+  name: String!
+  size: Int!
+  modifiedAt: DateTime!
+  "true si le fichier semble binaire : content est alors null."
+  binary: Boolean!
+  content: String
+}
+
+enum FileEntryKind {
+  dir
+  file
+}
+
+type GitCommit {
+  hash: String!
+  shortHash: String!
+  subject: String!
+  author: String!
+  date: DateTime!
+}
+
+"Fichier modifié dans un workspace ou un worktree (statuts git : M, A, D, R, ?, U...)."
+type GitFileChange {
+  path: String!
+  origPath: String
+  indexStatus: String!
+  worktreeStatus: String!
+  staged: Boolean!
+  unstaged: Boolean!
+  untracked: Boolean!
+  conflicted: Boolean!
+}
+
+type GitStatus {
+  branch: String
+  upstream: String
+  ahead: Int!
+  behind: Int!
+  detached: Boolean!
+  changes: [GitFileChange!]!
+  headCommit: GitCommit
+}
+
+type GitBranch {
+  name: String!
+  current: Boolean!
+  remote: Boolean!
+  upstream: String
+  commit: GitCommit
+}
+
+type GitDiff {
+  "Chemin du fichier, ou hash pour un commit."
+  path: String!
+  staged: Boolean!
+  "Diff unifié."
+  text: String!
+  binary: Boolean!
+  truncated: Boolean!
+}
+
 type WorkspaceGit {
   branch: String!
   commit: String!
@@ -425,9 +501,50 @@ type UsageSummary {
   bySession: [UsageBySession!]!
 }
 
+"Connexion GitHub en cours (device flow) : saisir userCode sur verificationUri."
+type GithubLogin {
+  id: ID!
+  userCode: String!
+  verificationUri: String!
+  expiresAt: DateTime!
+  intervalSeconds: Int!
+  "pending, done, failed, expired, cancelled"
+  status: String!
+  error: String
+  createdAt: DateTime!
+}
+
+type GithubAuthStatus {
+  "Identifiant (public) de l'OAuth App GitHub utilisée pour la connexion."
+  clientId: String
+  "'env' (GITHUB_CLIENT_ID), 'settings' (saisi dans l'interface) ou null."
+  clientIdSource: String
+  connected: Boolean!
+  "'pat' (jeton personnel) ou 'oauth' (device flow)."
+  method: String
+  login: String
+  avatarUrl: String
+  scopes: [String!]!
+  tokenSetAt: DateTime
+  currentLogin: GithubLogin
+}
+
+type GithubRepository {
+  fullName: String!
+  name: String!
+  owner: String!
+  description: String
+  private: Boolean!
+  defaultBranch: String!
+  cloneUrl: String!
+  htmlUrl: String!
+  pushedAt: DateTime
+}
+
 type AppSettings {
   claude: ClaudeSettings!
   claudeAuth: ClaudeAuthStatus!
+  github: GithubAuthStatus!
   "Modèles connus (dernière vérification, sinon liste de base)."
   models: [ClaudeModel!]!
   usage: UsageSummary!
@@ -459,8 +576,14 @@ type Query {
   me: User
   "Tous les utilisateurs (administrateurs de l'application)."
   users: [User!]!
+  "Contenu d'un dossier du workspace du projet (ou du worktree). path vide = racine."
+  workspaceEntries(projectId: ID!, worktreeId: ID, path: String = ""): [FileEntry!]!
+  "Lecture d'un fichier texte (2 Mo maximum)."
+  workspaceFile(projectId: ID!, worktreeId: ID, path: String!): FileContent!
   settings: AppSettings!
   claudeLogin(id: ID!): ClaudeLogin!
+  "Dépôts GitHub accessibles avec la connexion GitHub (les plus récents d'abord)."
+  githubRepositories(query: String): [GithubRepository!]!
   providers: [Provider!]!
   sessions(projectId: ID, status: SessionStatus, provider: String, limit: Int, offset: Int): [Session!]!
   session(id: ID!): Session
@@ -471,6 +594,12 @@ type Query {
   request(id: ID!): Request
   terminal(id: ID!): Terminal
   worktree(id: ID!): Worktree
+  "Suivi git d'un workspace (checkout principal) ou d'un worktree."
+  gitStatus(projectId: ID!, worktreeId: ID): GitStatus!
+  gitDiff(projectId: ID!, worktreeId: ID, path: String!, staged: Boolean = false): GitDiff!
+  gitCommitDiff(projectId: ID!, worktreeId: ID, hash: String!): GitDiff!
+  gitBranches(projectId: ID!, worktreeId: ID): [GitBranch!]!
+  gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
@@ -528,6 +657,13 @@ input CreateSessionInput {
 }
 
 type Mutation {
+  "Écrit un fichier. Avec expectedModifiedAt, refuse (FILE_CONFLICT) si le fichier a changé depuis."
+  writeWorkspaceFile(projectId: ID!, worktreeId: ID, path: String!, content: String!, expectedModifiedAt: DateTime): FileContent!
+  createWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, kind: FileEntryKind!): FileEntry!
+  renameWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, newPath: String!): FileEntry!
+  "Supprime un fichier ou un dossier (récursivement)."
+  deleteWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!): Boolean!
+
   "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
   updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
   "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."
@@ -536,6 +672,15 @@ type Mutation {
   clearClaudeOauthToken: AppSettings!
   "Lance la connexion : renvoie l'URL d'autorisation à ouvrir."
   startClaudeLogin(kind: ClaudeLoginKind = oauth): ClaudeLogin!
+  "GitHub : enregistre l'identifiant de l'OAuth App (null pour effacer)."
+  setGithubClientId(clientId: String): AppSettings!
+  "GitHub : enregistre un jeton d'accès personnel après vérification auprès de GitHub."
+  setGithubPersonalToken(token: String!): AppSettings!
+  "GitHub : démarre la connexion par device flow."
+  startGithubLogin: GithubLogin!
+  cancelGithubLogin: AppSettings!
+  "GitHub : oublie le jeton."
+  disconnectGithub: AppSettings!
   "Transmet le code d'autorisation ; en cas de succès le mode passe à celui du parcours (oauth ou server)."
   completeClaudeLogin(id: ID!, code: String!): ClaudeLogin!
   "Déconnecte le compte du serveur (claude auth logout)."
@@ -580,6 +725,19 @@ type Mutation {
   deleteTask(id: ID!): Boolean!
   "Confie la tâche à un nouvel agent : crée et démarre une session, assigne la tâche et la passe en cours."
   startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID): Session!
+
+  "git add (paths vide = tout)."
+  gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "git reset (paths vide = tout)."
+  gitUnstage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "Abandonne les modifications non indexées ; supprime un fichier non suivi."
+  gitDiscard(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitCommit(projectId: ID!, worktreeId: ID, message: String!, stageAll: Boolean = false): GitStatus!
+  gitFetch(projectId: ID!, worktreeId: ID): GitStatus!
+  gitPull(projectId: ID!, worktreeId: ID): GitStatus!
+  gitPush(projectId: ID!, worktreeId: ID): GitStatus!
+  "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
+  gitCheckout(projectId: ID!, worktreeId: ID, branch: String!, create: Boolean = false): GitStatus!
 
   "Ouvre un shell dans le workspace du projet (ou dans un worktree)."
   createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!

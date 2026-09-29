@@ -5,6 +5,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASKS, UPDATE_TASK, type Project, type Task, type TaskPriority, type TaskStatus } from '../graphql/operations';
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 
 const columns: { status: TaskStatus; label: string; hint: string }[] = [
   { status: 'TODO', label: 'À faire', hint: 'Prêtes à être confiées à un agent' },
@@ -209,6 +211,7 @@ export default function TasksPage() {
 
   const project = projectData?.project;
   useTabTitle(routeProjectId ? (project ? `Tâches · ${project.name}` : null) : 'Tâches');
+  useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worktreeId: null, label: project.name } : null);
   const tasks = data?.tasks ?? [];
   const byStatus = useMemo(() => {
     const m = new Map<TaskStatus, Task[]>();

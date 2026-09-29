@@ -2,7 +2,43 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Collapse, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CREATE_PROJECT, PROJECT, PROJECTS, UPDATE_PROJECT, type Project } from '../graphql/operations';
+import { CREATE_PROJECT, GITHUB_REPOSITORIES, GITHUB_STATUS, PROJECT, PROJECTS, UPDATE_PROJECT, type GithubAuthStatus, type GithubRepository, type Project } from '../graphql/operations';
+
+/** Liste des dépôts GitHub de l'utilisateur connecté, pour remplir l'URL et la branche. */
+function GithubRepoPicker({ onPick }: { onPick: (repo: GithubRepository) => void }) {
+  const { data: statusData } = useQuery<{ settings: { github: GithubAuthStatus } }>(GITHUB_STATUS);
+  const connected = statusData?.settings.github.connected ?? false;
+  const [query, setQuery] = useState('');
+  const { data, loading } = useQuery<{ githubRepositories: GithubRepository[] }>(GITHUB_REPOSITORIES, { variables: { query }, skip: !connected });
+  if (!statusData) return null;
+  if (!connected) {
+    return (
+      <Form.Text>
+        Dépôt privé ? <Link to="/settings?section=github">Connectez votre compte GitHub</Link> pour le choisir dans une liste et l'utiliser sans clé de déploiement.
+      </Form.Text>
+    );
+  }
+  const repos = data?.githubRepositories ?? [];
+  return (
+    <div className="border rounded p-2 mb-2">
+      <div className="d-flex align-items-center gap-2 mb-2">
+        <i className="bi bi-github" />
+        <Form.Control size="sm" placeholder="Rechercher un de vos dépôts GitHub…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {loading && <Spinner size="sm" />}
+      </div>
+      <div className="small" style={{ maxHeight: 160, overflow: 'auto' }}>
+        {repos.slice(0, 30).map((r) => (
+          <button key={r.fullName} type="button" className="btn btn-link btn-sm p-0 d-block text-start text-decoration-none" onClick={() => onPick(r)}>
+            {r.fullName}
+            {r.private && <span className="text-secondary"> · privé</span>}
+            <span className="text-secondary"> · {r.defaultBranch}</span>
+          </button>
+        ))}
+        {data && repos.length === 0 && <div className="text-secondary">Aucun dépôt ne correspond.</div>}
+      </div>
+    </div>
+  );
+}
 import { useTabTitle } from '../workbench/TabsContext';
 
 
@@ -102,9 +138,18 @@ export default function ProjectFormPage() {
 
             <fieldset className="mb-3">
               <legend className="h6">Dépôt git (facultatif)</legend>
+              {!isEdit && (
+                <GithubRepoPicker
+                  onPick={(r) => {
+                    setGitUrl(r.cloneUrl);
+                    setGitBranch(r.defaultBranch);
+                    if (!name) setName(r.name);
+                  }}
+                />
+              )}
               <Form.Group className="mb-2">
                 <Form.Label className="small mb-1">URL</Form.Label>
-                <Form.Control value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="git@github.com:org/repo.git" />
+                <Form.Control value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git ou git@github.com:org/repo.git" />
               </Form.Group>
               <Form.Group className="mb-2">
                 <Form.Label className="small mb-1">Branche</Form.Label>

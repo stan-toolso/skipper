@@ -9,6 +9,8 @@ import '@xterm/xterm/css/xterm.css';
 import { terminalSocketUrl } from '../apollo';
 import { CLOSE_TERMINAL, DELETE_TERMINAL, TERMINAL, type Terminal } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 
 const theme = {
   background: '#141414',
@@ -38,6 +40,7 @@ export default function TerminalPage() {
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const terminal = data?.terminal;
   useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : null);
+  useGitTarget(terminal ? { projectId: terminal.project.id, worktreeId: terminal.worktree?.id ?? null, label: terminal.worktree ? `${terminal.project.name} · ${terminal.worktree.branch}` : terminal.project.name } : null);
 
   useEffect(() => {
     const container = containerRef.current;

@@ -43,6 +43,11 @@ Trois notions :
 
 Mise en production (serveur, nginx, base RDS, pm2) : voir `DEPLOY.md`.
 
+Paramètres (menu en bas de la sidebar) : une section par service. **Claude** (authentification,
+modèles, budgets et consommation) et **GitHub** (jeton d'accès personnel collé, ou OAuth App et device flow ;
+jeton chiffré en base, dépôts privés en https sans clé de déploiement, liste des dépôts dans le
+formulaire de projet).
+
 ```bash
 cp .env.example .env        # renseigner GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (voir « Utilisateurs »)
 npm install
@@ -210,11 +215,44 @@ Sessions, Demandes) et un explorateur des projets dépliables avec leurs session
 demandes en attente) ; à droite un panneau à onglets où chaque page ouverte (session, projet,
 contexte, listes) est un onglet fermable. Les onglets ouverts sont mémorisés dans le navigateur.
 
+Sur les pages d'un projet ou d'un worktree (projet, session, terminal, fichiers, tâches, contexte),
+un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
+avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,
+abandonner), une zone de commit, les branches (bascule, création) et l'historique (clic : diff du
+commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queries `gitStatus`,
+`gitDiff`, `gitCommitDiff`, `gitBranches`, `gitLog` ; mutations `gitStage`, `gitUnstage`,
+`gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
+
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
 (`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
 réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
+
+## Identité visuelle
+
+Le pictogramme est une rose des vents à huit pointes, héritière de l'astérisque ✻ de Claude Code,
+pointe nord en couleur d'accent (`#d97757`). Composant React `frontend/src/components/Logo.tsx` ;
+fichiers SVG dans `frontend/public/` : `favicon.svg` (pastille sombre), `logo-mark.svg` (fond
+sombre), `logo-mark-dark.svg` (fond clair), `logo-mark-mono.svg` (masque CSS, utilisé devant les
+titres `h1`). Mot-symbole : « Skipper » en Fraunces 600 pour les supports hors interface.
+
+## Explorateur de fichiers et éditeur
+
+Chaque projet (et chaque worktree) a une entrée « Fichiers » dans la sidebar : un onglet
+explorateur (`frontend/src/pages/FilesPage.tsx`) montre l'arborescence du workspace, dossiers
+dépliables chargés à la demande, avec création, renommage et suppression au survol. Un clic sur un
+fichier l'ouvre dans son propre onglet d'éditeur (`FileEditorPage.tsx`, CodeMirror 6 : coloration
+selon l'extension chargée à la demande, Ctrl/Cmd+S ou bouton pour enregistrer, point orange dans
+l'onglet tant que ce n'est pas enregistré). L'enregistrement transmet la date de modification lue à
+l'ouverture : si le fichier a changé entre-temps (agent, autre onglet), le serveur refuse
+(`FILE_CONFLICT`) et l'éditeur propose de recharger ou d'écraser.
+
+Côté serveur (`backend/src/files/service.ts`), tout chemin est normalisé puis vérifié à l'intérieur
+de la racine du workspace, liens symboliques résolus compris ; les fichiers de plus de 2 Mo ou
+binaires ne sont pas ouverts. API : `workspaceEntries`, `workspaceFile`, `writeWorkspaceFile`,
+`createWorkspaceEntry`, `renameWorkspaceEntry`, `deleteWorkspaceEntry` (arguments `projectId` et
+`worktreeId` optionnel).
 
 ## Paramètres généraux (Claude)
 
