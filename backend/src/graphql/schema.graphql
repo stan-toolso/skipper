@@ -68,6 +68,7 @@ type Project {
   contextInstructions: [ContextInstruction!]!
   contextChanges(limit: Int): [ContextChange!]!
   terminals: [Terminal!]!
+  tasks(status: [TaskStatus!]): [Task!]!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -122,6 +123,59 @@ type ContextChange {
   authorType: String!
   authorSession: Session
   createdAt: DateTime!
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+"Tâche d'un projet, avec priorité. Créée et mise à jour par les humains ou les agents (outils MCP `tasks`)."
+type Task {
+  id: ID!
+  project: Project!
+  title: String!
+  description: String!
+  status: TaskStatus!
+  priority: TaskPriority!
+  "Session d'agent qui s'en occupe, le cas échéant."
+  session: Session
+  "'human' ou 'agent'."
+  createdByType: String!
+  createdBySession: Session
+  "Échéance AAAA-MM-JJ."
+  dueDate: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  completedAt: DateTime
+}
+
+input CreateTaskInput {
+  projectId: ID!
+  title: String!
+  description: String
+  priority: TaskPriority
+  status: TaskStatus
+  dueDate: String
+}
+
+input UpdateTaskInput {
+  title: String
+  description: String
+  priority: TaskPriority
+  status: TaskStatus
+  "Session assignée (null pour retirer)."
+  sessionId: ID
+  dueDate: String
 }
 
 enum TerminalStatus {
@@ -211,6 +265,9 @@ type Query {
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
   terminal(id: ID!): Terminal
+  "Tâches, tous projets confondus (par défaut : ouvertes)."
+  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, limit: Int): [Task!]!
+  task(id: ID!): Task
   contextInstruction(id: ID!): ContextInstruction
   searchContext(projectId: ID!, query: String!): [ContextInstruction!]!
 }
@@ -284,6 +341,12 @@ type Mutation {
   answerRequest(id: ID!, response: JSON!): Request!
   "Abandonne une demande : l'agent reçoit un refus."
   cancelRequest(id: ID!): Request!
+
+  createTask(input: CreateTaskInput!): Task!
+  updateTask(id: ID!, input: UpdateTaskInput!): Task!
+  deleteTask(id: ID!): Boolean!
+  "Confie la tâche à un nouvel agent : crée et démarre une session, assigne la tâche et la passe en cours."
+  startTaskSession(id: ID!, provider: String, config: JSON): Session!
 
   "Ouvre un shell dans le workspace du projet."
   createTerminal(projectId: ID!, name: String): Terminal!

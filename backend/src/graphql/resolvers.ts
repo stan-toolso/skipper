@@ -10,11 +10,35 @@ import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
 import { sessionService } from '../sessions/service.js';
 import { terminalService } from '../terminals/service.js';
+import { startTaskSession } from '../tasks/launch.js';
+import { taskService } from '../tasks/service.js';
+import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
 import type { Session, SessionStatus } from '../sessions/types.js';
 
 type GqlStatus = Uppercase<SessionStatus>;
 type GqlRequestStatus = Uppercase<RequestStatus>;
+type GqlTaskStatus = Uppercase<TaskStatus>;
+type GqlTaskPriority = Uppercase<TaskPriority>;
+const fromGqlTaskStatus = (s?: GqlTaskStatus | null) => (s ? (s.toLowerCase() as TaskStatus) : undefined);
+const fromGqlTaskStatuses = (s?: GqlTaskStatus[] | null) => (s?.length ? s.map((x) => x.toLowerCase() as TaskStatus) : undefined);
+const fromGqlTaskPriority = (p?: GqlTaskPriority | null) => (p ? (p.toLowerCase() as TaskPriority) : undefined);
+interface GqlTaskInput {
+  title?: string | null;
+  description?: string | null;
+  priority?: GqlTaskPriority | null;
+  status?: GqlTaskStatus | null;
+  sessionId?: string | null;
+  dueDate?: string | null;
+}
+const toTaskInput = (i: GqlTaskInput) => ({
+  title: i.title ?? undefined,
+  description: i.description ?? undefined,
+  priority: fromGqlTaskPriority(i.priority),
+  status: fromGqlTaskStatus(i.status),
+  sessionId: i.sessionId,
+  dueDate: i.dueDate,
+});
 const fromGqlRequestStatus = (s?: GqlRequestStatus | null): RequestStatus | undefined =>
   s ? (s.toLowerCase() as RequestStatus) : undefined;
 
@@ -36,6 +60,14 @@ export const resolvers = {
     authorSession: (c: ContextChange) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
   },
 
+  Task: {
+    status: (t: Task) => t.status.toUpperCase(),
+    priority: (t: Task) => t.priority.toUpperCase(),
+    project: (t: Task) => projectService.get(t.projectId),
+    session: (t: Task) => (t.sessionId ? sessionService.get(t.sessionId) : null),
+    createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
+  },
+
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
     project: (t: TerminalRecord) => projectService.get(t.projectId),
@@ -44,6 +76,7 @@ export const resolvers = {
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
     terminals: (project: Project) => terminalService.listByProject(project.id),
+    tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
     contextChanges: (project: Project, args: { limit?: number | null }) => contextService.changes(project.id, args.limit ?? undefined),
@@ -91,6 +124,14 @@ export const resolvers = {
       }),
     request: (_: unknown, args: { id: string }) => requestService.get(args.id),
     terminal: (_: unknown, args: { id: string }) => terminalService.get(args.id),
+    tasks: (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }) =>
+      taskService.list({
+        projectId: args.projectId ?? undefined,
+        status: fromGqlTaskStatuses(args.status) ?? ['todo', 'in_progress'],
+        priority: fromGqlTaskPriority(args.priority),
+        limit: args.limit ?? undefined,
+      }),
+    task: (_: unknown, args: { id: string }) => taskService.get(args.id),
     contextInstruction: (_: unknown, args: { id: string }) => contextService.getInstruction(args.id),
     searchContext: (_: unknown, args: { projectId: string; query: string }) => contextService.search(args.projectId, args.query),
   },
@@ -113,6 +154,10 @@ export const resolvers = {
     answerRequest: (_: unknown, args: { id: string; response: Record<string, unknown> }) => requestService.answer(args.id, args.response ?? {}),
     cancelRequest: (_: unknown, args: { id: string }) => requestService.cancel(args.id),
 
+    createTask: (_: unknown, { input }: { input: GqlTaskInput & { projectId: string; title: string } }) => taskService.create(input.projectId, { ...toTaskInput(input), title: input.title }, HUMAN),
+    updateTask: (_: unknown, { id, input }: { id: string; input: GqlTaskInput }) => taskService.update(id, toTaskInput(input)),
+    deleteTask: (_: unknown, args: { id: string }) => taskService.delete(args.id),
+    startTaskSession: (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null }) => startTaskSession(args.id, args),
     createTerminal: (_: unknown, args: { projectId: string; name?: string | null }) => terminalService.create(args.projectId, args.name),
     closeTerminal: (_: unknown, args: { id: string }) => terminalService.close(args.id),
     deleteTerminal: (_: unknown, args: { id: string }) => terminalService.delete(args.id),

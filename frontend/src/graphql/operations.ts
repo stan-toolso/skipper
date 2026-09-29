@@ -117,6 +117,25 @@ export interface Terminal {
   project: { id: string; name: string; workspacePath: string };
 }
 
+export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
+export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueDate: string | null;
+  createdByType: 'human' | 'agent';
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  project: { id: string; name: string };
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null } | null;
+  createdBySession: { id: string; name: string } | null;
+}
+
 export interface SessionEvent {
   id: string;
   sessionId: string;
@@ -597,5 +616,75 @@ export const CLOSE_TERMINAL = gql`
 export const DELETE_TERMINAL = gql`
   mutation DeleteTerminal($id: ID!) {
     deleteTerminal(id: $id)
+  }
+`;
+
+export const TASK_FIELDS = gql`
+  fragment TaskFields on Task {
+    id
+    title
+    description
+    status
+    priority
+    dueDate
+    createdByType
+    createdAt
+    updatedAt
+    completedAt
+    project {
+      id
+      name
+    }
+    session {
+      id
+      name
+      status
+      activity
+    }
+    createdBySession {
+      id
+      name
+    }
+  }
+`;
+
+export const TASKS = gql`
+  ${TASK_FIELDS}
+  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority) {
+    tasks(projectId: $projectId, status: $status, priority: $priority) {
+      ...TaskFields
+    }
+  }
+`;
+
+export const CREATE_TASK = gql`
+  ${TASK_FIELDS}
+  mutation CreateTask($input: CreateTaskInput!) {
+    createTask(input: $input) {
+      ...TaskFields
+    }
+  }
+`;
+
+export const UPDATE_TASK = gql`
+  ${TASK_FIELDS}
+  mutation UpdateTask($id: ID!, $input: UpdateTaskInput!) {
+    updateTask(id: $id, input: $input) {
+      ...TaskFields
+    }
+  }
+`;
+
+export const DELETE_TASK = gql`
+  mutation DeleteTask($id: ID!) {
+    deleteTask(id: $id)
+  }
+`;
+
+export const START_TASK_SESSION = gql`
+  mutation StartTaskSession($id: ID!) {
+    startTaskSession(id: $id) {
+      id
+    }
   }
 `;

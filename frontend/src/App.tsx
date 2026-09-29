@@ -10,6 +10,7 @@ import SessionDetailPage from './pages/SessionDetailPage';
 import RequestsPage from './pages/RequestsPage';
 import TerminalPage from './pages/TerminalPage';
 import WelcomePage from './pages/WelcomePage';
+import TasksPage from './pages/TasksPage';
 
 export default function App() {
   return (
@@ -21,6 +22,8 @@ export default function App() {
         <Route path="/projects/:id" element={<ProjectDetailPage />} />
         <Route path="/projects/:id/edit" element={<ProjectFormPage />} />
         <Route path="/projects/:id/context" element={<ContextPage />} />
+        <Route path="/projects/:id/tasks" element={<TasksPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/new" element={<NewSessionPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />

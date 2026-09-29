@@ -19,6 +19,10 @@ Trois notions :
 - **Terminal** : un shell interactif (pty) ouvert dans le workspace d'un projet et piloté depuis le
   navigateur (xterm.js relié par WebSocket), pour travailler comme dans un terminal, y compris avec
   le CLI `claude`.
+- **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
+  (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
+  l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
+  tâche comme consigne.
 
 ## Stack
 
@@ -61,6 +65,10 @@ backend/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
+    tasks/
+      service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
+      mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
+      launch.ts                # confier une tâche à un nouvel agent
     context/
       service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
       mcp.ts                   # serveur MCP in-process exposé aux sessions Claude (tree, read, write...)
@@ -128,6 +136,13 @@ frontend/
   mémoire du serveur ; la sortie récente est rejouée à chaque connexion WebSocket. Le menu « + » d'un
   projet dans la sidebar propose d'ouvrir une session d'agent ou un terminal.
 
+- **Task** : `projectId`, `title`, `description`, `status` (`todo`, `in_progress`, `done`, `cancelled`),
+  `priority` (`low`, `medium`, `high`, `urgent`), `sessionId` (session qui s'en occupe), auteur
+  (`human` ou `agent` avec sa session), `dueDate`. Les sessions Claude reçoivent la liste des tâches
+  ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,
+  `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
+  cours ; l'agent la passe en `done` quand il a fini.
+
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
 demandes en attente à `expired` et les terminaux à `closed`.
 
@@ -165,6 +180,7 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
+- `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
 

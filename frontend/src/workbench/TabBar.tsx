@@ -11,6 +11,7 @@ const icons: Record<TabKind, string> = {
   session: 'bi-chat-dots-fill',
   'new-session': 'bi-plus-circle',
   terminal: 'bi-terminal',
+  tasks: 'bi-check2-square',
   other: 'bi-file-earmark',
 };
 

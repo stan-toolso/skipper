@@ -43,6 +43,9 @@ function AddMenu({ projectId, onClose }: { projectId: string; onClose: () => voi
       <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId } })}>
         <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal'}
       </button>
+      <Link to={`/projects/${projectId}/tasks`} className="wb-pop-item" onClick={onClose}>
+        <i className="bi bi-check2-square wb-icon" /> Tâches du projet
+      </Link>
       <Link to={`/projects/${projectId}/context`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-journal-text wb-icon" /> Contexte du projet
       </Link>
@@ -94,6 +97,9 @@ export default function Sidebar() {
         </NavLink>
         <NavLink to="/sessions" end className="wb-menu-item">
           <i className="bi bi-chat-dots wb-icon" /> Sessions
+        </NavLink>
+        <NavLink to="/tasks" end className="wb-menu-item">
+          <i className="bi bi-check2-square wb-icon" /> Tâches
         </NavLink>
         <NavLink to="/requests" className="wb-menu-item">
           <i className="bi bi-bell wb-icon" /> Demandes

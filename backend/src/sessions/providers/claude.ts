@@ -15,6 +15,8 @@ import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { RequestCancelledError } from '../../requests/service.js';
+import { createTasksMcpServer } from '../../tasks/mcp.js';
+import { taskService } from '../../tasks/service.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
 import type { ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 
@@ -119,14 +121,16 @@ export class ClaudeProvider implements SessionProvider {
 
     const abortController = new AbortController();
     // Prompt système : celui du projet, puis la description de la bibliothèque de contexte.
-    const systemPrompt = [ctx.project.systemPrompt.trim(), await contextService.promptSummary(ctx.project.id)].filter(Boolean).join('\n\n');
+    const systemPrompt = [ctx.project.systemPrompt.trim(), await contextService.promptSummary(ctx.project.id), await taskService.promptSummary(ctx.project.id, ctx.session.id)]
+      .filter(Boolean)
+      .join('\n\n');
     // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
     const pluginDir = await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
-      mcpServers: { context: createContextMcpServer(ctx.project, ctx.session.id) },
+      mcpServers: { context: createContextMcpServer(ctx.project, ctx.session.id), tasks: createTasksMcpServer(ctx.project, ctx.session.id) },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model: cfg.model || undefined,
       permissionMode: cfg.permissionMode || 'default',
@@ -135,7 +139,7 @@ export class ClaudeProvider implements SessionProvider {
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : undefined,
       // Les outils du contexte sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
-      allowedTools: [...allowedTools, 'mcp__context'],
+      allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Par défaut le SDK utilise le binaire Claude Code qu'il embarque.

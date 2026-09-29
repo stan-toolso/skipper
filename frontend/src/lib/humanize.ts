@@ -57,6 +57,19 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
     case 'Skill':
       return { label: `Utilisation du savoir-faire ${str(input, 'skill') ?? ''}`, action: `utiliser le savoir-faire ${str(input, 'skill') ?? ''}` };
     default: {
+      if (name.startsWith('mcp__tasks__')) {
+        const op = name.slice('mcp__tasks__'.length);
+        const title = str(input, 'title');
+        const verbs: Record<string, [string, string]> = {
+          list: ['Consultation des tâches du projet', 'consulter les tâches'],
+          get: ["Consultation d'une tâche", 'consulter une tâche'],
+          create: [`Création de la tâche « ${title ?? ''} »`, `créer la tâche « ${title ?? ''} »`],
+          update: [`Mise à jour d'une tâche${str(input, 'status') ? ` (${str(input, 'status')})` : ''}`, 'mettre à jour une tâche'],
+          claim: ["Prise en charge d'une tâche", 'prendre une tâche en charge'],
+        };
+        const [label, action] = verbs[op] ?? [`Tâches : ${op}`, `utiliser les tâches (${op})`];
+        return { label, action };
+      }
       if (name.startsWith('mcp__context__')) {
         const op = name.slice('mcp__context__'.length);
         const path = str(input, 'path') ?? str(input, 'query') ?? '';
@@ -115,3 +128,11 @@ export function sessionStateHint(status: string, activity: string | null, pendin
   if (status === 'FAILED') return 'en erreur';
   return null;
 }
+
+export const taskStatusLabels: Record<string, string> = { TODO: 'À faire', IN_PROGRESS: 'En cours', DONE: 'Terminée', CANCELLED: 'Annulée' };
+export const taskPriorityLabels: Record<string, { label: string; bg: string }> = {
+  URGENT: { label: 'Urgente', bg: 'danger' },
+  HIGH: { label: 'Haute', bg: 'warning' },
+  MEDIUM: { label: 'Moyenne', bg: 'secondary' },
+  LOW: { label: 'Basse', bg: 'dark' },
+};

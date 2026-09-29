@@ -38,6 +38,9 @@ export default function ProjectDetailPage() {
           <Button as={Link as any} to={`/sessions/new?projectId=${project.id}`} size="sm">
             Nouvelle session
           </Button>
+          <Button as={Link as any} to={`/projects/${project.id}/tasks`} size="sm" variant="outline-primary">
+            Tâches
+          </Button>
           <Button as={Link as any} to={`/projects/${project.id}/context`} size="sm" variant="outline-primary">
             Contexte
           </Button>
