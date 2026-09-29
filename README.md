@@ -292,7 +292,11 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   optionnel, ex. `Bash(git status:*)`). Créée en répondant « ne plus demander dans ce projet » à une
   demande d'autorisation (les règles suggérées par le SDK sont enregistrées) ou à la main sur la page
   du projet ; chaque session Claude du projet les reçoit dans `allowedTools`, donc ne redemande pas.
-  Retirer une règle ne concerne que les prochaines sessions.
+  Retirer une règle ne concerne que les prochaines sessions. Pour les modifications de fichiers
+  (`Edit`, `Write`, `NotebookEdit`), le SDK ne suggère pas de règle mais le mode `acceptEdits` :
+  « ne plus demander pour cette session » passe la session dans ce mode (appliqué par le SDK et
+  enregistré dans sa configuration, événement `config`) ; « dans ce projet » mémorise en plus les
+  règles `Edit`, `Write`, `MultiEdit`, `NotebookEdit`.
 - **Request** : `sessionId`, `type` (`permission`, `question`, `input`, ... extensible), `status`
   (`pending`, `answered`, `cancelled`, `expired`), `title`, `message`, `payload`, `response`. Un
   provider appelle `ctx.ask(...)` et reçoit la réponse humaine sous forme de JSON libre. Le provider

@@ -19,7 +19,7 @@ import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { createGoogleMcpServer } from '../../google/mcp.js';
 import { googleAccountService, googleReadTools } from '../../google/service.js';
-import { permissionRuleService } from '../../permissions/service.js';
+import { permissionRuleService, suggestedMode } from '../../permissions/service.js';
 import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runner } from '../../runners/index.js';
@@ -369,6 +369,13 @@ export class ClaudeProvider implements SessionProvider {
             // la session courante l'applique tout de suite via updatedPermissions.
             const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
             if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+          }
+          // Pour les modifications de fichiers, le SDK suggère un changement de mode (acceptEdits) plutôt qu'une
+          // règle : updatedPermissions l'applique à la session en cours ; on l'enregistre aussi dans la configuration
+          // de la session (affichage, prochain lancement).
+          const mode = remember ? suggestedMode(options.suggestions ?? []) : null;
+          if (mode && permissionModes.includes(mode as PermissionMode) && mode !== ctx.session.config.permissionMode) {
+            await ctx.recordConfig({ permissionMode: mode });
           }
           return {
             behavior: 'allow',

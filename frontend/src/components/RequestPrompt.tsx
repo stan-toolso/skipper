@@ -21,14 +21,21 @@ interface Question {
 function OptionList({ options, onPick, disabled }: { options: Option[]; onPick: (o: Option) => void; disabled: boolean }) {
   const [cursor, setCursor] = useState(0);
   useEffect(() => {
-    // Raccourcis clavier façon Claude Code : chiffres, flèches, Entrée.
+    // Raccourcis clavier façon Claude Code : chiffres, flèches, Entrée. Ils valent aussi quand le focus est dans la
+    // zone de saisie principale (textarea) tant qu'elle est vide : sinon un « 1 » suivi d'Entrée partirait comme
+    // instruction à l'agent. Les champs texte du prompt lui-même (input) gardent leurs touches.
     const handler = (ev: KeyboardEvent) => {
-      if (disabled || (ev.target as HTMLElement)?.tagName === 'TEXTAREA' || (ev.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (disabled || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      const target = ev.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT') return;
+      if (target?.tagName === 'TEXTAREA' && (target as HTMLTextAreaElement).value !== '') return;
       const n = Number(ev.key);
       if (n >= 1 && n <= options.length) onPick(options[n - 1]);
       else if (ev.key === 'ArrowDown') setCursor((c) => Math.min(c + 1, options.length - 1));
       else if (ev.key === 'ArrowUp') setCursor((c) => Math.max(c - 1, 0));
-      else if (ev.key === 'Enter') onPick(options[cursor]);
+      else if (ev.key === 'Enter' && !ev.shiftKey) onPick(options[cursor]);
+      else return;
+      ev.preventDefault();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
