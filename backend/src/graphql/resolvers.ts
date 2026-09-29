@@ -11,7 +11,8 @@ import { requestService } from '../requests/service.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
 import { sessionService } from '../sessions/service.js';
-import { loginService } from '../settings/login.js';
+import { serverAuthStatus, serverLogout } from '../settings/cli.js';
+import { loginService, type ClaudeLoginKind } from '../settings/login.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
@@ -63,6 +64,10 @@ const appSettings = () => ({
 export const resolvers = {
   JSON: JSONResolver,
   DateTime: DateTimeResolver,
+
+  ClaudeAuthStatus: {
+    server: () => serverAuthStatus(),
+  },
 
   ContextInstruction: {
     versions: (instruction: ContextInstruction) => contextService.versions(instruction.id),
@@ -172,7 +177,12 @@ export const resolvers = {
       await settingsService.clearOauthToken();
       return appSettings();
     },
-    startClaudeLogin: () => loginService.start(),
+    startClaudeLogin: (_: unknown, args: { kind?: ClaudeLoginKind | null }) => loginService.start(args.kind ?? 'oauth'),
+    logoutServerClaude: async () => {
+      await serverLogout();
+      settingsService.invalidateVerification();
+      return appSettings();
+    },
     completeClaudeLogin: (_: unknown, args: { id: string; code: string }) => loginService.complete(args.id, args.code),
     cancelClaudeLogin: (_: unknown, args: { id: string }) => loginService.cancel(args.id),
     verifyClaudeAuth: async (_: unknown, args: { mode?: ClaudeAuthMode | null }) => {

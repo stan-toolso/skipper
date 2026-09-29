@@ -180,7 +180,7 @@ class SettingsService {
     this.invalidateVerification();
   }
 
-  private invalidateVerification(): void {
+  invalidateVerification(): void {
     this.verification = null;
     void settingsRepository.delete(KEY_VERIFICATION).catch((err) => console.error('[settings] purge vérification', err));
   }

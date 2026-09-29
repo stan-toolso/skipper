@@ -173,12 +173,17 @@ pour envoyer et échap pour interrompre.
 Page « Paramètres » (menu du bas de la sidebar), stockée en base (`app_settings`) et chargée en
 mémoire au démarrage (`backend/src/settings/`) :
 
-- **Authentification** : trois modes. `server` : Claude Code utilise la connexion de l'utilisateur
-  système qui fait tourner le backend (ou `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` de son
-  environnement). `oauth` : un jeton longue durée obtenu **depuis l'interface** ; le backend pilote
-  le flux officiel `claude setup-token` dans un pseudo-terminal (`settings/login.ts`), affiche l'URL
-  d'autorisation claude.com, reçoit le code collé par l'utilisateur et récupère le jeton imprimé par
-  le CLI. `api_key` : clé API Anthropic saisie dans l'interface. Le secret du mode actif est passé
+- **Authentification** : trois modes. `server` (recommandé) : Claude Code utilise le compte
+  connecté dans son magasin pour l'utilisateur système qui fait tourner le backend (ou
+  `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` de son environnement) ; la connexion se fait
+  **depuis l'interface** en pilotant `claude auth login` (identifiants avec jeton de
+  rafraîchissement, renouvelés seuls ; statut via `claude auth status --json`, déconnexion via
+  `claude auth logout`, `settings/cli.ts`). `oauth` : un jeton longue durée (un an) obtenu de la
+  même façon via `claude setup-token`, chiffré et stocké par Skipper. `api_key` : clé API Anthropic
+  saisie dans l'interface. Les deux parcours de connexion (`settings/login.ts`) lancent le CLI dans
+  un pseudo-terminal, en extraient l'URL d'autorisation claude.com, transmettent le code collé par
+  l'utilisateur, et lisent l'écran du CLI **reconstitué par un terminal headless** (le flux brut est
+  incomplet à cause des redessins avec déplacements de curseur). Le secret du mode actif est passé
   au processus Claude Code via `env` (`CLAUDE_CODE_OAUTH_TOKEN` ou `ANTHROPIC_API_KEY`). Les
   secrets sont chiffrés (AES-256-GCM, `settings/crypto.ts`, clé `SKIPPER_SECRET_KEY` ou fichier
   `WORKSPACES_ROOT/.secret-key`) et ne sont jamais renvoyés par l'API.

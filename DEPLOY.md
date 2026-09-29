@@ -39,13 +39,15 @@ Le port 4000 est celui de l'API Curso : Skipper est sur 4100. Le `.env` fixe aus
 
 ## Authentification Claude
 
-Le plus simple : dans l'application, **Paramètres → Authentification Claude → Se connecter avec
-Claude** (OAuth, compte claude.ai avec abonnement). Le backend pilote `claude setup-token` avec le
-CLI installé pour l'utilisateur `skipper` (`~/.local/bin/claude`) ; le jeton est chiffré en base
-avec la clé `/home/skipper/skipper-workspaces/.secret-key` (générée au premier démarrage, à
-sauvegarder avec la base). Alternatives : une clé API saisie dans la même page, ou le mode
-« compte du serveur » (`ssh skipper@skipper.toolso.io`, puis `claude` et `/login`, ou
-`ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un `pm2 restart skipper --update-env`).
+Le plus simple : dans l'application, **Paramètres → Compte du serveur → Se connecter avec
+Claude** (compte claude.ai avec abonnement). Le backend pilote `claude auth login` avec le CLI
+installé pour l'utilisateur `skipper` (`~/.local/bin/claude`) ; les identifiants sont rangés par
+le CLI dans `/home/skipper/.claude/` et se renouvellent seuls. Équivalent en SSH :
+`ssh skipper@skipper.toolso.io` puis `claude auth login`. Alternatives dans la même page : un jeton
+OAuth d'un an (`claude setup-token`, chiffré en base avec la clé
+`/home/skipper/skipper-workspaces/.secret-key`, à sauvegarder avec la base) ou une clé API. Le
+mode « compte du serveur » accepte aussi `ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un
+`pm2 restart skipper --update-env`.
 
 ## Procédure de déploiement
 

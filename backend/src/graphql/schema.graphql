@@ -305,8 +305,26 @@ type ClaudeVerification {
   models: [ClaudeModel!]!
 }
 
+"Compte connecté dans le magasin du CLI de l'utilisateur système (mode server), d'après `claude auth status`."
+type ServerAuthStatus {
+  loggedIn: Boolean!
+  "claude.ai (abonnement) ou console (facturation API)."
+  authMethod: String
+  email: String
+  organization: String
+  subscriptionType: String
+  error: String
+}
+
+"Parcours de connexion : oauth = jeton longue durée stocké par Skipper (claude setup-token) ; server = identifiants rangés par le CLI pour l'utilisateur système (claude auth login)."
+enum ClaudeLoginKind {
+  oauth
+  server
+}
+
 type ClaudeAuthStatus {
   mode: ClaudeAuthMode!
+  server: ServerAuthStatus!
   hasOauthToken: Boolean!
   oauthTokenSetAt: DateTime
   hasApiKey: Boolean!
@@ -364,6 +382,7 @@ type AppSettings {
 "Connexion OAuth en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
 type ClaudeLogin {
   id: ID!
+  kind: ClaudeLoginKind!
   url: String!
   "starting, awaiting_code, exchanging, done, failed"
   status: String!
@@ -455,10 +474,12 @@ type Mutation {
   setClaudeApiKey(apiKey: String): AppSettings!
   "Supprime le jeton OAuth enregistré."
   clearClaudeOauthToken: AppSettings!
-  "Lance la connexion OAuth : renvoie l'URL d'autorisation à ouvrir."
-  startClaudeLogin: ClaudeLogin!
-  "Transmet le code d'autorisation ; en cas de succès le jeton est enregistré et le mode passe à oauth."
+  "Lance la connexion : renvoie l'URL d'autorisation à ouvrir."
+  startClaudeLogin(kind: ClaudeLoginKind = oauth): ClaudeLogin!
+  "Transmet le code d'autorisation ; en cas de succès le mode passe à celui du parcours (oauth ou server)."
   completeClaudeLogin(id: ID!, code: String!): ClaudeLogin!
+  "Déconnecte le compte du serveur (claude auth logout)."
+  logoutServerClaude: AppSettings!
   cancelClaudeLogin(id: ID!): Boolean!
   "Interroge Claude Code avec l'authentification du mode indiqué (défaut : mode courant) : compte et modèles."
   verifyClaudeAuth(mode: ClaudeAuthMode): AppSettings!

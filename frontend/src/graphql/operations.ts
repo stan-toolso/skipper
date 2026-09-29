@@ -761,8 +761,20 @@ export interface ClaudeVerification {
   models: ClaudeModel[];
 }
 
+export type ClaudeLoginKind = 'oauth' | 'server';
+
+export interface ServerAuthStatus {
+  loggedIn: boolean;
+  authMethod: string | null;
+  email: string | null;
+  organization: string | null;
+  subscriptionType: string | null;
+  error: string | null;
+}
+
 export interface ClaudeAuthStatus {
   mode: ClaudeAuthMode;
+  server: ServerAuthStatus;
   hasOauthToken: boolean;
   oauthTokenSetAt: string | null;
   hasApiKey: boolean;
@@ -799,6 +811,7 @@ export interface AppSettings {
 
 export interface ClaudeLogin {
   id: string;
+  kind: ClaudeLoginKind;
   url: string;
   status: 'starting' | 'awaiting_code' | 'exchanging' | 'done' | 'failed';
   error: string | null;
@@ -818,6 +831,14 @@ export const APP_SETTINGS_FIELDS = gql`
     }
     claudeAuth {
       mode
+      server {
+        loggedIn
+        authMethod
+        email
+        organization
+        subscriptionType
+        error
+      }
       hasOauthToken
       oauthTokenSetAt
       hasApiKey
@@ -915,6 +936,7 @@ export const VERIFY_CLAUDE_AUTH = gql`
 const CLAUDE_LOGIN_FIELDS = gql`
   fragment ClaudeLoginFields on ClaudeLogin {
     id
+    kind
     url
     status
     error
@@ -924,8 +946,8 @@ const CLAUDE_LOGIN_FIELDS = gql`
 
 export const START_CLAUDE_LOGIN = gql`
   ${CLAUDE_LOGIN_FIELDS}
-  mutation StartClaudeLogin {
-    startClaudeLogin {
+  mutation StartClaudeLogin($kind: ClaudeLoginKind) {
+    startClaudeLogin(kind: $kind) {
       ...ClaudeLoginFields
     }
   }
@@ -936,6 +958,15 @@ export const COMPLETE_CLAUDE_LOGIN = gql`
   mutation CompleteClaudeLogin($id: ID!, $code: String!) {
     completeClaudeLogin(id: $id, code: $code) {
       ...ClaudeLoginFields
+    }
+  }
+`;
+
+export const LOGOUT_SERVER_CLAUDE = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation LogoutServerClaude {
+    logoutServerClaude {
+      ...AppSettingsFields
     }
   }
 `;

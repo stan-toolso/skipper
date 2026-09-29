@@ -6,6 +6,7 @@ import {
   CANCEL_CLAUDE_LOGIN,
   CLEAR_CLAUDE_OAUTH_TOKEN,
   COMPLETE_CLAUDE_LOGIN,
+  LOGOUT_SERVER_CLAUDE,
   SET_CLAUDE_API_KEY,
   SETTINGS,
   START_CLAUDE_LOGIN,
@@ -14,14 +15,15 @@ import {
   type AppSettings,
   type ClaudeAuthMode,
   type ClaudeLogin,
+  type ClaudeLoginKind,
   type ClaudeModel,
 } from '../graphql/operations';
 import { formatCost } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 
 const modeLabels: Record<ClaudeAuthMode, { title: string; hint: string }> = {
-  server: { title: 'Compte du serveur', hint: "La connexion Claude Code de l'utilisateur système qui fait tourner Skipper, ou les variables d'environnement du serveur." },
-  oauth: { title: 'Connexion Claude (OAuth)', hint: 'Un jeton obtenu depuis cette page avec votre compte claude.ai (abonnement Pro ou Max). Recommandé.' },
+  server: { title: 'Compte du serveur', hint: "Le compte connecté dans Claude Code pour l'utilisateur système qui fait tourner Skipper (connexion depuis cette page ou par SSH), ou les variables d'environnement du serveur. Recommandé : les identifiants se renouvellent seuls." },
+  oauth: { title: 'Jeton OAuth (un an)', hint: 'Un jeton longue durée obtenu depuis cette page et stocké chiffré par Skipper. À refaire chaque année.' },
   api_key: { title: 'Clé API Anthropic', hint: 'Facturation à la consommation via la console Anthropic.' },
 };
 
@@ -33,11 +35,12 @@ function ErrorLine({ error }: { error: Error | undefined }) {
   return error ? <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert> : null;
 }
 
-/** Étapes de la connexion OAuth : ouvrir l'URL, coller le code. */
-function OauthLogin({ onDone }: { onDone: () => void }) {
+/** Étapes de la connexion (OAuth ou compte du serveur) : ouvrir l'URL, coller le code. */
+function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label: string; onDone: () => void }) {
   const [login, setLogin] = useState<ClaudeLogin | null>(null);
   const [code, setCode] = useState('');
   const [start, { loading: starting, error: startError }] = useMutation<{ startClaudeLogin: ClaudeLogin }>(START_CLAUDE_LOGIN, {
+    variables: { kind },
     onCompleted: (res) => setLogin(res.startClaudeLogin),
   });
   const [complete, { loading: completing, error: completeError }] = useMutation<{ completeClaudeLogin: ClaudeLogin }>(COMPLETE_CLAUDE_LOGIN, {
@@ -53,14 +56,18 @@ function OauthLogin({ onDone }: { onDone: () => void }) {
       <div>
         {login?.status === 'failed' && <Alert variant="warning" className="py-2">{login.error ?? 'La connexion a échoué.'}</Alert>}
         <Button size="sm" onClick={() => start()} disabled={starting}>
-          {starting ? <><Spinner size="sm" className="me-1" /> Préparation…</> : <><i className="bi bi-box-arrow-in-right me-1" /> Se connecter avec Claude</>}
+          {starting ? <><Spinner size="sm" className="me-1" /> Préparation…</> : <><i className="bi bi-box-arrow-in-right me-1" /> {label}</>}
         </Button>
         <ErrorLine error={startError} />
       </div>
     );
   }
   if (login.status === 'done') {
-    return <Alert variant="success" className="py-2 mb-0"><i className="bi bi-check-circle me-1" /> Connecté : le jeton est enregistré et le mode OAuth est actif.</Alert>;
+    return (
+      <Alert variant="success" className="py-2 mb-0">
+        <i className="bi bi-check-circle me-1" /> {kind === 'server' ? 'Connecté : le compte du serveur est actif.' : 'Connecté : le jeton est enregistré et le mode OAuth est actif.'}
+      </Alert>
+    );
   }
   return (
     <div className="border rounded p-3">
@@ -142,7 +149,9 @@ function AuthCard({ settings }: { settings: AppSettings }) {
   const [update, { loading: updating, error: updateError }] = useMutation(UPDATE_CLAUDE_SETTINGS);
   const [verify, { loading: verifying, error: verifyError }] = useMutation(VERIFY_CLAUDE_AUTH);
   const [clearToken, { loading: clearing }] = useMutation(CLEAR_CLAUDE_OAUTH_TOKEN);
+  const [logoutServer, { loading: loggingOut, error: logoutError }] = useMutation(LOGOUT_SERVER_CLAUDE);
   const v = auth.verification;
+  const server = auth.server;
 
   const available: Record<ClaudeAuthMode, boolean> = { server: true, oauth: auth.hasOauthToken, api_key: auth.hasApiKey };
 
@@ -181,9 +190,29 @@ function AuthCard({ settings }: { settings: AppSettings }) {
         </Form.Group>
 
         <Row className="g-3 mb-3">
-          <Col lg={6}>
+          <Col lg={4}>
             <div className="fw-semibold mb-1">
-              <i className="bi bi-person-badge me-1" /> Connexion Claude (OAuth)
+              <i className="bi bi-hdd me-1" /> Compte du serveur
+              {server.loggedIn ? <Badge bg="success" className="ms-2">connecté</Badge> : auth.serverHasApiKey ? <Badge bg="success" className="ms-2">variable d'environnement</Badge> : <Badge bg="secondary" className="ms-2">non connecté</Badge>}
+            </div>
+            {server.loggedIn ? (
+              <div className="small text-secondary mb-2">
+                {server.email ?? 'Compte connecté'}
+                {server.subscriptionType ? ` · ${server.subscriptionType}` : ''}
+                {server.authMethod ? ` · ${server.authMethod}` : ''}.{' '}
+                <Button variant="link" size="sm" className="p-0 align-baseline" disabled={loggingOut} onClick={() => logoutServer()}>
+                  Déconnecter
+                </Button>
+              </div>
+            ) : (
+              <div className="small text-secondary mb-2">{server.error ? `État inconnu : ${server.error}` : 'Aucun compte Claude Code connecté pour cet utilisateur système.'}</div>
+            )}
+            <ClaudeLoginFlow kind="server" label={server.loggedIn ? 'Changer de compte' : 'Se connecter avec Claude'} onDone={() => verify({ variables: { mode: 'server' } })} />
+            <ErrorLine error={logoutError} />
+          </Col>
+          <Col lg={4}>
+            <div className="fw-semibold mb-1">
+              <i className="bi bi-person-badge me-1" /> Jeton OAuth (un an)
               {auth.hasOauthToken && <Badge bg="success" className="ms-2">jeton enregistré</Badge>}
             </div>
             {auth.hasOauthToken && (
@@ -194,9 +223,9 @@ function AuthCard({ settings }: { settings: AppSettings }) {
                 </Button>
               </div>
             )}
-            <OauthLogin onDone={() => verify({ variables: { mode: 'oauth' } })} />
+            <ClaudeLoginFlow kind="oauth" label="Obtenir un jeton" onDone={() => verify({ variables: { mode: 'oauth' } })} />
           </Col>
-          <Col lg={6}>
+          <Col lg={4}>
             <div className="fw-semibold mb-1">
               <i className="bi bi-key me-1" /> Clé API Anthropic
               {auth.hasApiKey && <Badge bg="success" className="ms-2">enregistrée</Badge>}
@@ -215,8 +244,8 @@ function AuthCard({ settings }: { settings: AppSettings }) {
                 Dernière vérification ({modeLabels[v.authMode].title.toLowerCase()}) le {fmtDate(v.verifiedAt)}
               </span>
             )}
-            {auth.mode === 'server' && !auth.serverHasApiKey && (
-              <span className="small text-secondary">Le serveur n'a pas de clé dans son environnement : il faut que l'utilisateur système soit connecté (<code>claude</code> puis <code>/login</code>).</span>
+            {auth.mode === 'server' && !auth.serverHasApiKey && !server.loggedIn && (
+              <span className="small text-secondary">Aucun compte du serveur : connectez-vous ci-dessus, ou choisissez un autre mode.</span>
             )}
           </div>
           {v && (

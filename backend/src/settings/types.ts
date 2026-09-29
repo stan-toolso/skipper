@@ -65,6 +65,17 @@ export interface ClaudeVerification {
   models: ClaudeModel[];
 }
 
+/** Compte connecté dans le magasin du CLI de l'utilisateur système (mode « server »). */
+export interface ServerAuthStatus {
+  loggedIn: boolean;
+  /** 'claude.ai' (abonnement) ou 'console' (clé API gérée), selon le CLI. */
+  authMethod: string | null;
+  email: string | null;
+  organization: string | null;
+  subscriptionType: string | null;
+  error: string | null;
+}
+
 export interface ClaudeAuthStatus {
   mode: ClaudeAuthMode;
   hasOauthToken: boolean;
