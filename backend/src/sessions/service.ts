@@ -20,6 +20,29 @@ async function publishSession(session: Session | null): Promise<Session> {
   return session;
 }
 
+/**
+ * Enregistre des changements de configuration d'une session (fusion clé par clé, null retire la clé), publie la
+ * session et journalise un événement `config`. `applied` : clés prises en compte à chaud ; les autres vaudront au
+ * prochain lancement. Les valeurs déjà en place sont ignorées ; renvoie null si la session n'existe plus.
+ */
+async function persistConfig(id: string, changes: Record<string, unknown>, applied: string[]): Promise<Session | null> {
+  const session = await sessionRepository.findById(id);
+  if (!session) return null;
+  const config: Record<string, unknown> = { ...session.config };
+  const effective: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === null ? session.config[key] === undefined : session.config[key] === value) continue;
+    effective[key] = value;
+    if (value === null) delete config[key];
+    else config[key] = value;
+  }
+  if (!Object.keys(effective).length) return session;
+  const updated = await publishSession(await sessionRepository.update(id, { config }));
+  const event = await sessionRepository.addEvent(id, 'config', { changes: effective, applied });
+  pubSub.publish('sessionEvent', id, event);
+  return updated;
+}
+
 export const sessionService = {
   list: (filter?: SessionFilter) => sessionRepository.list(filter),
   get: (id: string) => sessionRepository.findById(id),
@@ -71,6 +94,9 @@ export const sessionService = {
         },
         setActivity: async (activity) => {
           await publishSession(await sessionRepository.update(id, { activity }));
+        },
+        recordConfig: async (changes) => {
+          await persistConfig(id, changes, Object.keys(changes));
         },
         ask: async (input, signal) => {
           await emit('request', { type: input.type, title: input.title, payload: input.payload ?? {} });
@@ -176,11 +202,7 @@ export const sessionService = {
     const handle = running.get(id);
     // Appliquer d'abord à la session en cours : si le provider refuse, rien n'est enregistré.
     const applied = handle?.updateConfig ? await handle.updateConfig(changes) : [];
-    const updated = await publishSession(await sessionRepository.update(id, { config }));
-    // `applied` : clés prises en compte à chaud ; les autres vaudront au prochain lancement.
-    const event = await sessionRepository.addEvent(id, 'config', { changes, applied });
-    pubSub.publish('sessionEvent', id, event);
-    return updated;
+    return (await persistConfig(id, changes, applied)) ?? session;
   },
 
   async stop(id: string): Promise<Session> {

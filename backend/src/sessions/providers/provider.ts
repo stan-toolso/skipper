@@ -50,6 +50,11 @@ export interface RunContext {
    * Rejette avec RequestCancelledError si la demande est annulée ou `signal` déclenché.
    */
   ask(input: CreateRequestInput, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  /**
+   * Enregistre un changement de configuration que le provider a déjà appliqué lui-même (ex. mode
+   * d'autorisation accordé par l'humain en réponse à une demande), pour l'afficher et le conserver au prochain lancement.
+   */
+  recordConfig(changes: Record<string, unknown>): Promise<void>;
 }
 
 export interface RunResult {
