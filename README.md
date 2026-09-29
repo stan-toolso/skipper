@@ -31,9 +31,9 @@ Trois notions :
 - **Notification** : cloche en haut à droite de l'interface. Signale une demande d'un agent, une
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
   contexte par un agent. Notifications natives du navigateur activables en option.
-- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL) que les agents
-  peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
-  MCP et ne les voit jamais. Voir « Connexions » plus bas.
+- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
+  agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
+  MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -103,9 +103,10 @@ backend/
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
     connections/
-      service.ts               # connexions SSH / PostgreSQL d'un projet : CRUD, secrets chiffrés, test, prompt
+      service.ts               # connexions SSH / PostgreSQL / sites web d'un projet : CRUD, secrets chiffrés, test, prompt
       ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
       postgres.ts              # requêtes pg (lecture seule, tunnel), rendu des résultats, schéma
+      website.ts               # sites web : champs libres, noms de variables, fichier --secrets du navigateur, test HTTP
       mcp.ts                   # serveur MCP `connections` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema)
       runtime.ts               # mode « shell » : ssh-agent, enveloppes ssh/scp, pg_service.conf, tunnels par session
     context/
@@ -162,9 +163,10 @@ frontend/
   projets existants.
 ## Connexions
 
-Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Deux types
-pour l'instant : **serveur SSH** et **base PostgreSQL** (éventuellement atteinte à travers une connexion
-SSH du projet, en tunnel). Chaque connexion a un nom court (`prod`, `rds-prod`) que les agents emploient.
+Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Trois types :
+**serveur SSH**, **base PostgreSQL** (éventuellement atteinte à travers une connexion SSH du projet, en
+tunnel) et **site web**. Chaque connexion a un nom court (`prod`, `rds-prod`, `admin-site`) que les agents
+emploient.
 
 **Identifiants.** Les champs publics (hôte, port, utilisateur, base) sont en clair ; la clé privée ou le
 mot de passe sont chiffrés (AES-256-GCM, même clé que les jetons des Paramètres) et jamais renvoyés à
@@ -175,17 +177,33 @@ la première connexion réussie (test depuis l'interface) et vérifiée ensuite 
 Pour une base, on recommande un rôle dédié aux agents ; l'option « lecture seule » force en plus des
 transactions `READ ONLY`.
 
+**Sites web.** Une adresse (de préférence la page de connexion) et autant de champs qu'on veut, chacun
+avec une clé (`username`, `password`, `otp_secret`, `org_code`…), un libellé, et le choix **public** ou
+**secret**. Un champ public est communiqué tel quel à l'agent ; un champ secret est chiffré, jamais
+réaffiché, et désigné par un nom de variable dérivé de la connexion et de la clé (`admin-site` +
+`password` → `ADMIN_SITE_PASSWORD`). Le test depuis l'interface vérifie seulement que l'adresse répond en
+HTTP : les formulaires de connexion sont tous différents, c'est l'agent qui se connecte avec le navigateur.
+
 **Accès des agents**, au choix par connexion :
 
 - **Outils** (par défaut) : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
   `tasks`. Outils `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `sql_query`, `sql_schema`. Le backend
   déchiffre, exécute, tronque les sorties, et journalise chaque usage comme événement `connection` de la
   session (visible dans le transcript). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
+- **Navigateur** (sites web, mode « outils ») : les champs secrets sont écrits, pour la durée de la
+  session, dans un fichier dotenv passé au serveur MCP Playwright (`--secrets`). Quand l'agent tape le nom
+  d'une variable dans un champ de formulaire (`browser_type`, `browser_fill_form`), Playwright saisit la
+  valeur à sa place et la masque dans ses réponses et journaux (`SECRET_ADMIN_SITE_PASSWORD`). Le prompt
+  système décrit chaque site, ses champs publics et les variables de ses secrets. La demande d'autorisation
+  montre le nom de la variable, pas la valeur. Le navigateur headless doit être activé sur le projet. Le
+  fichier vit dans `/tmp/skipper-session-<id>-browser/` (hôte ou conteneur) et disparaît en fin de session.
 - **Shell de la session** : `ssh <nom>`, `scp`, `sftp` et `psql service=<nom>` fonctionnent dans le Bash
   de l'agent. Pour la durée de la session, le backend lance un `ssh-agent` dédié (la clé est utilisable,
   pas lisible), place des enveloppes `ssh`/`scp`/`sftp` en tête du `PATH` qui imposent un fichier de
   configuration et un `known_hosts` propres à la session, ouvre les tunnels nécessaires, et écrit
-  `PGSERVICEFILE` / `PGPASSFILE`. Le mot de passe d'une base est donc lisible par l'agent dans ce mode.
+  `PGSERVICEFILE` / `PGPASSFILE`. Les champs d'un site web deviennent des variables d'environnement
+  (`ADMIN_SITE_USERNAME`, `ADMIN_SITE_PASSWORD`). Le mot de passe d'une base ou d'un site est donc lisible
+  par l'agent dans ce mode.
   Tout est détruit à la fin de la session (`/tmp/skipper-session-<id>`), et les restes d'un arrêt
   brutal sont balayés au démarrage suivant. Ce mode nécessite `ssh`, `ssh-agent`, `ssh-add` et, pour les
   bases, `psql` sur la machine du backend.
@@ -210,9 +228,10 @@ projet ; les autres membres les voient sans les modifier.
   `gitUrl`, `gitBranch`. Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
-- **Connection** : `projectId`, `name`, `kind` (ssh, postgres), `settings` (hôte, port, utilisateur, base, ssl,
-  tunnel), `secrets` (chiffrés), `publicKey`, `hostKey`, `exposure` (mcp, direct, both), `readOnly`,
-  `requireApproval`, `commandAllowlist`, dernier test.
+- **Connection** : `projectId`, `name`, `kind` (ssh, postgres, website), `settings` (hôte, port, utilisateur,
+  base, ssl, tunnel ; pour un site : `url` et `fields` = clé, libellé, secret, valeur publique), `secrets`
+  (chiffrés, indexés par clé de champ pour un site), `publicKey`, `hostKey`, `exposure` (mcp, direct, both),
+  `readOnly`, `requireApproval`, `commandAllowlist`, dernier test.
 - **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
   créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et

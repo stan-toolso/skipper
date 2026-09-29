@@ -167,7 +167,7 @@ export class ClaudeProvider implements SessionProvider {
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
       browserEnabled
-        ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles."
+        ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du projet (connexions de type « site web »), tape le nom de variable d'un secret tel quel dans le champ du formulaire : le navigateur le remplace par la valeur."
         : '',
     ]
       .filter(Boolean)
@@ -177,7 +177,20 @@ export class ClaudeProvider implements SessionProvider {
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
     const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
-    const browserServer = browserEnabled ? await runner.browserMcpCommand(ctx.project, ctx.cwd) : null;
+    // Les secrets des sites web (connexions « site web » en mode outils) sont fournis au navigateur, jamais à l'agent.
+    let browserServer: Awaited<ReturnType<typeof runner.browserMcpCommand>> | null = null;
+    if (browserEnabled) {
+      try {
+        browserServer = await runner.browserMcpCommand(ctx.project, ctx.cwd, { sessionId: ctx.session.id, secrets: await connectionService.browserSecrets(ctx.project.id) });
+      } catch (err) {
+        await direct?.dispose().catch(() => undefined);
+        throw err;
+      }
+    }
+    const disposeAll = async () => {
+      await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
+      await browserServer?.dispose().catch((e) => console.error('[browser] nettoyage des secrets du navigateur', e));
+    };
     // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
     const browserReadTools = ['mcp__playwright__browser_snapshot', 'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_console_messages', 'mcp__playwright__browser_network_requests', 'mcp__playwright__browser_wait_for'];
     const options: Options = {
@@ -213,7 +226,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();
@@ -225,7 +238,7 @@ export class ClaudeProvider implements SessionProvider {
     try {
       stream = query({ prompt: queue, options });
     } catch (err) {
-      await direct?.dispose().catch(() => undefined);
+      await disposeAll();
       throw err;
     }
     let stopped = false;
@@ -247,7 +260,7 @@ export class ClaudeProvider implements SessionProvider {
         if (stopped || err instanceof AbortError) return { exitCode: null };
         return { exitCode: 1, error: (err as Error).message };
       } finally {
-        await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
+        await disposeAll();
       }
       if (stopped) return { exitCode: null };
       if (!lastResult) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };

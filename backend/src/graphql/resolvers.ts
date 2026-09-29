@@ -2,7 +2,8 @@ import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { accessibleProjectIds, canAccessProject, filterAsync, requireAdmin, requireProject, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { connectionService } from '../connections/service.js';
 import { fingerprint } from '../connections/ssh.js';
-import type { Connection, ConnectionInput, PostgresSettings } from '../connections/types.js';
+import type { Connection, ConnectionInput, PostgresSettings, WebsiteSettings } from '../connections/types.js';
+import { variableName } from '../connections/website.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
@@ -138,9 +139,11 @@ export const resolvers = {
 
   Connection: {
     project: (c: Connection) => projectService.get(c.projectId),
-    host: (c: Connection) => c.settings.host,
-    port: (c: Connection) => c.settings.port,
-    username: (c: Connection) => c.settings.username,
+    host: (c: Connection) => (c.kind === 'website' ? null : (c.settings as PostgresSettings).host),
+    port: (c: Connection) => (c.kind === 'website' ? null : (c.settings as PostgresSettings).port),
+    username: (c: Connection) => (c.kind === 'website' ? null : (c.settings as PostgresSettings).username),
+    url: (c: Connection) => (c.kind === 'website' ? (c.settings as WebsiteSettings).url : null),
+    fields: (c: Connection) => (c.kind === 'website' ? (c.settings as WebsiteSettings).fields.map((f) => ({ ...f, variable: variableName(c.name, f.key) })) : []),
     database: (c: Connection) => (c.kind === 'postgres' ? (c.settings as PostgresSettings).database : null),
     ssl: (c: Connection) => (c.kind === 'postgres' ? (c.settings as PostgresSettings).ssl : null),
     viaConnection: (c: Connection) => {

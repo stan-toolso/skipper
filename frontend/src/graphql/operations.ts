@@ -1654,7 +1654,23 @@ export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $cre
 
 // ---- Connexions ---------------------------------------------------------------------------------
 
-export type ConnectionKind = 'ssh' | 'postgres';
+export type ConnectionKind = 'ssh' | 'postgres' | 'website';
+
+/** Champ d'un site web ; `value` est null pour un secret, `variable` le nom sous lequel les agents le désignent. */
+export interface ConnectionField {
+  key: string;
+  label: string;
+  secret: boolean;
+  value: string | null;
+  variable: string;
+}
+
+export interface ConnectionFieldInput {
+  key: string;
+  label?: string | null;
+  secret?: boolean | null;
+  value?: string | null;
+}
 export type ConnectionExposure = 'mcp' | 'direct' | 'both';
 
 export interface Connection {
@@ -1662,9 +1678,11 @@ export interface Connection {
   name: string;
   kind: ConnectionKind;
   description: string;
-  host: string;
-  port: number;
-  username: string;
+  host: string | null;
+  port: number | null;
+  username: string | null;
+  url: string | null;
+  fields: ConnectionField[];
   database: string | null;
   ssl: boolean | null;
   viaConnection: { id: string; name: string } | null;
@@ -1699,6 +1717,8 @@ export interface ConnectionInput {
   commandAllowlist?: string[] | null;
   privateKey?: string | null;
   password?: string | null;
+  url?: string | null;
+  fields?: ConnectionFieldInput[] | null;
 }
 
 const CONNECTION_FIELDS = gql`
@@ -1710,6 +1730,14 @@ const CONNECTION_FIELDS = gql`
     host
     port
     username
+    url
+    fields {
+      key
+      label
+      secret
+      value
+      variable
+    }
     database
     ssl
     viaConnection {
@@ -1740,6 +1768,7 @@ export const PROJECT_CONNECTIONS = gql`
       name
       slug
       runner
+      runnerConfig
       myRole
       connections {
         ...ConnectionFields
