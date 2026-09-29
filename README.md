@@ -1,4 +1,4 @@
-# agents
+# Skipper
 
 Interface de gestion de sessions d'agents tournant en arrière-plan. Claude Code est le premier type
 supporté, mais l'architecture est générique : un « provider » par type d'agent (`shell` est fourni

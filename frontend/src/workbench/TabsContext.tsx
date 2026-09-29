@@ -21,7 +21,7 @@ interface TabsState {
 }
 
 const TabsContext = createContext<TabsState | null>(null);
-const STORAGE_KEY = 'agents.workbench.tabs';
+const STORAGE_KEY = 'skipper.workbench.tabs';
 
 /** Titre et type par défaut d'un onglet à partir de son chemin (les pages affinent le titre). */
 export function describeRoute(pathname: string): { title: string; kind: TabKind } {

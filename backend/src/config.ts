@@ -11,9 +11,9 @@ function env(name: string, fallback?: string): string {
 
 export const config = {
   port: Number(env('PORT', '4000')),
-  databaseUrl: env('DATABASE_URL', 'postgres://agents:agents@localhost:5432/agents'),
+  databaseUrl: env('DATABASE_URL', 'postgres://skipper:skipper@localhost:5432/skipper'),
   /** Chemin d'un binaire Claude Code spécifique ; sinon le SDK utilise celui qu'il embarque. */
   claudeBin: process.env.CLAUDE_BIN || undefined,
   /** Dossier commun contenant un sous-dossier par projet (workspace). */
-  workspacesRoot: path.resolve(env('WORKSPACES_ROOT', path.join(os.homedir(), 'agents-workspaces'))),
+  workspacesRoot: path.resolve(env('WORKSPACES_ROOT', path.join(os.homedir(), 'skipper-workspaces'))),
 };

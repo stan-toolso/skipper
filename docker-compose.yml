@@ -1,20 +1,22 @@
+name: skipper
+
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: agents-postgres
+    container_name: skipper-postgres
     environment:
-      POSTGRES_USER: agents
-      POSTGRES_PASSWORD: agents
-      POSTGRES_DB: agents
+      POSTGRES_USER: skipper
+      POSTGRES_PASSWORD: skipper
+      POSTGRES_DB: skipper
     ports:
       - "5432:5432"
     volumes:
-      - agents-pgdata:/var/lib/postgresql/data
+      - skipper-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agents -d agents"]
+      test: ["CMD-SHELL", "pg_isready -U skipper -d skipper"]
       interval: 5s
       timeout: 3s
       retries: 10
 
 volumes:
-  agents-pgdata:
+  skipper-pgdata:

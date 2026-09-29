@@ -48,7 +48,7 @@ export const terminalService = {
       cols: 120,
       rows: 30,
       cwd,
-      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', AGENTS_PROJECT: project.slug } as Record<string, string>,
+      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
     });
     const t: LiveTerminal = { id: record.id, proc, scrollback: '', clients: new Set() };
     live.set(record.id, t);

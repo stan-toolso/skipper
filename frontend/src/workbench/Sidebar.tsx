@@ -57,7 +57,7 @@ export default function Sidebar() {
   const pending = pendingData?.requests.length ?? 0;
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try {
-      return JSON.parse(localStorage.getItem('agents.workbench.collapsed') ?? '{}');
+      return JSON.parse(localStorage.getItem('skipper.workbench.collapsed') ?? '{}');
     } catch {
       return {};
     }
@@ -66,7 +66,7 @@ export default function Sidebar() {
     setCollapsed((prev) => {
       const next = { ...prev, [id]: !prev[id] };
       try {
-        localStorage.setItem('agents.workbench.collapsed', JSON.stringify(next));
+        localStorage.setItem('skipper.workbench.collapsed', JSON.stringify(next));
       } catch {
         /* ignore */
       }
@@ -81,7 +81,7 @@ export default function Sidebar() {
   return (
     <aside className="wb-sidebar">
       <div className="wb-brand">
-        <Link to="/projects">✻ Agents</Link>
+        <Link to="/projects">✻ Skipper</Link>
       </div>
 
       <nav className="wb-menu">

@@ -1,8 +1,8 @@
 {
-  "name": "agents",
+  "name": "skipper",
   "private": true,
   "version": "0.1.0",
-  "description": "Interface de gestion de sessions d'agents (Claude et autres) tournant en arrière-plan",
+  "description": "Skipper : pilotage de sessions d'agents (Claude et autres) tournant en arrière-plan",
   "workspaces": [
     "backend",
     "frontend"
