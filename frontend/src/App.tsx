@@ -11,6 +11,7 @@ import RequestsPage from './pages/RequestsPage';
 import TerminalPage from './pages/TerminalPage';
 import WelcomePage from './pages/WelcomePage';
 import TasksPage from './pages/TasksPage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/terminals/:id" element={<TerminalPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>
   );

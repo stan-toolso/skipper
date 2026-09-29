@@ -13,6 +13,7 @@ const icons: Record<TabKind, string> = {
   'new-session': 'bi-plus-circle',
   terminal: 'bi-terminal',
   tasks: 'bi-check2-square',
+  settings: 'bi-gear',
   other: 'bi-file-earmark',
 };
 

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-export type TabKind = 'projects' | 'sessions' | 'requests' | 'project' | 'project-form' | 'context' | 'session' | 'new-session' | 'terminal' | 'tasks' | 'other';
+export type TabKind = 'projects' | 'sessions' | 'requests' | 'project' | 'project-form' | 'context' | 'session' | 'new-session' | 'terminal' | 'tasks' | 'settings' | 'other';
 
 export interface Tab {
   /** Clé = pathname (la query string peut changer sans ouvrir un nouvel onglet). */
@@ -37,6 +37,7 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/sessions/new') return { title: 'Nouvelle session', kind: 'new-session' };
   if (/^\/sessions\/[^/]+$/.test(pathname)) return { title: 'Session', kind: 'session' };
   if (pathname === '/requests') return { title: 'Demandes', kind: 'requests' };
+  if (pathname === '/settings') return { title: 'Paramètres', kind: 'settings' };
   if (/^\/terminals\/[^/]+$/.test(pathname)) return { title: 'Terminal', kind: 'terminal' };
   return { title: pathname, kind: 'other' };
 }

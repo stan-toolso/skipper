@@ -177,6 +177,11 @@ export default function Sidebar() {
       <div className="wb-hint">
         Un point orange qui clignote : l'agent travaille. Vert : il attend vos instructions. Un badge jaune : il a besoin de vous.
       </div>
+      <nav className="wb-menu wb-menu-bottom">
+        <NavLink to="/settings" className="wb-menu-item">
+          <i className="bi bi-gear wb-icon" /> Paramètres
+        </NavLink>
+      </nav>
     </aside>
   );
 }

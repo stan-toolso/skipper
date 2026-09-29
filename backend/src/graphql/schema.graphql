@@ -271,7 +271,119 @@ type SessionEvent {
   createdAt: DateTime!
 }
 
+# ---- Paramètres généraux ---------------------------------------------------------------------
+
+"Comment le serveur s'authentifie auprès de Claude : compte de l'utilisateur système (server), jeton OAuth obtenu depuis l'interface (oauth), ou clé API (api_key)."
+enum ClaudeAuthMode {
+  server
+  oauth
+  api_key
+}
+
+type ClaudeAccount {
+  email: String
+  organization: String
+  subscriptionType: String
+  apiProvider: String
+}
+
+"Modèle connu de Claude Code : alias ou identifiant complet, et l'identifiant réel vers lequel il pointe."
+type ClaudeModel {
+  value: String!
+  resolvedModel: String
+  displayName: String!
+  description: String!
+}
+
+"Dernière vérification de connexion : compte lu et modèles disponibles."
+type ClaudeVerification {
+  verifiedAt: DateTime!
+  authMode: ClaudeAuthMode!
+  ok: Boolean!
+  error: String
+  account: ClaudeAccount
+  models: [ClaudeModel!]!
+}
+
+type ClaudeAuthStatus {
+  mode: ClaudeAuthMode!
+  hasOauthToken: Boolean!
+  oauthTokenSetAt: DateTime
+  hasApiKey: Boolean!
+  "Derniers caractères de la clé API enregistrée."
+  apiKeyHint: String
+  apiKeySetAt: DateTime
+  "Le processus serveur a lui-même ANTHROPIC_API_KEY ou CLAUDE_CODE_OAUTH_TOKEN dans son environnement."
+  serverHasApiKey: Boolean!
+  verification: ClaudeVerification
+}
+
+type ClaudeSettings {
+  authMode: ClaudeAuthMode!
+  "Modèle des sessions qui n'en précisent pas ; null = défaut de Claude Code."
+  defaultModel: String
+  "Modèles proposés à la création d'une session ; vide = tous."
+  allowedModels: [String!]!
+  fallbackModel: String
+  "Plafond de dépense estimée sur le mois calendaire, toutes sessions confondues (USD)."
+  monthlyBudgetUsd: Float
+  "Budget par défaut d'une session (USD)."
+  sessionBudgetUsd: Float
+  defaultMaxTurns: Int
+}
+
+type UsageByModel {
+  model: String!
+  usd: Float!
+}
+
+type UsageBySession {
+  sessionId: ID
+  sessionName: String
+  projectName: String
+  usd: Float!
+}
+
+"Consommation estimée (d'après total_cost_usd du SDK : une estimation au tarif API, pas une facture)."
+type UsageSummary {
+  monthStart: DateTime!
+  monthUsd: Float!
+  totalUsd: Float!
+  byModel: [UsageByModel!]!
+  bySession: [UsageBySession!]!
+}
+
+type AppSettings {
+  claude: ClaudeSettings!
+  claudeAuth: ClaudeAuthStatus!
+  "Modèles connus (dernière vérification, sinon liste de base)."
+  models: [ClaudeModel!]!
+  usage: UsageSummary!
+}
+
+"Connexion OAuth en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
+type ClaudeLogin {
+  id: ID!
+  url: String!
+  "starting, awaiting_code, exchanging, done, failed"
+  status: String!
+  error: String
+  createdAt: DateTime!
+}
+
+input ClaudeSettingsInput {
+  authMode: ClaudeAuthMode
+  defaultModel: String
+  allowedModels: [String!]
+  fallbackModel: String
+  monthlyBudgetUsd: Float
+  sessionBudgetUsd: Float
+  defaultMaxTurns: Int
+}
+
 type Query {
+  settings: AppSettings!
+  claudeLogin(id: ID!): ClaudeLogin!
   providers: [Provider!]!
   sessions(projectId: ID, status: SessionStatus, provider: String, limit: Int, offset: Int): [Session!]!
   session(id: ID!): Session
@@ -337,6 +449,20 @@ input CreateSessionInput {
 }
 
 type Mutation {
+  "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
+  updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
+  "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."
+  setClaudeApiKey(apiKey: String): AppSettings!
+  "Supprime le jeton OAuth enregistré."
+  clearClaudeOauthToken: AppSettings!
+  "Lance la connexion OAuth : renvoie l'URL d'autorisation à ouvrir."
+  startClaudeLogin: ClaudeLogin!
+  "Transmet le code d'autorisation ; en cas de succès le jeton est enregistré et le mode passe à oauth."
+  completeClaudeLogin(id: ID!, code: String!): ClaudeLogin!
+  cancelClaudeLogin(id: ID!): Boolean!
+  "Interroge Claude Code avec l'authentification du mode indiqué (défaut : mode courant) : compte et modèles."
+  verifyClaudeAuth(mode: ClaudeAuthMode): AppSettings!
+
   "Crée le projet et prépare son workspace (clone git si une URL est fournie)."
   createProject(input: CreateProjectInput!): Project!
   updateProject(id: ID!, input: UpdateProjectInput!): Project!

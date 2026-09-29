@@ -39,10 +39,13 @@ Le port 4000 est celui de l'API Curso : Skipper est sur 4100. Le `.env` fixe aus
 
 ## Authentification Claude
 
-Le backend lance Claude Code via le Claude Agent SDK, avec les identifiants de l'utilisateur
-`skipper` : soit une connexion Claude Code (`ssh skipper@skipper.toolso.io`, puis `claude` et
-`/login`, une seule fois), soit `ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un
-`pm2 restart skipper --update-env`. Sans l'un des deux, les sessions d'agents échouent.
+Le plus simple : dans l'application, **Paramètres → Authentification Claude → Se connecter avec
+Claude** (OAuth, compte claude.ai avec abonnement). Le backend pilote `claude setup-token` avec le
+CLI installé pour l'utilisateur `skipper` (`~/.local/bin/claude`) ; le jeton est chiffré en base
+avec la clé `/home/skipper/skipper-workspaces/.secret-key` (générée au premier démarrage, à
+sauvegarder avec la base). Alternatives : une clé API saisie dans la même page, ou le mode
+« compte du serveur » (`ssh skipper@skipper.toolso.io`, puis `claude` et `/login`, ou
+`ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un `pm2 restart skipper --update-env`).
 
 ## Procédure de déploiement
 

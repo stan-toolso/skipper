@@ -733,3 +733,215 @@ export const MARK_ALL_NOTIFICATIONS_READ = gql`
     markAllNotificationsRead
   }
 `;
+
+// ---- Paramètres généraux ---------------------------------------------------------------------
+
+export type ClaudeAuthMode = 'server' | 'oauth' | 'api_key';
+
+export interface ClaudeModel {
+  value: string;
+  resolvedModel: string | null;
+  displayName: string;
+  description: string;
+}
+
+export interface ClaudeAccount {
+  email: string | null;
+  organization: string | null;
+  subscriptionType: string | null;
+  apiProvider: string | null;
+}
+
+export interface ClaudeVerification {
+  verifiedAt: string;
+  authMode: ClaudeAuthMode;
+  ok: boolean;
+  error: string | null;
+  account: ClaudeAccount | null;
+  models: ClaudeModel[];
+}
+
+export interface ClaudeAuthStatus {
+  mode: ClaudeAuthMode;
+  hasOauthToken: boolean;
+  oauthTokenSetAt: string | null;
+  hasApiKey: boolean;
+  apiKeyHint: string | null;
+  apiKeySetAt: string | null;
+  serverHasApiKey: boolean;
+  verification: ClaudeVerification | null;
+}
+
+export interface ClaudeSettings {
+  authMode: ClaudeAuthMode;
+  defaultModel: string | null;
+  allowedModels: string[];
+  fallbackModel: string | null;
+  monthlyBudgetUsd: number | null;
+  sessionBudgetUsd: number | null;
+  defaultMaxTurns: number | null;
+}
+
+export interface UsageSummary {
+  monthStart: string;
+  monthUsd: number;
+  totalUsd: number;
+  byModel: { model: string; usd: number }[];
+  bySession: { sessionId: string | null; sessionName: string | null; projectName: string | null; usd: number }[];
+}
+
+export interface AppSettings {
+  claude: ClaudeSettings;
+  claudeAuth: ClaudeAuthStatus;
+  models: ClaudeModel[];
+  usage: UsageSummary;
+}
+
+export interface ClaudeLogin {
+  id: string;
+  url: string;
+  status: 'starting' | 'awaiting_code' | 'exchanging' | 'done' | 'failed';
+  error: string | null;
+  createdAt: string;
+}
+
+export const APP_SETTINGS_FIELDS = gql`
+  fragment AppSettingsFields on AppSettings {
+    claude {
+      authMode
+      defaultModel
+      allowedModels
+      fallbackModel
+      monthlyBudgetUsd
+      sessionBudgetUsd
+      defaultMaxTurns
+    }
+    claudeAuth {
+      mode
+      hasOauthToken
+      oauthTokenSetAt
+      hasApiKey
+      apiKeyHint
+      apiKeySetAt
+      serverHasApiKey
+      verification {
+        verifiedAt
+        authMode
+        ok
+        error
+        account {
+          email
+          organization
+          subscriptionType
+          apiProvider
+        }
+        models {
+          value
+          resolvedModel
+          displayName
+          description
+        }
+      }
+    }
+    models {
+      value
+      resolvedModel
+      displayName
+      description
+    }
+    usage {
+      monthStart
+      monthUsd
+      totalUsd
+      byModel {
+        model
+        usd
+      }
+      bySession {
+        sessionId
+        sessionName
+        projectName
+        usd
+      }
+    }
+  }
+`;
+
+export const SETTINGS = gql`
+  ${APP_SETTINGS_FIELDS}
+  query Settings {
+    settings {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+export const UPDATE_CLAUDE_SETTINGS = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation UpdateClaudeSettings($input: ClaudeSettingsInput!) {
+    updateClaudeSettings(input: $input) {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+export const SET_CLAUDE_API_KEY = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation SetClaudeApiKey($apiKey: String) {
+    setClaudeApiKey(apiKey: $apiKey) {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+export const CLEAR_CLAUDE_OAUTH_TOKEN = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation ClearClaudeOauthToken {
+    clearClaudeOauthToken {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+export const VERIFY_CLAUDE_AUTH = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation VerifyClaudeAuth($mode: ClaudeAuthMode) {
+    verifyClaudeAuth(mode: $mode) {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+const CLAUDE_LOGIN_FIELDS = gql`
+  fragment ClaudeLoginFields on ClaudeLogin {
+    id
+    url
+    status
+    error
+    createdAt
+  }
+`;
+
+export const START_CLAUDE_LOGIN = gql`
+  ${CLAUDE_LOGIN_FIELDS}
+  mutation StartClaudeLogin {
+    startClaudeLogin {
+      ...ClaudeLoginFields
+    }
+  }
+`;
+
+export const COMPLETE_CLAUDE_LOGIN = gql`
+  ${CLAUDE_LOGIN_FIELDS}
+  mutation CompleteClaudeLogin($id: ID!, $code: String!) {
+    completeClaudeLogin(id: $id, code: $code) {
+      ...ClaudeLoginFields
+    }
+  }
+`;
+
+export const CANCEL_CLAUDE_LOGIN = gql`
+  mutation CancelClaudeLogin($id: ID!) {
+    cancelClaudeLogin(id: $id)
+  }
+`;

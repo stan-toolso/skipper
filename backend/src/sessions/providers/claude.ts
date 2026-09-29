@@ -17,6 +17,8 @@ import { AppError } from '../../errors.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
+import { settingsService } from '../../settings/service.js';
+import { usageService } from '../../settings/usage.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
 import type { ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 
@@ -94,7 +96,19 @@ export class ClaudeProvider implements SessionProvider {
             { value: 'bypassPermissions', label: 'Tout autoriser (risqué)', description: "L'agent agit sans aucune confirmation." },
           ],
         },
-        { key: 'model', label: 'Modèle', type: 'string', required: false, advanced: true, description: 'Laisser vide pour le modèle par défaut. Ex. sonnet, opus.' },
+        {
+          key: 'model',
+          label: 'Modèle',
+          type: 'select',
+          required: false,
+          advanced: true,
+          defaultValue: settingsService.claude.defaultModel ?? '',
+          description: 'Les modèles proposés et le choix par défaut se règlent dans Paramètres.',
+          options: [
+            { value: '', label: settingsService.claude.defaultModel ? `Réglage général (${settingsService.claude.defaultModel})` : 'Modèle par défaut de Claude Code' },
+            ...settingsService.selectableModels().map((m) => ({ value: m.value, label: m.displayName, description: m.description || undefined })),
+          ],
+        },
         { key: 'maxTurns', label: 'Nombre maximum d\'étapes', type: 'number', required: false, advanced: true, description: "Arrête l'agent au-delà de ce nombre d'échanges avec le modèle." },
         { key: 'maxBudgetUsd', label: 'Budget maximum (USD)', type: 'number', required: false, advanced: true },
         { key: 'allowedTools', label: 'Outils pré-autorisés', type: 'string', required: false, advanced: true, description: 'Liste séparée par des virgules, ex. "Read,Edit,Bash(git:*)"' },
@@ -113,11 +127,19 @@ export class ClaudeProvider implements SessionProvider {
     if (cfg.permissionMode !== undefined && !permissionModes.includes(cfg.permissionMode)) {
       throw new AppError(`permissionMode invalide : ${String(cfg.permissionMode)}`);
     }
+    settingsService.assertModelAllowed(cfg.model ? String(cfg.model) : null);
   }
 
   async start(ctx: RunContext): Promise<RunningHandle> {
     const cfg = ctx.session.config as ClaudeConfig;
     if (!ctx.initialMessage) throw new AppError('Une session Claude nécessite une première instruction');
+
+    // Réglages généraux : authentification, modèle par défaut, budgets, plafond mensuel.
+    const general = settingsService.claude;
+    await settingsService.assertBudgetAvailable();
+    const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
+    settingsService.assertModelAllowed(model);
+    const env = settingsService.authEnv();
 
     const abortController = new AbortController();
     // Prompt système : celui du projet, puis la description de la bibliothèque de contexte.
@@ -132,12 +154,14 @@ export class ClaudeProvider implements SessionProvider {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
       mcpServers: { context: createContextMcpServer(ctx.project, ctx.session.id), tasks: createTasksMcpServer(ctx.project, ctx.session.id) },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
-      model: cfg.model || undefined,
+      model,
+      fallbackModel: general.fallbackModel ?? undefined,
+      env,
       permissionMode: cfg.permissionMode || 'default',
       // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé.
       allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
-      maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : undefined,
-      maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : undefined,
+      maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
+      maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks'],
       // Reprise de la conversation Claude si la session a déjà tourné.
@@ -152,7 +176,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools },
     });
 
     const queue = new MessageQueue();
@@ -165,12 +189,14 @@ export class ClaudeProvider implements SessionProvider {
 
     const done: Promise<RunResult> = (async () => {
       let lastResult: SDKResultMessage | undefined;
+      let previousModelTotals: Record<string, number> = {};
       try {
         for await (const message of stream) {
           await this.handleMessage(ctx, message);
           if (message.type === 'result') {
             // Fin d'un tour : l'agent attend la prochaine instruction.
             lastResult = message;
+            previousModelTotals = await this.recordUsage(ctx, message, previousModelTotals, model ?? 'default');
             await ctx.setActivity('idle');
           }
         }
@@ -197,6 +223,7 @@ export class ClaudeProvider implements SessionProvider {
         await done;
       },
       async sendMessage(text) {
+        await settingsService.assertBudgetAvailable();
         await ctx.emit('instruction', { text });
         queue.push(text);
         await ctx.setActivity('busy');
@@ -257,6 +284,23 @@ export class ClaudeProvider implements SessionProvider {
         throw err;
       }
     };
+  }
+
+  /**
+   * Relevé de consommation : `total_cost_usd` est cumulé sur la session, `modelUsage` donne le
+   * cumul par modèle ; on enregistre le delta depuis le dernier total connu. Renvoie les cumuls par
+   * modèle pour le prochain tour. Une erreur de relevé ne doit jamais interrompre la session.
+   */
+  private async recordUsage(ctx: RunContext, result: SDKResultMessage, previous: Record<string, number>, fallbackModel: string): Promise<Record<string, number>> {
+    const modelTotals: Record<string, number> = {};
+    for (const [name, usage] of Object.entries(result.modelUsage ?? {})) modelTotals[name] = usage.costUSD;
+    try {
+      const delta = await usageService.recordTotal(ctx.session.id, ctx.project.id, result.total_cost_usd ?? 0, modelTotals, previous, fallbackModel);
+      if (delta > 0) await ctx.emit('usage', { deltaUsd: Number(delta.toFixed(6)), totalUsd: result.total_cost_usd });
+    } catch (err) {
+      console.error('[usage] relevé impossible', err);
+    }
+    return modelTotals;
   }
 
   private async handleMessage(ctx: RunContext, message: SDKMessage): Promise<void> {

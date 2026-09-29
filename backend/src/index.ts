@@ -10,6 +10,8 @@ import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
 import { sessionService } from './sessions/service.js';
+import { loginService } from './settings/login.js';
+import { settingsService } from './settings/service.js';
 import { terminalService } from './terminals/service.js';
 import { attachTerminalWebSockets } from './terminals/ws.js';
 
@@ -19,6 +21,9 @@ const typeDefs = readFileSync(path.join(here, 'graphql/schema.graphql'), 'utf8')
 async function main() {
   const applied = await runMigrations();
   if (applied.length) console.log(`[db] migrations appliquées : ${applied.join(', ')}`);
+
+  await settingsService.load();
+  console.log(`[settings] authentification Claude : ${settingsService.claude.authMode}`);
 
   const recovered = await sessionService.recoverAfterRestart();
   if (recovered.sessions) console.log(`[sessions] ${recovered.sessions} session(s) marquée(s) comme interrompue(s)`);
@@ -53,6 +58,7 @@ async function main() {
     console.log(`[http] ${signal} reçu, arrêt en cours...`);
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
+    loginService.shutdown();
     await terminalService.shutdown();
     await sessionService.shutdown();
     await pool.end();

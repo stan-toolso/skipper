@@ -168,6 +168,31 @@ réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
 
+## Paramètres généraux (Claude)
+
+Page « Paramètres » (menu du bas de la sidebar), stockée en base (`app_settings`) et chargée en
+mémoire au démarrage (`backend/src/settings/`) :
+
+- **Authentification** : trois modes. `server` : Claude Code utilise la connexion de l'utilisateur
+  système qui fait tourner le backend (ou `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` de son
+  environnement). `oauth` : un jeton longue durée obtenu **depuis l'interface** ; le backend pilote
+  le flux officiel `claude setup-token` dans un pseudo-terminal (`settings/login.ts`), affiche l'URL
+  d'autorisation claude.com, reçoit le code collé par l'utilisateur et récupère le jeton imprimé par
+  le CLI. `api_key` : clé API Anthropic saisie dans l'interface. Le secret du mode actif est passé
+  au processus Claude Code via `env` (`CLAUDE_CODE_OAUTH_TOKEN` ou `ANTHROPIC_API_KEY`). Les
+  secrets sont chiffrés (AES-256-GCM, `settings/crypto.ts`, clé `SKIPPER_SECRET_KEY` ou fichier
+  `WORKSPACES_ROOT/.secret-key`) et ne sont jamais renvoyés par l'API.
+- **Vérifier la connexion** : lance Claude Code sans prompt et lit `accountInfo()` (e-mail,
+  abonnement) et `supportedModels()` ; le résultat est mémorisé et alimente la liste des modèles.
+- **Modèles** : modèles proposés à la création d'une session (`allowedModels`, vide = tous),
+  modèle par défaut et modèle de repli. Le champ « Modèle » du formulaire de session devient une
+  liste déroulante ; un modèle hors liste est refusé côté serveur.
+- **Facturation** : plafond mensuel (USD, toutes sessions), budget par défaut par session
+  (`maxBudgetUsd` du SDK) et nombre d'étapes par défaut. À chaque fin de tour, le delta de
+  `total_cost_usd` est enregistré dans `usage_ledger` (ventilé par modèle via `modelUsage`) ; le
+  plafond atteint bloque le démarrage des sessions et l'envoi d'instructions (`BUDGET_EXCEEDED`).
+  Ce coût est une estimation au tarif API : avec un abonnement Claude (OAuth) il n'est pas facturé.
+
 ## Ajouter un type d'agent
 
 1. Implémenter `SessionProvider` (`backend/src/sessions/providers/provider.ts`) : `describe()` expose
@@ -179,6 +204,8 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 
 ## API GraphQL
 
+- `settings` (réglages Claude, statut d'authentification, modèles connus, consommation) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
+- Connexion OAuth : `startClaudeLogin` (URL à ouvrir), `completeClaudeLogin(id, code)`, `cancelClaudeLogin`, `claudeLogin(id)`
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`

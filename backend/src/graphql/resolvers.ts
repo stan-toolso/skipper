@@ -11,6 +11,10 @@ import { requestService } from '../requests/service.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
 import { sessionService } from '../sessions/service.js';
+import { loginService } from '../settings/login.js';
+import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
+import type { ClaudeAuthMode } from '../settings/types.js';
+import { usageService } from '../settings/usage.js';
 import { terminalService } from '../terminals/service.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
@@ -47,6 +51,14 @@ const fromGqlRequestStatus = (s?: GqlRequestStatus | null): RequestStatus | unde
 const toGqlStatus = (s: SessionStatus): GqlStatus => s.toUpperCase() as GqlStatus;
 const fromGqlStatus = (s?: GqlStatus | null): SessionStatus | undefined =>
   s ? (s.toLowerCase() as SessionStatus) : undefined;
+
+/** Vue agrégée des paramètres ; les champs coûteux (consommation) sont résolus à la demande. */
+const appSettings = () => ({
+  claude: settingsService.claude,
+  claudeAuth: settingsService.authStatus(),
+  models: settingsService.models(),
+  usage: () => usageService.summary(),
+});
 
 export const resolvers = {
   JSON: JSONResolver,
@@ -110,6 +122,8 @@ export const resolvers = {
   },
 
   Query: {
+    settings: () => appSettings(),
+    claudeLogin: (_: unknown, args: { id: string }) => loginService.get(args.id),
     providers: () => listProviders(),
     sessions: (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; limit?: number | null; offset?: number | null }) =>
       sessionService.list({
@@ -146,6 +160,25 @@ export const resolvers = {
   },
 
   Mutation: {
+    updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }) => {
+      await settingsService.update(input);
+      return appSettings();
+    },
+    setClaudeApiKey: async (_: unknown, args: { apiKey?: string | null }) => {
+      await settingsService.setApiKey(args.apiKey ?? null);
+      return appSettings();
+    },
+    clearClaudeOauthToken: async () => {
+      await settingsService.clearOauthToken();
+      return appSettings();
+    },
+    startClaudeLogin: () => loginService.start(),
+    completeClaudeLogin: (_: unknown, args: { id: string; code: string }) => loginService.complete(args.id, args.code),
+    cancelClaudeLogin: (_: unknown, args: { id: string }) => loginService.cancel(args.id),
+    verifyClaudeAuth: async (_: unknown, args: { mode?: ClaudeAuthMode | null }) => {
+      await settingsService.verify(args.mode ?? undefined);
+      return appSettings();
+    },
     createProject: (_: unknown, { input }: { input: CreateProjectInput }) => projectService.create(input),
     updateProject: (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }) => projectService.update(id, input),
     prepareProjectWorkspace: (_: unknown, args: { id: string }) => projectService.prepareWorkspace(args.id),
