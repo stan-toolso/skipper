@@ -9,7 +9,6 @@ interface ProjectRow {
   system_prompt: string;
   git_url: string | null;
   git_branch: string | null;
-  runner: 'local' | 'docker';
   runner_config: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
@@ -24,7 +23,6 @@ function toProject(row: ProjectRow): Project {
     systemPrompt: row.system_prompt,
     gitUrl: row.git_url,
     gitBranch: row.git_branch,
-    runner: row.runner ?? 'local',
     runnerConfig: row.runner_config ?? {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -37,16 +35,15 @@ const updateColumns: Record<keyof UpdateProjectInput, string> = {
   systemPrompt: 'system_prompt',
   gitUrl: 'git_url',
   gitBranch: 'git_branch',
-  runner: 'runner',
   runnerConfig: 'runner_config',
 };
 
 export const projectRepository = {
   async create(input: CreateProjectInput & { slug: string }): Promise<Project> {
     const { rows } = await pool.query<ProjectRow>(
-      `INSERT INTO projects (name, slug, description, system_prompt, git_url, git_branch, runner, runner_config)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [input.name, input.slug, input.description ?? null, input.systemPrompt ?? '', input.gitUrl || null, input.gitBranch || null, input.runner ?? 'local', JSON.stringify(input.runnerConfig ?? {})],
+      `INSERT INTO projects (name, slug, description, system_prompt, git_url, git_branch, runner_config)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [input.name, input.slug, input.description ?? null, input.systemPrompt ?? '', input.gitUrl || null, input.gitBranch || null, JSON.stringify(input.runnerConfig ?? {})],
     );
     return toProject(rows[0]);
   },
@@ -84,11 +81,6 @@ export const projectRepository = {
       if (key === 'runnerConfig') {
         params.push(JSON.stringify(value ?? {}));
         sets.push(`${column} = $${params.length}::jsonb`);
-        continue;
-      }
-      if (key === 'runner') {
-        params.push(value ?? 'local');
-        sets.push(`${column} = $${params.length}`);
         continue;
       }
       // Les champs optionnels vides sont stockés en NULL ; le prompt système reste une chaîne.

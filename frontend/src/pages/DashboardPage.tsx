@@ -330,7 +330,6 @@ function ProjectsTable({ projects }: { projects: DashboardProject[] }) {
                 <Link to={`/projects/${p.project.id}`} className="fw-semibold text-decoration-none">{p.project.name}</Link>
                 <div className="small text-secondary">
                   {p.project.git?.branch && <span className="font-monospace me-2"><i className="bi bi-git me-1" />{p.project.git.branch}</span>}
-                  {p.project.runner === 'docker' && <span className="me-2"><i className="bi bi-box me-1" />conteneur</span>}
                   {p.overdueTasks > 0 && <span className="text-warning">{plural(p.overdueTasks, 'tâche en retard', 'tâches en retard')}</span>}
                 </div>
               </td>

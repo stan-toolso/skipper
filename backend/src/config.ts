@@ -12,9 +12,9 @@ function env(name: string, fallback?: string): string {
 export const config = {
   port: Number(env('PORT', '4000')),
   databaseUrl: env('DATABASE_URL', 'postgres://skipper:skipper@localhost:5432/skipper'),
-  /** Chemin d'un binaire Claude Code spécifique ; sinon le SDK utilise celui qu'il embarque. */
+  /** Binaire Claude Code du serveur, pour l'authentification du compte uniquement ; sinon celui du SDK. */
   claudeBin: process.env.CLAUDE_BIN || undefined,
-  /** Image Docker des environnements isolés (runner docker) et limites par défaut. */
+  /** Image Docker des conteneurs de projet (seul environnement d'exécution) et limites par défaut. */
   runnerImage: process.env.SKIPPER_RUNNER_IMAGE || 'skipper-runner:latest',
   runnerMemory: process.env.SKIPPER_RUNNER_MEMORY || '1g',
   runnerCpus: process.env.SKIPPER_RUNNER_CPUS || '1',

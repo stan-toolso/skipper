@@ -176,3 +176,13 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
   MEMBER: { label: 'Membre', hint: 'Lance des sessions et des terminaux, gère tâches et contexte.' },
   VIEWER: { label: 'Lecteur', hint: 'Consulte sessions, tâches et contexte sans rien modifier.' },
 };
+
+/** Règles « allow » contenues dans les suggestions du SDK (PermissionUpdate addRules), au format Read ou Bash(git status:*). */
+export function suggestedRules(suggestions: unknown[] | undefined | null): string[] {
+  const out: string[] = [];
+  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+    if (s?.type !== 'addRules' || (s.behavior ?? 'allow') !== 'allow') continue;
+    for (const r of s.rules ?? []) if (r.toolName) out.push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
+  }
+  return out;
+}

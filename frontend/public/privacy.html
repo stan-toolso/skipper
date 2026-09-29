@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Skipper · Politique de confidentialité</title>
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      :root { color-scheme: light dark; }
+      body { max-width: 720px; margin: 3rem auto; padding: 0 1rem; font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      h1 { font-size: 1.6rem; }
+      h2 { font-size: 1.15rem; margin-top: 2rem; }
+      code { font-size: 0.95em; }
+      footer { margin-top: 3rem; font-size: 0.9em; opacity: 0.7; }
+    </style>
+  </head>
+  <body>
+    <h1>Skipper · Politique de confidentialité</h1>
+    <p>
+      Skipper est un outil interne de Toolso pour piloter des agents logiciels (Claude Code) sur des projets de développement. Il est
+      hébergé par Toolso et réservé aux personnes invitées sur un projet. Cette page décrit l'usage qui est fait des données Google.
+    </p>
+
+    <h2>Connexion des utilisateurs</h2>
+    <p>
+      La connexion se fait avec un compte Google. Skipper ne lit que l'identité du compte (adresse e-mail, nom, photo) pour reconnaître
+      un utilisateur invité. Aucune inscription libre n'est possible.
+    </p>
+
+    <h2>Compte Google relié à un projet (Gmail, Google Drive)</h2>
+    <p>
+      Un administrateur de projet peut relier un compte Google à ce projet pour que les agents accèdent à sa messagerie Gmail et/ou à
+      son Google Drive, avec le niveau d'accès qu'il choisit (lecture seule, ou lecture et écriture). Concrètement :
+    </p>
+    <ul>
+      <li>Le jeton d'accès accordé par Google est stocké chiffré sur le serveur de Skipper et n'est jamais affiché ni transmis aux agents.</li>
+      <li>Les agents n'accèdent aux messages et aux fichiers qu'à la demande d'un utilisateur du projet, dans le cadre de son travail ;
+        chaque accès est journalisé et consultable dans le projet. Les envois d'e-mails et les dépôts de fichiers sont soumis à l'approbation d'un humain.</li>
+      <li>Les contenus lus (messages, fichiers) ne sont pas conservés durablement par Skipper en dehors du journal de la session qui les a demandés,
+        et ne sont pas utilisés à d'autres fins.</li>
+      <li>Ces données ne sont ni vendues ni partagées avec des tiers. Elles sont transmises au fournisseur du modèle d'IA (Anthropic) uniquement
+        dans la mesure où un agent les traite pour la tâche demandée.</li>
+      <li>L'accès peut être retiré à tout moment : « Déconnecter » dans Skipper révoque le jeton auprès de Google et l'efface ; il peut aussi être
+        révoqué depuis les paramètres de sécurité du compte Google.</li>
+    </ul>
+    <p>
+      L'utilisation des données reçues des API Google respecte la
+      <a href="https://developers.google.com/terms/api-services-user-data-policy">politique de données utilisateur des services d'API Google</a>,
+      y compris ses exigences d'utilisation limitée.
+    </p>
+
+    <h2>Contact</h2>
+    <p>Pour toute question : <a href="mailto:stan@toolso.io">stan@toolso.io</a>.</p>
+
+    <footer>Toolso · Dernière mise à jour : 29 septembre 2026</footer>
+  </body>
+</html>

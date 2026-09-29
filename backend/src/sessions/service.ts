@@ -165,6 +165,8 @@ export const sessionService = {
 
   async delete(id: string): Promise<boolean> {
     if (running.has(id)) await this.stop(id);
+    // La mise à jour finale du statut (tâche de fond) doit être terminée avant de supprimer la ligne.
+    await finishing.get(id);
     return sessionRepository.delete(id);
   },
 

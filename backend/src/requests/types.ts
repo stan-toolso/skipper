@@ -25,8 +25,10 @@ export interface CreateRequestInput {
 /** Réponse d'une demande de type 'permission'. */
 export interface PermissionResponse {
   decision: 'allow' | 'deny';
-  /** Si true, les suggestions de règles du SDK sont appliquées pour ne plus redemander. */
+  /** Si true, les suggestions de règles du SDK sont appliquées pour ne plus redemander pendant la session. */
   always?: boolean;
+  /** 'project' : les règles suggérées sont mémorisées pour le projet (toutes ses sessions futures) en plus de la session courante. */
+  scope?: 'session' | 'project';
   message?: string;
 }
 
