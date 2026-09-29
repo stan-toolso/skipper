@@ -1671,7 +1671,6 @@ export interface ConnectionFieldInput {
   secret?: boolean | null;
   value?: string | null;
 }
-export type ConnectionExposure = 'mcp' | 'direct' | 'both';
 
 export interface Connection {
   id: string;
@@ -1686,7 +1685,6 @@ export interface Connection {
   database: string | null;
   ssl: boolean | null;
   viaConnection: { id: string; name: string } | null;
-  exposure: ConnectionExposure;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string[];
@@ -1711,7 +1709,6 @@ export interface ConnectionInput {
   database?: string | null;
   ssl?: boolean | null;
   viaConnectionId?: string | null;
-  exposure?: ConnectionExposure | null;
   readOnly?: boolean | null;
   requireApproval?: boolean | null;
   commandAllowlist?: string[] | null;
@@ -1744,7 +1741,6 @@ const CONNECTION_FIELDS = gql`
       id
       name
     }
-    exposure
     readOnly
     requireApproval
     commandAllowlist

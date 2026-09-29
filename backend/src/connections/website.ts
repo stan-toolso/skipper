@@ -32,7 +32,7 @@ export function validateUrl(url: string | null | undefined): string {
 }
 
 /**
- * Nom de variable d'un champ, commun au navigateur et au shell : NOM_DE_LA_CONNEXION_CLE en majuscules
+ * Nom de variable d'un champ pour le navigateur : NOM_DE_LA_CONNEXION_CLE en majuscules
  * (ex. connexion "admin-site", champ "password" → ADMIN_SITE_PASSWORD).
  */
 export function variableName(connectionName: string, key: string): string {
@@ -63,7 +63,7 @@ function quoteDotenv(name: string, value: string): string {
   if (!value.includes("'")) return `'${value}'`;
   if (!value.includes('"') && !value.includes('\\')) return `"${value}"`;
   if (!value.includes('`')) return `\`${value}\``;
-  throw new AppError(`Le secret ${name} contient à la fois des apostrophes, des guillemets et des accents graves : le navigateur ne peut pas le recevoir. Changez-le ou passez ce site en accès shell.`);
+  throw new AppError(`Le secret ${name} contient à la fois des apostrophes, des guillemets et des accents graves : le navigateur ne peut pas le recevoir. Changez-le.`);
 }
 
 /** Résumé d'un champ pour les agents : valeur d'un champ public, nom de variable d'un secret. */

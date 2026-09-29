@@ -11,7 +11,6 @@ import {
   TEST_CONNECTION,
   UPDATE_CONNECTION,
   type Connection,
-  type ConnectionExposure,
   type ConnectionFieldInput,
   type ConnectionInput,
   type ConnectionKind,
@@ -23,19 +22,6 @@ const kindLabels: Record<ConnectionKind, { label: string; newLabel: string; icon
   postgres: { label: 'Base PostgreSQL', newLabel: 'Nouvelle base PostgreSQL', icon: 'bi-database' },
   website: { label: 'Site web', newLabel: 'Nouveau site web', icon: 'bi-globe' },
 };
-
-const exposureOptions: { value: ConnectionExposure; label: string; hint: string }[] = [
-  { value: 'mcp', label: 'Outils (recommandé)', hint: "L'agent passe par les outils du serveur : il ne voit jamais les identifiants, chaque usage est journalisé." },
-  { value: 'direct', label: 'Shell de la session', hint: 'ssh, scp ou psql fonctionnent directement dans le shell de l\'agent. La clé SSH reste dans un agent SSH éphémère ; un mot de passe de base devient lisible.' },
-  { value: 'both', label: 'Les deux', hint: 'Outils et shell.' },
-];
-
-/** Pour un site web, « outils » désigne le navigateur headless et « shell » des variables d'environnement. */
-const websiteExposureOptions: { value: ConnectionExposure; label: string; hint: string }[] = [
-  { value: 'mcp', label: 'Navigateur (recommandé)', hint: "Les champs secrets sont fournis au navigateur headless du projet : l'agent tape le nom de la variable dans le formulaire, le navigateur saisit la valeur à sa place et la masque dans ses réponses." },
-  { value: 'direct', label: 'Shell de la session', hint: "Tous les champs deviennent des variables d'environnement du shell de l'agent (pour curl, des scripts). L'agent peut alors lire les valeurs." },
-  { value: 'both', label: 'Les deux', hint: 'Navigateur et shell.' },
-];
 
 /** Ligne du tableau de champs d'un site web, telle que saisie. */
 interface FieldRow {
@@ -68,7 +54,6 @@ interface FormState {
   database: string;
   ssl: boolean;
   viaConnectionId: string;
-  exposure: ConnectionExposure;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string;
@@ -87,7 +72,6 @@ const emptyForm = (kind: ConnectionKind): FormState => ({
   database: '',
   ssl: false,
   viaConnectionId: '',
-  exposure: 'mcp',
   readOnly: true,
   requireApproval: true,
   commandAllowlist: '',
@@ -106,7 +90,6 @@ const formFrom = (c: Connection): FormState => ({
   database: c.database ?? '',
   ssl: Boolean(c.ssl),
   viaConnectionId: c.viaConnection?.id ?? '',
-  exposure: c.exposure,
   readOnly: c.readOnly,
   requireApproval: c.requireApproval,
   commandAllowlist: c.commandAllowlist.join('\n'),
@@ -192,7 +175,6 @@ function ConnectionModal({ projectId, kind, connection, sshConnections, onClose,
     const input: ConnectionInput = {
       name: form.name,
       description: form.description,
-      exposure: form.exposure,
       requireApproval: form.requireApproval,
     };
     if (kind === 'website') {
@@ -340,11 +322,13 @@ function ConnectionModal({ projectId, kind, connection, sshConnections, onClose,
             <Col md={12}>
               <hr className="my-1" />
               <Form.Label className="fw-semibold">Accès des agents</Form.Label>
-              {(kind === 'website' ? websiteExposureOptions : exposureOptions).map((o) => (
-                <Form.Check key={o.value} type="radio" id={`exposure-${o.value}`} name="exposure" className="mb-1" checked={form.exposure === o.value} onChange={() => set('exposure', o.value)} label={<span>{o.label} <span className="text-secondary small">— {o.hint}</span></span>} />
-              ))}
+              <Form.Text className="d-block">
+                {kind === 'website'
+                  ? "Les champs secrets sont fournis au navigateur headless du projet : l'agent tape le nom de la variable dans le formulaire, le navigateur saisit la valeur à sa place et la masque dans ses réponses."
+                  : "L'agent passe par les outils du serveur : il ne voit jamais les identifiants, et chaque usage est journalisé dans la session."}
+              </Form.Text>
               {kind !== 'website' && (
-                <Form.Check id="requireApproval" className="mt-2" checked={form.requireApproval} onChange={(e) => set('requireApproval', e.target.checked)} label={<span>Me demander avant chaque appel d'outil <span className="text-secondary small">— sinon les outils s'exécutent sans confirmation (le shell dépend du mode d'autorisation de la session).</span></span>} />
+                <Form.Check id="requireApproval" className="mt-2" checked={form.requireApproval} onChange={(e) => set('requireApproval', e.target.checked)} label={<span>Me demander avant chaque appel d'outil <span className="text-secondary small">— sinon les outils s'exécutent sans confirmation.</span></span>} />
               )}
               {kind === 'website' && <Form.Text className="d-block mt-2">Les actions du navigateur (saisie, clic) passent par les demandes d'autorisation de la session ; vous y verrez le nom de la variable, pas sa valeur. Le navigateur headless doit être activé dans les réglages du projet.</Form.Text>}
             </Col>
@@ -416,9 +400,6 @@ function ConnectionCard({ connection: c, sshConnections, projectId, canEdit, bro
           )}
         </span>
         <span className="ms-auto d-flex gap-1">
-          <Badge bg="light" text="dark">
-            {(c.kind === 'website' ? websiteExposureOptions : exposureOptions).find((o) => o.value === c.exposure)?.label.replace(' (recommandé)', '')}
-          </Badge>
           {c.kind === 'postgres' && <Badge bg={c.readOnly ? 'success' : 'warning'} text={c.readOnly ? undefined : 'dark'}>{c.readOnly ? 'lecture seule' : 'écriture'}</Badge>}
           {c.kind !== 'website' && <Badge bg={c.requireApproval ? 'primary' : 'secondary'}>{c.requireApproval ? 'avec approbation' : 'sans approbation'}</Badge>}
           {c.lastTestOk === true && <Badge bg="success">testée</Badge>}
@@ -492,24 +473,15 @@ function ConnectionCard({ connection: c, sshConnections, projectId, canEdit, bro
           </dd>
           <dt className="col-sm-3">Pour les agents</dt>
           <dd className="col-sm-9">
-            {c.exposure !== 'direct' && (
-              <div>
-                {c.kind === 'website' ? (
-                  <>
-                    Navigateur : <code>browser_type</code> / <code>browser_fill_form</code> avec le nom de variable d'un secret
-                    {!browserEnabled && <span className="text-warning"> — navigateur headless désactivé sur ce projet</span>}
-                  </>
-                ) : (
-                  <>
-                    Outils : <code>{c.kind === 'ssh' ? 'ssh_run, ssh_upload, ssh_download' : 'sql_query, sql_schema'}</code>
-                  </>
-                )}
-              </div>
-            )}
-            {c.exposure !== 'mcp' && (
-              <div>
-                Shell : <code>{c.kind === 'ssh' ? `ssh ${c.name}` : c.kind === 'postgres' ? `psql service=${c.name}` : c.fields.map((f) => `$${f.variable}`).join(', ') || 'aucune variable'}</code>
-              </div>
+            {c.kind === 'website' ? (
+              <>
+                Navigateur : <code>browser_type</code> / <code>browser_fill_form</code> avec le nom de variable d'un secret
+                {!browserEnabled && <span className="text-warning"> — navigateur headless désactivé sur ce projet</span>}
+              </>
+            ) : (
+              <>
+                Outils : <code>{c.kind === 'ssh' ? 'ssh_run, ssh_upload, ssh_download' : 'sql_query, sql_schema'}</code>
+              </>
             )}
           </dd>
         </dl>
@@ -579,20 +551,14 @@ export default function ConnectionsPage() {
       </div>
 
       <p className="text-secondary small" style={{ maxWidth: 900 }}>
-        Systèmes externes que les agents de ce projet peuvent utiliser. Les identifiants sont chiffrés en base et, en mode « outils », ne sont jamais transmis à l'agent : le serveur exécute pour lui et
+        Systèmes externes que les agents de ce projet peuvent utiliser. Les identifiants sont chiffrés en base et ne sont jamais transmis à l'agent : le serveur exécute pour lui et
         journalise chaque accès dans la session. Pour un serveur SSH, Skipper génère une clé dédiée que vous autorisez sur la machine ; pour une base, préférez un rôle en lecture seule. Pour un site web, les
         champs secrets sont saisis par le navigateur headless à la place de l'agent.
       </p>
 
-      {!browserEnabled && project.connections.some((c) => c.kind === 'website' && c.exposure !== 'direct') && (
+      {!browserEnabled && project.connections.some((c) => c.kind === 'website') && (
         <Alert variant="warning" className="py-2 small">
           Le navigateur headless n'est pas activé sur ce projet : les agents ne pourront pas se connecter aux sites web. Activez-le dans les réglages du projet.
-        </Alert>
-      )}
-
-      {project.connections.some((c) => c.exposure !== 'mcp') && (
-        <Alert variant="warning" className="py-2 small">
-          Les agents s'exécutent dans le conteneur du projet : l'accès depuis le shell (ssh, psql, variables d'environnement des sites) n'y est pas disponible, seuls les outils et le navigateur le sont.
         </Alert>
       )}
 

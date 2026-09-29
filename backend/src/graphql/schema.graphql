@@ -294,13 +294,6 @@ enum ConnectionKind {
   website
 }
 
-"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants ; pour un site web, le navigateur headless saisit les secrets), shell de la session (ssh, psql, variables d'environnement), ou les deux."
-enum ConnectionExposure {
-  mcp
-  direct
-  both
-}
-
 "Champ d'un site web (identifiant, mot de passe, code d'organisation...)."
 type ConnectionField {
   "Clé technique (minuscules, chiffres, soulignés)."
@@ -309,7 +302,7 @@ type ConnectionField {
   secret: Boolean!
   "Valeur d'un champ public ; null pour un secret (jamais renvoyé)."
   value: String
-  "Nom de variable sous lequel le navigateur et le shell des agents désignent le champ (ex. ADMIN_SITE_PASSWORD)."
+  "Nom de variable sous lequel le navigateur des agents désigne le champ (ex. ADMIN_SITE_PASSWORD)."
   variable: String!
 }
 
@@ -337,7 +330,6 @@ type Connection {
   ssl: Boolean
   "postgres : connexion SSH traversée (tunnel)."
   viaConnection: Connection
-  exposure: ConnectionExposure!
   "postgres : transactions en lecture seule."
   readOnly: Boolean!
   "Chaque appel d'outil est soumis à l'approbation d'un humain."
@@ -368,7 +360,6 @@ input ConnectionInput {
   database: String
   ssl: Boolean
   viaConnectionId: ID
-  exposure: ConnectionExposure
   readOnly: Boolean
   requireApproval: Boolean
   commandAllowlist: [String!]

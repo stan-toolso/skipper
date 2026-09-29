@@ -29,15 +29,14 @@ function localPath(cwd: string, p: string): string {
 }
 
 function describe(c: Connection, byId: Map<string, Connection>): string {
-  const flags = [c.exposure !== 'direct' && 'outils', c.exposure !== 'mcp' && 'shell', c.requireApproval ? 'approbation requise' : 'sans approbation'].filter(Boolean);
+  const flags = [c.requireApproval ? 'approbation requise' : 'sans approbation'];
   if (c.kind === 'ssh') {
     const s = c.settings as SshSettings;
     return `- ${c.name} · ${kindLabels.ssh} · ${s.username}@${s.host}:${s.port}${c.description ? ` — ${c.description}` : ''} [${flags.join(', ')}${c.commandAllowlist.length ? `, commandes : ${c.commandAllowlist.join(' | ')}` : ''}]`;
   }
   if (c.kind === 'website') {
     const s = c.settings as WebsiteSettings;
-    const access = [c.exposure !== 'direct' && 'navigateur', c.exposure !== 'mcp' && 'shell (variables d\'environnement)'].filter(Boolean);
-    return `- ${c.name} · ${kindLabels.website} · ${s.url}${c.description ? ` — ${c.description}` : ''} [${access.join(', ')}] champs : ${s.fields.length ? s.fields.map((f) => describeField(c, f)).join(', ') : 'aucun'}`;
+    return `- ${c.name} · ${kindLabels.website} · ${s.url}${c.description ? ` — ${c.description}` : ''} [navigateur] champs : ${s.fields.length ? s.fields.map((f) => describeField(c, f)).join(', ') : 'aucun'}`;
   }
   const s = c.settings as PostgresSettings;
   const via = s.viaConnectionId ? byId.get(s.viaConnectionId)?.name : null;
@@ -74,13 +73,11 @@ export function createConnectionsMcpServer(ctx: ConnectionsMcpContext): McpSdkSe
   const sshConnection = async (name: string) => {
     const c = await connectionService.getByName(ctx.project.id, name);
     if (c.kind !== 'ssh') throw new AppError(`"${c.name}" est une connexion ${kindLabels[c.kind]}, pas un serveur SSH`);
-    if (c.exposure === 'direct') throw new AppError(`"${c.name}" n'est accessible que depuis le shell (ssh ${c.name}), pas par les outils`);
     return c;
   };
   const pgConnection = async (name: string) => {
     const c = await connectionService.getByName(ctx.project.id, name);
     if (c.kind !== 'postgres') throw new AppError(`"${c.name}" est une connexion ${kindLabels[c.kind]}, pas une base PostgreSQL`);
-    if (c.exposure === 'direct') throw new AppError(`"${c.name}" n'est accessible que depuis le shell (psql service=${c.name}), pas par les outils`);
     return c;
   };
 

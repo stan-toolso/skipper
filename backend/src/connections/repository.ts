@@ -1,5 +1,5 @@
 import { pool } from '../db/pool.js';
-import type { Connection, ConnectionExposure, ConnectionKind, ConnectionSettings } from './types.js';
+import type { Connection, ConnectionKind, ConnectionSettings } from './types.js';
 
 interface Row {
   id: string;
@@ -12,7 +12,6 @@ interface Row {
   public_key: string | null;
   host_key: string | null;
   host_key_seen_at: Date | null;
-  exposure: ConnectionExposure;
   read_only: boolean;
   require_approval: boolean;
   command_allowlist: string[];
@@ -34,7 +33,6 @@ const toConnection = (r: Row): Connection => ({
   publicKey: r.public_key,
   hostKey: r.host_key,
   hostKeySeenAt: r.host_key_seen_at,
-  exposure: r.exposure,
   readOnly: r.read_only,
   requireApproval: r.require_approval,
   commandAllowlist: Array.isArray(r.command_allowlist) ? r.command_allowlist : [],
@@ -52,7 +50,6 @@ export interface ConnectionRecordInput {
   settings: ConnectionSettings;
   secrets: Record<string, string>;
   publicKey: string | null;
-  exposure: ConnectionExposure;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string[];
@@ -61,8 +58,8 @@ export interface ConnectionRecordInput {
 export const connectionRepository = {
   async create(projectId: string, input: ConnectionRecordInput): Promise<Connection> {
     const { rows } = await pool.query<Row>(
-      `INSERT INTO connections (project_id, name, kind, description, settings, secrets, public_key, exposure, read_only, require_approval, command_allowlist)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11::jsonb) RETURNING *`,
+      `INSERT INTO connections (project_id, name, kind, description, settings, secrets, public_key, read_only, require_approval, command_allowlist)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10::jsonb) RETURNING *`,
       [
         projectId,
         input.name,
@@ -71,7 +68,6 @@ export const connectionRepository = {
         JSON.stringify(input.settings),
         JSON.stringify(input.secrets),
         input.publicKey,
-        input.exposure,
         input.readOnly,
         input.requireApproval,
         JSON.stringify(input.commandAllowlist),
@@ -91,7 +87,6 @@ export const connectionRepository = {
     if (patch.publicKey !== undefined) set('public_key', patch.publicKey);
     if (patch.hostKey !== undefined) set('host_key', patch.hostKey);
     if (patch.hostKeySeenAt !== undefined) set('host_key_seen_at', patch.hostKeySeenAt);
-    if (patch.exposure !== undefined) set('exposure', patch.exposure);
     if (patch.readOnly !== undefined) set('read_only', patch.readOnly);
     if (patch.requireApproval !== undefined) set('require_approval', patch.requireApproval);
     if (patch.commandAllowlist !== undefined) set('command_allowlist', JSON.stringify(patch.commandAllowlist), '::jsonb');

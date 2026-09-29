@@ -32,7 +32,7 @@ Trois notions :
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
   contexte par un agent. Notifications natives du navigateur activables en option.
 - **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
-  agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
+  agents peuvent utiliser. Les identifiants sont chiffrés en base ; l'agent passe toujours par des outils
   MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
 - **Compte Google** : un compte Google relié à un projet (OAuth) pour donner aux agents accès à sa
   messagerie Gmail et/ou à son Drive, en lecture ou en écriture. Voir « Compte Google » plus bas.
@@ -116,7 +116,6 @@ backend/
       postgres.ts              # requêtes pg (lecture seule, tunnel), rendu des résultats, schéma
       website.ts               # sites web : champs libres, noms de variables, fichier --secrets du navigateur, test HTTP
       mcp.ts                   # serveur MCP `connections` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema)
-      runtime.ts               # mode « shell » : ssh-agent, enveloppes ssh/scp, pg_service.conf, tunnels par session
     context/
       service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
       mcp.ts                   # serveur MCP in-process exposé aux sessions Claude (tree, read, write...)
@@ -192,42 +191,30 @@ réaffiché, et désigné par un nom de variable dérivé de la connexion et de 
 `password` → `ADMIN_SITE_PASSWORD`). Le test depuis l'interface vérifie seulement que l'adresse répond en
 HTTP : les formulaires de connexion sont tous différents, c'est l'agent qui se connecte avec le navigateur.
 
-**Accès des agents**, au choix par connexion :
+**Accès des agents.** Toute connexion passe par le backend : l'agent ne reçoit jamais les identifiants.
 
-- **Outils** (par défaut) : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
+- **Outils** : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
   `tasks`. Outils `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `sql_query`, `sql_schema`. Le backend
   déchiffre, exécute, tronque les sorties, et journalise chaque usage comme événement `connection` de la
   session (visible dans le transcript). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
-- **Navigateur** (sites web, mode « outils ») : les champs secrets sont écrits, pour la durée de la
+- **Navigateur** (sites web) : les champs secrets sont écrits, pour la durée de la
   session, dans un fichier dotenv passé au serveur MCP Playwright (`--secrets`). Quand l'agent tape le nom
   d'une variable dans un champ de formulaire (`browser_type`, `browser_fill_form`), Playwright saisit la
   valeur à sa place et la masque dans ses réponses et journaux (`SECRET_ADMIN_SITE_PASSWORD`). Le prompt
   système décrit chaque site, ses champs publics et les variables de ses secrets. La demande d'autorisation
   montre le nom de la variable, pas la valeur. Le navigateur headless doit être activé sur le projet. Le
   fichier vit dans `/tmp/skipper-session-<id>-browser/` (hôte ou conteneur) et disparaît en fin de session.
-- **Shell de la session** : `ssh <nom>`, `scp`, `sftp` et `psql service=<nom>` fonctionnent dans le Bash
-  de l'agent. Pour la durée de la session, le backend lance un `ssh-agent` dédié (la clé est utilisable,
-  pas lisible), place des enveloppes `ssh`/`scp`/`sftp` en tête du `PATH` qui imposent un fichier de
-  configuration et un `known_hosts` propres à la session, ouvre les tunnels nécessaires, et écrit
-  `PGSERVICEFILE` / `PGPASSFILE`. Les champs d'un site web deviennent des variables d'environnement
-  (`ADMIN_SITE_USERNAME`, `ADMIN_SITE_PASSWORD`). Le mot de passe d'une base ou d'un site est donc lisible
-  par l'agent dans ce mode.
-  Tout est détruit à la fin de la session (`/tmp/skipper-session-<id>`), et les restes d'un arrêt
-  brutal sont balayés au démarrage suivant. Ce mode nécessite `ssh`, `ssh-agent`, `ssh-add` et, pour les
-  bases, `psql` sur la machine du backend.
-- **Les deux**.
-
 **Approbation.** Par défaut, chaque appel d'outil sur une connexion devient une demande d'intervention
 humaine (comme les autres permissions) ; on peut la désactiver par connexion (« sans approbation »).
 `list` est toujours libre. En mode d'autorisation « tout autoriser » de la session, aucune demande n'est
-faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
-shell suit le mode d'autorisation de la session (permission Bash).
+faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés.
 
 **Isolation.** Les sessions tournent dans le conteneur du projet, jamais sur la machine du backend : un
-agent ne peut pas lire ce que le backend lit. En contrepartie l'accès « shell » n'est pas disponible (pas
-d'agent SSH ni de tunnels dans le conteneur) : seuls les outils restent utilisables ; le code de l'accès
-direct (`connections/runtime.ts`) est conservé mais jamais activé. La gestion des connexions est réservée
-aux administrateurs du projet ; les autres membres les voient sans les modifier.
+agent ne peut pas lire ce que le backend lit. L'ancien accès « shell de la session » (`ssh <nom>`,
+`psql service=<nom>` grâce à un agent SSH, des enveloppes et des tunnels lancés par le backend) a été
+retiré avec sa colonne `exposure` (migration `016`) : il supposait que l'agent tourne sur la machine du
+backend. La gestion des connexions est réservée aux administrateurs du projet ; les autres membres les
+voient sans les modifier.
 
 ## Compte Google
 
@@ -266,7 +253,7 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   sessions en base mais conserve le dossier sur disque.
 - **Connection** : `projectId`, `name`, `kind` (ssh, postgres, website), `settings` (hôte, port, utilisateur,
   base, ssl, tunnel ; pour un site : `url` et `fields` = clé, libellé, secret, valeur publique), `secrets`
-  (chiffrés, indexés par clé de champ pour un site), `publicKey`, `hostKey`, `exposure` (mcp, direct, both),
+  (chiffrés, indexés par clé de champ pour un site), `publicKey`, `hostKey`,
   `readOnly`, `requireApproval`, `commandAllowlist`, dernier test.
 - **GoogleAccount** : `projectId` (un par projet), `email`, `name`, `avatarUrl`, `googleSub`, `gmailAccess`
   et `driveAccess` (none, read, write), `scopes` accordées, `refreshToken` (chiffré), qui l'a relié, dernière

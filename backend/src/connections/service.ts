@@ -6,7 +6,6 @@ import * as postgres from './postgres.js';
 import { connectionRepository, type ConnectionRecordInput } from './repository.js';
 import * as ssh from './ssh.js';
 import {
-  CONNECTION_EXPOSURES,
   CONNECTION_KINDS,
   type Connection,
   type ConnectionInput,
@@ -92,7 +91,6 @@ export const connectionService = {
       settings: web ? web.settings : await this.buildSettings(kind, null, input, projectId),
       secrets: {},
       publicKey: null,
-      exposure: this.validateExposure(input.exposure ?? 'mcp'),
       readOnly: input.readOnly ?? true,
       requireApproval: input.requireApproval ?? true,
       commandAllowlist: normalizeAllowlist(input.commandAllowlist),
@@ -125,7 +123,6 @@ export const connectionService = {
     } else if (input.host != null || input.port != null || input.username != null || input.database != null || input.ssl != null || input.viaConnectionId !== undefined) {
       patch.settings = await this.buildSettings(current.kind, current.settings, input, current.projectId);
     }
-    if (input.exposure != null) patch.exposure = this.validateExposure(input.exposure);
     if (input.readOnly != null) patch.readOnly = input.readOnly;
     if (input.requireApproval != null) patch.requireApproval = input.requireApproval;
     if (input.commandAllowlist != null) patch.commandAllowlist = normalizeAllowlist(input.commandAllowlist);
@@ -175,11 +172,6 @@ export const connectionService = {
     if (!hostKey || connection.hostKey) return;
     await connectionRepository.update(connection.id, { hostKey, hostKeySeenAt: new Date() });
     connection.hostKey = hostKey;
-  },
-
-  validateExposure(exposure: Connection['exposure']): Connection['exposure'] {
-    if (!CONNECTION_EXPOSURES.includes(exposure)) throw new AppError(`Mode d'accès inconnu : ${exposure}`);
-    return exposure;
   },
 
   /**
@@ -266,13 +258,13 @@ export const connectionService = {
   },
 
   /**
-   * Secrets des sites web accessibles par les outils (exposure mcp ou both), à donner au navigateur
-   * headless : nom de variable → valeur. Les champs publics n'y figurent pas, l'agent connaît leur valeur.
+   * Secrets des sites web à donner au navigateur headless : nom de variable → valeur. Les champs publics
+   * n'y figurent pas, l'agent connaît leur valeur.
    */
   async browserSecrets(projectId: string): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
     for (const c of await connectionRepository.listByProject(projectId)) {
-      if (c.kind !== 'website' || c.exposure === 'direct') continue;
+      if (c.kind !== 'website') continue;
       for (const f of this.websiteCredentials(c).fields) if (f.secret && f.value) out[f.variable] = f.value;
     }
     return out;
@@ -325,34 +317,25 @@ export const connectionService = {
     const list = await connectionRepository.listByProject(project.id);
     if (list.length === 0) return '';
     const byId = new Map(list.map((c) => [c.id, c]));
-    // Dans le conteneur du projet, le shell de l'agent n'a ni agent SSH ni tunnels : seuls les outils sont disponibles.
-    const shellAvailable = false;
     const browserAvailable = Boolean((project.runnerConfig as { browser?: boolean } | null)?.browser);
     const lines = list.map((c) => {
-      const viaMcp = c.exposure !== 'direct';
-      const direct = c.exposure !== 'mcp' && shellAvailable;
       if (c.kind === 'website') {
         const s = c.settings as WebsiteSettings;
         const publics = s.fields.filter((f) => !f.secret).map((f) => `${f.label} : ${JSON.stringify(f.value ?? '')}`);
         const secrets = s.fields.filter((f) => f.secret).map((f) => `${f.label} → \`${website.variableName(c.name, f.key)}\``);
-        const how = [
-          viaMcp && (browserAvailable ? `dans le navigateur, tape le nom de la variable dans le champ du formulaire (\`browser_type\`, \`browser_fill_form\`) : il est remplacé par la valeur, que tu ne vois jamais` : "le navigateur headless n'est pas activé sur ce projet : les secrets ne sont pas accessibles"),
-          direct && `dans le shell : variables d'environnement ${s.fields.map((f) => `\`${website.variableName(c.name, f.key)}\``).join(', ')}`,
-        ].filter(Boolean).join(' ; ');
-        if (!how) return `- \`${c.name}\` : site web ${s.url} configuré en accès shell uniquement, indisponible dans cet environnement d'exécution.`;
+        const how = browserAvailable
+          ? 'dans le navigateur, tape le nom de la variable dans le champ du formulaire (`browser_type`, `browser_fill_form`) : il est remplacé par la valeur, que tu ne vois jamais'
+          : "le navigateur headless n'est pas activé sur ce projet : les secrets ne sont pas accessibles";
         return `- \`${c.name}\` : site web ${s.url}${c.description ? ` — ${c.description}` : ''}. ${publics.length ? `Champs connus : ${publics.join(', ')}. ` : ''}${secrets.length ? `Secrets : ${secrets.join(', ')}. ` : ''}Accès : ${how}.`;
       }
-      if (!viaMcp && !direct) return `- \`${c.name}\` : ${kindLabels[c.kind]} configurée en accès shell uniquement, indisponible dans cet environnement d'exécution.`;
       if (c.kind === 'ssh') {
         const s = c.settings as SshSettings;
-        const how = [viaMcp && 'outils `ssh_run`, `ssh_upload`, `ssh_download`', direct && `dans le shell : \`ssh ${c.name}\`, \`scp fichier ${c.name}:chemin\``].filter(Boolean).join(' ; ');
         const policy = c.commandAllowlist.length ? ` ; commandes limitées aux préfixes ${c.commandAllowlist.map((p) => `\`${p}\``).join(', ')}` : '';
-        return `- \`${c.name}\` : serveur SSH ${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ''}${c.description ? ` — ${c.description}` : ''}. Accès : ${how}${policy}.`;
+        return `- \`${c.name}\` : serveur SSH ${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ''}${c.description ? ` — ${c.description}` : ''}. Accès : outils \`ssh_run\`, \`ssh_upload\`, \`ssh_download\`${policy}.`;
       }
       const s = c.settings as PostgresSettings;
       const via = s.viaConnectionId ? byId.get(s.viaConnectionId)?.name : null;
-      const how = [viaMcp && 'outils `sql_query`, `sql_schema`', direct && `dans le shell : \`psql service=${c.name}\``].filter(Boolean).join(' ; ');
-      return `- \`${c.name}\` : base PostgreSQL ${s.database} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${c.description ? ` — ${c.description}` : ''}. ${c.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Accès : ${how}.`;
+      return `- \`${c.name}\` : base PostgreSQL ${s.database} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${c.description ? ` — ${c.description}` : ''}. ${c.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Accès : outils \`sql_query\`, \`sql_schema\`.`;
     });
     return [
       "Le projet dispose de connexions vers des systèmes externes, utilisables avec les outils du serveur MCP `connections` (le serveur détient les identifiants : tu n'as pas à les connaître) ou, pour les sites web, avec le navigateur headless. Chaque appel peut être soumis à l'approbation d'un humain. Désigne une connexion par son nom.",

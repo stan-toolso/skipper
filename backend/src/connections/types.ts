@@ -3,17 +3,11 @@ export type ConnectionKind = 'ssh' | 'postgres' | 'website';
 export const CONNECTION_KINDS: ConnectionKind[] = ['ssh', 'postgres', 'website'];
 
 /**
- * Comment les agents accèdent à la connexion :
- * - mcp : par les outils du serveur MCP `connections` ; le backend détient les identifiants, l'agent ne les voit jamais.
- *   Pour un site web : les champs secrets sont fournis au navigateur headless (option `--secrets` de Playwright MCP),
- *   l'agent tape le nom d'une variable et le navigateur saisit la valeur à sa place ;
- * - direct : depuis le shell de la session (`ssh <nom>`, `psql service=<nom>`) grâce à un agent SSH et des fichiers
- *   de configuration éphémères ; la clé SSH reste inaccessible, mais un mot de passe de base l'est.
- *   Pour un site web : tous les champs deviennent des variables d'environnement du shell ;
- * - both : les deux.
+ * Les agents accèdent à toute connexion par les outils du serveur MCP `connections` : le backend détient
+ * les identifiants, l'agent ne les voit jamais. Pour un site web, les champs secrets sont fournis au
+ * navigateur headless (option `--secrets` de Playwright MCP) : l'agent tape le nom d'une variable et le
+ * navigateur saisit la valeur à sa place.
  */
-export type ConnectionExposure = 'mcp' | 'direct' | 'both';
-export const CONNECTION_EXPOSURES: ConnectionExposure[] = ['mcp', 'direct', 'both'];
 
 /** Champs publics d'une connexion SSH. */
 export interface SshSettings {
@@ -67,7 +61,6 @@ export interface Connection {
   publicKey: string | null;
   hostKey: string | null;
   hostKeySeenAt: Date | null;
-  exposure: ConnectionExposure;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string[];
@@ -89,7 +82,6 @@ export interface ConnectionInput {
   database?: string | null;
   ssl?: boolean | null;
   viaConnectionId?: string | null;
-  exposure?: ConnectionExposure | null;
   readOnly?: boolean | null;
   requireApproval?: boolean | null;
   commandAllowlist?: string[] | null;

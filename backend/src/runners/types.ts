@@ -76,5 +76,5 @@ export interface BrowserMcpServer extends SpawnSpec {
 /** Options communes du serveur MCP Playwright : sans fenêtre, profil jetable, une seule origine de sortie. */
 export const PLAYWRIGHT_MCP_ARGS = ['--headless', '--isolated', '--browser', 'chromium', '--no-sandbox'];
 
-/** Nom court d'une session dans les chemins temporaires (cohérent avec connections/runtime.ts). */
+/** Nom court d'une session dans les chemins temporaires. */
 export const sessionTag = (sessionId: string) => `skipper-session-${sessionId.slice(0, 8)}`;

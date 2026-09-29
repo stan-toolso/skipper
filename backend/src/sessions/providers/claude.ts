@@ -11,7 +11,6 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../../config.js';
 import { createConnectionsMcpServer } from '../../connections/mcp.js';
-import { prepareDirectAccess, type DirectAccess } from '../../connections/runtime.js';
 import { connectionService } from '../../connections/service.js';
 import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
@@ -149,14 +148,6 @@ export class ClaudeProvider implements SessionProvider {
     const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
-    // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
-    let direct: DirectAccess | null = null;
-    try {
-      direct = await prepareDirectAccess(ctx.project, ctx.session.id, env);
-    } catch (err) {
-      await ctx.emit('system', { message: `Accès direct aux connexions indisponible : ${(err as Error).message}` });
-    }
-    Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
     // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
@@ -181,18 +172,9 @@ export class ClaudeProvider implements SessionProvider {
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
     const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
-    // Les secrets des sites web (connexions « site web » en mode outils) sont fournis au navigateur, jamais à l'agent.
-    let browserServer: Awaited<ReturnType<typeof runner.browserMcpCommand>> | null = null;
-    if (browserEnabled) {
-      try {
-        browserServer = await runner.browserMcpCommand(ctx.project, ctx.cwd, { sessionId: ctx.session.id, secrets: await connectionService.browserSecrets(ctx.project.id) });
-      } catch (err) {
-        await direct?.dispose().catch(() => undefined);
-        throw err;
-      }
-    }
+    // Les secrets des sites web sont fournis au navigateur, jamais à l'agent.
+    const browserServer = browserEnabled ? await runner.browserMcpCommand(ctx.project, ctx.cwd, { sessionId: ctx.session.id, secrets: await connectionService.browserSecrets(ctx.project.id) }) : null;
     const disposeAll = async () => {
-      await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
       await browserServer?.dispose().catch((e) => console.error('[browser] nettoyage des secrets du navigateur', e));
     };
     // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
@@ -233,7 +215,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccount: googleAccount?.email ?? null, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccount: googleAccount?.email ?? null, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools },
     });
 
     const queue = new MessageQueue();
