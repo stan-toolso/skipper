@@ -184,7 +184,11 @@ export const loginService = {
     l.submittedAt = l.output.length;
     l.status = 'exchanging';
     console.log(`[login] ${l.id} code reçu (${trimmed.length} caractères), transmis au CLI`);
-    l.proc.write(trimmed + '\r');
+    // Le CLI traite une saisie rapide comme un collage : un retour chariot dans le même paquet est
+    // absorbé dans le texte au lieu de valider. On envoie donc Entrée séparément, après un délai.
+    l.proc.write(trimmed);
+    await new Promise((r) => setTimeout(r, 600));
+    l.proc.write('\r');
 
     const deadline = Date.now() + 60_000;
     while (l.status === 'exchanging' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 300));
