@@ -24,7 +24,7 @@ pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
 
 | Élément            | Emplacement                                                     |
 | ------------------ | --------------------------------------------------------------- |
-| Clone du dépôt     | `/home/skipper/skipper` (branche `main`, alias ssh `github-skipper`, clé de déploiement lecture seule `~/.ssh/skipper-deploy`) |
+| Clone du dépôt     | `/home/skipper/skipper` (branche `main`, remote HTTPS public `https://github.com/stan-toolso/skipper.git` ; l'alias ssh `github-skipper` et la clé `~/.ssh/skipper-deploy` restent disponibles si le dépôt devient privé) |
 | Configuration      | `/home/skipper/skipper/.env` (jamais versionné)                 |
 | Workspaces projets | `/home/skipper/skipper-workspaces`                              |
 | Front publié       | `/var/www/skipper` (copie de `frontend/dist/`)                  |
