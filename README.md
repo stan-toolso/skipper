@@ -35,6 +35,8 @@ Trois notions :
 
 ## Démarrage rapide
 
+Mise en production (serveur, nginx, base RDS, pm2) : voir `DEPLOY.md`.
+
 ```bash
 cp .env.example .env        # ajuster si besoin
 npm install
