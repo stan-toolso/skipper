@@ -183,6 +183,14 @@ réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
 
+## Identité visuelle
+
+Le pictogramme est une rose des vents à huit pointes, héritière de l'astérisque ✻ de Claude Code,
+pointe nord en couleur d'accent (`#d97757`). Composant React `frontend/src/components/Logo.tsx` ;
+fichiers SVG dans `frontend/public/` : `favicon.svg` (pastille sombre), `logo-mark.svg` (fond
+sombre), `logo-mark-dark.svg` (fond clair), `logo-mark-mono.svg` (masque CSS, utilisé devant les
+titres `h1`). Mot-symbole : « Skipper » en Fraunces 600 pour les supports hors interface.
+
 ## Explorateur de fichiers et éditeur
 
 Chaque projet (et chaque worktree) a une entrée « Fichiers » dans la sidebar : un onglet

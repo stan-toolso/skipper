@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { CREATE_TERMINAL, CREATE_WORKTREE, REQUESTS, SIDEBAR, type HumanRequest, type Session, type SessionActivity, type SessionStatus, type Terminal } from '../graphql/operations';
 import { sessionStateHint } from '../lib/humanize';
+import Logo from '../components/Logo';
 
 type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'>;
 type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'>;
@@ -152,7 +153,10 @@ export default function Sidebar() {
   return (
     <aside className="wb-sidebar">
       <div className="wb-brand">
-        <Link to="/">✻ Skipper</Link>
+        <Link to="/" title="Accueil">
+          <Logo size={18} />
+          Skipper
+        </Link>
       </div>
 
       <nav className="wb-menu">

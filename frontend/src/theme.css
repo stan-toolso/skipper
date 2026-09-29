@@ -33,7 +33,18 @@ body {
 }
 
 /* L'habillage reste en police système ; le monospace est réservé au code, aux chemins et aux terminaux. */
-h1::before { content: '✻ '; color: var(--cc-accent); }
+/* Pictogramme Skipper (rose des vents) devant les titres de page, en couleur d'accent. */
+h1::before {
+  content: '';
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 0.35em;
+  vertical-align: -0.06em;
+  background-color: var(--cc-accent);
+  -webkit-mask: url('/logo-mark-mono.svg') center / contain no-repeat;
+  mask: url('/logo-mark-mono.svg') center / contain no-repeat;
+}
 h1, h2, h3 { letter-spacing: -0.01em; font-weight: 600; }
 .text-secondary { color: var(--cc-dim) !important; }
 .bi { line-height: 1; vertical-align: -0.125em; }
