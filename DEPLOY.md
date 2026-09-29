@@ -121,6 +121,12 @@ pm2 restart skipper --update-env
 
 Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 
+## Application installable
+
+Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx
+(bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
+prochaine ouverture. L'installation exige HTTPS : c'est le cas.
+
 ## Vérifications
 
 ```bash

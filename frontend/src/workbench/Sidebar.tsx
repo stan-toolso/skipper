@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import { CREATE_TERMINAL, CREATE_WORKTREE, REQUESTS, SIDEBAR, type HumanRequest, type Session, type SessionActivity, type SessionStatus, type Terminal } from '../graphql/operations';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
+import InstallButton from '../components/InstallButton';
 
 type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'>;
 type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'>;
@@ -296,6 +297,7 @@ export default function Sidebar() {
         Un point orange qui clignote : l'agent travaille. Vert : il attend vos instructions. Un badge jaune : il a besoin de vous.
       </div>
       <nav className="wb-menu wb-menu-bottom">
+        <InstallButton />
         {user?.isAdmin && (
           <NavLink to="/settings" className="wb-menu-item">
             <i className="bi bi-gear wb-icon" /> Paramètres

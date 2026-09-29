@@ -237,6 +237,19 @@ défilement (ombres de débordement, onglet actif ramené en vue, menu listant t
 en-têtes de page passent à la ligne ; la page de session a un bouton d'envoi ; sur écran tactile les
 actions au survol de l'explorateur sont toujours visibles et les cibles sont agrandies.
 
+## Application installable (PWA)
+
+Skipper s'installe sur l'écran d'accueil d'un téléphone (Android : fenêtre d'installation ou
+bouton « Installer l'application » en bas de la sidebar ; iPhone : Safari, Partager, « Sur l'écran
+d'accueil ») et comme application de bureau (Chrome, Edge). `vite-plugin-pwa` (`vite.config.ts`)
+génère le manifeste (`manifest.webmanifest`, icônes `frontend/public/icon-*.png` et
+`apple-touch-icon.png`, produites depuis la rose des vents) et un service worker qui met en cache la
+coquille de l'application et se met à jour seul ; l'API GraphQL, les WebSockets des terminaux et
+l'authentification ne passent jamais par le cache. `frontend/src/lib/pwa.ts` enregistre le service
+worker et garde l'événement d'installation d'Android pour le bouton. En mode plein écran, les zones
+sûres d'iOS sont respectées (`env(safe-area-inset-*)`). Sur écran tactile, aucun champ ne reçoit le
+focus automatiquement (`frontend/src/lib/device.ts`) : le clavier virtuel ne s'ouvre qu'au toucher.
+
 ## Identité visuelle
 
 Le pictogramme est une rose des vents à huit pointes, héritière de l'astérisque ✻ de Claude Code,

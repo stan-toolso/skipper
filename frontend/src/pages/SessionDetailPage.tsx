@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import { canAutoFocus } from '../lib/device';
 import { useGitTarget } from '../workbench/GitTargetContext';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
@@ -62,8 +63,9 @@ export default function SessionDetailPage() {
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
 
+  // Focus dans la zone de saisie à l'ouverture, sauf sur mobile (le clavier virtuel masquerait la page).
   useEffect(() => {
-    inputRef.current?.focus();
+    if (canAutoFocus()) inputRef.current?.focus();
   }, [session?.id]);
 
   // Échap interrompt le tour en cours, comme dans Claude Code.

@@ -6,6 +6,7 @@ import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASKS,
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { canAutoFocus } from '../lib/device';
 
 
 const columns: { status: TaskStatus; label: string; hint: string }[] = [
@@ -47,7 +48,7 @@ function TaskModal({ task, projectId, onClose }: { task: Task | null; projectId:
         <Modal.Body>
           <Form.Group className="mb-3">
             <Form.Label>Titre</Form.Label>
-            <Form.Control autoFocus value={form.title} onChange={set('title')} required placeholder="Ex. Ajouter la page de contact" />
+            <Form.Control autoFocus={canAutoFocus()} value={form.title} onChange={set('title')} required placeholder="Ex. Ajouter la page de contact" />
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Description</Form.Label>

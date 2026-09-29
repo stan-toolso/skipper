@@ -2,6 +2,7 @@ import { useMutation } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
 import { describeTool } from '../lib/humanize';
+import { canAutoFocus } from '../lib/device';
 
 interface Option {
   label: string;
@@ -86,7 +87,7 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
             answer({ decision: 'deny', message: message || undefined });
           }}
         >
-          <input autoFocus placeholder="Que doit faire l'agent à la place ? (Entrée pour envoyer, vide = simple refus)" value={message} onChange={(e) => setMessage(e.target.value)} />
+          <input autoFocus={canAutoFocus()} placeholder="Que doit faire l'agent à la place ? (Entrée pour envoyer, vide = simple refus)" value={message} onChange={(e) => setMessage(e.target.value)} />
         </form>
       )}
     </div>
@@ -147,7 +148,7 @@ function InputPrompt({ request, answer, busy }: { request: HumanRequest; answer:
           if (text.trim()) answer({ text: text.trim() });
         }}
       >
-        <input autoFocus disabled={busy} placeholder="Votre réponse (Entrée pour envoyer)" value={text} onChange={(e) => setText(e.target.value)} />
+        <input autoFocus={canAutoFocus()} disabled={busy} placeholder="Votre réponse (Entrée pour envoyer)" value={text} onChange={(e) => setText(e.target.value)} />
       </form>
     </div>
   );

@@ -450,3 +450,10 @@
   /* Panneau git : replié, une fine bande à droite ; déplié, il recouvre le contenu. */
   .git-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(340px, 92vw); box-shadow: -12px 0 40px rgba(0,0,0,.6); }
 }
+
+/* ---- Application installée (PWA) ------------------------------------------------------------- */
+/* Zones sûres iOS en plein écran (encoche, barre d'accueil). */
+.wb { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; background: #0f0f0f; }
+.wb-sidebar { padding-top: env(safe-area-inset-top); }
+.wb-install { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.wb-install-hint { padding: 4px 14px 8px 36px; font-size: 12px; color: var(--cc-dimmer); }
