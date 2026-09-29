@@ -87,10 +87,16 @@ function knownHostsLine(s: SshSettings, hostKey: string): string {
 /** Échappement d'un champ de .pgpass (":" et "\" sont réservés). */
 const pgpassField = (v: string) => v.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
 
+/** L'accès direct suppose que le CLI tourne sur la machine du backend (agent SSH, fichiers, tunnels locaux). */
+export const supportsDirectAccess = (project: Pick<Project, 'runner'>) => project.runner === 'local';
+
 export async function prepareDirectAccess(project: Project, sessionId: string, baseEnv: NodeJS.ProcessEnv): Promise<DirectAccess | null> {
   const all = await connectionService.listByProject(project.id);
   const direct = all.filter((c) => c.exposure !== 'mcp');
   if (direct.length === 0) return null;
+  if (!supportsDirectAccess(project)) {
+    throw new AppError(`l'accès depuis le shell (${direct.map((c) => c.name).join(', ')}) n'est disponible qu'avec le runner local ; dans un conteneur Docker, seuls les outils restent utilisables`);
+  }
 
   // Dossier éphémère (0700) de la session, dans le dossier temporaire : le chemin d'un socket Unix doit rester court.
   const dir = sessionDir(sessionId);

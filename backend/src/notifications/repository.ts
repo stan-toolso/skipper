@@ -36,23 +36,33 @@ export const notificationRepository = {
     );
     return toNotification(rows[0]);
   },
-  async list(opts: { unreadOnly?: boolean; limit?: number } = {}): Promise<Notification[]> {
-    const { rows } = await pool.query<Row>(
-      `SELECT * FROM notifications ${opts.unreadOnly ? 'WHERE read_at IS NULL' : ''} ORDER BY created_at DESC LIMIT $1`,
-      [Math.min(opts.limit ?? 50, 200)],
-    );
+  async findById(id: string): Promise<Notification | null> {
+    const { rows } = await pool.query<Row>('SELECT * FROM notifications WHERE id = $1', [id]);
+    return rows[0] ? toNotification(rows[0]) : null;
+  },
+  async list(opts: { unreadOnly?: boolean; limit?: number; projectIds?: string[] } = {}): Promise<Notification[]> {
+    const where = [...(opts.unreadOnly ? ['read_at IS NULL'] : []), ...(opts.projectIds ? ['(project_id IS NULL OR project_id = ANY($2::uuid[]))'] : [])];
+    const params: unknown[] = [Math.min(opts.limit ?? 50, 200)];
+    if (opts.projectIds) params.push(opts.projectIds);
+    const { rows } = await pool.query<Row>(`SELECT * FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $1`, params);
     return rows.map(toNotification);
   },
-  async countUnread(): Promise<number> {
-    const { rows } = await pool.query<{ n: string }>('SELECT count(*)::text AS n FROM notifications WHERE read_at IS NULL');
+  async countUnread(projectIds?: string[]): Promise<number> {
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM notifications WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''}`,
+      projectIds ? [projectIds] : [],
+    );
     return Number(rows[0].n);
   },
   async markRead(id: string): Promise<Notification | null> {
     const { rows } = await pool.query<Row>('UPDATE notifications SET read_at = COALESCE(read_at, now()) WHERE id = $1 RETURNING *', [id]);
     return rows[0] ? toNotification(rows[0]) : null;
   },
-  async markAllRead(): Promise<number> {
-    const { rowCount } = await pool.query('UPDATE notifications SET read_at = now() WHERE read_at IS NULL');
+  async markAllRead(projectIds?: string[]): Promise<number> {
+    const { rowCount } = await pool.query(
+      `UPDATE notifications SET read_at = now() WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''}`,
+      projectIds ? [projectIds] : [],
+    );
     return rowCount ?? 0;
   },
 };

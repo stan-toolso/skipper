@@ -44,6 +44,38 @@ enum SessionActivity {
   IDLE
 }
 
+# ---- Utilisateurs et accès ----------------------------------------------------------------------
+
+"Rôle d'un utilisateur sur un projet : ADMIN gère le projet et ses membres, MEMBER lance sessions et terminaux, VIEWER consulte seulement."
+enum ProjectRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+"Utilisateur de l'application (connexion Google). Il n'existe que s'il a été invité sur un projet."
+type User {
+  id: ID!
+  email: String!
+  name: String!
+  avatarUrl: String
+  "Administrateur de l'application : accès aux paramètres généraux."
+  isAdmin: Boolean!
+  createdAt: DateTime!
+  "Null tant que l'utilisateur ne s'est jamais connecté."
+  lastLoginAt: DateTime
+}
+
+"Appartenance d'un utilisateur à un projet."
+type ProjectMember {
+  user: User!
+  role: ProjectRole!
+  invitedBy: User
+  createdAt: DateTime!
+  "Invité mais jamais connecté."
+  pending: Boolean!
+}
+
 "Un projet regroupe des sessions ; chacune s'exécute dans le workspace du projet."
 type Project {
   id: ID!
@@ -55,6 +87,11 @@ type Project {
   systemPrompt: String!
   gitUrl: String
   gitBranch: String
+  "Environnement d'exécution : local (sur le serveur) ou docker (conteneur dédié)."
+  runner: String!
+  "Réglages du runner docker : { image, memory, cpus }."
+  runnerConfig: JSON!
+  runnerStatus: RunnerStatus!
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
   workspaceExists: Boolean!
@@ -71,6 +108,9 @@ type Project {
   tasks(status: [TaskStatus!]): [Task!]!
   worktrees: [Worktree!]!
   connections: [Connection!]!
+  members: [ProjectMember!]!
+  "Rôle de l'utilisateur connecté sur ce projet."
+  myRole: ProjectRole!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -337,6 +377,68 @@ enum FileEntryKind {
   file
 }
 
+type GitCommit {
+  hash: String!
+  shortHash: String!
+  subject: String!
+  author: String!
+  date: DateTime!
+}
+
+"Fichier modifié dans un workspace ou un worktree (statuts git : M, A, D, R, ?, U...)."
+type GitFileChange {
+  path: String!
+  origPath: String
+  indexStatus: String!
+  worktreeStatus: String!
+  staged: Boolean!
+  unstaged: Boolean!
+  untracked: Boolean!
+  conflicted: Boolean!
+}
+
+type GitStatus {
+  branch: String
+  upstream: String
+  ahead: Int!
+  behind: Int!
+  detached: Boolean!
+  changes: [GitFileChange!]!
+  headCommit: GitCommit
+}
+
+type GitBranch {
+  name: String!
+  current: Boolean!
+  remote: Boolean!
+  upstream: String
+  commit: GitCommit
+}
+
+type GitDiff {
+  "Chemin du fichier, ou hash pour un commit."
+  path: String!
+  staged: Boolean!
+  "Diff unifié."
+  text: String!
+  binary: Boolean!
+  truncated: Boolean!
+}
+
+"État de l'environnement d'exécution d'un projet."
+type RunnerStatus {
+  kind: String!
+  ready: Boolean!
+  "running, stopped, absent, unavailable..."
+  state: String!
+  containerName: String
+  image: String
+  memory: String
+  cpus: String
+  startedAt: DateTime
+  error: String
+}
+
 type WorkspaceGit {
   branch: String!
   commit: String!
@@ -571,6 +673,10 @@ input ClaudeSettingsInput {
 }
 
 type Query {
+  "Utilisateur connecté (null sinon). Seule requête accessible sans session."
+  me: User
+  "Tous les utilisateurs (administrateurs de l'application)."
+  users: [User!]!
   "Contenu d'un dossier du workspace du projet (ou du worktree). path vide = racine."
   workspaceEntries(projectId: ID!, worktreeId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
@@ -590,6 +696,12 @@ type Query {
   terminal(id: ID!): Terminal
   worktree(id: ID!): Worktree
   connection(id: ID!): Connection
+  "Suivi git d'un workspace (checkout principal) ou d'un worktree."
+  gitStatus(projectId: ID!, worktreeId: ID): GitStatus!
+  gitDiff(projectId: ID!, worktreeId: ID, path: String!, staged: Boolean = false): GitDiff!
+  gitCommitDiff(projectId: ID!, worktreeId: ID, hash: String!): GitDiff!
+  gitBranches(projectId: ID!, worktreeId: ID): [GitBranch!]!
+  gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
@@ -625,6 +737,9 @@ input CreateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
+  "local (défaut) ou docker."
+  runner: String
+  runnerConfig: JSON
 }
 
 input UpdateProjectInput {
@@ -633,6 +748,8 @@ input UpdateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
+  runner: String
+  runnerConfig: JSON
 }
 
 input CreateSessionInput {
@@ -679,11 +796,22 @@ type Mutation {
   "Interroge Claude Code avec l'authentification du mode indiqué (défaut : mode courant) : compte et modèles."
   verifyClaudeAuth(mode: ClaudeAuthMode): AppSettings!
 
-  "Crée le projet et prépare son workspace (clone git si une URL est fournie)."
+  "Invite un e-mail sur le projet (l'utilisateur est créé s'il n'existe pas) ou change son rôle. Réservé aux administrateurs du projet."
+  inviteProjectMember(projectId: ID!, email: String!, role: ProjectRole = MEMBER): ProjectMember!
+  updateProjectMemberRole(projectId: ID!, userId: ID!, role: ProjectRole!): ProjectMember!
+  removeProjectMember(projectId: ID!, userId: ID!): Boolean!
+
+  "Crée le projet et prépare son workspace (clone git si une URL est fournie). Le créateur en devient administrateur."
   createProject(input: CreateProjectInput!): Project!
   updateProject(id: ID!, input: UpdateProjectInput!): Project!
   "(Re)crée le workspace s'il n'existe pas sur disque."
   prepareProjectWorkspace(id: ID!): Project!
+  "Démarre l'environnement d'exécution (conteneur) du projet."
+  startProjectRunner(id: ID!): Project!
+  "Arrête l'environnement d'exécution ; les sessions en cours sont interrompues."
+  stopProjectRunner(id: ID!): Project!
+  "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
+  resetProjectRunner(id: ID!): Project!
   "Supprime le projet et ses sessions en base ; le dossier sur disque est conservé."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
@@ -710,6 +838,19 @@ type Mutation {
   deleteTask(id: ID!): Boolean!
   "Confie la tâche à un nouvel agent : crée et démarre une session, assigne la tâche et la passe en cours."
   startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID): Session!
+
+  "git add (paths vide = tout)."
+  gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "git reset (paths vide = tout)."
+  gitUnstage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "Abandonne les modifications non indexées ; supprime un fichier non suivi."
+  gitDiscard(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitCommit(projectId: ID!, worktreeId: ID, message: String!, stageAll: Boolean = false): GitStatus!
+  gitFetch(projectId: ID!, worktreeId: ID): GitStatus!
+  gitPull(projectId: ID!, worktreeId: ID): GitStatus!
+  gitPush(projectId: ID!, worktreeId: ID): GitStatus!
+  "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
+  gitCheckout(projectId: ID!, worktreeId: ID, branch: String!, create: Boolean = false): GitStatus!
 
   "Ouvre un shell dans le workspace du projet (ou dans un worktree)."
   createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!

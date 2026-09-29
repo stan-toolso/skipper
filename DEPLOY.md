@@ -8,10 +8,11 @@ pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
 
 - **SSH** : `ssh skipper@skipper.toolso.io` (clé `~/.ssh/id_rsa` du poste, ou la clé EC2
   `app-paris.pem`). `skipper` est sudoer sans mot de passe.
-- **Web** : https://skipper.toolso.io, protégé par une **authentification HTTP basic** nginx
-  (`/etc/nginx/.htpasswd-skipper`, identifiants dans `/home/skipper/.skipper-credentials`).
-  Cette protection est indispensable : l'application ouvre des terminaux sur le serveur.
-  Ajouter un utilisateur : `sudo htpasswd /etc/nginx/.htpasswd-skipper <nom>`.
+- **Web** : https://skipper.toolso.io. Connexion des utilisateurs par **Google OAuth** (voir
+  « Connexion des utilisateurs »). L'ancienne **authentification HTTP basic** nginx est désactivée
+  (lignes `auth_basic` commentées dans le site nginx) ; le fichier `/etc/nginx/.htpasswd-skipper` et
+  les identifiants dans `/home/skipper/.skipper-credentials` existent toujours pour la réactiver en
+  cas de besoin.
 - **Base** : PostgreSQL 14 sur l'instance RDS `toolso-campaign-manager` (compte AWS Toolso
   Emailing, `eu-west-1`), base `skipper`, rôle `skipper`. Connexion en TLS vérifié
   (`sslmode=verify-full`, bundle CA `~/rds-eu-west-1-bundle.pem`). Le mot de passe est dans
@@ -34,8 +35,30 @@ pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
 | Claude Code CLI    | `~/.local/bin/claude` (pour se connecter : `claude` puis `/login`) |
 
 Le port 4000 est celui de l'API Curso : Skipper est sur 4100. Le `.env` fixe aussi
-`SHELL=/bin/bash` (les terminaux web utilisent zsh par défaut, absent du serveur) et
-`VITE_GRAPHQL_URL=https://skipper.toolso.io/graphql` (lu par Vite au build).
+`SHELL=/bin/bash` (les terminaux web utilisent zsh par défaut, absent du serveur),
+`VITE_GRAPHQL_URL=https://skipper.toolso.io/graphql` (lu par Vite au build),
+`APP_URL=https://skipper.toolso.io`, `API_URL=https://skipper.toolso.io` et les identifiants Google.
+
+## Connexion des utilisateurs
+
+Les utilisateurs se connectent avec Google. La configuration existe dans la console Google Cloud,
+projet **Skipper** (`skipper-510112`, organisation toolso.io, compte de facturation Toolso) :
+
+- **Google Auth Platform → Audience** : « Interne », donc seuls les comptes toolso.io peuvent se
+  connecter, sans validation Google. Passer en « Externe » (avec liste d'utilisateurs test puis
+  vérification) pour inviter des comptes hors organisation.
+- **Google Auth Platform → Clients** : client « Skipper web » (application Web) avec les URI de
+  redirection `https://skipper.toolso.io/auth/google/callback` et
+  `http://localhost:4000/auth/google/callback` (développement).
+- Le secret du client n'est visible qu'à sa création : il est dans le `.env` du poste de
+  développement (jamais versionné). Le reporter dans `~/skipper/.env` sur le serveur
+  (`GOOGLE_CLIENT_ID=...`, `GOOGLE_CLIENT_SECRET=...`), puis `pm2 restart skipper --update-env`.
+  S'il est perdu : dans le client, « Add secret » en génère un nouveau.
+
+Seules les adresses invitées sur un projet peuvent se connecter. La migration `011_users.sql` crée
+`stan@toolso.io` administrateur de l'application et de tous les projets existants ; les autres
+utilisateurs sont invités depuis la page d'un projet (bloc « Membres »). Le site nginx doit
+proxifier `/auth/` vers le backend (bloc présent dans `deploy/nginx-skipper.conf`).
 
 ## Authentification Claude
 
@@ -80,6 +103,24 @@ Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<r
 l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
 dossier ou création de worktree.
 
+## Environnements isolés (runner docker)
+
+Un projet en mode « Conteneur Docker » a besoin de Docker sur le serveur et de l'image de base.
+**Non installé à ce jour** (et le disque de l'instance est presque plein : à agrandir ou nettoyer
+avant, l'image pèse ~600 Mo plus les caches des projets). Mise en place :
+
+```bash
+# Sur le serveur, en tant que skipper (sudoer)
+sudo apt-get update && sudo apt-get install -y docker.io
+sudo usermod -aG docker skipper        # puis se reconnecter
+cd ~/skipper && docker build -t skipper-runner:latest deploy/runner
+```
+
+Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env` ;
+sur cette instance de 1,8 Go, viser 512m à 768m par conteneur et peu de projets isolés en parallèle.
+Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
+projet applique la nouvelle image.
+
 ## Procédure de déploiement
 
 ```bash
@@ -98,14 +139,20 @@ pm2 restart skipper --update-env
 
 Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 
+## Application installable
+
+Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx
+(bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
+prochaine ouverture. L'installation exige HTTPS : c'est le cas.
+
 ## Vérifications
 
 ```bash
 pm2 list                                     # skipper « online », uptime remis à zéro
 pm2 logs skipper --nostream --lines 20       # « [http] GraphQL prêt sur http://localhost:4100/graphql »
-curl -s -u stan -X POST https://skipper.toolso.io/graphql \
+curl -s -X POST https://skipper.toolso.io/graphql \
   -H 'content-type: application/json' -d '{"query":"{ providers { type label } }"}'
-curl -s -u stan https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
+curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 ```
 
 ## Bon à savoir

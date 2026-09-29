@@ -5,6 +5,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASKS, UPDATE_TASK, type Project, type Task, type TaskPriority, type TaskStatus } from '../graphql/operations';
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+import { canAutoFocus } from '../lib/device';
+
 
 const columns: { status: TaskStatus; label: string; hint: string }[] = [
   { status: 'TODO', label: 'À faire', hint: 'Prêtes à être confiées à un agent' },
@@ -45,7 +48,7 @@ function TaskModal({ task, projectId, onClose }: { task: Task | null; projectId:
         <Modal.Body>
           <Form.Group className="mb-3">
             <Form.Label>Titre</Form.Label>
-            <Form.Control autoFocus value={form.title} onChange={set('title')} required placeholder="Ex. Ajouter la page de contact" />
+            <Form.Control autoFocus={canAutoFocus()} value={form.title} onChange={set('title')} required placeholder="Ex. Ajouter la page de contact" />
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Description</Form.Label>
@@ -209,6 +212,7 @@ export default function TasksPage() {
 
   const project = projectData?.project;
   useTabTitle(routeProjectId ? (project ? `Tâches · ${project.name}` : null) : 'Tâches');
+  useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worktreeId: null, label: project.name } : null);
   const tasks = data?.tasks ?? [];
   const byStatus = useMemo(() => {
     const m = new Map<TaskStatus, Task[]>();

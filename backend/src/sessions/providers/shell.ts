@@ -1,4 +1,5 @@
 import { AppError } from '../../errors.js';
+import { runnerFor } from '../../runners/index.js';
 import type { ProviderDescription, RunContext, RunningHandle, SessionProvider } from './provider.js';
 import { spawnProcess } from './process.js';
 
@@ -31,9 +32,11 @@ export class ShellProvider implements SessionProvider {
     if (!command) throw new AppError('Une session shell nécessite une commande dans le prompt');
     await ctx.emit('system', { message: `Exécution dans ${ctx.cwd} : ${command}` });
     await ctx.setActivity('busy');
+    const spec = await runnerFor(ctx.project).shellCommand(ctx.project, ctx.cwd, cfg.shell || '/bin/sh', command);
     return spawnProcess({
-      command: cfg.shell || '/bin/sh',
-      args: ['-c', command],
+      command: spec.command,
+      args: spec.args,
+      env: spec.env,
       cwd: ctx.cwd,
       interactive: true,
       // Une session shell relancée par un message reçoit ce message sur stdin.

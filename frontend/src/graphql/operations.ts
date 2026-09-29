@@ -23,6 +23,38 @@ export interface Provider {
   configFields: ConfigField[];
 }
 
+export type ProjectRole = 'ADMIN' | 'MEMBER' | 'VIEWER';
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  isAdmin: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface ProjectMember {
+  user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'>;
+  role: ProjectRole;
+  invitedBy: Pick<User, 'id' | 'name'> | null;
+  pending: boolean;
+  createdAt: string;
+}
+
+export interface RunnerStatus {
+  kind: string;
+  ready: boolean;
+  state: string;
+  containerName: string | null;
+  image: string | null;
+  memory: string | null;
+  cpus: string | null;
+  startedAt: string | null;
+  error: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -31,9 +63,13 @@ export interface Project {
   systemPrompt: string;
   gitUrl: string | null;
   gitBranch: string | null;
+  runner: 'local' | 'docker';
+  runnerConfig: { image?: string; memory?: string; cpus?: string };
+  runnerStatus: RunnerStatus;
   workspacePath: string;
   workspaceExists: boolean;
   git: { branch: string; commit: string } | null;
+  myRole: ProjectRole;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,6 +195,47 @@ export interface Worktree {
   createdAt: string;
 }
 
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+export interface GitFileChange {
+  path: string;
+  origPath: string | null;
+  indexStatus: string;
+  worktreeStatus: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+}
+export interface GitStatus {
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  changes: GitFileChange[];
+  headCommit: GitCommit | null;
+}
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream: string | null;
+  commit: GitCommit | null;
+}
+export interface GitDiff {
+  path: string;
+  staged: boolean;
+  text: string;
+  binary: boolean;
+  truncated: boolean;
+}
+
 export interface SessionEvent {
   id: string;
   sessionId: string;
@@ -189,14 +266,102 @@ export const PROJECT_FIELDS = gql`
     systemPrompt
     gitUrl
     gitBranch
+    runner
+    runnerConfig
+    runnerStatus {
+      kind
+      ready
+      state
+      containerName
+      image
+      memory
+      cpus
+      startedAt
+      error
+    }
     workspacePath
     workspaceExists
     git {
       branch
       commit
     }
+    myRole
     createdAt
     updatedAt
+  }
+`;
+
+export const USER_FIELDS = gql`
+  fragment UserFields on User {
+    id
+    email
+    name
+    avatarUrl
+    isAdmin
+    createdAt
+    lastLoginAt
+  }
+`;
+
+export const ME = gql`
+  ${USER_FIELDS}
+  query Me {
+    me {
+      ...UserFields
+    }
+  }
+`;
+
+export const PROJECT_MEMBERS = gql`
+  query ProjectMembers($id: ID!) {
+    project(id: $id) {
+      id
+      myRole
+      members {
+        role
+        pending
+        createdAt
+        user {
+          id
+          email
+          name
+          avatarUrl
+        }
+        invitedBy {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
+export const INVITE_PROJECT_MEMBER = gql`
+  mutation InviteProjectMember($projectId: ID!, $email: String!, $role: ProjectRole) {
+    inviteProjectMember(projectId: $projectId, email: $email, role: $role) {
+      role
+      user {
+        id
+        email
+      }
+    }
+  }
+`;
+
+export const UPDATE_PROJECT_MEMBER_ROLE = gql`
+  mutation UpdateProjectMemberRole($projectId: ID!, $userId: ID!, $role: ProjectRole!) {
+    updateProjectMemberRole(projectId: $projectId, userId: $userId, role: $role) {
+      role
+      user {
+        id
+      }
+    }
+  }
+`;
+
+export const REMOVE_PROJECT_MEMBER = gql`
+  mutation RemoveProjectMember($projectId: ID!, $userId: ID!) {
+    removeProjectMember(projectId: $projectId, userId: $userId)
   }
 `;
 
@@ -323,6 +488,33 @@ export const PREPARE_PROJECT_WORKSPACE = gql`
   ${PROJECT_FIELDS}
   mutation PrepareProjectWorkspace($id: ID!) {
     prepareProjectWorkspace(id: $id) {
+      ...ProjectFields
+    }
+  }
+`;
+
+export const START_PROJECT_RUNNER = gql`
+  ${PROJECT_FIELDS}
+  mutation StartProjectRunner($id: ID!) {
+    startProjectRunner(id: $id) {
+      ...ProjectFields
+    }
+  }
+`;
+
+export const STOP_PROJECT_RUNNER = gql`
+  ${PROJECT_FIELDS}
+  mutation StopProjectRunner($id: ID!) {
+    stopProjectRunner(id: $id) {
+      ...ProjectFields
+    }
+  }
+`;
+
+export const RESET_PROJECT_RUNNER = gql`
+  ${PROJECT_FIELDS}
+  mutation ResetProjectRunner($id: ID!) {
+    resetProjectRunner(id: $id) {
       ...ProjectFields
     }
   }
@@ -1318,6 +1510,113 @@ export const DELETE_WORKSPACE_ENTRY = gql`
   }
 `;
 
+export const GIT_STATUS_FIELDS = gql`
+  fragment GitStatusFields on GitStatus {
+    branch
+    upstream
+    ahead
+    behind
+    detached
+    changes {
+      path
+      origPath
+      indexStatus
+      worktreeStatus
+      staged
+      unstaged
+      untracked
+      conflicted
+    }
+    headCommit {
+      hash
+      shortHash
+      subject
+      author
+      date
+    }
+  }
+`;
+
+export const GIT_STATUS = gql`
+  ${GIT_STATUS_FIELDS}
+  query GitStatus($projectId: ID!, $worktreeId: ID) {
+    gitStatus(projectId: $projectId, worktreeId: $worktreeId) {
+      ...GitStatusFields
+    }
+  }
+`;
+
+export const GIT_DIFF = gql`
+  query GitDiff($projectId: ID!, $worktreeId: ID, $path: String!, $staged: Boolean) {
+    gitDiff(projectId: $projectId, worktreeId: $worktreeId, path: $path, staged: $staged) {
+      path
+      staged
+      text
+      binary
+      truncated
+    }
+  }
+`;
+
+export const GIT_COMMIT_DIFF = gql`
+  query GitCommitDiff($projectId: ID!, $worktreeId: ID, $hash: String!) {
+    gitCommitDiff(projectId: $projectId, worktreeId: $worktreeId, hash: $hash) {
+      path
+      staged
+      text
+      binary
+      truncated
+    }
+  }
+`;
+
+export const GIT_BRANCHES = gql`
+  query GitBranches($projectId: ID!, $worktreeId: ID) {
+    gitBranches(projectId: $projectId, worktreeId: $worktreeId) {
+      name
+      current
+      remote
+      upstream
+      commit {
+        hash
+        shortHash
+        subject
+        author
+        date
+      }
+    }
+  }
+`;
+
+export const GIT_LOG = gql`
+  query GitLog($projectId: ID!, $worktreeId: ID, $limit: Int) {
+    gitLog(projectId: $projectId, worktreeId: $worktreeId, limit: $limit) {
+      hash
+      shortHash
+      subject
+      author
+      date
+    }
+  }
+`;
+
+const gitMutation = (name: string, args: string, call: string) => gql`
+  ${GIT_STATUS_FIELDS}
+  mutation ${name}($projectId: ID!, $worktreeId: ID${args}) {
+    ${call} {
+      ...GitStatusFields
+    }
+  }
+`;
+export const GIT_STAGE = gitMutation('GitStage', ', $paths: [String!]!', 'gitStage(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
+export const GIT_UNSTAGE = gitMutation('GitUnstage', ', $paths: [String!]!', 'gitUnstage(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
+export const GIT_DISCARD = gitMutation('GitDiscard', ', $paths: [String!]!', 'gitDiscard(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
+export const GIT_COMMIT = gitMutation('GitCommit', ', $message: String!, $stageAll: Boolean', 'gitCommit(projectId: $projectId, worktreeId: $worktreeId, message: $message, stageAll: $stageAll)');
+export const GIT_FETCH = gitMutation('GitFetch', '', 'gitFetch(projectId: $projectId, worktreeId: $worktreeId)');
+export const GIT_PULL = gitMutation('GitPull', '', 'gitPull(projectId: $projectId, worktreeId: $worktreeId)');
+export const GIT_PUSH = gitMutation('GitPush', '', 'gitPush(projectId: $projectId, worktreeId: $worktreeId)');
+export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $create: Boolean', 'gitCheckout(projectId: $projectId, worktreeId: $worktreeId, branch: $branch, create: $create)');
+
 // ---- Connexions ---------------------------------------------------------------------------------
 
 export type ConnectionKind = 'ssh' | 'postgres';
@@ -1405,6 +1704,8 @@ export const PROJECT_CONNECTIONS = gql`
       id
       name
       slug
+      runner
+      myRole
       connections {
         ...ConnectionFields
       }

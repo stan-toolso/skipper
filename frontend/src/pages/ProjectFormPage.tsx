@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Collapse, Form, Spinner } from 'react-bootstrap';
+import { Alert, Button, Card, Col, Collapse, Form, Row, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CREATE_PROJECT, GITHUB_REPOSITORIES, GITHUB_STATUS, PROJECT, PROJECTS, UPDATE_PROJECT, type GithubAuthStatus, type GithubRepository, type Project } from '../graphql/operations';
 
@@ -64,6 +64,10 @@ export default function ProjectFormPage() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('');
+  const [runner, setRunner] = useState<'local' | 'docker'>('local');
+  const [runnerImage, setRunnerImage] = useState('');
+  const [runnerMemory, setRunnerMemory] = useState('');
+  const [runnerCpus, setRunnerCpus] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(isEdit);
 
   useEffect(() => {
@@ -75,11 +79,16 @@ export default function ProjectFormPage() {
     setSystemPrompt(p.systemPrompt);
     setGitUrl(p.gitUrl ?? '');
     setGitBranch(p.gitBranch ?? '');
+    setRunner(p.runner ?? 'local');
+    setRunnerImage(p.runnerConfig?.image ?? '');
+    setRunnerMemory(p.runnerConfig?.memory ?? '');
+    setRunnerCpus(p.runnerConfig?.cpus ?? '');
   }, [data]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null };
+    const runnerConfig = Object.fromEntries(Object.entries({ image: runnerImage.trim(), memory: runnerMemory.trim(), cpus: runnerCpus.trim() }).filter(([, v]) => v));
+    const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runner, runnerConfig };
     if (isEdit) updateProject({ variables: { id, input: common } });
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
   };
@@ -120,6 +129,19 @@ export default function ProjectFormPage() {
               <Form.Text>Transmis à chaque session lancée dans ce projet, en plus de la tâche demandée.</Form.Text>
             </Form.Group>
 
+            <Form.Group className="mb-3">
+              <Form.Label>Environnement d'exécution</Form.Label>
+              <Form.Select value={runner} onChange={(e) => setRunner(e.target.value as 'local' | 'docker')}>
+                <option value="local">Sur le serveur (partagé)</option>
+                <option value="docker">Conteneur Docker isolé, dédié au projet</option>
+              </Form.Select>
+              <Form.Text>
+                {runner === 'docker'
+                  ? "Les agents, terminaux et commandes tournent dans un conteneur qui ne voit que ce projet, avec des limites de mémoire et de CPU. Nécessite Docker sur le serveur."
+                  : "Les agents et terminaux tournent directement sur le serveur, avec l'utilisateur de Skipper."}
+              </Form.Text>
+            </Form.Group>
+
             <div className="mb-3">
               <Button variant="link" size="sm" className="p-0 text-secondary" onClick={() => setShowAdvanced((v) => !v)} aria-expanded={showAdvanced}>
                 <i className={`bi bi-chevron-${showAdvanced ? 'down' : 'right'} me-1`} />
@@ -132,6 +154,23 @@ export default function ProjectFormPage() {
                     <Form.Control value={slug} onChange={(e) => setSlug(e.target.value)} disabled={isEdit} placeholder="généré à partir du nom si vide" pattern="[a-z0-9][a-z0-9-]*" />
                     <Form.Text>Minuscules, chiffres et tirets. {isEdit ? 'Non modifiable après création.' : 'Le dossier de travail portera ce nom.'}</Form.Text>
                   </Form.Group>
+                  {runner === 'docker' && (
+                    <Row className="g-2 mb-3">
+                      <Col sm={6}>
+                        <Form.Label className="small mb-1">Image Docker</Form.Label>
+                        <Form.Control size="sm" value={runnerImage} onChange={(e) => setRunnerImage(e.target.value)} placeholder="skipper-runner:latest" />
+                      </Col>
+                      <Col sm={3}>
+                        <Form.Label className="small mb-1">Mémoire</Form.Label>
+                        <Form.Control size="sm" value={runnerMemory} onChange={(e) => setRunnerMemory(e.target.value)} placeholder="1g" />
+                      </Col>
+                      <Col sm={3}>
+                        <Form.Label className="small mb-1">CPU</Form.Label>
+                        <Form.Control size="sm" value={runnerCpus} onChange={(e) => setRunnerCpus(e.target.value)} placeholder="1" />
+                      </Col>
+                      <Form.Text>Vides : valeurs par défaut du serveur. Un changement d'image ou de limites s'applique après « Recréer » sur la page du projet.</Form.Text>
+                    </Row>
+                  )}
                 </div>
               </Collapse>
             </div>

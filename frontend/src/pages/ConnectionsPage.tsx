@@ -267,7 +267,7 @@ function PublicKeyBlock({ connection }: { connection: Connection }) {
   );
 }
 
-function ConnectionCard({ connection: c, sshConnections, projectId }: { connection: Connection; sshConnections: Connection[]; projectId: string }) {
+function ConnectionCard({ connection: c, sshConnections, projectId, canEdit }: { connection: Connection; sshConnections: Connection[]; projectId: string; canEdit: boolean }) {
   const [editing, setEditing] = useState(false);
   const [test, { loading: testing, data: testData, error: testError }] = useMutation<{ testConnection: { ok: boolean; error: string | null; detail: string | null } }>(TEST_CONNECTION, { refetchQueries: ['ProjectConnections'] });
   const [remove, { error: removeError }] = useMutation(DELETE_CONNECTION, { refetchQueries: ['ProjectConnections'] });
@@ -324,9 +324,11 @@ function ConnectionCard({ connection: c, sshConnections, projectId }: { connecti
                 {c.hostFingerprint ? (
                   <>
                     <code>{c.hostFingerprint}</code> <span className="text-secondary">mémorisée le {fmtDate(c.hostKeySeenAt)}</span>{' '}
-                    <Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => window.confirm('Oublier la clé d\'hôte mémorisée ? Elle sera réapprise à la prochaine connexion.') && forgetHostKey({ variables: { id: c.id } })}>
-                      oublier
-                    </Button>
+                    {canEdit && (
+                      <Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => window.confirm('Oublier la clé d\'hôte mémorisée ? Elle sera réapprise à la prochaine connexion.') && forgetHostKey({ variables: { id: c.id } })}>
+                        oublier
+                      </Button>
+                    )}
                   </>
                 ) : (
                   <span className="text-secondary">pas encore mémorisée : elle le sera à la première connexion réussie (testez la connexion).</span>
@@ -363,6 +365,7 @@ function ConnectionCard({ connection: c, sshConnections, projectId }: { connecti
         {c.kind === 'ssh' && <PublicKeyBlock connection={c} />}
         {(testError || removeError) && <Alert variant="danger" className="mt-2 mb-0 py-2">{(testError ?? removeError)?.message}</Alert>}
       </Card.Body>
+      {canEdit && (
       <Card.Footer className="d-flex gap-2 flex-wrap">
         <Button size="sm" variant="outline-primary" disabled={testing} onClick={() => test({ variables: { id: c.id } })}>
           {testing ? 'Test en cours…' : 'Tester la connexion'}
@@ -379,6 +382,7 @@ function ConnectionCard({ connection: c, sshConnections, projectId }: { connecti
           Supprimer
         </Button>
       </Card.Footer>
+      )}
       {editing && <ConnectionModal projectId={projectId} kind={c.kind} connection={c} sshConnections={sshConnections.filter((s) => s.id !== c.id)} onClose={() => setEditing(false)} onCreated={() => undefined} />}
     </Card>
   );
@@ -386,7 +390,7 @@ function ConnectionCard({ connection: c, sshConnections, projectId }: { connecti
 
 export default function ConnectionsPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ project: { id: string; name: string; slug: string; connections: Connection[] } | null }>(PROJECT_CONNECTIONS, { variables: { id }, pollInterval: 10_000 });
+  const { data, loading, error } = useQuery<{ project: { id: string; name: string; slug: string; runner: string; myRole: string; connections: Connection[] } | null }>(PROJECT_CONNECTIONS, { variables: { id }, pollInterval: 10_000 });
   const [creating, setCreating] = useState<ConnectionKind | null>(null);
   const [justCreated, setJustCreated] = useState<Connection | null>(null);
   useTabTitle(data?.project ? `Connexions · ${data.project.name}` : 'Connexions');
@@ -396,6 +400,7 @@ export default function ConnectionsPage() {
   const project = data?.project;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const sshConnections = project.connections.filter((c) => c.kind === 'ssh');
+  const canEdit = project.myRole === 'ADMIN';
 
   return (
     <>
@@ -406,20 +411,28 @@ export default function ConnectionsPage() {
           </Link>
           <h1 className="h3 mb-0">Connexions</h1>
         </div>
-        <div className="d-flex gap-2">
-          <Button size="sm" onClick={() => setCreating('ssh')}>
-            <i className="bi bi-hdd-network me-1" /> Serveur SSH
-          </Button>
-          <Button size="sm" onClick={() => setCreating('postgres')}>
-            <i className="bi bi-database me-1" /> Base PostgreSQL
-          </Button>
-        </div>
+        {canEdit && (
+          <div className="d-flex gap-2">
+            <Button size="sm" onClick={() => setCreating('ssh')}>
+              <i className="bi bi-hdd-network me-1" /> Serveur SSH
+            </Button>
+            <Button size="sm" onClick={() => setCreating('postgres')}>
+              <i className="bi bi-database me-1" /> Base PostgreSQL
+            </Button>
+          </div>
+        )}
       </div>
 
       <p className="text-secondary small" style={{ maxWidth: 900 }}>
         Systèmes externes que les agents de ce projet peuvent utiliser. Les identifiants sont chiffrés en base et, en mode « outils », ne sont jamais transmis à l'agent : le serveur exécute pour lui et
         journalise chaque accès dans la session. Pour un serveur SSH, Skipper génère une clé dédiée que vous autorisez sur la machine ; pour une base, préférez un rôle en lecture seule.
       </p>
+
+      {project.runner === 'docker' && project.connections.some((c) => c.exposure !== 'mcp') && (
+        <Alert variant="warning" className="py-2 small">
+          Ce projet s'exécute dans un conteneur Docker : l'accès depuis le shell (ssh, psql) n'y est pas disponible, seuls les outils le sont.
+        </Alert>
+      )}
 
       {justCreated?.kind === 'ssh' && (
         <Alert variant="success" dismissible onClose={() => setJustCreated(null)}>
@@ -429,7 +442,7 @@ export default function ConnectionsPage() {
 
       {project.connections.length === 0 && <Alert variant="light">Aucune connexion pour ce projet.</Alert>}
       {project.connections.map((c) => (
-        <ConnectionCard key={c.id} connection={c} sshConnections={sshConnections} projectId={project.id} />
+        <ConnectionCard key={c.id} connection={c} sshConnections={sshConnections} projectId={project.id} canEdit={canEdit} />
       ))}
 
       {creating && (

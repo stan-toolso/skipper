@@ -6,8 +6,14 @@ comme second exemple).
 
 Trois notions :
 
+- **Utilisateur** : connexion uniquement avec un compte Google. Personne ne s'inscrit seul : un
+  utilisateur existe parce qu'il a été **invité sur un projet** (par e-mail), avec un rôle propre à
+  ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
+- **Environnement d'exécution (runner)** : par projet, `local` (les agents, terminaux et commandes
+  tournent sur le serveur avec l'utilisateur de Skipper) ou `docker` (un conteneur dédié au projet,
+  avec limites de mémoire et de CPU, qui ne voit que le code de ce projet).
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal.
@@ -35,7 +41,7 @@ Trois notions :
 
 ## Stack
 
-- **Backend** : Node.js 20, TypeScript, GraphQL ([graphql-yoga](https://the-guild.dev/graphql/yoga-server)), PostgreSQL (`pg`, migrations SQL), [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk)
+- **Backend** : Node.js 20, TypeScript, GraphQL ([graphql-yoga](https://the-guild.dev/graphql/yoga-server)), PostgreSQL (`pg`, migrations SQL), [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk), Google OAuth (sans dépendance)
 - **Frontend** : React 18, Vite, Bootstrap 5 (react-bootstrap), Apollo Client, React Router
 - **Infra locale** : Docker Compose (PostgreSQL 16)
 
@@ -49,7 +55,7 @@ jeton chiffré en base, dépôts privés en https sans clé de déploiement, lis
 formulaire de projet).
 
 ```bash
-cp .env.example .env        # ajuster si besoin
+cp .env.example .env        # renseigner GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (voir « Utilisateurs »)
 npm install
 npm run db:up               # lance PostgreSQL dans Docker
 npm run dev                 # backend (http://localhost:4000/graphql) + frontend (http://localhost:5173)
@@ -69,11 +75,18 @@ Claude Code sur la machine qui héberge le backend (connexion `claude` ou `ANTHR
 ```
 backend/
   src/
-    index.ts                   # serveur HTTP + GraphQL
+    index.ts                   # serveur HTTP + GraphQL (contexte = utilisateur du cookie de session)
     config.ts                  # variables d'environnement
     errors.ts                  # erreurs métier renvoyées au client
     pubsub.ts                  # canaux temps réel (subscriptions)
     db/                        # pool pg, runner de migrations, migrations SQL
+    auth/
+      routes.ts                # /auth/google, /auth/google/callback, /auth/logout
+      google.ts                # flux OAuth Google (URL d'autorisation, échange du code, profil)
+      session.ts               # sessions de connexion : jeton dans un cookie HttpOnly, hachage en base
+      access.ts                # contexte GraphQL et gardes : requireUser, requireAdmin, requireProject(role)
+    users/
+      service.ts               # connexion Google, invitations et rôles par projet
     projects/
       service.ts               # création / édition, slug, préparation du workspace
       workspace.ts             # dossier du projet, clone git, infos de branche
@@ -120,6 +133,33 @@ frontend/
     components/                # layout, badge de statut, journal, carte de demande
 ```
 
+## Utilisateurs et droits
+
+- **Connexion** : Google uniquement (`GET /auth/google` redirige vers Google, le retour ouvre une
+  session de 30 jours dans un cookie `skipper_session` HttpOnly, `POST /auth/logout` la ferme).
+  Configuration : `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (console Google Cloud, identifiant
+  OAuth « application Web », URI de redirection `API_URL/auth/google/callback`), `APP_URL` (front,
+  cible des redirections et origine autorisée en CORS) et `API_URL`. Un compte Google dont l'adresse
+  ne correspond à aucun utilisateur est refusé (`Aucune invitation pour …`) : il n'y a pas
+  d'inscription libre.
+- **User** : `email` (unique, minuscules), `name`, `avatarUrl`, `googleSub` (relié à la première
+  connexion), `isAdmin` (administrateur de l'application : page Paramètres, liste des
+  utilisateurs ; n'ouvre aucun projet), `lastLoginAt` (null = invité jamais connecté).
+- **ProjectMember** : `(projectId, userId)`, `role` et qui a invité. Rôles, du plus au moins
+  puissant :
+  - `admin` : modifier / supprimer le projet, gérer les membres, et tout ce qui suit ;
+  - `member` : sessions, terminaux, worktrees, tâches, contexte, réponses aux demandes ;
+  - `viewer` : lecture seule.
+  Le créateur d'un projet en est administrateur. Un projet garde toujours au moins un
+  administrateur. Inviter une adresse crée l'utilisateur s'il n'existe pas (« en attente » jusqu'à sa
+  première connexion) ; réinviter change le rôle.
+- **Contrôle d'accès** : chaque requête et mutation GraphQL vérifie le rôle sur le projet de l'objet
+  visé (`backend/src/auth/access.ts`) ; les listes globales (projets, sessions, demandes, tâches,
+  notifications) sont restreintes aux projets de l'utilisateur ; les subscriptions filtrent de même ;
+  la WebSocket d'un terminal exige le cookie de session et le rôle `member`. Les notifications sont
+  partagées entre les membres d'un projet (état lu / non lu commun).
+- Première migration : `stan@toolso.io` est créé administrateur de l'application et de tous les
+  projets existants.
 ## Connexions
 
 Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Deux types
@@ -157,10 +197,12 @@ humaine (comme les autres permissions) ; on peut la désactiver par connexion (�
 faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
 shell suit le mode d'autorisation de la session (permission Bash).
 
-**Limite à connaître.** Les sessions tournent sur la machine du backend, sous le même utilisateur
-système : un agent à qui l'on a tout autorisé peut lire ce que le backend lit. Le mode « outils » et les
-demandes d'approbation réduisent la surface, mais l'isolation réelle passerait par l'exécution des
-sessions sous un autre utilisateur ou dans un conteneur.
+**Runner et isolation.** Avec le runner local, les sessions tournent sur la machine du backend, sous le
+même utilisateur système : un agent à qui l'on a tout autorisé peut lire ce que le backend lit. Le mode
+« outils » et les demandes d'approbation réduisent la surface ; le runner Docker isole réellement la
+session, mais l'accès « shell » n'y est pas disponible (pas d'agent SSH ni de tunnels dans le conteneur) :
+seuls les outils restent utilisables. La gestion des connexions est réservée aux administrateurs du
+projet ; les autres membres les voient sans les modifier.
 
 ## Modèle
 
@@ -219,6 +261,21 @@ sessions sous un autre utilisateur ou dans un conteneur.
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
   cours ; l'agent la passe en `done` quand il a fini.
 
+- **Runner** (`backend/src/runners/`) : `local` ou `docker` par projet (`projects.runner`,
+  `projects.runner_config` = `{ image, memory, cpus }`). Le runner fournit l'exécutable Claude Code
+  donné au SDK, la commande du terminal web et celle du provider shell. En mode docker, un conteneur
+  `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
+  construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
+  worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
+  de l'utilisateur de Skipper, donc aucune traduction de chemin. Le SDK reste dans le backend : il
+  reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
+  du CLI dans le conteneur, stdio relayés ; demandes d'autorisation, outils MCP (contexte, tâches)
+  et skills fonctionnent donc sans changement. L'authentification Claude (jeton OAuth ou clé API des
+  Paramètres) et le jeton GitHub sont transmis par variables d'environnement à chaque `docker exec` ;
+  le dossier `~/.claude` de l'hôte est monté s'il existe (mode « compte du serveur »). Le terminal
+  web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
+  page du projet (démarrer, arrêter, recréer).
+
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
 demandes en attente à `expired` et les terminaux à `closed`.
 
@@ -231,11 +288,40 @@ Sessions, Demandes) et un explorateur des projets dépliables avec leurs session
 demandes en attente) ; à droite un panneau à onglets où chaque page ouverte (session, projet,
 contexte, listes) est un onglet fermable. Les onglets ouverts sont mémorisés dans le navigateur.
 
+Sur les pages d'un projet ou d'un worktree (projet, session, terminal, fichiers, tâches, contexte),
+un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
+avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,
+abandonner), une zone de commit, les branches (bascule, création) et l'historique (clic : diff du
+commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queries `gitStatus`,
+`gitDiff`, `gitCommitDiff`, `gitBranches`, `gitLog` ; mutations `gitStage`, `gitUnstage`,
+`gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
+
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
 (`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
 réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
+
+## Mobile
+
+Sous 768 px (`workbench.css`, `terminal.css`) : la sidebar devient un tiroir ouvert par le bouton
+menu de la barre du haut et refermé à chaque navigation ; les onglets défilent sans barre de
+défilement (ombres de débordement, onglet actif ramené en vue, menu listant tous les onglets) ; les
+en-têtes de page passent à la ligne ; la page de session a un bouton d'envoi ; sur écran tactile les
+actions au survol de l'explorateur sont toujours visibles et les cibles sont agrandies.
+
+## Application installable (PWA)
+
+Skipper s'installe sur l'écran d'accueil d'un téléphone (Android : fenêtre d'installation ou
+bouton « Installer l'application » en bas de la sidebar ; iPhone : Safari, Partager, « Sur l'écran
+d'accueil ») et comme application de bureau (Chrome, Edge). `vite-plugin-pwa` (`vite.config.ts`)
+génère le manifeste (`manifest.webmanifest`, icônes `frontend/public/icon-*.png` et
+`apple-touch-icon.png`, produites depuis la rose des vents) et un service worker qui met en cache la
+coquille de l'application et se met à jour seul ; l'API GraphQL, les WebSockets des terminaux et
+l'authentification ne passent jamais par le cache. `frontend/src/lib/pwa.ts` enregistre le service
+worker et garde l'événement d'installation d'Android pour le bouton. En mode plein écran, les zones
+sûres d'iOS sont respectées (`env(safe-area-inset-*)`). Sur écran tactile, aucun champ ne reçoit le
+focus automatiquement (`frontend/src/lib/device.ts`) : le clavier virtuel ne s'ouvre qu'au toucher.
 
 ## Identité visuelle
 
@@ -303,7 +389,12 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 
 ## API GraphQL
 
-- `settings` (réglages Claude, statut d'authentification, modèles connus, consommation) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
+Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de droits portent le code
+`UNAUTHENTICATED` (pas connecté) ou `FORBIDDEN` (rôle insuffisant).
+
+- `me` (utilisateur connecté, null sinon) ; `users` (administrateurs de l'application)
+- `Project.members`, `Project.myRole` ; `inviteProjectMember(projectId, email, role)`, `updateProjectMemberRole(projectId, userId, role)`, `removeProjectMember(projectId, userId)` (administrateurs du projet)
+- `settings` (réglages Claude, statut d'authentification, modèles connus, consommation ; administrateurs de l'application) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
 - Connexion OAuth : `startClaudeLogin` (URL à ouvrir), `completeClaudeLogin(id, code)`, `cancelClaudeLogin`, `claudeLogin(id)`
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`

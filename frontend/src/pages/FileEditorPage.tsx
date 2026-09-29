@@ -11,6 +11,8 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { WORKSPACE_FILE, WRITE_WORKSPACE_FILE, type FileContent } from '../graphql/operations';
 import { fileIcon, filesUrl, formatSize, useWorkspaceFromRoute } from '../lib/files';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 
 /** Accorde CodeMirror au thème sombre de l'application. */
 const appTheme = EditorView.theme(
@@ -33,6 +35,7 @@ function fmtDate(iso: string): string {
 /** Éditeur de code d'un fichier du workspace, dans son propre onglet. */
 export default function FileEditorPage() {
   const { info, loading: wsLoading, error: wsError, filePath } = useWorkspaceFromRoute();
+  useGitTarget(info ? { projectId: info.projectId, worktreeId: info.worktreeId, label: info.label } : null);
   const wsRef = info ? { projectId: info.projectId, worktreeId: info.worktreeId } : null;
   const { data, loading, error, refetch } = useQuery<{ workspaceFile: FileContent }>(WORKSPACE_FILE, {
     variables: { ...wsRef, path: filePath },

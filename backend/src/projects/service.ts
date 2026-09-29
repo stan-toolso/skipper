@@ -22,6 +22,7 @@ function validateSlug(slug: string): void {
 
 export const projectService = {
   list: () => projectRepository.list(),
+  listForUser: (userId: string) => projectRepository.listForUser(userId),
 
   async get(id: string): Promise<Project> {
     const project = await projectRepository.findById(id);
@@ -48,6 +49,7 @@ export const projectService = {
 
   async update(id: string, input: UpdateProjectInput): Promise<Project> {
     if (input.name !== undefined && !input.name?.trim()) throw new AppError('Le nom du projet est obligatoire');
+    if (input.runner != null && !['local', 'docker'].includes(input.runner)) throw new AppError(`Runner inconnu : ${input.runner}`);
     const project = await projectRepository.update(id, { ...input, name: input.name?.trim() });
     if (!project) throw new NotFoundError('Projet introuvable');
     return project;

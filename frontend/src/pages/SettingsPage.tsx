@@ -23,6 +23,7 @@ import { useTabTitle } from '../workbench/TabsContext';
 import GithubSection from '../components/GithubSection';
 import { Nav } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
+import { canAutoFocus } from '../lib/device';
 
 const modeLabels: Record<ClaudeAuthMode, { title: string; hint: string }> = {
   server: { title: 'Compte du serveur', hint: "Le compte connecté dans Claude Code pour l'utilisateur système qui fait tourner Skipper (connexion depuis cette page ou par SSH), ou les variables d'environnement du serveur. Recommandé : les identifiants se renouvellent seuls." },
@@ -91,7 +92,7 @@ function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label
             }}
           >
             <InputGroup size="sm" style={{ maxWidth: 560 }}>
-              <Form.Control value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code d'autorisation" autoFocus spellCheck={false} />
+              <Form.Control value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code d'autorisation" autoFocus={canAutoFocus()} spellCheck={false} />
               <Button type="submit" disabled={completing || !code.trim()}>
                 {completing ? <><Spinner size="sm" className="me-1" /> Vérification…</> : 'Valider'}
               </Button>

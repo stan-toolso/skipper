@@ -1,5 +1,6 @@
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
+import type { Project } from '../projects/types.js';
 import { decryptSecret, encryptSecret } from '../settings/crypto.js';
 import * as postgres from './postgres.js';
 import { connectionRepository, type ConnectionRecordInput } from './repository.js';
@@ -250,13 +251,16 @@ export const connectionService = {
   // ---- Prompt des agents ----------------------------------------------------------------------
 
   /** Description des connexions du projet pour le prompt système d'une session. */
-  async promptSummary(projectId: string): Promise<string> {
-    const list = await connectionRepository.listByProject(projectId);
+  async promptSummary(project: Pick<Project, 'id' | 'runner'>): Promise<string> {
+    const list = await connectionRepository.listByProject(project.id);
     if (list.length === 0) return '';
     const byId = new Map(list.map((c) => [c.id, c]));
+    // Dans un conteneur Docker, le shell de l'agent n'a ni agent SSH ni tunnels : seuls les outils sont disponibles.
+    const shellAvailable = project.runner === 'local';
     const lines = list.map((c) => {
       const viaMcp = c.exposure !== 'direct';
-      const direct = c.exposure !== 'mcp';
+      const direct = c.exposure !== 'mcp' && shellAvailable;
+      if (!viaMcp && !direct) return `- \`${c.name}\` : ${kindLabels[c.kind]} configurée en accès shell uniquement, indisponible dans cet environnement d'exécution.`;
       if (c.kind === 'ssh') {
         const s = c.settings as SshSettings;
         const how = [viaMcp && 'outils `ssh_run`, `ssh_upload`, `ssh_download`', direct && `dans le shell : \`ssh ${c.name}\`, \`scp fichier ${c.name}:chemin\``].filter(Boolean).join(' ; ');

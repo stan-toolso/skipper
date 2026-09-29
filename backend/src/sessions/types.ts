@@ -40,6 +40,8 @@ export interface CreateSessionInput {
 
 export interface SessionFilter {
   projectId?: string;
+  /** Restreint aux projets listés (projets accessibles à l'utilisateur). */
+  projectIds?: string[];
   worktreeId?: string;
   status?: SessionStatus;
   provider?: string;

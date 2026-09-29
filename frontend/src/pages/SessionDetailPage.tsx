@@ -3,6 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import { canAutoFocus } from '../lib/device';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import RequestPrompt from '../components/RequestPrompt';
 import Transcript from '../components/Transcript';
@@ -55,12 +58,14 @@ export default function SessionDetailPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const session = data?.session;
   useTabTitle(session?.name);
+  useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.branch}` : session.project.name } : null);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
 
+  // Focus dans la zone de saisie à l'ouverture, sauf sur mobile (le clavier virtuel masquerait la page).
   useEffect(() => {
-    inputRef.current?.focus();
+    if (canAutoFocus()) inputRef.current?.focus();
   }, [session?.id]);
 
   // Échap interrompt le tour en cours, comme dans Claude Code.
@@ -190,6 +195,9 @@ export default function SessionDetailPage() {
             }
           }}
         />
+        <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={sending || !text.trim()} onClick={submit}>
+          <i className="bi bi-send" />
+        </button>
       </div>
       <div className="cc-hint">
         <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>

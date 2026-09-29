@@ -2,6 +2,7 @@ import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
+import { runnerFor } from '../runners/index.js';
 import { worktreeService } from '../worktrees/service.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
@@ -42,13 +43,13 @@ export const terminalService = {
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
     const record = await terminalRepository.create(projectId, label, worktreeId ?? null);
 
-    const shell = process.env.SHELL || '/bin/zsh';
-    const proc = pty.spawn(shell, ['-l'], {
+    const spec = await runnerFor(project).terminalCommand(project, cwd);
+    const proc = pty.spawn(spec.command, spec.args, {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd,
-      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
+      env: { ...process.env, ...spec.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
     });
     const t: LiveTerminal = { id: record.id, proc, scrollback: '', clients: new Set() };
     live.set(record.id, t);

@@ -102,6 +102,10 @@ export const sessionRepository = {
       params.push(filter.projectId);
       where.push(`project_id = $${params.length}`);
     }
+    if (filter.projectIds) {
+      params.push(filter.projectIds);
+      where.push(`project_id = ANY($${params.length}::uuid[])`);
+    }
     if (filter.worktreeId) {
       params.push(filter.worktreeId);
       where.push(`worktree_id = $${params.length}`);

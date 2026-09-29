@@ -9,6 +9,9 @@ import '@xterm/xterm/css/xterm.css';
 import { terminalSocketUrl } from '../apollo';
 import { CLOSE_TERMINAL, DELETE_TERMINAL, TERMINAL, type Terminal } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
+import { canAutoFocus } from '../lib/device';
+import { useGitTarget } from '../workbench/GitTargetContext';
+
 
 const theme = {
   background: '#141414',
@@ -38,6 +41,7 @@ export default function TerminalPage() {
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const terminal = data?.terminal;
   useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : null);
+  useGitTarget(terminal ? { projectId: terminal.project.id, worktreeId: terminal.worktree?.id ?? null, label: terminal.worktree ? `${terminal.project.name} · ${terminal.worktree.branch}` : terminal.project.name } : null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -57,7 +61,7 @@ export default function TerminalPage() {
     ws.onopen = () => {
       setConnection('open');
       sendResize();
-      term.focus();
+      if (canAutoFocus()) term.focus();
     };
     ws.onmessage = (event) => {
       const message = JSON.parse(String(event.data)) as { type: 'data'; data: string } | { type: 'exit'; code: number | null };
