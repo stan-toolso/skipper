@@ -245,8 +245,8 @@ function WorktreesCard({ projectId }: { projectId: string }) {
                     size="sm"
                     variant="outline-danger"
                     onClick={() => {
-                      const deleteBranch = window.confirm(`Supprimer le worktree « ${w.branch} » ?\n\nOK : supprimer le dossier et la branche locale.\nAnnuler : ne rien faire.`);
-                      if (deleteBranch) deleteWorktree({ variables: { id: w.id, deleteBranch: window.confirm('Supprimer aussi la branche locale ? (Annuler = garder la branche)') } });
+                      if (!window.confirm(`Supprimer le worktree « ${w.branch} » ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés.`)) return;
+                      deleteWorktree({ variables: { id: w.id, deleteBranch: window.confirm('Supprimer aussi la branche locale ? (Annuler = garder la branche)') } });
                     }}
                   >
                     Supprimer
@@ -345,7 +345,7 @@ export default function ProjectDetailPage() {
                 size="sm"
                 variant="outline-danger"
                 onClick={() => {
-                  if (window.confirm(`Supprimer le projet « ${project.name} » et ses sessions ? Le dossier sur disque sera conservé.`)) {
+                  if (window.confirm(`Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, worktrees, son conteneur et son dossier de travail seront supprimés. Irréversible.`)) {
                     deleteProject({ variables: { id } });
                   }
                 }}

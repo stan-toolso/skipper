@@ -7,6 +7,7 @@ import { contextService, HUMAN } from '../context/service.js';
 import { NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { gitService } from '../git/service.js';
+import { deleteProjectCascade, deleteWorktreeCascade } from '../projects/cleanup.js';
 import { runnerFor } from '../runners/index.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
@@ -490,7 +491,7 @@ export const resolvers = {
     },
     deleteProject: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
-      return projectService.delete(args.id);
+      return deleteProjectCascade(args.id);
     },
     createSession: async (
       _: unknown,
@@ -566,7 +567,7 @@ export const resolvers = {
     },
     deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
       await guardWorktree(ctx, args.id, 'member');
-      return worktreeService.delete(args.id, args.deleteBranch ?? false);
+      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false);
     },
     // Connexions : identifiants et politique d'accès des agents, réservés aux administrateurs du projet.
     createConnection: async (_: unknown, args: { projectId: string; input: ConnectionInput }, ctx: Ctx) => {

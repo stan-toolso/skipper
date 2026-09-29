@@ -813,6 +813,7 @@ type Mutation {
   "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
   resetProjectRunner(id: ID!): Project!
   "Supprime le projet et ses sessions en base ; le dossier sur disque est conservé."
+  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, worktrees, conteneur, dossier de travail. Irréversible."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
   startSession(id: ID!): Session!
@@ -857,6 +858,7 @@ type Mutation {
   "Crée un worktree git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal)."
   createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String): Worktree!
   "Supprime le dossier du worktree ; la branche est conservée sauf deleteBranch."
+  "Supprime le worktree et tout ce qui y est rattaché (sessions arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
   deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
   "Crée une connexion ; pour ssh sans privateKey, génère une paire de clés (la clé publique est à installer sur le serveur)."
   createConnection(projectId: ID!, input: ConnectionInput!): Connection!

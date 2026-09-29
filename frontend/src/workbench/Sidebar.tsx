@@ -100,7 +100,7 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
             type="button"
             className="wb-pop-item danger"
             onClick={() => {
-              if (!window.confirm('Supprimer ce worktree (son dossier) ? Les fichiers non validés seront perdus.')) return;
+              if (!window.confirm('Supprimer ce worktree ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.')) return;
               const deleteBranch = window.confirm('Supprimer aussi la branche locale ? (Annuler = la garder)');
               onClose();
               deleteWorktree({ variables: { id: worktreeId, deleteBranch } }).catch((err) => window.alert(err.message));
