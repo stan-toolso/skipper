@@ -11,9 +11,9 @@ Trois notions :
   ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
-- **Environnement d'exécution (runner)** : par projet, `local` (les agents, terminaux et commandes
-  tournent sur le serveur avec l'utilisateur de Skipper) ou `docker` (un conteneur dédié au projet,
-  avec limites de mémoire et de CPU, qui ne voit que le code de ce projet).
+- **Environnement d'exécution** : chaque projet a son conteneur Docker (limites de mémoire et de CPU,
+  ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
+  s'exécute directement sur le serveur avec l'utilisateur de Skipper.
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal.
@@ -68,7 +68,8 @@ Le provider Claude s'appuie sur le [Claude Agent SDK](https://code.claude.com/do
 (`@anthropic-ai/claude-agent-sdk`), qui embarque son propre binaire Claude Code : chaque message du
 flux `query()` est journalisé comme événement `claude.<type>`. L'authentification est celle de
 Claude Code sur la machine qui héberge le backend (connexion `claude` ou `ANTHROPIC_API_KEY`).
-`CLAUDE_BIN` permet, si besoin, d'imposer un binaire Claude Code spécifique.
+`CLAUDE_BIN` permet, si besoin, d'imposer le binaire utilisé pour les commandes d'authentification du
+compte ; les sessions utilisent toujours le CLI de l'image Docker du projet.
 
 ## Structure
 
@@ -197,12 +198,11 @@ humaine (comme les autres permissions) ; on peut la désactiver par connexion (�
 faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
 shell suit le mode d'autorisation de la session (permission Bash).
 
-**Runner et isolation.** Avec le runner local, les sessions tournent sur la machine du backend, sous le
-même utilisateur système : un agent à qui l'on a tout autorisé peut lire ce que le backend lit. Le mode
-« outils » et les demandes d'approbation réduisent la surface ; le runner Docker isole réellement la
-session, mais l'accès « shell » n'y est pas disponible (pas d'agent SSH ni de tunnels dans le conteneur) :
-seuls les outils restent utilisables. La gestion des connexions est réservée aux administrateurs du
-projet ; les autres membres les voient sans les modifier.
+**Isolation.** Les sessions tournent dans le conteneur du projet, jamais sur la machine du backend : un
+agent ne peut pas lire ce que le backend lit. En contrepartie l'accès « shell » n'est pas disponible (pas
+d'agent SSH ni de tunnels dans le conteneur) : seuls les outils restent utilisables ; le code de l'accès
+direct (`connections/runtime.ts`) est conservé mais jamais activé. La gestion des connexions est réservée
+aux administrateurs du projet ; les autres membres les voient sans les modifier.
 
 ## Modèle
 
@@ -267,10 +267,10 @@ projet ; les autres membres les voient sans les modifier.
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
   cours ; l'agent la passe en `done` quand il a fini.
 
-- **Runner** (`backend/src/runners/`) : `local` ou `docker` par projet (`projects.runner`,
-  `projects.runner_config` = `{ image, memory, cpus }`). Le runner fournit l'exécutable Claude Code
-  donné au SDK, la commande du terminal web et celle du provider shell. En mode docker, un conteneur
-  `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
+- **Runner** (`backend/src/runners/`) : un seul, Docker, pour tous les projets (`projects.runner_config`
+  = `{ image, memory, cpus, browser }`). Le runner fournit l'exécutable Claude Code donné au SDK, la
+  commande du terminal web et celle du provider shell ; aucun de ces processus ne tourne sur l'hôte.
+  Un conteneur `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
   worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
   de l'utilisateur de Skipper, donc aucune traduction de chemin. Le SDK reste dans le backend : il
@@ -284,10 +284,10 @@ projet ; les autres membres les voient sans les modifier.
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : un serveur MCP Playwright (`@playwright/mcp`, Chromium sans fenêtre)
-  est déclaré à chaque session sous le nom `playwright`. Avec le runner docker il est lancé par
-  `docker exec` dans le conteneur (image `skipper-runner` : Playwright et Chromium sont dans
-  `/opt/ms-playwright`) ; avec le runner local via `npx @playwright/mcp` (installer Chromium sur le
-  serveur : `npx playwright install chromium`). Les outils d'observation (instantané de la page,
+  est déclaré à chaque session sous le nom `playwright`, lancé par `docker exec` dans le conteneur
+  (image `skipper-runner` : Playwright et Chromium sont dans `/opt/ms-playwright`). Sa configuration
+  passe sur la ligne de commande du CLI : elle ne reçoit qu'un environnement minimal (`PATH`, `HOME`),
+  jamais celui du backend. Les outils d'observation (instantané de la page,
   capture d'écran, console, réseau, attente) sont autorisés d'office ; navigation, clics et saisies
   passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
   `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.

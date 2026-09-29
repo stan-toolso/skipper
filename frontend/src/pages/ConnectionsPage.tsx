@@ -390,7 +390,7 @@ function ConnectionCard({ connection: c, sshConnections, projectId, canEdit }: {
 
 export default function ConnectionsPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ project: { id: string; name: string; slug: string; runner: string; myRole: string; connections: Connection[] } | null }>(PROJECT_CONNECTIONS, { variables: { id }, pollInterval: 10_000 });
+  const { data, loading, error } = useQuery<{ project: { id: string; name: string; slug: string; myRole: string; connections: Connection[] } | null }>(PROJECT_CONNECTIONS, { variables: { id }, pollInterval: 10_000 });
   const [creating, setCreating] = useState<ConnectionKind | null>(null);
   const [justCreated, setJustCreated] = useState<Connection | null>(null);
   useTabTitle(data?.project ? `Connexions · ${data.project.name}` : 'Connexions');
@@ -428,9 +428,9 @@ export default function ConnectionsPage() {
         journalise chaque accès dans la session. Pour un serveur SSH, Skipper génère une clé dédiée que vous autorisez sur la machine ; pour une base, préférez un rôle en lecture seule.
       </p>
 
-      {project.runner === 'docker' && project.connections.some((c) => c.exposure !== 'mcp') && (
+      {project.connections.some((c) => c.exposure !== 'mcp') && (
         <Alert variant="warning" className="py-2 small">
-          Ce projet s'exécute dans un conteneur Docker : l'accès depuis le shell (ssh, psql) n'y est pas disponible, seuls les outils le sont.
+          Les agents s'exécutent dans le conteneur du projet : l'accès depuis le shell (ssh, psql) n'y est pas disponible, seuls les outils le sont.
         </Alert>
       )}
 

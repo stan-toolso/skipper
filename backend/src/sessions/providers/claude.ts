@@ -20,7 +20,7 @@ import { AppError } from '../../errors.js';
 import { permissionRuleService } from '../../permissions/service.js';
 import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
-import { runnerFor } from '../../runners/index.js';
+import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
@@ -157,8 +157,7 @@ export class ClaudeProvider implements SessionProvider {
     Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
-    const runner = runnerFor(ctx.project);
-    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans l'environnement du runner.
+    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
     const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
     // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches et des connexions.
     const systemPrompt = [
@@ -187,7 +186,9 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
-        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, env: { ...process.env, ...browserServer.env } as Record<string, string> } } : {}),
+        // Environnement minimal : la configuration MCP est passée au CLI sur sa ligne de commande, visible de tout
+        // utilisateur du serveur (ps) ; l'environnement du backend (secrets) ne doit jamais y figurer.
+        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...browserServer.env } } } : {}),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
@@ -203,7 +204,7 @@ export class ClaudeProvider implements SessionProvider {
       allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', ...(browserServer ? browserReadTools : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
-      // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
+      // Script de relais qui exécute le CLI dans le conteneur du projet.
       pathToClaudeCodeExecutable: await runner.claudeExecutable(ctx.project),
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),

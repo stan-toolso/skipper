@@ -110,11 +110,11 @@ Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<r
 l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
 dossier ou création de worktree.
 
-## Environnements isolés (runner docker)
+## Conteneurs des projets (Docker obligatoire)
 
-Un projet en mode « Conteneur Docker » a besoin de Docker sur le serveur et de l'image de base.
-**Non installé à ce jour** (et le disque de l'instance est presque plein : à agrandir ou nettoyer
-avant, l'image pèse ~600 Mo plus les caches des projets). Mise en place :
+Tout projet tourne dans son conteneur Docker : sessions, terminaux et commandes n'ont aucun mode
+d'exécution directe sur le serveur. Docker et l'image de base sont donc indispensables (installés
+depuis le 29/09/2026 ; l'image pèse ~1 Go plus les caches des projets). Mise en place :
 
 ```bash
 # Sur le serveur, en tant que skipper (sudoer)

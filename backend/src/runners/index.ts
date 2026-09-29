@@ -1,13 +1,8 @@
-import type { Project } from '../projects/types.js';
 import { DockerRunner } from './docker.js';
-import { LocalRunner } from './local.js';
-import type { Runner, RunnerKind } from './types.js';
+import type { Runner } from './types.js';
 
-const runners: Record<RunnerKind, Runner> = { local: new LocalRunner(), docker: new DockerRunner() };
+/** Unique environnement d'exécution : tout projet tourne dans son conteneur Docker, jamais sur le serveur. */
+export const runner: Runner = new DockerRunner();
 
-export function runnerFor(project: Project): Runner {
-  return runners[project.runner] ?? runners.local;
-}
-
-export { DockerRunner, LocalRunner };
+export { DockerRunner };
 export type { Runner, RunnerConfig, RunnerKind, RunnerStatus, SpawnSpec } from './types.js';
