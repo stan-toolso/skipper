@@ -178,6 +178,22 @@ input UpdateTaskInput {
   dueDate: String
 }
 
+"Notification affichée dans la cloche de l'interface."
+type Notification {
+  id: ID!
+  "request.created, task.created, task.completed, session.completed, session.failed, context.created"
+  type: String!
+  title: String!
+  message: String
+  "Chemin dans l'application vers l'élément concerné."
+  link: String
+  project: Project
+  session: Session
+  payload: JSON!
+  readAt: DateTime
+  createdAt: DateTime!
+}
+
 enum TerminalStatus {
   RUNNING
   CLOSED
@@ -265,6 +281,8 @@ type Query {
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
   terminal(id: ID!): Terminal
+  notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
+  unreadNotificationCount: Int!
   "Tâches, tous projets confondus (par défaut : ouvertes)."
   tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, limit: Int): [Task!]!
   task(id: ID!): Task
@@ -342,6 +360,9 @@ type Mutation {
   "Abandonne une demande : l'agent reçoit un refus."
   cancelRequest(id: ID!): Request!
 
+  markNotificationRead(id: ID!): Notification!
+  "Renvoie le nombre de notifications marquées."
+  markAllNotificationsRead: Int!
   createTask(input: CreateTaskInput!): Task!
   updateTask(id: ID!, input: UpdateTaskInput!): Task!
   deleteTask(id: ID!): Boolean!
@@ -376,4 +397,5 @@ type Subscription {
   requestCreated: Request!
   "Demande répondue, annulée ou expirée."
   requestUpdated: Request!
+  notificationCreated: Notification!
 }

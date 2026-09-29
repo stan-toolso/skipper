@@ -78,7 +78,7 @@ export function createTasksMcpServer(project: Project, sessionId: string): McpSd
           run(async () => {
             const existing = await taskService.get(id);
             if (existing.projectId !== project.id) throw new Error('Tâche introuvable dans ce projet');
-            const t = await taskService.update(id, { status: status as Task['status'] | undefined, priority: priority as Task['priority'] | undefined, title, description, dueDate: due_date });
+            const t = await taskService.update(id, { status: status as Task['status'] | undefined, priority: priority as Task['priority'] | undefined, title, description, dueDate: due_date }, actor);
             return `Tâche mise à jour : ${line(t, sessionId)}`;
           }),
       ),
@@ -86,7 +86,7 @@ export function createTasksMcpServer(project: Project, sessionId: string): McpSd
         run(async () => {
           const existing = await taskService.get(id);
           if (existing.projectId !== project.id) throw new Error('Tâche introuvable dans ce projet');
-          const t = await taskService.update(id, { status: 'in_progress', sessionId });
+          const t = await taskService.update(id, { status: 'in_progress', sessionId }, actor);
           return `Tâche prise en charge : ${line(t, sessionId)}`;
         }),
       ),

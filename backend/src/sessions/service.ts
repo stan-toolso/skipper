@@ -2,6 +2,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { ensureWorkspace } from '../projects/workspace.js';
 import { pubSub } from '../pubsub.js';
+import { notificationService } from '../notifications/service.js';
 import { requestService } from '../requests/service.js';
 import { sessionRepository } from './repository.js';
 import { getProvider } from './providers/registry.js';
@@ -72,6 +73,15 @@ export const sessionService = {
         },
         ask: async (input, signal) => {
           await emit('request', { type: input.type, title: input.title, payload: input.payload ?? {} });
+          void notificationService.notify({
+            type: 'request.created',
+            title: input.type === 'question' ? `Question de l'agent « ${session.name} »` : `« ${session.name} » attend votre autorisation`,
+            message: input.title,
+            link: `/sessions/${id}`,
+            projectId: session.projectId,
+            sessionId: id,
+            payload: { requestType: input.type },
+          });
           const response = await requestService.ask(id, input, signal);
           await emit('request.answered', { type: input.type, title: input.title, response });
           return response;
@@ -94,6 +104,16 @@ export const sessionService = {
       const error = result.error ?? (status === 'failed' ? `Code de sortie ${result.exitCode}` : null);
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
+      if (status === 'completed' || status === 'failed') {
+        void notificationService.notify({
+          type: `session.${status}`,
+          title: status === 'completed' ? `Session « ${session.name} » terminée` : `Session « ${session.name} » en erreur`,
+          message: status === 'failed' ? error : `Projet ${project.name}`,
+          link: `/sessions/${id}`,
+          projectId: session.projectId,
+          sessionId: id,
+        });
+      }
     });
     finishing.set(id, finished.catch((err) => console.error('[sessions] fin de session', err)).finally(() => finishing.delete(id)));
 

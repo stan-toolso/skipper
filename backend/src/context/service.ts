@@ -1,5 +1,6 @@
 import { pool } from '../db/pool.js';
 import { AppError, NotFoundError } from '../errors.js';
+import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
 import { slugify } from '../projects/service.js';
 import { contextRepository, type FolderRecord, type InstructionRecord } from './repository.js';
@@ -203,6 +204,16 @@ export const contextService = {
     const instruction = await this.getInstruction(record.id);
     await contextRepository.addChange(projectId, 'instruction.create', instruction.path, { version: 1 }, actor);
     refreshSkills(projectId);
+    if (actor.type === 'agent') {
+      void notificationService.notify({
+        type: 'context.created',
+        title: 'Un agent a ajouté une instruction au contexte',
+        message: instruction.path,
+        link: `/projects/${projectId}/context?instruction=${instruction.id}`,
+        projectId,
+        sessionId: actor.sessionId ?? null,
+      });
+    }
     return instruction;
   },
 

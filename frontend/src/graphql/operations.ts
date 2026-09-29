@@ -136,6 +136,17 @@ export interface Task {
   createdBySession: { id: string; name: string } | null;
 }
 
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  message: string | null;
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
+  project: { id: string; name: string } | null;
+}
+
 export interface SessionEvent {
   id: string;
   sessionId: string;
@@ -686,5 +697,39 @@ export const START_TASK_SESSION = gql`
     startTaskSession(id: $id) {
       id
     }
+  }
+`;
+
+export const NOTIFICATIONS = gql`
+  query Notifications($limit: Int) {
+    notifications(limit: $limit) {
+      id
+      type
+      title
+      message
+      link
+      readAt
+      createdAt
+      project {
+        id
+        name
+      }
+    }
+    unreadNotificationCount
+  }
+`;
+
+export const MARK_NOTIFICATION_READ = gql`
+  mutation MarkNotificationRead($id: ID!) {
+    markNotificationRead(id: $id) {
+      id
+      readAt
+    }
+  }
+`;
+
+export const MARK_ALL_NOTIFICATIONS_READ = gql`
+  mutation MarkAllNotificationsRead {
+    markAllNotificationsRead
   }
 `;

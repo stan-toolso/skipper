@@ -1,5 +1,6 @@
 import type { Actor } from '../context/types.js';
 import { AppError, NotFoundError } from '../errors.js';
+import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
 import { taskRepository } from './repository.js';
 import { TASK_PRIORITIES, TASK_STATUSES, type CreateTaskInput, type Task, type TaskFilter, type UpdateTaskInput } from './types.js';
@@ -24,15 +25,41 @@ export const taskService = {
   },
 
   async create(projectId: string, input: CreateTaskInput, actor: Actor): Promise<Task> {
-    await projectService.get(projectId);
+    const project = await projectService.get(projectId);
     validate(input);
-    return taskRepository.create(projectId, { ...input, title: input.title.trim(), dueDate: input.dueDate || null }, actor);
+    const task = await taskRepository.create(projectId, { ...input, title: input.title.trim(), dueDate: input.dueDate || null }, actor);
+    if (actor.type === 'agent') {
+      void notificationService.notify({
+        type: 'task.created',
+        title: `Nouvelle tâche proposée par un agent`,
+        message: `${task.title} (priorité ${priorityLabels[task.priority]}) · ${project.name}`,
+        link: `/projects/${projectId}/tasks`,
+        projectId,
+        sessionId: actor.sessionId ?? null,
+        payload: { taskId: task.id },
+      });
+    }
+    return task;
   },
 
-  async update(id: string, input: UpdateTaskInput): Promise<Task> {
+  /** `actor` permet de notifier quand c'est un agent qui termine une tâche. */
+  async update(id: string, input: UpdateTaskInput, actor?: Actor): Promise<Task> {
     validate(input);
+    const before = await taskRepository.findById(id);
     const task = await taskRepository.update(id, { ...input, title: input.title?.trim(), dueDate: input.dueDate === '' ? null : input.dueDate });
     if (!task) throw new NotFoundError('Tâche introuvable');
+    if (actor?.type === 'agent' && before && before.status !== 'done' && task.status === 'done') {
+      const project = await projectService.get(task.projectId);
+      void notificationService.notify({
+        type: 'task.completed',
+        title: `Tâche terminée par un agent`,
+        message: `${task.title} · ${project.name}`,
+        link: `/projects/${task.projectId}/tasks`,
+        projectId: task.projectId,
+        sessionId: actor.sessionId ?? null,
+        payload: { taskId: task.id },
+      });
+    }
     return task;
   },
 

@@ -4,6 +4,8 @@ import type { ContextChange, ContextInstruction, ContextInstructionVersion } fro
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
 import { workspaceExists, workspaceGitInfo, workspacePath } from '../projects/workspace.js';
+import { notificationService } from '../notifications/service.js';
+import type { Notification } from '../notifications/types.js';
 import { pubSub } from '../pubsub.js';
 import { requestService } from '../requests/service.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
@@ -58,6 +60,11 @@ export const resolvers = {
   },
   ContextChange: {
     authorSession: (c: ContextChange) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
+  },
+
+  Notification: {
+    project: (n: Notification) => (n.projectId ? projectService.get(n.projectId).catch(() => null) : null),
+    session: (n: Notification) => (n.sessionId ? sessionService.get(n.sessionId) : null),
   },
 
   Task: {
@@ -124,6 +131,8 @@ export const resolvers = {
       }),
     request: (_: unknown, args: { id: string }) => requestService.get(args.id),
     terminal: (_: unknown, args: { id: string }) => terminalService.get(args.id),
+    notifications: (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }) => notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined }),
+    unreadNotificationCount: () => notificationService.countUnread(),
     tasks: (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }) =>
       taskService.list({
         projectId: args.projectId ?? undefined,
@@ -154,6 +163,8 @@ export const resolvers = {
     answerRequest: (_: unknown, args: { id: string; response: Record<string, unknown> }) => requestService.answer(args.id, args.response ?? {}),
     cancelRequest: (_: unknown, args: { id: string }) => requestService.cancel(args.id),
 
+    markNotificationRead: (_: unknown, args: { id: string }) => notificationService.markRead(args.id),
+    markAllNotificationsRead: () => notificationService.markAllRead(),
     createTask: (_: unknown, { input }: { input: GqlTaskInput & { projectId: string; title: string } }) => taskService.create(input.projectId, { ...toTaskInput(input), title: input.title }, HUMAN),
     updateTask: (_: unknown, { id, input }: { id: string; input: GqlTaskInput }) => taskService.update(id, toTaskInput(input)),
     deleteTask: (_: unknown, args: { id: string }) => taskService.delete(args.id),
@@ -193,6 +204,10 @@ export const resolvers = {
     },
     requestUpdated: {
       subscribe: () => pubSub.subscribe('requestUpdated'),
+      resolve: (payload: unknown) => payload,
+    },
+    notificationCreated: {
+      subscribe: () => pubSub.subscribe('notificationCreated'),
       resolve: (payload: unknown) => payload,
     },
   },

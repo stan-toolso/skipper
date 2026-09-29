@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import NotificationBell from './NotificationBell';
 import { useTabs, type TabKind } from './TabsContext';
 
 const icons: Record<TabKind, string> = {
@@ -21,8 +22,9 @@ export default function TabBar() {
   const navigate = useNavigate();
 
   return (
-    <div className="wb-tabbar" role="tablist">
-      {tabs.map((tab) => (
+    <div className="wb-topbar">
+      <div className="wb-tabbar" role="tablist">
+        {tabs.map((tab) => (
         <div
           key={tab.key}
           role="tab"
@@ -53,7 +55,11 @@ export default function TabBar() {
           </button>
         </div>
       ))}
-      {tabs.length === 0 && <div className="wb-tab-empty">Ouvrez un projet ou une session depuis la barre de gauche</div>}
+        {tabs.length === 0 && <div className="wb-tab-empty">Ouvrez un projet ou une session depuis la barre de gauche</div>}
+      </div>
+      <div className="wb-tabbar-right">
+        <NotificationBell />
+      </div>
     </div>
   );
 }

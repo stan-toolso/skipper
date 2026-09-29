@@ -19,6 +19,9 @@ Trois notions :
 - **Terminal** : un shell interactif (pty) ouvert dans le workspace d'un projet et piloté depuis le
   navigateur (xterm.js relié par WebSocket), pour travailler comme dans un terminal, y compris avec
   le CLI `claude`.
+- **Notification** : cloche en haut à droite de l'interface. Signale une demande d'un agent, une
+  tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
+  contexte par un agent. Notifications natives du navigateur activables en option.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -65,6 +68,8 @@ backend/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
+    notifications/
+      service.ts               # notifications (cloche) émises par les autres services
     tasks/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
@@ -180,6 +185,7 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
+- `notifications(unreadOnly, limit)`, `unreadNotificationCount` ; `markNotificationRead(id)`, `markAllNotificationsRead` ; subscription `notificationCreated`
 - `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
