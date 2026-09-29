@@ -36,7 +36,8 @@ interface LiveLogin extends ClaudeLogin {
 }
 
 const URL_RE = /https:\/\/claude\.com\/[^\s\x07\x1b]*oauth\/authorize\?[^\s\x07\x1b]+/;
-const TOKEN_RE = /sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,}/;
+// Le préfixe exact du jeton varie selon les versions du CLI : on accepte tout jeton Anthropic assez long.
+const TOKEN_RE = /sk-ant-[A-Za-z0-9_-]{40,}/;
 const LOGIN_TTL_MS = 15 * 60_000;
 
 const logins = new Map<string, LiveLogin>();
@@ -60,7 +61,7 @@ function publicView(l: LiveLogin): ClaudeLogin {
 
 /** Sortie du CLI pour le journal du serveur : sans séquences ANSI, jeton masqué. */
 function redactedTail(l: LiveLogin, chars = 1500): string {
-  return stripAnsi(l.output).replace(/sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]+/g, 'sk-ant-oat**-[masqué]').replace(/\n{3,}/g, '\n\n').slice(-chars);
+  return stripAnsi(l.output).replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, 'sk-ant-[masqué]').replace(/\n{3,}/g, '\n\n').slice(-chars);
 }
 
 function finish(l: LiveLogin, status: 'done' | 'failed', error: string | null = null): void {

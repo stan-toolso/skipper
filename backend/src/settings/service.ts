@@ -165,7 +165,7 @@ class SettingsService {
   }
 
   async setOauthToken(token: string): Promise<void> {
-    if (!/^sk-ant-oat/.test(token.trim())) throw new AppError('Jeton OAuth inattendu');
+    if (!/^sk-ant-[A-Za-z0-9_-]{40,}$/.test(token.trim())) throw new AppError('Jeton OAuth inattendu');
     this.secrets.oauthToken = encryptSecret(token.trim());
     this.secrets.oauthTokenSetAt = new Date().toISOString();
     await settingsRepository.set(KEY_SECRETS, this.secrets);
