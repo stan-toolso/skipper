@@ -49,6 +49,26 @@ OAuth d'un an (`claude setup-token`, chiffré en base avec la clé
 mode « compte du serveur » accepte aussi `ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un
 `pm2 restart skipper --update-env`.
 
+## Dépôts git privés des projets
+
+Le serveur n'a aucun identifiant GitHub générique : pour qu'un projet Skipper puisse cloner un
+dépôt privé (et créer des worktrees), il lui faut une **clé de déploiement en lecture seule**
+dédiée, avec un alias SSH. Exemple pour Curso (déjà en place : clé `~/.ssh/curso-deploy`, alias
+`github-curso`) :
+
+```bash
+# Sur le serveur
+ssh-keygen -t ed25519 -N "" -C "skipper-server-<projet>-deploy" -f ~/.ssh/<projet>-deploy
+printf "\nHost github-<projet>\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/<projet>-deploy\n  IdentitiesOnly yes\n" >> ~/.ssh/config
+cat ~/.ssh/<projet>-deploy.pub
+# Depuis le poste (droits admin sur le dépôt)
+gh repo deploy-key add <clé>.pub --repo <org>/<repo> --title "Skipper (skipper.toolso.io, lecture seule)"
+```
+
+Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<repo>.git` (pas
+l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
+dossier ou création de worktree.
+
 ## Procédure de déploiement
 
 ```bash
