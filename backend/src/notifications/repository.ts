@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { toJson } from '../db/json.js';
 import type { Notification, NotifyInput } from './types.js';
 
 interface Row {
@@ -32,7 +33,7 @@ export const notificationRepository = {
     const { rows } = await pool.query<Row>(
       `INSERT INTO notifications (type, title, message, link, project_id, session_id, payload)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [input.type, input.title, input.message ?? null, input.link ?? null, input.projectId ?? null, input.sessionId ?? null, JSON.stringify(input.payload ?? {})],
+      [input.type, input.title, input.message ?? null, input.link ?? null, input.projectId ?? null, input.sessionId ?? null, toJson(input.payload ?? {})],
     );
     return toNotification(rows[0]);
   },

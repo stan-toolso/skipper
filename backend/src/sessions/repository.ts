@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { toJson } from '../db/json.js';
 import type { CreateSessionInput, Session, SessionActivity, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
@@ -168,7 +169,7 @@ export const sessionRepository = {
     const { rows } = await pool.query<EventRow>(
       `INSERT INTO session_events (session_id, type, payload)
        VALUES ($1, $2, $3) RETURNING *`,
-      [sessionId, type, JSON.stringify(payload)],
+      [sessionId, type, toJson(payload)],
     );
     return toEvent(rows[0]);
   },

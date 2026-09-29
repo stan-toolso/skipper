@@ -1,4 +1,5 @@
 import { pool, type Queryable } from '../db/pool.js';
+import { toJson } from '../db/json.js';
 import type { Actor, ContextChange, ContextChangeKind, ContextFolder, ContextInstruction, ContextInstructionVersion } from './types.js';
 
 interface FolderRow {
@@ -197,7 +198,7 @@ export const contextRepository = {
     const { rows } = await db.query<ChangeRow>(
       `INSERT INTO context_changes (project_id, kind, path, details, author_type, author_session_id)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [projectId, kind, path, JSON.stringify(details), actor.type, actor.sessionId ?? null],
+      [projectId, kind, path, toJson(details), actor.type, actor.sessionId ?? null],
     );
     return toChange(rows[0]);
   },
