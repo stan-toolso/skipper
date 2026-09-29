@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService, slugify } from '../projects/service.js';
 import type { Project } from '../projects/types.js';
-import { ensureWorkspace, git, workspacePath } from '../projects/workspace.js';
+import { ensureWorkspace, git, isGitRepository, workspacePath } from '../projects/workspace.js';
 import { worktreeRepository } from './repository.js';
 import type { Worktree } from './types.js';
 
@@ -66,6 +66,11 @@ export const worktreeService = {
     const name = slugify(input.name?.trim() || branch);
     if (!name) throw new AppError('Nom de worktree invalide');
     const main = await ensureWorkspace(project);
+    if (!(await isGitRepository(main))) {
+      throw new AppError(
+        `Le dossier principal du projet (${main}) n'est pas un dépôt git. S'il est vide, « Créer le dossier » depuis la page du projet le clonera ; sinon videz-le ou clonez-y le dépôt à la main.`,
+      );
+    }
     const dir = path.join(worktreesRoot(project), name);
     if (await exists(dir)) throw new AppError(`Le dossier ${dir} existe déjà`);
     await mkdir(worktreesRoot(project), { recursive: true });

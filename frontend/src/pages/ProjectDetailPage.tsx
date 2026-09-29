@@ -168,7 +168,15 @@ export default function ProjectDetailPage() {
                 </dd>
                 <dt className="col-4">État</dt>
                 <dd className="col-8">
-                  {project.workspaceExists ? (
+                  {project.workspaceExists && project.gitUrl && !project.git ? (
+                    <>
+                      <span className="text-warning">dépôt non récupéré</span>{' '}
+                      <Button size="sm" variant="outline-primary" className="ms-2" disabled={preparing} onClick={() => prepareWorkspace({ variables: { id } })}>
+                        {preparing ? 'Récupération…' : 'Récupérer le dépôt'}
+                      </Button>
+                      <div className="text-secondary mt-1">Le dossier existe mais ne contient pas le dépôt. S'il est vide, la récupération le clone.</div>
+                    </>
+                  ) : project.workspaceExists ? (
                     <span className="text-success">prêt</span>
                   ) : (
                     <>
