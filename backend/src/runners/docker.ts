@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,8 +9,9 @@ import { AppError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { worktreesRoot } from '../worktrees/service.js';
-import type { Runner, RunnerConfig, RunnerStatus, SpawnSpec } from './types.js';
+import { PLAYWRIGHT_MCP_ARGS, sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
+import { renderSecretsFile } from '../connections/website.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -29,6 +30,18 @@ async function docker(args: string[], opts: { allowFail?: boolean } = {}): Promi
   }
 }
 
+/** `docker` avec un contenu sur l'entrée standard (écriture d'un fichier dans le conteneur sans passer par un volume). */
+function dockerWithInput(args: string[], input: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (d: Buffer) => (err += d.toString()));
+    child.on('error', (e) => reject(new AppError(`docker ${args[0]} a échoué : ${e.message}`)));
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new AppError(`docker ${args[0]} a échoué : ${err.trim() || `code ${code}`}`))));
+    child.stdin.end(input);
+  });
+}
+
 /** Conteneur Docker dédié au projet, code monté aux mêmes chemins absolus que sur l'hôte. */
 export class DockerRunner implements Runner {
   readonly kind = 'docker' as const;
@@ -37,7 +50,7 @@ export class DockerRunner implements Runner {
     return `skipper-${project.slug}`;
   }
 
-  private settings(project: Project): Required<RunnerConfig> {
+  private settings(project: Project): Required<Pick<RunnerConfig, 'image' | 'memory' | 'cpus'>> {
     const c = (project.runnerConfig ?? {}) as RunnerConfig;
     return { image: c.image || config.runnerImage, memory: c.memory || config.runnerMemory, cpus: c.cpus || config.runnerCpus };
   }
@@ -90,6 +103,10 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       const args = [
         'run', '-d', '--name', name, '--restart', 'unless-stopped', '--memory', s.memory, '--cpus', s.cpus,
         '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
+        // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de
+        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; les montages
+        // ci-dessous (~/.claude, ~/.claude.json, ~/.gitconfig) viennent s'y superposer.
+        '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0750,size=512m`,
         // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
         '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
         // Le code, les worktrees et les skills du projet, au même chemin que sur l'hôte.
@@ -137,5 +154,24 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   async shellCommand(project: Project, cwd: string, _shell: string, script: string): Promise<SpawnSpec> {
     await this.ensureReady(project);
     return { command: 'docker', args: ['exec', '-i', '-w', cwd, ...PASSTHROUGH_ENV.flatMap((v) => ['-e', v]), this.containerName(project), 'sh', '-c', script] };
+  }
+
+  /**
+   * Playwright MCP installé dans l'image (`playwright-mcp`), captures d'écran dans le dossier de travail.
+   * Les secrets sont écrits dans le /tmp du conteneur (hors des volumes, donc hors du dépôt) et supprimés en fin de session.
+   * C'est le CLI qui lance ce serveur, et le CLI tourne déjà dans le conteneur (où `docker` n'existe pas) :
+   * la commande s'exécute donc directement, sans `docker exec`.
+   */
+  async browserMcpCommand(project: Project, cwd: string, options: BrowserMcpOptions): Promise<BrowserMcpServer> {
+    await this.ensureReady(project);
+    const container = this.containerName(project);
+    const args = [...PLAYWRIGHT_MCP_ARGS, '--output-dir', `${cwd}/.playwright-mcp`];
+    let dir: string | null = null;
+    if (Object.keys(options.secrets).length) {
+      dir = `/tmp/${sessionTag(options.sessionId)}-browser`;
+      await dockerWithInput(['exec', '-i', container, 'sh', '-c', 'umask 077 && rm -rf "$1" && mkdir -p "$1" && cat > "$1/secrets.env"', 'sh', dir], renderSecretsFile(options.secrets));
+      args.push('--secrets', `${dir}/secrets.env`);
+    }
+    return { command: 'playwright-mcp', args, dispose: async () => (dir ? docker(['exec', container, 'rm', '-rf', dir], { allowFail: true }).then(() => undefined) : undefined) };
   }
 }

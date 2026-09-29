@@ -4,7 +4,7 @@ import { Alert, Badge, Form, Nav, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import RequestCard from '../components/RequestCard';
 import { REQUESTS, type HumanRequest, type RequestStatus } from '../graphql/operations';
-import { describeTool } from '../lib/humanize';
+import { describeTool, requestTitle } from '../lib/humanize';
 
 const statusLabels: Record<RequestStatus, { label: string; bg: string }> = {
   PENDING: { label: 'En attente', bg: 'warning' },
@@ -26,12 +26,6 @@ function summarizeResponse(r: HumanRequest): string {
     return Object.values(answers).join(' ; ') || '—';
   }
   return typeof r.response.text === 'string' ? r.response.text : JSON.stringify(r.response);
-}
-
-function requestTitle(r: HumanRequest): string {
-  const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
-  if (r.type === 'permission' && p.toolName) return `Autorisation de ${describeTool(p.toolName, p.input ?? {}).action}`;
-  return r.title;
 }
 
 function summarizePayload(r: HumanRequest): string {

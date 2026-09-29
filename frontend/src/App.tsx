@@ -12,7 +12,7 @@ import NewSessionPage from './pages/NewSessionPage';
 import SessionDetailPage from './pages/SessionDetailPage';
 import RequestsPage from './pages/RequestsPage';
 import TerminalPage from './pages/TerminalPage';
-import WelcomePage from './pages/WelcomePage';
+import DashboardPage from './pages/DashboardPage';
 import TasksPage from './pages/TasksPage';
 import SettingsPage from './pages/SettingsPage';
 import FilesPage from './pages/FilesPage';
@@ -40,7 +40,7 @@ function Gate() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<WelcomePage />} />
+        <Route path="/" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/new" element={<ProjectFormPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />

@@ -26,7 +26,20 @@ export function spawnProcess(opts: SpawnOptions): RunningHandle {
     cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
     stdio: ['pipe', 'pipe', 'pipe'],
+    // Groupe de processus dédié : l'arrêt tue aussi les enfants (sh -c ne relaie pas les signaux).
+    detached: process.platform !== 'win32',
   });
+  const killGroup = (signal: NodeJS.Signals) => {
+    if (child.pid && process.platform !== 'win32') {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch {
+        /* groupe déjà disparu : on retombe sur le processus seul */
+      }
+    }
+    child.kill(signal);
+  };
 
   if (opts.stdin !== undefined) child.stdin?.write(opts.stdin);
   if (!opts.interactive) child.stdin?.end();
@@ -71,9 +84,9 @@ export function spawnProcess(opts: SpawnOptions): RunningHandle {
     async stop() {
       if (!alive()) return;
       stopped = true;
-      child.kill('SIGTERM');
+      killGroup('SIGTERM');
       const timer = setTimeout(() => {
-        if (alive()) child.kill('SIGKILL');
+        if (alive()) killGroup('SIGKILL');
       }, 5000);
       await exited;
       clearTimeout(timer);

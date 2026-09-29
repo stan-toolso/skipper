@@ -1,7 +1,7 @@
 import { useMutation } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool } from '../lib/humanize';
+import { describeTool, suggestedRules } from '../lib/humanize';
 import { canAutoFocus } from '../lib/device';
 import Markdown from './Markdown';
 
@@ -52,7 +52,9 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
   const p = request.payload as { toolName?: string; input?: Record<string, unknown>; suggestions?: unknown[] };
   const [denying, setDenying] = useState(false);
   const [message, setMessage] = useState('');
-  const canAlways = Array.isArray(p.suggestions) && p.suggestions.length > 0;
+  const rules = suggestedRules(p.suggestions);
+  const canAlways = rules.length > 0;
+  const ruleHint = rules.join(', ');
   const input = p.input ?? {};
   const desc = describeTool(p.toolName ?? 'outil', input);
   const detail = desc.detail ?? (typeof input.content === 'string' ? undefined : JSON.stringify(input, null, 2));
@@ -60,7 +62,12 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
 
   const options: Option[] = [
     { label: 'Oui, autoriser', value: () => ({ decision: 'allow' }) },
-    ...(canAlways ? [{ label: 'Oui, et ne plus demander pour cette session', value: () => ({ decision: 'allow', always: true }) } as Option] : []),
+    ...(canAlways
+      ? [
+          { label: 'Oui, et ne plus demander pour cette session', description: ruleHint, value: () => ({ decision: 'allow', scope: 'session' }) } as Option,
+          { label: 'Oui, et ne plus demander dans ce projet', description: `${ruleHint} (mémorisé pour toutes les sessions du projet)`, value: () => ({ decision: 'allow', scope: 'project' }) } as Option,
+        ]
+      : []),
     { label: "Non, et expliquer ce qu'il faut faire à la place", value: () => 'deny-with-message' as const },
   ];
 

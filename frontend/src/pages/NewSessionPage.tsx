@@ -2,8 +2,24 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Collapse, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CREATE_SESSION, PROJECTS, PROJECT_WORKTREES, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worktree } from '../graphql/operations';
+import { CREATE_SESSION, CREATE_WORKTREE, PROJECTS, PROJECT_WORKTREES, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worktree } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
+
+/** Nom de branche proposé pour un nouveau worktree, dérivé du nom de la session ou de la tâche. */
+function suggestBranch(name: string, prompt: string): string {
+  const base = (name.trim() || prompt.trim().split('\n')[0])
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+  return `agent/${base || new Date().toISOString().slice(0, 10)}`;
+}
+
+/** Cible d'exécution de la session : dossier principal, worktree existant, ou nouveau worktree. */
+const NEW_WORKTREE = 'new';
 
 function ConfigInput({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
   if (field.type === 'boolean') {
@@ -61,12 +77,18 @@ export default function NewSessionPage() {
     onCompleted: (res) => navigate(`/sessions/${res.createSession.id}`),
   });
 
+  const [createWorktree, { loading: creatingWorktree, error: worktreeError }] = useMutation<{ createWorktree: { id: string } }>(CREATE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
+
   const [name, setName] = useState('');
   const [projectId, setProjectId] = useState(searchParams.get('projectId') ?? '');
-  const [worktreeId, setWorktreeId] = useState(searchParams.get('worktreeId') ?? '');
-  const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[]; git: { branch: string } | null } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
+  // Projet git : par défaut, un nouveau worktree est proposé (sauf si un worktree est imposé par l'URL).
+  const [worktreeId, setWorktreeId] = useState(searchParams.get('worktreeId') ?? NEW_WORKTREE);
+  const [branch, setBranch] = useState('');
+  const [branchTouched, setBranchTouched] = useState(false);
+  const { data: worktreesData } = useQuery<{ project: { gitUrl: string | null; worktrees: Worktree[]; git: { branch: string } | null } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
   const worktrees = worktreesData?.project?.worktrees ?? [];
   const mainBranch = worktreesData?.project?.git?.branch;
+  const isGit = Boolean(worktreesData?.project?.gitUrl);
   const [providerType, setProviderType] = useState('');
   const [prompt, setPrompt] = useState('');
   const [autoStart, setAutoStart] = useState(true);
@@ -84,9 +106,19 @@ export default function NewSessionPage() {
   }, [projects, projectId]);
 
   useEffect(() => {
-    // Le worktree choisi doit appartenir au projet sélectionné.
-    if (worktreeId && worktreesData?.project && !worktrees.some((w) => w.id === worktreeId)) setWorktreeId('');
-  }, [worktreesData, worktrees, worktreeId]);
+    // Le worktree choisi doit appartenir au projet sélectionné ; sans dépôt git, seul le dossier principal existe.
+    if (!worktreesData?.project) return;
+    if (!isGit) {
+      if (worktreeId) setWorktreeId('');
+    } else if (worktreeId && worktreeId !== NEW_WORKTREE && !worktrees.some((w) => w.id === worktreeId)) {
+      setWorktreeId(NEW_WORKTREE);
+    }
+  }, [worktreesData, worktrees, worktreeId, isGit]);
+
+  useEffect(() => {
+    // Nom de branche suggéré tant que l'utilisateur ne l'a pas modifié lui-même.
+    if (!branchTouched) setBranch(suggestBranch(name, prompt));
+  }, [name, prompt, branchTouched]);
 
   useEffect(() => {
     if (!providerType && providers.length) setProviderType(providers[0].type);
@@ -99,14 +131,22 @@ export default function NewSessionPage() {
     setValues(defaults);
   }, [provider]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!provider || !project) return;
+    let targetWorktreeId: string | null = worktreeId || null;
+    if (worktreeId === NEW_WORKTREE) {
+      // Le worktree est créé d'abord ; en cas d'échec, le formulaire reste affiché avec l'erreur.
+      const res = await createWorktree({ variables: { projectId: project.id, branch: branch.trim() } }).catch(() => null);
+      if (!res?.data) return;
+      targetWorktreeId = res.data.createWorktree.id;
+      setWorktreeId(targetWorktreeId);
+    }
     createSession({
       variables: {
         input: {
           projectId: project.id,
-          worktreeId: worktreeId || null,
+          worktreeId: targetWorktreeId,
           name: name.trim() || prompt.trim().split('\n')[0].slice(0, 60) || 'Session',
           provider: provider.type,
           prompt: prompt || null,
@@ -149,19 +189,40 @@ export default function NewSessionPage() {
               {project && <Form.Text>L'agent travaillera dans le dossier de ce projet{project.systemPrompt ? ', avec ses instructions permanentes.' : '.'}</Form.Text>}
             </Form.Group>
 
-            {worktrees.length > 0 && (
+            {isGit && (
               <Form.Group className="mb-3">
                 <Form.Label>Branche de travail</Form.Label>
-                <Form.Select value={worktreeId} onChange={(e) => setWorktreeId(e.target.value)}>
-                  <option value="">Dossier principal{mainBranch ? ` (${mainBranch})` : ''}</option>
-                  {worktrees.map((w) => (
-                    <option key={w.id} value={w.id} disabled={!w.exists}>
-                      Worktree {w.branch}
-                      {!w.exists ? ' (absent du disque)' : ''}
-                    </option>
-                  ))}
-                </Form.Select>
-                <Form.Text>Un worktree isole le travail de l'agent sur sa propre branche, sans toucher au dossier principal.</Form.Text>
+                <div className="d-flex gap-2 flex-wrap">
+                  <Form.Select value={worktreeId} onChange={(e) => setWorktreeId(e.target.value)} style={{ maxWidth: 360 }}>
+                    <option value={NEW_WORKTREE}>Nouveau worktree (recommandé)</option>
+                    <option value="">Dossier principal{mainBranch ? ` (${mainBranch})` : ''}</option>
+                    {worktrees.map((w) => (
+                      <option key={w.id} value={w.id} disabled={!w.exists}>
+                        Worktree {w.branch}
+                        {!w.exists ? ' (absent du disque)' : ''}
+                      </option>
+                    ))}
+                  </Form.Select>
+                  {worktreeId === NEW_WORKTREE && (
+                    <Form.Control
+                      value={branch}
+                      onChange={(e) => {
+                        setBranchTouched(true);
+                        setBranch(e.target.value);
+                      }}
+                      placeholder="nom de la branche"
+                      style={{ maxWidth: 360 }}
+                      required
+                    />
+                  )}
+                </div>
+                <Form.Text>
+                  {worktreeId === NEW_WORKTREE
+                    ? `La branche est créée depuis ${mainBranch ?? 'la branche courante'} dans un dossier dédié : l'agent y travaille sans toucher au dossier principal.`
+                    : worktreeId
+                      ? 'L\'agent travaille dans ce worktree, à côté du dossier principal.'
+                      : 'L\'agent travaille directement dans le dossier principal ; ses modifications y restent tant qu\'elles ne sont pas commitées.'}
+                </Form.Text>
               </Form.Group>
             )}
 
@@ -218,10 +279,10 @@ export default function NewSessionPage() {
               </div>
             )}
 
-            {createError && <Alert variant="danger">{createError.message}</Alert>}
+            {(worktreeError ?? createError) && <Alert variant="danger">{(worktreeError ?? createError)?.message}</Alert>}
 
-            <Button type="submit" disabled={creating || !provider || !project || !prompt.trim()}>
-              {creating ? 'Lancement…' : autoStart ? 'Lancer la session' : 'Créer la session'}
+            <Button type="submit" disabled={creating || creatingWorktree || !provider || !project || !prompt.trim() || (worktreeId === NEW_WORKTREE && !branch.trim())}>
+              {creatingWorktree ? 'Création du worktree…' : creating ? 'Lancement…' : autoStart ? 'Lancer la session' : 'Créer la session'}
             </Button>
           </Form>
         </Card.Body>
