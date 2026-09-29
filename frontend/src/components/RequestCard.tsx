@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Card, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
+import { describeTool } from '../lib/humanize';
 
 interface Question {
   question: string;
@@ -14,16 +15,18 @@ interface Question {
 /** Formulaire d'autorisation d'outil : autoriser (une fois / toujours) ou refuser avec un motif. */
 function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; onAnswer: (r: Record<string, unknown>) => void; busy: boolean }) {
   const [message, setMessage] = useState('');
-  const p = request.payload as { toolName?: string; input?: unknown; suggestions?: unknown[] };
+  const p = request.payload as { toolName?: string; input?: Record<string, unknown>; suggestions?: unknown[] };
   const canAlways = Array.isArray(p.suggestions) && p.suggestions.length > 0;
+  const desc = describeTool(p.toolName ?? 'outil', p.input ?? {});
+  const content = typeof p.input?.content === 'string' ? p.input.content : undefined;
   return (
     <>
-      <div className="small text-secondary mb-1">
-        Outil <code>{String(p.toolName)}</code>
-      </div>
-      <pre className="pre-dark p-2 small mb-2" style={{ maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-        {JSON.stringify(p.input, null, 2)}
-      </pre>
+      <div className="mb-1">L'agent souhaite {desc.action}.</div>
+      {(desc.detail || content) && (
+        <pre className="pre-dark p-2 small mb-2" style={{ maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+          {[desc.detail, content].filter(Boolean).join('\n\n')}
+        </pre>
+      )}
       <Form.Control size="sm" className="mb-2" placeholder="Motif ou consigne en cas de refus (optionnel)" value={message} onChange={(e) => setMessage(e.target.value)} />
       <div className="d-flex gap-2">
         <Button size="sm" variant="success" disabled={busy} onClick={() => onAnswer({ decision: 'allow' })}>
@@ -31,7 +34,7 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
         </Button>
         {canAlways && (
           <Button size="sm" variant="outline-success" disabled={busy} onClick={() => onAnswer({ decision: 'allow', always: true })}>
-            Toujours autoriser (session)
+            Toujours autoriser pour cette session
           </Button>
         )}
         <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => onAnswer({ decision: 'deny', message: message || undefined })}>
@@ -153,7 +156,7 @@ export default function RequestCard({ request, showSession = false }: { request:
       </Card.Body>
       <Card.Footer className="text-end">
         <Button size="sm" variant="link" className="text-secondary" disabled={busy} onClick={() => cancelRequest({ variables: { id: request.id } })}>
-          Abandonner la demande
+          Ignorer cette demande
         </Button>
       </Card.Footer>
     </Card>

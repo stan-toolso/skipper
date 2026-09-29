@@ -4,6 +4,7 @@ import { Alert, Badge, Form, Nav, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import RequestCard from '../components/RequestCard';
 import { REQUESTS, type HumanRequest, type RequestStatus } from '../graphql/operations';
+import { describeTool } from '../lib/humanize';
 
 const statusLabels: Record<RequestStatus, { label: string; bg: string }> = {
   PENDING: { label: 'En attente', bg: 'warning' },
@@ -27,12 +28,15 @@ function summarizeResponse(r: HumanRequest): string {
   return typeof r.response.text === 'string' ? r.response.text : JSON.stringify(r.response);
 }
 
+function requestTitle(r: HumanRequest): string {
+  const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
+  if (r.type === 'permission' && p.toolName) return `Autorisation de ${describeTool(p.toolName, p.input ?? {}).action}`;
+  return r.title;
+}
+
 function summarizePayload(r: HumanRequest): string {
   const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
-  if (r.type === 'permission' && p.input) {
-    const detail = typeof p.input.command === 'string' ? p.input.command : typeof p.input.file_path === 'string' ? p.input.file_path : '';
-    return detail ? `${p.toolName ?? ''} ${detail}` : p.toolName ?? '';
-  }
+  if (r.type === 'permission' && p.input) return describeTool(p.toolName ?? '', p.input).detail ?? '';
   return '';
 }
 
@@ -124,7 +128,7 @@ export default function RequestsPage() {
                       <Badge bg="secondary">{typeLabels[r.type] ?? r.type}</Badge>
                     </td>
                     <td>
-                      {r.title}
+                      {requestTitle(r)}
                       {summarizePayload(r) && (
                         <div className="small text-secondary text-break">
                           <code>{summarizePayload(r)}</code>

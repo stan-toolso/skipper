@@ -3,14 +3,22 @@ import type { CreateRequestInput } from '../../requests/types.js';
 import type { Session, SessionActivity } from '../types.js';
 
 /** Description d'un champ de configuration, exposée au front pour générer le formulaire. */
+export interface ConfigOption {
+  value: string;
+  label: string;
+  description?: string;
+}
+
 export interface ConfigField {
   key: string;
   label: string;
   type: 'string' | 'number' | 'boolean' | 'select';
   required: boolean;
   description?: string;
-  options?: string[];
+  options?: ConfigOption[];
   defaultValue?: string;
+  /** true : affiché dans la section « Options avancées » du formulaire. */
+  advanced?: boolean;
 }
 
 export interface ProviderDescription {

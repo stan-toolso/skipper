@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap';
+import { Alert, Button, Card, Collapse, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CREATE_PROJECT, PROJECT, PROJECTS, UPDATE_PROJECT, type Project } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -28,6 +28,7 @@ export default function ProjectFormPage() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(isEdit);
 
   useEffect(() => {
     const p = data?.project;
@@ -67,30 +68,40 @@ export default function ProjectFormPage() {
             </Form.Group>
 
             <Form.Group className="mb-3">
-              <Form.Label>Slug (nom du dossier)</Form.Label>
-              <Form.Control
-                value={slug}
-                onChange={(e) => setSlug(e.target.value)}
-                disabled={isEdit}
-                placeholder="dérivé du nom si vide"
-                pattern="[a-z0-9][a-z0-9-]*"
-              />
-              <Form.Text>Minuscules, chiffres et tirets. {isEdit ? 'Non modifiable après création.' : 'Le workspace sera créé dans ce dossier.'}</Form.Text>
-            </Form.Group>
-
-            <Form.Group className="mb-3">
               <Form.Label>Description</Form.Label>
-              <Form.Control value={description} onChange={(e) => setDescription(e.target.value)} />
+              <Form.Control value={description} onChange={(e) => setDescription(e.target.value)} placeholder="En une phrase, de quoi il s'agit (facultatif)" />
             </Form.Group>
 
             <Form.Group className="mb-3">
-              <Form.Label>Prompt système</Form.Label>
-              <Form.Control as="textarea" rows={8} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="Contexte, règles et conventions données à l'agent pour ce projet." />
-              <Form.Text>Ajouté au prompt système de l'agent pour chaque session du projet.</Form.Text>
+              <Form.Label>Instructions permanentes pour les agents</Form.Label>
+              <Form.Control
+                as="textarea"
+                rows={8}
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="Ce que tout agent doit savoir sur ce projet : de quoi il s'agit, les conventions à respecter, ce qu'il ne faut pas faire…"
+              />
+              <Form.Text>Transmis à chaque session lancée dans ce projet, en plus de la tâche demandée.</Form.Text>
             </Form.Group>
+
+            <div className="mb-3">
+              <Button variant="link" size="sm" className="p-0 text-secondary" onClick={() => setShowAdvanced((v) => !v)} aria-expanded={showAdvanced}>
+                <i className={`bi bi-chevron-${showAdvanced ? 'down' : 'right'} me-1`} />
+                Options avancées
+              </Button>
+              <Collapse in={showAdvanced}>
+                <div className="pt-2 ps-3 border-start">
+                  <Form.Group className="mb-3">
+                    <Form.Label>Identifiant (nom du dossier de travail)</Form.Label>
+                    <Form.Control value={slug} onChange={(e) => setSlug(e.target.value)} disabled={isEdit} placeholder="généré à partir du nom si vide" pattern="[a-z0-9][a-z0-9-]*" />
+                    <Form.Text>Minuscules, chiffres et tirets. {isEdit ? 'Non modifiable après création.' : 'Le dossier de travail portera ce nom.'}</Form.Text>
+                  </Form.Group>
+                </div>
+              </Collapse>
+            </div>
 
             <fieldset className="mb-3">
-              <legend className="h6">Dépôt git (optionnel)</legend>
+              <legend className="h6">Dépôt git (facultatif)</legend>
               <Form.Group className="mb-2">
                 <Form.Label className="small mb-1">URL</Form.Label>
                 <Form.Control value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="git@github.com:org/repo.git" />
@@ -101,8 +112,8 @@ export default function ProjectFormPage() {
               </Form.Group>
               <Form.Text>
                 {isEdit
-                  ? "Modifier l'URL n'affecte pas un workspace déjà cloné."
-                  : 'Le dépôt est cloné dans le workspace à la création du projet.'}
+                  ? "Modifier l'adresse n'affecte pas un dossier de travail déjà créé."
+                  : 'Si vous indiquez un dépôt, son code est récupéré dans le dossier de travail à la création du projet.'}
               </Form.Text>
             </fieldset>
 

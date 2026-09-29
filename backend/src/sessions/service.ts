@@ -71,7 +71,7 @@ export const sessionService = {
           await publishSession(await sessionRepository.update(id, { activity }));
         },
         ask: async (input, signal) => {
-          await emit('request', { type: input.type, title: input.title });
+          await emit('request', { type: input.type, title: input.title, payload: input.payload ?? {} });
           const response = await requestService.ask(id, input, signal);
           await emit('request.answered', { type: input.type, title: input.title, response });
           return response;

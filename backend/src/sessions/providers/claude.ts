@@ -77,19 +77,25 @@ export class ClaudeProvider implements SessionProvider {
       description: 'Session Claude Code interactive (Agent SDK) : envoyez des instructions à tout moment.',
       interactive: true,
       configFields: [
-        { key: 'model', label: 'Modèle', type: 'string', required: false, description: 'Ex. sonnet, opus, ou un identifiant complet' },
         {
           key: 'permissionMode',
-          label: 'Mode de permissions',
+          label: 'Autorisations',
           type: 'select',
           required: false,
-          options: permissionModes,
           defaultValue: 'default',
-          description: 'En mode default, chaque outil non autorisé génère une demande d\'autorisation à traiter dans l\'interface.',
+          description: "Ce que l'agent peut faire sans vous demander.",
+          options: [
+            { value: 'default', label: 'Me demander avant chaque action sensible', description: 'Chaque modification de fichier ou commande vous est soumise (recommandé).' },
+            { value: 'acceptEdits', label: 'Modifier les fichiers librement', description: 'Les modifications de fichiers sont autorisées ; les commandes restent soumises.' },
+            { value: 'plan', label: 'Réfléchir seulement, sans rien modifier', description: "L'agent analyse et propose un plan, sans toucher aux fichiers." },
+            { value: 'dontAsk', label: 'Ne jamais me demander', description: 'Les actions non autorisées sont refusées automatiquement.' },
+            { value: 'bypassPermissions', label: 'Tout autoriser (risqué)', description: "L'agent agit sans aucune confirmation." },
+          ],
         },
-        { key: 'maxTurns', label: 'Nombre max de tours', type: 'number', required: false },
-        { key: 'maxBudgetUsd', label: 'Budget max (USD)', type: 'number', required: false },
-        { key: 'allowedTools', label: 'Outils autorisés', type: 'string', required: false, description: 'Liste séparée par des virgules, ex. "Read,Edit,Bash(git:*)"' },
+        { key: 'model', label: 'Modèle', type: 'string', required: false, advanced: true, description: 'Laisser vide pour le modèle par défaut. Ex. sonnet, opus.' },
+        { key: 'maxTurns', label: 'Nombre maximum d\'étapes', type: 'number', required: false, advanced: true, description: "Arrête l'agent au-delà de ce nombre d'échanges avec le modèle." },
+        { key: 'maxBudgetUsd', label: 'Budget maximum (USD)', type: 'number', required: false, advanced: true },
+        { key: 'allowedTools', label: 'Outils pré-autorisés', type: 'string', required: false, advanced: true, description: 'Liste séparée par des virgules, ex. "Read,Edit,Bash(git:*)"' },
       ],
     };
   }

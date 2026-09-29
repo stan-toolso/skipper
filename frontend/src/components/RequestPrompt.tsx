@@ -1,6 +1,7 @@
 import { useMutation } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
+import { describeTool } from '../lib/humanize';
 
 interface Option {
   label: string;
@@ -51,20 +52,23 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
   const [message, setMessage] = useState('');
   const canAlways = Array.isArray(p.suggestions) && p.suggestions.length > 0;
   const input = p.input ?? {};
-  const detail = typeof input.command === 'string' ? input.command : typeof input.file_path === 'string' ? String(input.file_path) : JSON.stringify(input, null, 2);
+  const desc = describeTool(p.toolName ?? 'outil', input);
+  const detail = desc.detail ?? (typeof input.content === 'string' ? undefined : JSON.stringify(input, null, 2));
+  const content = typeof input.content === 'string' ? input.content : typeof input.new_string === 'string' ? input.new_string : undefined;
 
   const options: Option[] = [
-    { label: 'Oui', value: () => ({ decision: 'allow' }) },
+    { label: 'Oui, autoriser', value: () => ({ decision: 'allow' }) },
     ...(canAlways ? [{ label: 'Oui, et ne plus demander pour cette session', value: () => ({ decision: 'allow', always: true }) } as Option] : []),
-    { label: 'Non, et dire à Claude quoi faire autrement', value: () => 'deny-with-message' as const },
+    { label: "Non, et expliquer ce qu'il faut faire à la place", value: () => 'deny-with-message' as const },
   ];
 
   return (
     <div className="cc-prompt">
-      <div className="cc-prompt-title">{p.toolName ?? 'Outil'}</div>
-      <div className="cc-prompt-body">{detail}</div>
+      <div className="cc-prompt-title">L'agent souhaite {desc.action}</div>
+      {detail && <div className="cc-prompt-body">{detail}</div>}
+      {content && <div className="cc-prompt-body">{content.length > 1500 ? `${content.slice(0, 1500)}\n…` : content}</div>}
       {request.message && <div className="cc-prompt-body">{request.message}</div>}
-      <div>Voulez-vous continuer ?</div>
+      <div>Êtes-vous d'accord ?</div>
       {!denying ? (
         <OptionList
           options={options}
@@ -82,7 +86,7 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
             answer({ decision: 'deny', message: message || undefined });
           }}
         >
-          <input autoFocus placeholder="Que doit faire Claude à la place ? (Entrée pour envoyer, vide = simple refus)" value={message} onChange={(e) => setMessage(e.target.value)} />
+          <input autoFocus placeholder="Que doit faire l'agent à la place ? (Entrée pour envoyer, vide = simple refus)" value={message} onChange={(e) => setMessage(e.target.value)} />
         </form>
       )}
     </div>
@@ -166,9 +170,9 @@ export default function RequestPrompt({ request }: { request: HumanRequest }) {
         <InputPrompt request={request} answer={answer} busy={busy} />
       )}
       <div className="cc-hint">
-        <span>{error ? <span className="cc-red">{error.message}</span> : 'Chiffre ou clic pour choisir · ↑↓ puis Entrée'}</span>
+        <span>{error ? <span className="cc-red">{error.message}</span> : 'Cliquez sur une réponse, ou tapez son numéro'}</span>
         <button type="button" className="cc-btn" disabled={busy} onClick={() => cancelRequest({ variables: { id: request.id } })}>
-          Abandonner (esc)
+          Ignorer cette demande
         </button>
       </div>
     </div>

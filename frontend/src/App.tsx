@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectFormPage from './pages/ProjectFormPage';
@@ -9,12 +9,13 @@ import NewSessionPage from './pages/NewSessionPage';
 import SessionDetailPage from './pages/SessionDetailPage';
 import RequestsPage from './pages/RequestsPage';
 import TerminalPage from './pages/TerminalPage';
+import WelcomePage from './pages/WelcomePage';
 
 export default function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route path="/" element={<WelcomePage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/new" element={<ProjectFormPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />

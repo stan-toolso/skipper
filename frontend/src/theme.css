@@ -32,12 +32,11 @@ body {
   color: var(--cc-fg);
 }
 
-/* Titres, badges, libellés de tableau : monospace, comme un terminal. */
-h1, h2, h3, h4, h5, h6, .navbar-brand, .badge, th, legend, .form-label, .card-header, .nav-link {
-  font-family: var(--bs-font-monospace);
-}
-h1::before, h2::before { content: '✻ '; color: var(--cc-accent); }
-h1, h2, h3 { letter-spacing: -0.01em; }
+/* L'habillage reste en police système ; le monospace est réservé au code, aux chemins et aux terminaux. */
+h1::before { content: '✻ '; color: var(--cc-accent); }
+h1, h2, h3 { letter-spacing: -0.01em; font-weight: 600; }
+.text-secondary { color: var(--cc-dim) !important; }
+.bi { line-height: 1; vertical-align: -0.125em; }
 
 .navbar.app-navbar {
   background: #0f0f0f;
@@ -99,7 +98,7 @@ h1, h2, h3 { letter-spacing: -0.01em; }
   --bs-btn-active-color: #141414;
 }
 .btn-outline-secondary { --bs-btn-color: var(--cc-dim); --bs-btn-border-color: var(--cc-border); --bs-btn-hover-bg: var(--cc-bg-hover); --bs-btn-hover-color: var(--cc-fg); --bs-btn-hover-border-color: var(--cc-dim); }
-.btn { font-family: var(--bs-font-monospace); }
+.btn { font-weight: 500; }
 
 .badge.bg-primary { background-color: var(--cc-accent) !important; color: #141414; }
 .alert { --bs-alert-bg: var(--cc-bg-elevated); --bs-alert-border-color: var(--cc-border); }

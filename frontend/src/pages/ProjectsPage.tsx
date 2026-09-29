@@ -23,17 +23,16 @@ export default function ProjectsPage() {
           <thead>
             <tr>
               <th>Nom</th>
-              <th>Slug</th>
               <th>Dépôt git</th>
-              <th>Workspace</th>
+              <th>Dossier de travail</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {data.projects.length === 0 && (
               <tr>
-                <td colSpan={5} className="text-secondary">
-                  Aucun projet. Créez-en un pour lancer des sessions.
+                <td colSpan={4} className="text-secondary">
+                  Aucun projet pour l'instant. Un projet regroupe un dossier de travail, des instructions permanentes et les sessions des agents.
                 </td>
               </tr>
             )}
@@ -43,19 +42,25 @@ export default function ProjectsPage() {
                   <Link to={`/projects/${p.id}`}>{p.name}</Link>
                   {p.description && <div className="small text-secondary">{p.description}</div>}
                 </td>
-                <td>
-                  <code>{p.slug}</code>
-                </td>
                 <td className="small">
-                  {p.gitUrl ?? <span className="text-secondary">—</span>}
+                  {p.gitUrl ?? <span className="text-secondary">aucun</span>}
                   {p.git && (
                     <div className="text-secondary">
-                      {p.git.branch} @ {p.git.commit}
+                      branche {p.git.branch} · {p.git.commit}
                     </div>
                   )}
                 </td>
                 <td className="small">
-                  {p.workspaceExists ? <span className="text-success">prêt</span> : <span className="text-warning">absent</span>}
+                  {p.workspaceExists ? (
+                    <span className="text-success">
+                      <i className="bi bi-check-circle me-1" />
+                      prêt
+                    </span>
+                  ) : (
+                    <span className="text-warning">
+                      <i className="bi bi-exclamation-circle me-1" />à préparer
+                    </span>
+                  )}
                 </td>
                 <td className="text-end">
                   <Button as={Link as any} to={`/sessions/new?projectId=${p.id}`} size="sm" variant="outline-primary">

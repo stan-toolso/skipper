@@ -25,6 +25,7 @@ const STORAGE_KEY = 'skipper.workbench.tabs';
 
 /** Titre et type par défaut d'un onglet à partir de son chemin (les pages affinent le titre). */
 export function describeRoute(pathname: string): { title: string; kind: TabKind } {
+  if (pathname === '/') return { title: 'Accueil', kind: 'other' };
   if (pathname === '/projects') return { title: 'Projets', kind: 'projects' };
   if (pathname === '/projects/new') return { title: 'Nouveau projet', kind: 'project-form' };
   if (/^\/projects\/[^/]+\/edit$/.test(pathname)) return { title: 'Modifier le projet', kind: 'project-form' };
@@ -58,7 +59,6 @@ export function TabsProvider({ children }: { children: ReactNode }) {
 
   // Chaque navigation ouvre (ou réactive) l'onglet correspondant au chemin.
   useEffect(() => {
-    if (location.pathname === '/') return;
     const url = location.pathname + location.search;
     setTabs((prev) => {
       const existing = prev.find((t) => t.key === location.pathname);
@@ -84,7 +84,7 @@ export function TabsProvider({ children }: { children: ReactNode }) {
       setTabs(remaining);
       if (key === activeKey) {
         const next = remaining[index] ?? remaining[index - 1];
-        navigate(next ? next.url : '/projects');
+        navigate(next ? next.url : '/');
       }
     },
     [activeKey, navigate],

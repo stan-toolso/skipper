@@ -10,14 +10,22 @@ enum SessionStatus {
   INTERRUPTED
 }
 
+type ConfigOption {
+  value: String!
+  label: String!
+  description: String
+}
+
 type ConfigField {
   key: String!
   label: String!
   type: String!
   required: Boolean!
   description: String
-  options: [String!]
+  options: [ConfigOption!]
   defaultValue: String
+  "Affiché dans la section « Options avancées »."
+  advanced: Boolean
 }
 
 "Un type d'agent que l'on peut exécuter en session (Claude, shell, ...)."

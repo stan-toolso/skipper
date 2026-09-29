@@ -63,14 +63,14 @@ export default function ProjectDetailPage() {
       <Row className="g-3 mb-4">
         <Col md={5}>
           <Card className="h-100">
-            <Card.Header>Workspace</Card.Header>
+            <Card.Header>Dossier de travail</Card.Header>
             <Card.Body className="small">
               <dl className="row mb-0">
-                <dt className="col-4">Slug</dt>
+                <dt className="col-4">Identifiant</dt>
                 <dd className="col-8">
                   <code>{project.slug}</code>
                 </dd>
-                <dt className="col-4">Dossier</dt>
+                <dt className="col-4">Emplacement</dt>
                 <dd className="col-8 text-break">
                   <code>{project.workspacePath}</code>
                 </dd>
@@ -82,13 +82,13 @@ export default function ProjectDetailPage() {
                     <>
                       <span className="text-warning">absent</span>{' '}
                       <Button size="sm" variant="outline-primary" className="ms-2" disabled={preparing} onClick={() => prepareWorkspace({ variables: { id } })}>
-                        {preparing ? 'Préparation…' : 'Préparer'}
+                        {preparing ? 'Création…' : 'Créer le dossier'}
                       </Button>
                     </>
                   )}
                 </dd>
                 <dt className="col-4">Dépôt git</dt>
-                <dd className="col-8 text-break">{project.gitUrl ?? '—'}</dd>
+                <dd className="col-8 text-break">{project.gitUrl ?? 'aucun'}</dd>
                 <dt className="col-4">Branche</dt>
                 <dd className="col-8">
                   {project.git ? (
@@ -105,11 +105,11 @@ export default function ProjectDetailPage() {
         </Col>
         <Col md={7}>
           <Card className="h-100">
-            <Card.Header>Prompt système</Card.Header>
+            <Card.Header>Instructions permanentes pour les agents</Card.Header>
             <Card.Body>
-              <pre className="mb-0 small" style={{ whiteSpace: 'pre-wrap', maxHeight: '30vh', overflow: 'auto' }}>
-                {project.systemPrompt || <span className="text-secondary">Aucun prompt système.</span>}
-              </pre>
+              <div className="small" style={{ whiteSpace: 'pre-wrap', maxHeight: '30vh', overflow: 'auto' }}>
+                {project.systemPrompt || <span className="text-secondary">Aucune instruction permanente. Ajoutez-en via « Modifier » : conventions, contexte métier, ce qu'il ne faut pas faire…</span>}
+              </div>
             </Card.Body>
           </Card>
         </Col>

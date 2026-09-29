@@ -1,25 +1,27 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap';
+import { Alert, Button, Card, Collapse, Form, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CREATE_SESSION, PROJECTS, PROVIDERS, type ConfigField, type Project, type Provider, type Session } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
-
 
 function ConfigInput({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
   if (field.type === 'boolean') {
     return <Form.Check type="switch" checked={value === 'true'} onChange={(e) => onChange(String(e.target.checked))} />;
   }
   if (field.type === 'select') {
+    const selected = (field.options ?? []).find((o) => o.value === value);
     return (
-      <Form.Select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">—</option>
-        {(field.options ?? []).map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </Form.Select>
+      <>
+        <Form.Select value={value} onChange={(e) => onChange(e.target.value)}>
+          {(field.options ?? []).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Form.Select>
+        {selected?.description && <Form.Text>{selected.description}</Form.Text>}
+      </>
     );
   }
   return <Form.Control type={field.type === 'number' ? 'number' : 'text'} value={value} onChange={(e) => onChange(e.target.value)} />;
@@ -36,12 +38,26 @@ function buildConfig(fields: ConfigField[], values: Record<string, string>): Rec
   return config;
 }
 
+function FieldGroup({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
+  return (
+    <Form.Group className="mb-3" key={field.key}>
+      <Form.Label className="mb-1">
+        {field.label}
+        {field.required && ' *'}
+      </Form.Label>
+      <ConfigInput field={field} value={value} onChange={onChange} />
+      {field.description && field.type !== 'select' && <Form.Text>{field.description}</Form.Text>}
+    </Form.Group>
+  );
+}
+
 export default function NewSessionPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { data, loading, error } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const { data: projectsData, loading: loadingProjects } = useQuery<{ projects: Project[] }>(PROJECTS);
   const [createSession, { loading: creating, error: createError }] = useMutation<{ createSession: Session }>(CREATE_SESSION, {
+    refetchQueries: ['Sidebar'],
     onCompleted: (res) => navigate(`/sessions/${res.createSession.id}`),
   });
 
@@ -51,6 +67,7 @@ export default function NewSessionPage() {
   const [prompt, setPrompt] = useState('');
   const [autoStart, setAutoStart] = useState(true);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const providers = data?.providers ?? [];
   const provider = providers.find((p) => p.type === providerType);
@@ -78,7 +95,14 @@ export default function NewSessionPage() {
     if (!provider || !project) return;
     createSession({
       variables: {
-        input: { projectId: project.id, name, provider: provider.type, prompt: prompt || null, config: buildConfig(provider.configFields, values), autoStart },
+        input: {
+          projectId: project.id,
+          name: name.trim() || prompt.trim().split('\n')[0].slice(0, 60) || 'Session',
+          provider: provider.type,
+          prompt: prompt || null,
+          config: buildConfig(provider.configFields, values),
+          autoStart,
+        },
       },
     });
   };
@@ -88,15 +112,19 @@ export default function NewSessionPage() {
   if (projects.length === 0) {
     return (
       <Alert variant="warning">
-        Aucun projet : une session s'exécute nécessairement dans un projet. <Link to="/projects/new">Créer un projet</Link>.
+        Commencez par créer un projet : c'est le dossier de travail dans lequel l'agent interviendra. <Link to="/projects/new">Créer un projet</Link>.
       </Alert>
     );
   }
 
+  const mainFields = (provider?.configFields ?? []).filter((f) => !f.advanced);
+  const advancedFields = (provider?.configFields ?? []).filter((f) => f.advanced);
+  const setValue = (key: string) => (v: string) => setValues((prev) => ({ ...prev, [key]: v }));
+
   return (
     <>
       <h1 className="h3 mb-3">Nouvelle session</h1>
-      <Card>
+      <Card style={{ maxWidth: 820 }}>
         <Card.Body>
           <Form onSubmit={submit}>
             <Form.Group className="mb-3">
@@ -108,58 +136,66 @@ export default function NewSessionPage() {
                   </option>
                 ))}
               </Form.Select>
-              {project && (
-                <Form.Text>
-                  La session s'exécutera dans <code>{project.workspacePath}</code>
-                  {project.systemPrompt ? ' avec le prompt système du projet.' : '.'}
-                </Form.Text>
-              )}
+              {project && <Form.Text>L'agent travaillera dans le dossier de ce projet{project.systemPrompt ? ', avec ses instructions permanentes.' : '.'}</Form.Text>}
             </Form.Group>
 
             <Form.Group className="mb-3">
-              <Form.Label>Nom</Form.Label>
-              <Form.Control value={name} onChange={(e) => setName(e.target.value)} required placeholder="Ex. Refacto du module auth" />
+              <Form.Label>Que doit faire l'agent ?</Form.Label>
+              <Form.Control
+                as="textarea"
+                rows={6}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Décrivez la tâche comme à un collègue. Ex. : « Ajoute une page de contact au site, avec un formulaire qui envoie un e-mail. »"
+              />
+              <Form.Text>Vous pourrez préciser, corriger ou relancer l'agent à tout moment pendant la session.</Form.Text>
             </Form.Group>
 
             <Form.Group className="mb-3">
-              <Form.Label>Type d'agent</Form.Label>
-              <Form.Select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
-                {providers.map((p) => (
-                  <option key={p.type} value={p.type}>
-                    {p.label}
-                  </option>
-                ))}
-              </Form.Select>
-              {provider && <Form.Text>{provider.description}</Form.Text>}
+              <Form.Label>Nom de la session</Form.Label>
+              <Form.Control value={name} onChange={(e) => setName(e.target.value)} placeholder="Pour la retrouver dans la liste (facultatif, déduit de la tâche sinon)" />
             </Form.Group>
 
-            <Form.Group className="mb-3">
-              <Form.Label>Prompt / instruction</Form.Label>
-              <Form.Control as="textarea" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-            </Form.Group>
-
-            {provider && provider.configFields.length > 0 && (
-              <fieldset className="mb-3">
-                <legend className="h6">Options « {provider.label} »</legend>
-                {provider.configFields.map((field) => (
-                  <Form.Group className="mb-2" key={field.key}>
-                    <Form.Label className="small mb-1">
-                      {field.label}
-                      {field.required && ' *'}
-                    </Form.Label>
-                    <ConfigInput field={field} value={values[field.key] ?? ''} onChange={(v) => setValues((prev) => ({ ...prev, [field.key]: v }))} />
-                    {field.description && <Form.Text>{field.description}</Form.Text>}
-                  </Form.Group>
-                ))}
-              </fieldset>
+            {providers.length > 1 && (
+              <Form.Group className="mb-3">
+                <Form.Label>Agent</Form.Label>
+                <Form.Select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
+                  {providers.map((p) => (
+                    <option key={p.type} value={p.type}>
+                      {p.label}
+                    </option>
+                  ))}
+                </Form.Select>
+                {provider && <Form.Text>{provider.description}</Form.Text>}
+              </Form.Group>
             )}
 
-            <Form.Check className="mb-3" type="switch" id="autoStart" label="Démarrer immédiatement" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />
+            {mainFields.map((field) => (
+              <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
+            ))}
+
+            <Form.Check className="mb-3" type="switch" id="autoStart" label="Démarrer tout de suite" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />
+
+            {advancedFields.length > 0 && (
+              <div className="mb-3">
+                <Button variant="link" size="sm" className="p-0 text-secondary" onClick={() => setShowAdvanced((v) => !v)} aria-expanded={showAdvanced}>
+                  <i className={`bi bi-chevron-${showAdvanced ? 'down' : 'right'} me-1`} />
+                  Options avancées
+                </Button>
+                <Collapse in={showAdvanced}>
+                  <div className="pt-2 ps-3 border-start">
+                    {advancedFields.map((field) => (
+                      <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
+                    ))}
+                  </div>
+                </Collapse>
+              </div>
+            )}
 
             {createError && <Alert variant="danger">{createError.message}</Alert>}
 
-            <Button type="submit" disabled={creating || !provider || !project}>
-              {creating ? 'Création…' : 'Créer la session'}
+            <Button type="submit" disabled={creating || !provider || !project || !prompt.trim()}>
+              {creating ? 'Lancement…' : autoStart ? 'Lancer la session' : 'Créer la session'}
             </Button>
           </Form>
         </Card.Body>

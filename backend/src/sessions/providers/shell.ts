@@ -20,7 +20,7 @@ export class ShellProvider implements SessionProvider {
       description: 'Exécute le prompt comme une commande shell en arrière-plan ; les messages envoyés sont écrits sur son entrée standard.',
       interactive: true,
       configFields: [
-        { key: 'shell', label: 'Shell', type: 'string', required: false, defaultValue: '/bin/sh' },
+        { key: 'shell', label: 'Shell', type: 'string', required: false, defaultValue: '/bin/sh', advanced: true },
       ],
     };
   }

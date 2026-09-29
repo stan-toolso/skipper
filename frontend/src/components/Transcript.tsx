@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionEvent } from '../graphql/operations';
+import { describeTool, formatCost, formatDuration } from '../lib/humanize';
 
 interface ContentBlock {
   type: string;
@@ -57,8 +58,9 @@ function toolResultText(content: unknown): string {
   return content == null ? '' : JSON.stringify(content, null, 2);
 }
 
-function ToolCall({ name, input, result }: { name: string; input: Record<string, unknown>; result?: ToolResult }) {
+function ToolCall({ name, input, result, technical }: { name: string; input: Record<string, unknown>; result?: ToolResult; technical: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const desc = describeTool(name, input);
   const lines = (result?.text ?? '').split('\n');
   const limit = 3;
   const shown = expanded ? lines : lines.slice(0, limit);
@@ -69,8 +71,9 @@ function ToolCall({ name, input, result }: { name: string; input: Record<string,
       <div className="cc-call">
         <span className={`cc-dot ${dotClass}`}>⏺</span>
         <span>
-          <span className="cc-name">{name}</span>
-          <span className="cc-args">({summarizeToolInput(name, input)})</span>
+          <span className="cc-name">{desc.label}</span>
+          {desc.detail && desc.detail !== desc.label && <span className="cc-args"> — {desc.detail.length > 140 ? `${desc.detail.slice(0, 137)}…` : desc.detail}</span>}
+          {technical && <span className="cc-raw">{name}({summarizeToolInput(name, input)})</span>}
         </span>
       </div>
       {result && (
@@ -93,11 +96,11 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
-function formatCost(p: Record<string, unknown>): string {
+function describeResult(p: Record<string, unknown>, technical: boolean): string {
   const parts: string[] = [];
-  if (typeof p.num_turns === 'number') parts.push(`${p.num_turns} tour${p.num_turns > 1 ? 's' : ''}`);
-  if (typeof p.duration_ms === 'number') parts.push(`${(p.duration_ms / 1000).toFixed(1)}s`);
-  if (typeof p.total_cost_usd === 'number') parts.push(`$${p.total_cost_usd.toFixed(4)}`);
+  if (typeof p.duration_ms === 'number') parts.push(formatDuration(p.duration_ms));
+  if (typeof p.total_cost_usd === 'number') parts.push(formatCost(p.total_cost_usd));
+  if (technical && typeof p.num_turns === 'number') parts.push(`${p.num_turns} échange${p.num_turns > 1 ? 's' : ''} avec le modèle`);
   return parts.join(' · ');
 }
 
@@ -105,7 +108,10 @@ function formatCost(p: Record<string, unknown>): string {
  * Transcript d'une session rendu à la manière de Claude Code :
  * instructions préfixées par >, réponses ⏺, appels d'outils avec résultat ⎿, notes en gris.
  */
-export default function Transcript({ events, autoScroll = true }: { events: SessionEvent[]; autoScroll?: boolean }) {
+/**
+ * `technical` affiche en plus les lignes système (démarrage, erreurs brutes, noms d'outils).
+ */
+export default function Transcript({ events, autoScroll = true, technical = false }: { events: SessionEvent[]; autoScroll?: boolean; technical?: boolean }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Associe chaque résultat d'outil (événement claude.user) à son appel (tool_use_id).
@@ -152,7 +158,7 @@ export default function Transcript({ events, autoScroll = true }: { events: Sess
               </div>,
             );
           } else if (block.type === 'tool_use') {
-            nodes.push(<ToolCall key={key} name={block.name ?? 'outil'} input={block.input ?? {}} result={block.id ? results.get(block.id) : undefined} />);
+            nodes.push(<ToolCall key={key} name={block.name ?? 'outil'} input={block.input ?? {}} result={block.id ? results.get(block.id) : undefined} technical={technical} />);
           } else if (block.type === 'thinking' && block.thinking) {
             nodes.push(<Thinking key={key} text={block.thinking} />);
           }
@@ -162,12 +168,14 @@ export default function Transcript({ events, autoScroll = true }: { events: Sess
       case 'claude.result':
         nodes.push(
           <div key={e.id} className={`cc-note${p.is_error ? ' error' : ''}`}>
-            {p.is_error ? `✗ ${String(p.subtype)}${Array.isArray(p.errors) ? ` : ${p.errors.join(' ; ')}` : ''}` : `✻ Tour terminé · ${formatCost(p)}`}
+            {p.is_error
+              ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
+              : `✓ Réponse terminée${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
           </div>,
         );
         break;
       case 'claude.system':
-        if (p.subtype === 'init') {
+        if (technical && p.subtype === 'init') {
           nodes.push(
             <div key={e.id} className="cc-note">
               ✻ Claude Code {String(p.claude_code_version ?? '')} · {String(p.model ?? '')} · {String(p.cwd ?? '')}
@@ -176,18 +184,22 @@ export default function Transcript({ events, autoScroll = true }: { events: Sess
         }
         break;
       case 'system':
-        nodes.push(
-          <div key={e.id} className="cc-note">
-            · {String(p.message ?? JSON.stringify(p))}
-          </div>,
-        );
+        if (technical) {
+          nodes.push(
+            <div key={e.id} className="cc-note">
+              · {String(p.message ?? JSON.stringify(p))}
+            </div>,
+          );
+        }
         break;
       case 'stderr':
-        nodes.push(
-          <div key={e.id} className="cc-note error">
-            {String(p.text ?? '')}
-          </div>,
-        );
+        if (technical) {
+          nodes.push(
+            <div key={e.id} className="cc-note error">
+              {String(p.text ?? '')}
+            </div>,
+          );
+        }
         break;
       case 'stdout':
         nodes.push(
@@ -196,28 +208,42 @@ export default function Transcript({ events, autoScroll = true }: { events: Sess
           </div>,
         );
         break;
-      case 'request':
+      case 'request': {
+        const payload = (p.payload ?? {}) as { toolName?: string; input?: Record<string, unknown> };
+        const text =
+          p.type === 'permission' && payload.toolName
+            ? `L'agent a demandé l'autorisation de ${describeTool(payload.toolName, payload.input ?? {}).action}`
+            : p.type === 'question'
+              ? `L'agent vous a posé une question : ${String(p.title)}`
+              : `L'agent vous a demandé : ${String(p.title)}`;
         nodes.push(
           <div key={e.id} className="cc-note warn">
-            ⏸ {String(p.title)}
+            ⏸ {text}
           </div>,
         );
         break;
-      case 'request.answered':
+      }
+      case 'request.answered': {
+        const r = (p.response ?? {}) as Record<string, unknown>;
+        const text =
+          r.decision === 'allow' ? (r.always ? 'Autorisé pour toute la session' : 'Autorisé') : r.decision === 'deny' ? `Refusé${r.message ? ` : ${String(r.message)}` : ''}` : r.answers ? Object.values(r.answers as Record<string, string>).join(' ; ') : JSON.stringify(r);
         nodes.push(
           <div key={e.id} className="cc-note">
-            ▶ Réponse : {JSON.stringify(p.response)}
+            ▶ Votre réponse : {text}
           </div>,
         );
         break;
-      case 'status':
+      }
+      case 'status': {
+        const labels: Record<string, string> = { completed: 'Session terminée', failed: 'Session terminée avec une erreur', stopped: 'Session arrêtée', interrupted: 'Session interrompue' };
         nodes.push(
           <div key={e.id} className={`cc-note${p.status === 'failed' ? ' error' : ''}`}>
-            ■ Session {String(p.status)}
+            ■ {labels[String(p.status)] ?? `Session ${String(p.status)}`}
             {p.error ? ` — ${String(p.error)}` : ''}
           </div>,
         );
         break;
+      }
       default:
         // Événements techniques (rate limit, hooks, tool results déjà rattachés...) : non affichés.
         break;

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import RequestPrompt from '../components/RequestPrompt';
 import Transcript from '../components/Transcript';
 import '../components/terminal.css';
@@ -20,14 +21,7 @@ import {
 
 type SessionWithEvents = Session & { events: SessionEvent[]; requests: HumanRequest[] };
 
-const statusLabels: Record<Session['status'], string> = {
-  PENDING: 'en attente de démarrage',
-  RUNNING: 'en cours',
-  COMPLETED: 'terminée',
-  FAILED: 'échouée',
-  STOPPED: 'arrêtée',
-  INTERRUPTED: 'interrompue (serveur redémarré)',
-};
+const TECH_KEY = 'skipper.session.technical';
 
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
@@ -41,6 +35,23 @@ export default function SessionDetailPage() {
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
 
   const [text, setText] = useState('');
+  const [technical, setTechnical] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(TECH_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleTechnical = () => {
+    setTechnical((v) => {
+      try {
+        localStorage.setItem(TECH_KEY, v ? '0' : '1');
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
+  };
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const session = data?.session;
   useTabTitle(session?.name);
@@ -77,12 +88,12 @@ export default function SessionDetailPage() {
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
 
   const statusLine = pending.length
-    ? `⏸ En attente de votre réponse (${pending.length} demande${pending.length > 1 ? 's' : ''})`
+    ? `⏸ L'agent attend votre réponse ci-dessus`
     : busy
-      ? '✻ Claude travaille… (échap pour interrompre)'
+      ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
       : running
-        ? '⏵ En attente de vos instructions'
-        : `■ Session ${statusLabels[session.status]} — envoyer un message la relance`;
+        ? "⏵ L'agent attend vos instructions"
+        : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
 
   return (
     <div className="cc">
@@ -91,24 +102,30 @@ export default function SessionDetailPage() {
           <span className="cc-title">✻ {session.name}</span>
           <span className="cc-meta">
             {' '}
-            · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link> · <code>{session.provider}</code>
-            {model && <> · {model}</>}
-            {session.exitCode !== null && <> · exit {session.exitCode}</>}
+            · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            {technical && (
+              <>
+                {' '}
+                · <code>{session.provider}</code>
+                {model && <> · {model}</>}
+                {session.exitCode !== null && <> · exit {session.exitCode}</>}
+              </>
+            )}
           </span>
         </div>
         <div className="cc-actions">
           {busy && (
-            <button type="button" className="cc-btn" onClick={() => interruptSession({ variables: { id } })}>
+            <button type="button" className="cc-btn" title="Arrête ce que l'agent est en train de faire ; la session reste ouverte" onClick={() => interruptSession({ variables: { id } })}>
               Interrompre
             </button>
           )}
           {running && (
-            <button type="button" className="cc-btn accent" onClick={() => endSession({ variables: { id } })}>
-              Terminer
+            <button type="button" className="cc-btn accent" title="L'agent finit ce qu'il fait, puis la session se termine" onClick={() => endSession({ variables: { id } })}>
+              Terminer la session
             </button>
           )}
           {running && (
-            <button type="button" className="cc-btn danger" onClick={() => stopSession({ variables: { id } })}>
+            <button type="button" className="cc-btn danger" title="Arrêt immédiat, sans attendre" onClick={() => stopSession({ variables: { id } })}>
               Arrêter
             </button>
           )}
@@ -124,7 +141,12 @@ export default function SessionDetailPage() {
         </div>
       </div>
 
-      <Transcript events={session.events} />
+      <div className="cc-toggle">
+        <label>
+          <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
+        </label>
+      </div>
+      <Transcript events={session.events} technical={technical} />
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />
@@ -138,7 +160,7 @@ export default function SessionDetailPage() {
         <span>
           {session.error && <span className="cc-red">{session.error} · </span>}
           {actionError && <span className="cc-red">{actionError.message} · </span>}
-          ⏵⏵ {permissionMode}
+          <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
         </span>
       </div>
 
@@ -148,7 +170,7 @@ export default function SessionDetailPage() {
           ref={inputRef}
           rows={1}
           value={text}
-          placeholder={running ? 'Donnez une instruction à Claude…' : 'Relancer la session avec une nouvelle instruction…'}
+          placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
           disabled={sending}
           onChange={(e) => {
             setText(e.target.value);
@@ -165,7 +187,7 @@ export default function SessionDetailPage() {
       </div>
       <div className="cc-hint">
         <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>
-        <span>{session.project.workspacePath}</span>
+        <span title="Dossier de travail de la session">{technical ? session.project.workspacePath : ''}</span>
       </div>
     </div>
   );

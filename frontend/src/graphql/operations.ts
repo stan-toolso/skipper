@@ -10,8 +10,9 @@ export interface ConfigField {
   type: 'string' | 'number' | 'boolean' | 'select';
   required: boolean;
   description?: string | null;
-  options?: string[] | null;
+  options?: { value: string; label: string; description?: string | null }[] | null;
   defaultValue?: string | null;
+  advanced?: boolean | null;
 }
 
 export interface Provider {
@@ -218,8 +219,13 @@ export const PROVIDERS = gql`
         type
         required
         description
-        options
+        options {
+          value
+          label
+          description
+        }
         defaultValue
+        advanced
       }
     }
   }

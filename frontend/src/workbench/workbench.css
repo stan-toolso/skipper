@@ -3,8 +3,8 @@
   display: flex;
   height: 100vh;
   overflow: hidden;
-  font-family: var(--bs-font-monospace);
-  font-size: 13px;
+  font-family: var(--bs-font-sans-serif);
+  font-size: 13.5px;
 }
 .wb-sidebar {
   width: 260px;
@@ -29,7 +29,12 @@
 }
 .wb-menu-item:hover { color: var(--cc-fg); background: var(--cc-bg-hover); }
 .wb-menu-item.active { color: var(--cc-fg); background: var(--cc-bg-hover); box-shadow: inset 2px 0 0 var(--cc-accent); }
-.wb-icon { width: 1.2em; text-align: center; color: var(--cc-dim); }
+.wb-icon { width: 1.3em; text-align: center; color: var(--cc-dim); }
+.wb-menu-item.active .wb-icon { color: var(--cc-accent); }
+.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; }
+.wb-row.active .wb-state, .wb-row:hover .wb-state { color: var(--cc-dim); }
+.wb-hint { padding: 8px 14px; font-size: 11.5px; color: var(--cc-dimmer); border-top: 1px solid var(--cc-border); }
+.wb-hint a { color: var(--cc-dim); }
 
 .wb-section-title {
   display: flex;
@@ -157,7 +162,7 @@
 .wb-tab-close:hover { color: var(--cc-fg); background: var(--cc-border); }
 .wb-tab-empty { padding: 0 12px; display: flex; align-items: center; color: var(--cc-dimmer); }
 
-.wb-content { flex: 1; overflow: auto; padding: 16px 20px; font-family: var(--bs-font-sans-serif); font-size: 14px; }
+.wb-content { flex: 1; overflow: auto; padding: 18px 24px; font-family: var(--bs-font-sans-serif); font-size: 14px; }
 .wb-content.flush { padding: 0; overflow: hidden; }
 /* Le terminal de session remplit tout le panneau. */
 .wb-content.flush .cc { height: 100%; border-radius: 0; }

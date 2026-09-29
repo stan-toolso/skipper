@@ -76,7 +76,10 @@ function Tree({
         .map((f) => (
           <div key={f.id}>
             <div className="d-flex align-items-center justify-content-between tree-row" style={{ paddingLeft: depth * 14 }}>
-              <span className="text-secondary">📁 {f.name}</span>
+              <span className="text-secondary">
+                <i className="bi bi-folder2 me-1" />
+                {f.name}
+              </span>
               <ButtonGroup size="sm" className="tree-actions">
                 <Button variant="link" className="p-0 px-1 text-secondary" title="Nouvelle instruction ici" onClick={() => onNewInstruction(f.id)}>
                   +📄
@@ -105,7 +108,8 @@ function Tree({
             onClick={() => onSelect(i.id)}
             title={i.description}
           >
-            📄 {i.name} <span className="text-secondary small">v{i.version}</span>
+            <i className="bi bi-file-text me-1" />
+            {i.name} <span className="text-secondary small">v{i.version}</span>
           </div>
         ))}
     </>
@@ -120,7 +124,7 @@ function Tree({
         .tree-row:hover .tree-actions { visibility: visible; }
       `}</style>
       {render(null, 0)}
-      {folders.length === 0 && instructions.length === 0 && <div className="text-secondary small">Bibliothèque vide.</div>}
+      {folders.length === 0 && instructions.length === 0 && <div className="text-secondary small">Rien pour l'instant. Les agents y rangeront ce qu'ils apprennent, et vous pouvez commencer à y écrire.</div>}
     </div>
   );
 }
@@ -308,8 +312,9 @@ export default function ContextPage() {
           </Button>
         </ButtonGroup>
       </div>
-      <p className="text-secondary small">
-        Bibliothèque d'instructions du projet, stockée en base et versionnée. Les agents la consultent comme skills <code>context:*</code> et la modifient avec les outils MCP <code>context</code>.
+      <p className="text-secondary small" style={{ maxWidth: 760 }}>
+        La mémoire du projet : les règles, décisions et connaissances que les agents consultent avant d'agir et complètent au fil de leur travail. Chaque
+        modification est conservée, vous pouvez revenir à une version précédente à tout moment.
       </p>
       {mutationError && <Alert variant="danger">{mutationError.message}</Alert>}
 
