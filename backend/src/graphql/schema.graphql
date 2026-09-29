@@ -106,7 +106,7 @@ type ContextInstructionVersion {
 "Entrée du journal des modifications du contexte d'un projet."
 type ContextChange {
   id: ID!
-  "folder.create, folder.rename, folder.move, folder.delete, instruction.create, instruction.update, instruction.move, instruction.delete, instruction.restore"
+  "folder.create, folder.rename, folder.move, folder.delete, instruction.create, instruction.update, instruction.move, instruction.delete, instruction.restore, project.update"
   kind: String!
   path: String!
   details: JSON!

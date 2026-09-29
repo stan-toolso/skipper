@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { projectService } from '../projects/service.js';
 import type { Project } from '../projects/types.js';
 import { contextService } from './service.js';
 import type { Actor, ContextTree } from './types.js';
@@ -40,8 +41,31 @@ export function createContextMcpServer(project: Project, sessionId: string): Mcp
   return createSdkMcpServer({
     name: 'context',
     version: '1.0.0',
-    instructions: `Bibliothèque de contexte du projet "${project.name}" : instructions durables (conventions, décisions, procédures, connaissances) rangées en dossiers. Les chemins sont de la forme "dossier/sous-dossier/nom". Consulte-la avant d'agir et enregistre-y ce qui mérite d'être retenu pour les prochaines sessions.`,
+    instructions: `Contexte du projet "${project.name}". D'une part le contexte propre au projet (description, prompt système ajouté à chaque session) : outils project et update_project. D'autre part une bibliothèque d'instructions durables (conventions, décisions, procédures, connaissances) rangées en dossiers, dont les chemins sont de la forme "dossier/sous-dossier/nom". Consulte-la avant d'agir et enregistre-y ce qui mérite d'être retenu pour les prochaines sessions.`,
     tools: [
+      tool('project', 'Lit le contexte propre au projet : nom, description et prompt système (ajouté au prompt de chaque session).', {}, async () =>
+        run(async () => {
+          const p = await projectService.get(project.id);
+          return [`# ${p.name} (${p.slug})`, '', '## Description', p.description || '(aucune)', '', '## Prompt système', p.systemPrompt || '(aucun)'].join('\n');
+        }),
+      ),
+      tool(
+        'update_project',
+        "Met à jour le contexte propre au projet : sa description et/ou son prompt système (contenu complet, remplace l'existant). Lis-le d'abord avec `project`. Le nouveau prompt système s'applique aux sessions démarrées ensuite ; la modification est journalisée avec les valeurs précédentes.",
+        {
+          description: z.string().optional().describe('Nouvelle description du projet (une ou deux phrases)'),
+          system_prompt: z.string().optional().describe('Nouveau prompt système complet : contexte, règles et conventions données à l\'agent pour chaque session'),
+          change_note: z.string().optional().describe('Ce qui change et pourquoi'),
+        },
+        async ({ description, system_prompt, change_note }) =>
+          run(async () => {
+            if (description === undefined && system_prompt === undefined) throw new Error('Indique description et/ou system_prompt');
+            const { fields } = await contextService.updateProject(project.id, { description, systemPrompt: system_prompt, changeNote: change_note }, actor);
+            if (fields.length === 0) return 'Aucun changement (valeurs identiques).';
+            const labels = { description: 'description', systemPrompt: 'prompt système' };
+            return `Projet mis à jour : ${fields.map((f) => labels[f]).join(', ')}.${fields.includes('systemPrompt') ? ' Le nouveau prompt système sera pris en compte par les prochaines sessions.' : ''}`;
+          }),
+      ),
       tool('tree', "Liste l'arborescence complète de la bibliothèque de contexte (dossiers et instructions avec leur description).", {}, async () =>
         run(async () => renderTree(await contextService.tree(project.id))),
       ),

@@ -35,7 +35,10 @@ const changeLabels: Record<string, string> = {
   'instruction.move': 'Instruction déplacée',
   'instruction.delete': 'Instruction supprimée',
   'instruction.restore': 'Version restaurée',
+  'project.update': 'Projet modifié',
 };
+
+const projectFieldLabels: Record<string, string> = { description: 'description', systemPrompt: 'prompt système' };
 
 function Author({ type, session }: { type: 'human' | 'agent'; session: { id: string; name: string } | null }) {
   if (type === 'agent') {
@@ -381,6 +384,7 @@ export default function ContextPage() {
                 </td>
                 <td className="text-secondary">
                   {typeof c.details.version === 'number' && `v${c.details.version} `}
+                  {Array.isArray(c.details.fields) && `${c.details.fields.map((f) => projectFieldLabels[String(f)] ?? String(f)).join(', ')} `}
                   {typeof c.details.changeNote === 'string' && c.details.changeNote}
                   {typeof c.details.restoredVersion === 'number' && `depuis v${c.details.restoredVersion}`}
                 </td>

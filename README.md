@@ -116,7 +116,9 @@ frontend/
     instruction est un skill `context:<nom>` découvert nativement ;
   - **outils MCP** (serveur in-process `context`, toujours autorisé) : `tree`, `read`, `search`,
     `write` (crée ou met à jour, dossiers créés à la volée), `create_folder`, `move`, `delete`,
-    `history`. Les écritures sont attribuées à la session ;
+    `history`, plus `project` et `update_project` pour lire et modifier le contexte propre au projet
+    (description, prompt système ; journalisé en `project.update` avec les valeurs précédentes, le
+    nouveau prompt s'applique aux sessions suivantes). Les écritures sont attribuées à la session ;
   - **prompt système** : un résumé de l'arborescence est ajouté au prompt du projet.
 
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted` et les

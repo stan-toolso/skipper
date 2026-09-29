@@ -2,6 +2,7 @@ import { pool } from '../db/pool.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { slugify } from '../projects/service.js';
+import type { Project, UpdateProjectInput } from '../projects/types.js';
 import { contextRepository, type FolderRecord, type InstructionRecord } from './repository.js';
 import { materializeSkills } from './skills.js';
 import type { Actor, ContextChange, ContextFolder, ContextInstruction, ContextInstructionVersion, ContextTree } from './types.js';
@@ -308,15 +309,46 @@ export const contextService = {
 
   changes: (projectId: string, limit?: number): Promise<ContextChange[]> => contextRepository.listChanges(projectId, limit),
 
+  /**
+   * Met à jour le contexte propre au projet (description, prompt système). Le projet n'est pas
+   * versionné : les valeurs précédentes sont conservées dans le journal, ce qui permet de les retrouver.
+   * Le nouveau prompt système ne s'applique qu'aux sessions démarrées ensuite.
+   */
+  async updateProject(
+    projectId: string,
+    input: { description?: string | null; systemPrompt?: string | null; changeNote?: string | null },
+    actor: Actor,
+  ): Promise<{ project: Project; fields: Array<'description' | 'systemPrompt'> }> {
+    const before = await projectService.get(projectId);
+    const patch: UpdateProjectInput = {};
+    if (input.description != null && input.description.trim() !== (before.description ?? '')) patch.description = input.description.trim();
+    if (input.systemPrompt != null && input.systemPrompt.trim() !== before.systemPrompt.trim()) patch.systemPrompt = input.systemPrompt.trim();
+    const fields = Object.keys(patch) as Array<'description' | 'systemPrompt'>;
+    if (fields.length === 0) return { project: before, fields };
+    const project = await projectService.update(projectId, patch);
+    await contextRepository.addChange(
+      projectId,
+      'project.update',
+      'projet',
+      {
+        fields,
+        changeNote: input.changeNote ?? null,
+        before: Object.fromEntries(fields.map((f) => [f, before[f] ?? ''])),
+      },
+      actor,
+    );
+    return { project, fields };
+  },
+
   /** Résumé textuel de l'arborescence, injecté dans le prompt système des agents. */
   async promptSummary(projectId: string): Promise<string> {
     const tree = await this.tree(projectId);
     if (tree.folders.length === 0 && tree.instructions.length === 0) {
-      return "Ce projet dispose d'une bibliothèque de contexte (vide pour l'instant). Utilise les outils du serveur MCP `context` pour y ranger des instructions durables (conventions, décisions, procédures) dans des dossiers.";
+      return "Ce projet dispose d'une bibliothèque de contexte (vide pour l'instant). Utilise les outils du serveur MCP `context` pour y ranger des instructions durables (conventions, décisions, procédures) dans des dossiers. Le contexte propre au projet (description, prompt système) se lit avec `project` et se met à jour avec `update_project`.";
     }
     const lines = tree.instructions.map((i) => `- ${i.path}${i.description ? ` — ${i.description}` : ''} (v${i.version})`);
     return [
-      "Ce projet dispose d'une bibliothèque de contexte : des instructions rangées en dossiers, consultables et modifiables avec les outils du serveur MCP `context` (tree, read, search, write, create_folder, move, delete, history). Chaque instruction est aussi disponible comme skill `context:<chemin>`. Consulte les instructions pertinentes avant d'agir, et enregistre-y les décisions et conventions durables.",
+      "Ce projet dispose d'une bibliothèque de contexte : des instructions rangées en dossiers, consultables et modifiables avec les outils du serveur MCP `context` (tree, read, search, write, create_folder, move, delete, history). Chaque instruction est aussi disponible comme skill `context:<chemin>`. Consulte les instructions pertinentes avant d'agir, et enregistre-y les décisions et conventions durables. Le contexte propre au projet (description, prompt système) se lit avec `project` et se met à jour avec `update_project`.",
       'Instructions disponibles :',
       ...lines,
     ].join('\n');

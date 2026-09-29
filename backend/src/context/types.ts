@@ -55,7 +55,8 @@ export type ContextChangeKind =
   | 'instruction.update'
   | 'instruction.move'
   | 'instruction.delete'
-  | 'instruction.restore';
+  | 'instruction.restore'
+  | 'project.update';
 
 export interface ContextChange {
   id: string;
