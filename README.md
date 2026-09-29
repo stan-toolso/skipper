@@ -8,9 +8,14 @@ Trois notions :
 
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
-- **Session** : une exécution d'agent, rattachée à un projet et lancée dans son workspace.
+- **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
+  workspace. On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
+  terminée est relancée (reprise de la conversation) par un simple message.
 - **Demande** : intervention humaine attendue par un agent (autorisation d'outil, question, saisie).
   La session reste en cours jusqu'à la réponse.
+- **Contexte** : bibliothèque d'instructions propre à chaque projet, rangée en dossiers, stockée en
+  base et versionnée. Les agents la consultent (skills) et la gèrent (outils MCP) ; elle est
+  administrable dans l'application.
 
 ## Stack
 
@@ -51,6 +56,10 @@ backend/
       workspace.ts             # dossier du projet, clone git, infos de branche
     requests/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
+    context/
+      service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
+      mcp.ts                   # serveur MCP in-process exposé aux sessions Claude (tree, read, write...)
+      skills.ts                # génération d'un plugin Claude Code (une skill par instruction)
     graphql/
       schema.graphql           # schéma (queries, mutations, subscriptions SSE)
       resolvers.ts
@@ -79,8 +88,12 @@ frontend/
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
 - **Session** : `projectId`, `name`, `provider`, `status` (`pending`, `running`, `completed`, `failed`,
-  `stopped`, `interrupted`), `prompt`, `config` (JSON propre au provider), `externalId` (ex.
-  `session_id` Claude), `exitCode`, `error`, horodatages.
+  `stopped`, `interrupted`), `activity` pour une session en cours (`busy` : l'agent travaille, `idle` :
+  il attend des instructions), `prompt` (première instruction), `config` (JSON propre au provider),
+  `externalId` (ex. `session_id` Claude), `exitCode`, `error`, horodatages. Le provider Claude utilise
+  le mode « streaming input » du SDK : la session reste ouverte entre les tours, `sendSessionMessage`
+  envoie une instruction, `interruptSession` interrompt le tour en cours (échap dans l'interface),
+  `endSession` termine proprement, `stopSession` tue le processus.
 - **Request** : `sessionId`, `type` (`permission`, `question`, `input`, ... extensible), `status`
   (`pending`, `answered`, `cancelled`, `expired`), `title`, `message`, `payload`, `response`. Un
   provider appelle `ctx.ask(...)` et reçoit la réponse humaine sous forme de JSON libre. Le provider
@@ -91,8 +104,31 @@ frontend/
 - **SessionEvent** : journal ordonné d'une session (`stdout`, `stderr`, `system`, `status`,
   `claude.assistant`, `claude.result`, ...), avec un `payload` JSON.
 
+- **Contexte** : `ContextFolder` (arborescence, slug par niveau) et `ContextInstruction` (nom,
+  description, contenu Markdown, `version`). Chaque modification de nom, description ou contenu crée
+  une `ContextInstructionVersion` (auteur `human` ou `agent` avec la session, note de version) et
+  toute opération, structure comprise, est journalisée dans `ContextChange`. Une ancienne version se
+  restaure en créant une nouvelle version. Les chemins sont des suites de slugs (`api/auth/regles-jwt`).
+
+  Exposition aux agents Claude, à chaque démarrage de session :
+  - **skills** : la bibliothèque est matérialisée en plugin Claude Code local
+    (`WORKSPACES_ROOT/.context-plugins/<slug>/skills/<chemin--avec--tirets>/SKILL.md`), donc chaque
+    instruction est un skill `context:<nom>` découvert nativement ;
+  - **outils MCP** (serveur in-process `context`, toujours autorisé) : `tree`, `read`, `search`,
+    `write` (crée ou met à jour, dossiers créés à la volée), `create_folder`, `move`, `delete`,
+    `history`. Les écritures sont attribuées à la session ;
+  - **prompt système** : un résumé de l'arborescence est ajouté au prompt du projet.
+
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted` et les
 demandes en attente à `expired`.
+
+## Interface
+
+Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
+(`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
+réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
+options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
+pour envoyer et échap pour interrompre.
 
 ## Ajouter un type d'agent
 
@@ -109,7 +145,10 @@ Le front génère automatiquement le formulaire de création à partir de `confi
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
 - `createSession(input)`, `startSession(id)`, `stopSession(id)`, `deleteSession(id)`
-- `requests(status, sessionId)`, `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
+- `sendSessionMessage(id, text)`, `interruptSession(id)`, `endSession(id)`
+- `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
+- `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
+- `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
 
 ## Scripts

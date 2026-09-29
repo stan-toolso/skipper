@@ -11,8 +11,10 @@ export interface SpawnOptions {
   onStdout: (line: string) => void | Promise<void>;
   /** Appelé pour chaque ligne de stderr. */
   onStderr: (line: string) => void | Promise<void>;
-  /** Contenu à écrire sur stdin (puis fermeture), si fourni. */
+  /** Contenu écrit sur stdin au démarrage, si fourni. */
   stdin?: string;
+  /** Si true, stdin reste ouvert : `sendMessage` y écrit une ligne, `end` le ferme. */
+  interactive?: boolean;
 }
 
 /**
@@ -26,11 +28,8 @@ export function spawnProcess(opts: SpawnOptions): RunningHandle {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  if (opts.stdin !== undefined) {
-    child.stdin?.end(opts.stdin);
-  } else {
-    child.stdin?.end();
-  }
+  if (opts.stdin !== undefined) child.stdin?.write(opts.stdin);
+  if (!opts.interactive) child.stdin?.end();
 
   // Sérialise les callbacks pour préserver l'ordre des événements persistés.
   let chain: Promise<void> = Promise.resolve();
@@ -60,6 +59,8 @@ export function spawnProcess(opts: SpawnOptions): RunningHandle {
     });
   });
 
+  const alive = () => child.exitCode === null && child.signalCode === null;
+
   return {
     async wait() {
       const result = await exited;
@@ -68,14 +69,25 @@ export function spawnProcess(opts: SpawnOptions): RunningHandle {
       return result;
     },
     async stop() {
-      if (child.exitCode !== null || child.signalCode !== null) return;
+      if (!alive()) return;
       stopped = true;
       child.kill('SIGTERM');
       const timer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        if (alive()) child.kill('SIGKILL');
       }, 5000);
       await exited;
       clearTimeout(timer);
     },
+    ...(opts.interactive
+      ? {
+          async sendMessage(text: string) {
+            if (!alive() || !child.stdin?.writable) throw new Error("Le processus n'accepte plus d'entrée");
+            child.stdin.write(text.endsWith('\n') ? text : `${text}\n`);
+          },
+          async end() {
+            child.stdin?.end();
+          },
+        }
+      : {}),
   };
 }

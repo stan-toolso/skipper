@@ -21,7 +21,7 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
       <div className="small text-secondary mb-1">
         Outil <code>{String(p.toolName)}</code>
       </div>
-      <pre className="bg-light p-2 rounded small mb-2" style={{ maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+      <pre className="pre-dark p-2 small mb-2" style={{ maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
         {JSON.stringify(p.input, null, 2)}
       </pre>
       <Form.Control size="sm" className="mb-2" placeholder="Motif ou consigne en cas de refus (optionnel)" value={message} onChange={(e) => setMessage(e.target.value)} />

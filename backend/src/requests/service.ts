@@ -27,7 +27,7 @@ function settleWaiter(request: HumanRequest): void {
 }
 
 export const requestService = {
-  list: (filter?: { sessionId?: string; status?: RequestStatus; limit?: number }) => requestRepository.list(filter),
+  list: (filter?: { sessionId?: string; status?: RequestStatus; limit?: number; newestFirst?: boolean }) => requestRepository.list(filter),
   countPending: (sessionId: string) => requestRepository.countPending(sessionId),
 
   async get(id: string): Promise<HumanRequest> {

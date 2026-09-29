@@ -44,7 +44,7 @@ export const requestRepository = {
     return rows[0] ? toRequest(rows[0]) : null;
   },
 
-  async list(filter: { sessionId?: string; status?: RequestStatus; limit?: number } = {}): Promise<HumanRequest[]> {
+  async list(filter: { sessionId?: string; status?: RequestStatus; limit?: number; newestFirst?: boolean } = {}): Promise<HumanRequest[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.sessionId) {
@@ -57,7 +57,7 @@ export const requestRepository = {
     }
     params.push(Math.min(filter.limit ?? 100, 500));
     const { rows } = await pool.query<RequestRow>(
-      `SELECT * FROM requests ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at ASC LIMIT $${params.length}`,
+      `SELECT * FROM requests ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at ${filter.newestFirst ? 'DESC' : 'ASC'} LIMIT $${params.length}`,
       params,
     );
     return rows.map(toRequest);

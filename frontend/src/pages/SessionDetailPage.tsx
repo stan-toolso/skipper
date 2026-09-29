@@ -1,122 +1,173 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { Alert, Button, Card, Col, Row, Spinner } from 'react-bootstrap';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import EventLog from '../components/EventLog';
-import RequestCard from '../components/RequestCard';
-import StatusBadge from '../components/StatusBadge';
-import { DELETE_SESSION, SESSION, START_SESSION, STOP_SESSION, type HumanRequest, type Session, type SessionEvent } from '../graphql/operations';
+import RequestPrompt from '../components/RequestPrompt';
+import Transcript from '../components/Transcript';
+import '../components/terminal.css';
+import {
+  DELETE_SESSION,
+  END_SESSION,
+  INTERRUPT_SESSION,
+  SEND_SESSION_MESSAGE,
+  SESSION,
+  STOP_SESSION,
+  type HumanRequest,
+  type Session,
+  type SessionEvent,
+} from '../graphql/operations';
 
 type SessionWithEvents = Session & { events: SessionEvent[]; requests: HumanRequest[] };
 
+const statusLabels: Record<Session['status'], string> = {
+  PENDING: 'en attente de démarrage',
+  RUNNING: 'en cours',
+  COMPLETED: 'terminée',
+  FAILED: 'échouée',
+  STOPPED: 'arrêtée',
+  INTERRUPTED: 'interrompue (serveur redémarré)',
+};
+
+/** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error } = useQuery<{ session: SessionWithEvents | null }>(SESSION, {
-    variables: { id },
-    pollInterval: 2000,
-  });
-  const [startSession, { error: startError }] = useMutation(START_SESSION);
+  const { data, loading, error } = useQuery<{ session: SessionWithEvents | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
+  const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
+  const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
 
+  const [text, setText] = useState('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const session = data?.session;
+  const running = session?.status === 'RUNNING';
+  const busy = running && session?.activity === 'BUSY';
+  const pending = session?.requests ?? [];
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [session?.id]);
+
+  // Échap interrompt le tour en cours, comme dans Claude Code.
+  useEffect(() => {
+    const handler = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape' && busy && pending.length === 0) interruptSession({ variables: { id } });
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [busy, pending.length, id, interruptSession]);
+
+  const submit = () => {
+    const value = text.trim();
+    if (!value || sending) return;
+    setText('');
+    sendMessage({ variables: { id, text: value } });
+  };
+
   if (loading && !data) return <Spinner animation="border" size="sm" />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
-  const session = data?.session;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const canStart = session.status !== 'RUNNING';
-  const actionError = startError ?? stopError;
+  const actionError = sendError ?? interruptError ?? endError ?? stopError;
+  const model = typeof session.config.model === 'string' ? session.config.model : null;
+  const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
+
+  const statusLine = pending.length
+    ? `⏸ En attente de votre réponse (${pending.length} demande${pending.length > 1 ? 's' : ''})`
+    : busy
+      ? '✻ Claude travaille… (échap pour interrompre)'
+      : running
+        ? '⏵ En attente de vos instructions'
+        : `■ Session ${statusLabels[session.status]} — envoyer un message la relance`;
 
   return (
-    <>
-      <div className="d-flex align-items-center justify-content-between mb-3">
+    <div className="cc">
+      <div className="cc-header">
         <div>
-          <Link to="/sessions" className="small">
+          <span className="cc-title">✻ {session.name}</span>
+          <span className="cc-meta">
+            {' '}
+            · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link> · <code>{session.provider}</code>
+            {model && <> · {model}</>}
+            {session.exitCode !== null && <> · exit {session.exitCode}</>}
+          </span>
+        </div>
+        <div className="cc-actions">
+          <Link to="/sessions" className="cc-btn">
             ← Sessions
           </Link>
-          <h1 className="h3 mb-0">
-            {session.name} <StatusBadge status={session.status} pendingRequests={session.pendingRequestCount} />
-          </h1>
-          <div className="text-secondary small">
-            Projet <Link to={`/projects/${session.project.id}`}>{session.project.name}</Link>
-          </div>
-        </div>
-        <div className="d-flex gap-2">
-          {canStart && (
-            <Button size="sm" onClick={() => startSession({ variables: { id } })}>
-              {session.status === 'PENDING' ? 'Démarrer' : 'Relancer'}
-            </Button>
+          {busy && (
+            <button type="button" className="cc-btn" onClick={() => interruptSession({ variables: { id } })}>
+              Interrompre
+            </button>
           )}
-          {session.status === 'RUNNING' && (
-            <Button size="sm" variant="warning" onClick={() => stopSession({ variables: { id } })}>
+          {running && (
+            <button type="button" className="cc-btn accent" onClick={() => endSession({ variables: { id } })}>
+              Terminer
+            </button>
+          )}
+          {running && (
+            <button type="button" className="cc-btn danger" onClick={() => stopSession({ variables: { id } })}>
               Arrêter
-            </Button>
+            </button>
           )}
-          <Button
-            size="sm"
-            variant="outline-danger"
+          <button
+            type="button"
+            className="cc-btn danger"
             onClick={() => {
               if (window.confirm('Supprimer cette session ?')) deleteSession({ variables: { id } });
             }}
           >
             Supprimer
-          </Button>
+          </button>
         </div>
       </div>
 
-      {actionError && <Alert variant="danger">{actionError.message}</Alert>}
-      {session.error && <Alert variant="danger">{session.error}</Alert>}
+      <Transcript events={session.events} />
 
-      {session.requests.length > 0 && (
-        <div className="mb-3">
-          <h2 className="h5">L'agent attend une réponse</h2>
-          {session.requests.map((r) => (
-            <RequestCard key={r.id} request={r} />
-          ))}
-        </div>
-      )}
+      {pending.map((r) => (
+        <RequestPrompt key={r.id} request={r} />
+      ))}
 
-      <Row className="g-3 mb-3">
-        <Col md={4}>
-          <Card className="h-100">
-            <Card.Header>Informations</Card.Header>
-            <Card.Body className="small">
-              <dl className="row mb-0">
-                <dt className="col-5">Type</dt>
-                <dd className="col-7">
-                  <code>{session.provider}</code>
-                </dd>
-                <dt className="col-5">Id externe</dt>
-                <dd className="col-7 text-break">{session.externalId ?? '—'}</dd>
-                <dt className="col-5">Créée</dt>
-                <dd className="col-7">{new Date(session.createdAt).toLocaleString()}</dd>
-                <dt className="col-5">Démarrée</dt>
-                <dd className="col-7">{session.startedAt ? new Date(session.startedAt).toLocaleString() : '—'}</dd>
-                <dt className="col-5">Terminée</dt>
-                <dd className="col-7">{session.endedAt ? new Date(session.endedAt).toLocaleString() : '—'}</dd>
-                <dt className="col-5">Code de sortie</dt>
-                <dd className="col-7">{session.exitCode ?? '—'}</dd>
-              </dl>
-              <hr />
-              <div className="text-secondary">Configuration</div>
-              <pre className="mb-0">{JSON.stringify(session.config, null, 2)}</pre>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={8}>
-          <Card className="h-100">
-            <Card.Header>Prompt</Card.Header>
-            <Card.Body>
-              <pre className="mb-0" style={{ whiteSpace: 'pre-wrap' }}>
-                {session.prompt ?? <span className="text-secondary">—</span>}
-              </pre>
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
+      <div className="cc-status">
+        <span>
+          {busy && pending.length === 0 && <span className="cc-spinner">✻ </span>}
+          {statusLine}
+        </span>
+        <span>
+          {session.error && <span className="cc-red">{session.error} · </span>}
+          {actionError && <span className="cc-red">{actionError.message} · </span>}
+          ⏵⏵ {permissionMode}
+        </span>
+      </div>
 
-      <h2 className="h5">Journal</h2>
-      <EventLog events={session.events} />
-    </>
+      <div className="cc-input" onClick={() => inputRef.current?.focus()}>
+        <span className="cc-caret">&gt;</span>
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={text}
+          placeholder={running ? 'Donnez une instruction à Claude…' : 'Relancer la session avec une nouvelle instruction…'}
+          disabled={sending}
+          onChange={(e) => {
+            setText(e.target.value);
+            e.target.style.height = 'auto';
+            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+      </div>
+      <div className="cc-hint">
+        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>
+        <span>{session.project.workspacePath}</span>
+      </div>
+    </div>
   );
 }

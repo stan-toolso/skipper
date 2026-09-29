@@ -25,7 +25,15 @@ type Provider {
   type: String!
   label: String!
   description: String!
+  "true si l'on peut envoyer des instructions à une session en cours."
+  interactive: Boolean!
   configFields: [ConfigField!]!
+}
+
+"Pour une session en cours : l'agent travaille ou attend des instructions."
+enum SessionActivity {
+  BUSY
+  IDLE
 }
 
 "Un projet regroupe des sessions ; chacune s'exécute dans le workspace du projet."
@@ -47,6 +55,64 @@ type Project {
   createdAt: DateTime!
   updatedAt: DateTime!
   sessions(status: SessionStatus, limit: Int, offset: Int): [Session!]!
+  "Bibliothèque de contexte : dossiers et instructions à plat, avec leur chemin."
+  contextFolders: [ContextFolder!]!
+  contextInstructions: [ContextInstruction!]!
+  contextChanges(limit: Int): [ContextChange!]!
+}
+
+"Dossier de la bibliothèque de contexte d'un projet."
+type ContextFolder {
+  id: ID!
+  projectId: ID!
+  parentId: ID
+  name: String!
+  slug: String!
+  "Chemin de slugs depuis la racine, ex. \"api/auth\"."
+  path: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+"Instruction (document Markdown) de la bibliothèque de contexte, versionnée."
+type ContextInstruction {
+  id: ID!
+  projectId: ID!
+  folderId: ID
+  name: String!
+  slug: String!
+  path: String!
+  description: String!
+  content: String!
+  version: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  versions: [ContextInstructionVersion!]!
+}
+
+type ContextInstructionVersion {
+  id: ID!
+  version: Int!
+  name: String!
+  description: String!
+  content: String!
+  changeNote: String
+  "'human' (interface) ou 'agent' (session)."
+  authorType: String!
+  authorSession: Session
+  createdAt: DateTime!
+}
+
+"Entrée du journal des modifications du contexte d'un projet."
+type ContextChange {
+  id: ID!
+  "folder.create, folder.rename, folder.move, folder.delete, instruction.create, instruction.update, instruction.move, instruction.delete, instruction.restore"
+  kind: String!
+  path: String!
+  details: JSON!
+  authorType: String!
+  authorSession: Session
+  createdAt: DateTime!
 }
 
 type WorkspaceGit {
@@ -60,6 +126,8 @@ type Session {
   name: String!
   provider: String!
   status: SessionStatus!
+  activity: SessionActivity
+  "Première instruction de la session."
   prompt: String
   config: JSON!
   externalId: String
@@ -114,9 +182,29 @@ type Query {
   session(id: ID!): Session
   projects: [Project!]!
   project(id: ID!): Project
-  "Demandes, toutes sessions confondues (par défaut : celles en attente)."
-  requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int): [Request!]!
+  "Demandes, toutes sessions confondues. `status` à null renvoie tout l'historique (par défaut : celles en attente)."
+  requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
+  contextInstruction(id: ID!): ContextInstruction
+  searchContext(projectId: ID!, query: String!): [ContextInstruction!]!
+}
+
+input CreateContextInstructionInput {
+  projectId: ID!
+  folderId: ID
+  name: String!
+  description: String
+  content: String
+  changeNote: String
+}
+
+input UpdateContextInstructionInput {
+  name: String
+  description: String
+  content: String
+  "Dossier cible (null = racine) pour déplacer l'instruction."
+  folderId: ID
+  changeNote: String
 }
 
 input CreateProjectInput {
@@ -157,12 +245,31 @@ type Mutation {
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
   startSession(id: ID!): Session!
+  "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
   deleteSession(id: ID!): Boolean!
+  "Envoie une instruction : transmise à l'agent si la session est en cours, sinon relance la session avec cette instruction."
+  sendSessionMessage(id: ID!, text: String!): Session!
+  "Fin propre : l'agent termine son tour, puis la session se termine."
+  endSession(id: ID!): Session!
+  "Interrompt le tour en cours ; la session reste ouverte aux instructions."
+  interruptSession(id: ID!): Session!
   "Répond à une demande en attente ; la session reprend avec cette réponse."
   answerRequest(id: ID!, response: JSON!): Request!
   "Abandonne une demande : l'agent reçoit un refus."
   cancelRequest(id: ID!): Request!
+
+  createContextFolder(projectId: ID!, parentId: ID, name: String!): ContextFolder!
+  renameContextFolder(id: ID!, name: String!): ContextFolder!
+  moveContextFolder(id: ID!, parentId: ID): ContextFolder!
+  "Supprime le dossier et tout son contenu."
+  deleteContextFolder(id: ID!): Boolean!
+  createContextInstruction(input: CreateContextInstructionInput!): ContextInstruction!
+  "Toute modification de nom, description ou contenu crée une nouvelle version."
+  updateContextInstruction(id: ID!, input: UpdateContextInstructionInput!): ContextInstruction!
+  deleteContextInstruction(id: ID!): Boolean!
+  "Restaure une ancienne version (crée une nouvelle version avec son contenu)."
+  restoreContextInstructionVersion(id: ID!, version: Int!): ContextInstruction!
 }
 
 type Subscription {

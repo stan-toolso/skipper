@@ -17,7 +17,8 @@ export class ShellProvider implements SessionProvider {
     return {
       type: this.type,
       label: 'Commande shell',
-      description: 'Exécute le prompt comme une commande shell en arrière-plan.',
+      description: 'Exécute le prompt comme une commande shell en arrière-plan ; les messages envoyés sont écrits sur son entrée standard.',
+      interactive: true,
       configFields: [
         { key: 'shell', label: 'Shell', type: 'string', required: false, defaultValue: '/bin/sh' },
       ],
@@ -26,12 +27,17 @@ export class ShellProvider implements SessionProvider {
 
   async start(ctx: RunContext): Promise<RunningHandle> {
     const cfg = ctx.session.config as ShellConfig;
-    if (!ctx.session.prompt) throw new AppError('Une session shell nécessite une commande dans le prompt');
-    await ctx.emit('system', { message: `Exécution dans ${ctx.cwd} : ${ctx.session.prompt}` });
+    const command = ctx.session.prompt;
+    if (!command) throw new AppError('Une session shell nécessite une commande dans le prompt');
+    await ctx.emit('system', { message: `Exécution dans ${ctx.cwd} : ${command}` });
+    await ctx.setActivity('busy');
     return spawnProcess({
       command: cfg.shell || '/bin/sh',
-      args: ['-c', ctx.session.prompt],
+      args: ['-c', command],
       cwd: ctx.cwd,
+      interactive: true,
+      // Une session shell relancée par un message reçoit ce message sur stdin.
+      stdin: ctx.initialMessage && ctx.initialMessage !== command ? `${ctx.initialMessage}\n` : undefined,
       onStdout: (line) => ctx.emit('stdout', { text: line }),
       onStderr: (line) => ctx.emit('stderr', { text: line }),
     });

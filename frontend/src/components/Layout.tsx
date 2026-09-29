@@ -11,10 +11,10 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <Navbar bg="dark" data-bs-theme="dark" expand="sm" className="mb-4">
+      <Navbar expand="sm" className="mb-4 app-navbar">
         <Container>
           <Navbar.Brand as={Link} to="/projects">
-            Agents
+            ✻ Agents
           </Navbar.Brand>
           <Nav className="me-auto">
             <Nav.Link as={NavLink} to="/projects">

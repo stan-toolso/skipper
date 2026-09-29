@@ -7,8 +7,12 @@ import {
   type PermissionResult,
   type SDKMessage,
   type SDKResultMessage,
+  type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../../config.js';
+import { createContextMcpServer } from '../../context/mcp.js';
+import { contextService } from '../../context/service.js';
+import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
@@ -25,6 +29,40 @@ interface ClaudeConfig {
 const permissionModes: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'];
 
 /**
+ * File de messages utilisateur consommée par le SDK en mode "streaming input" :
+ * la session reste ouverte tant que la file n'est pas fermée, ce qui permet
+ * d'envoyer de nouvelles instructions à tout moment.
+ */
+class MessageQueue implements AsyncIterable<SDKUserMessage> {
+  private readonly buffer: SDKUserMessage[] = [];
+  private waiter: (() => void) | null = null;
+  private closed = false;
+
+  push(text: string): void {
+    if (this.closed) throw new AppError("La session n'accepte plus d'instructions");
+    this.buffer.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+    this.waiter?.();
+  }
+
+  close(): void {
+    this.closed = true;
+    this.waiter?.();
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    while (true) {
+      if (this.buffer.length) {
+        yield this.buffer.shift()!;
+        continue;
+      }
+      if (this.closed) return;
+      await new Promise<void>((resolve) => (this.waiter = resolve));
+      this.waiter = null;
+    }
+  }
+}
+
+/**
  * Provider Claude Code, basé sur le Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`).
  * `query()` pilote le harnais Claude Code et renvoie un flux de messages typés,
  * chacun étant journalisé comme événement `claude.<type>` de la session.
@@ -36,7 +74,8 @@ export class ClaudeProvider implements SessionProvider {
     return {
       type: this.type,
       label: 'Claude Code',
-      description: 'Exécute un prompt avec Claude Code (Agent SDK) en arrière-plan.',
+      description: 'Session Claude Code interactive (Agent SDK) : envoyez des instructions à tout moment.',
+      interactive: true,
       configFields: [
         { key: 'model', label: 'Modèle', type: 'string', required: false, description: 'Ex. sonnet, opus, ou un identifiant complet' },
         {
@@ -70,21 +109,27 @@ export class ClaudeProvider implements SessionProvider {
 
   async start(ctx: RunContext): Promise<RunningHandle> {
     const cfg = ctx.session.config as ClaudeConfig;
-    if (!ctx.session.prompt) throw new AppError('Une session Claude nécessite un prompt');
+    if (!ctx.initialMessage) throw new AppError('Une session Claude nécessite une première instruction');
 
     const abortController = new AbortController();
-    const systemPrompt = ctx.project.systemPrompt.trim();
+    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte.
+    const systemPrompt = [ctx.project.systemPrompt.trim(), await contextService.promptSummary(ctx.project.id)].filter(Boolean).join('\n\n');
+    // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
+    const pluginDir = await materializeSkills(ctx.project);
+    const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     const options: Options = {
       cwd: ctx.cwd,
-      // Le prompt système du projet complète celui de Claude Code (préréglage claude_code).
-      systemPrompt: systemPrompt ? { type: 'preset', preset: 'claude_code', append: systemPrompt } : undefined,
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
+      mcpServers: { context: createContextMcpServer(ctx.project, ctx.session.id) },
+      plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model: cfg.model || undefined,
       permissionMode: cfg.permissionMode || 'default',
       // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé.
       allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : undefined,
-      allowedTools: cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+      // Les outils du contexte sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
+      allowedTools: [...allowedTools, 'mcp__context'],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Par défaut le SDK utilise le binaire Claude Code qu'il embarque.
@@ -97,28 +142,37 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, model: options.model, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools },
     });
 
-    const stream = query({ prompt: ctx.session.prompt, options });
+    const queue = new MessageQueue();
+    await ctx.emit('instruction', { text: ctx.initialMessage });
+    queue.push(ctx.initialMessage);
+    await ctx.setActivity('busy');
+
+    const stream = query({ prompt: queue, options });
     let stopped = false;
 
     const done: Promise<RunResult> = (async () => {
-      let result: SDKResultMessage | undefined;
+      let lastResult: SDKResultMessage | undefined;
       try {
         for await (const message of stream) {
           await this.handleMessage(ctx, message);
-          if (message.type === 'result') result = message;
+          if (message.type === 'result') {
+            // Fin d'un tour : l'agent attend la prochaine instruction.
+            lastResult = message;
+            await ctx.setActivity('idle');
+          }
         }
       } catch (err) {
         if (stopped || err instanceof AbortError) return { exitCode: null };
         return { exitCode: 1, error: (err as Error).message };
       }
       if (stopped) return { exitCode: null };
-      if (!result) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };
-      if (result.is_error) {
-        const detail = result.subtype === 'success' ? result.result : result.errors.join('\n');
-        return { exitCode: 1, error: `${result.subtype}${detail ? ` : ${detail}` : ''}` };
+      if (!lastResult) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };
+      if (lastResult.is_error) {
+        const detail = lastResult.subtype === 'success' ? lastResult.result : lastResult.errors.join('\n');
+        return { exitCode: 1, error: `${lastResult.subtype}${detail ? ` : ${detail}` : ''}` };
       }
       return { exitCode: 0 };
     })();
@@ -127,9 +181,21 @@ export class ClaudeProvider implements SessionProvider {
       wait: () => done,
       async stop() {
         stopped = true;
+        queue.close();
         abortController.abort();
         stream.close();
         await done;
+      },
+      async sendMessage(text) {
+        await ctx.emit('instruction', { text });
+        queue.push(text);
+        await ctx.setActivity('busy');
+      },
+      async end() {
+        queue.close();
+      },
+      async interrupt() {
+        await stream.interrupt();
       },
     };
   }

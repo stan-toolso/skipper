@@ -46,8 +46,9 @@ async function main() {
 
   const shutdown = async (signal: string) => {
     console.log(`[http] ${signal} reçu, arrêt en cours...`);
-    await sessionService.shutdown();
+    // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
+    await sessionService.shutdown();
     await pool.end();
     process.exit(0);
   };

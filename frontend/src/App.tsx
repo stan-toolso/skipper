@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectFormPage from './pages/ProjectFormPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
+import ContextPage from './pages/ContextPage';
 import SessionsPage from './pages/SessionsPage';
 import NewSessionPage from './pages/NewSessionPage';
 import SessionDetailPage from './pages/SessionDetailPage';
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/projects/new" element={<ProjectFormPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />
         <Route path="/projects/:id/edit" element={<ProjectFormPage />} />
+        <Route path="/projects/:id/context" element={<ContextPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/new" element={<NewSessionPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />

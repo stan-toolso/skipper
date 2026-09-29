@@ -1,0 +1,114 @@
+/* Thème global inspiré de Claude Code : sombre, accent orange, touches monospace.
+   Surcharge les variables Bootstrap (mode dark activé sur <html>). */
+:root,
+[data-bs-theme='dark'] {
+  --cc-bg: #141414;
+  --cc-bg-elevated: #1a1a1a;
+  --cc-bg-hover: #1f1f1f;
+  --cc-fg: #e8e6e3;
+  --cc-dim: #8b8b8b;
+  --cc-border: #333;
+  --cc-accent: #d97757;
+  --cc-accent-hover: #e48c6c;
+
+  --bs-body-bg: var(--cc-bg);
+  --bs-body-color: var(--cc-fg);
+  --bs-secondary-color: var(--cc-dim);
+  --bs-tertiary-bg: var(--cc-bg-elevated);
+  --bs-border-color: var(--cc-border);
+  --bs-border-color-translucent: var(--cc-border);
+  --bs-primary: var(--cc-accent);
+  --bs-primary-rgb: 217, 119, 87;
+  --bs-link-color: var(--cc-accent);
+  --bs-link-color-rgb: 217, 119, 87;
+  --bs-link-hover-color: var(--cc-accent-hover);
+  --bs-link-hover-color-rgb: 228, 140, 108;
+  --bs-code-color: var(--cc-accent);
+  --bs-font-monospace: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+body {
+  background: var(--cc-bg);
+  color: var(--cc-fg);
+}
+
+/* Titres, badges, libellés de tableau : monospace, comme un terminal. */
+h1, h2, h3, h4, h5, h6, .navbar-brand, .badge, th, legend, .form-label, .card-header, .nav-link {
+  font-family: var(--bs-font-monospace);
+}
+h1::before, h2::before { content: '✻ '; color: var(--cc-accent); }
+h1, h2, h3 { letter-spacing: -0.01em; }
+
+.navbar.app-navbar {
+  background: #0f0f0f;
+  border-bottom: 1px solid var(--cc-border);
+}
+.navbar.app-navbar .navbar-brand { color: var(--cc-accent); font-weight: 600; }
+.navbar.app-navbar .nav-link { color: var(--cc-dim); }
+.navbar.app-navbar .nav-link.active, .navbar.app-navbar .nav-link:hover { color: var(--cc-fg); }
+
+.card {
+  --bs-card-bg: var(--cc-bg-elevated);
+  --bs-card-border-color: var(--cc-border);
+  --bs-card-cap-bg: var(--cc-bg-hover);
+  --bs-card-cap-color: var(--cc-dim);
+}
+.table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--cc-fg);
+  --bs-table-border-color: var(--cc-border);
+  --bs-table-hover-bg: var(--cc-bg-hover);
+  --bs-table-hover-color: var(--cc-fg);
+}
+.table th { color: var(--cc-dim); font-weight: 500; }
+
+.form-control, .form-select {
+  background-color: var(--cc-bg-elevated);
+  border-color: var(--cc-border);
+  color: var(--cc-fg);
+}
+.form-control:focus, .form-select:focus {
+  background-color: var(--cc-bg-elevated);
+  color: var(--cc-fg);
+  border-color: var(--cc-dim);
+  box-shadow: 0 0 0 0.2rem rgba(217, 119, 87, 0.2);
+}
+.form-control::placeholder { color: #5c5c5c; }
+.form-text { color: var(--cc-dim); }
+.form-check-input:checked { background-color: var(--cc-accent); border-color: var(--cc-accent); }
+
+.btn-primary {
+  --bs-btn-bg: var(--cc-accent);
+  --bs-btn-border-color: var(--cc-accent);
+  --bs-btn-color: #141414;
+  --bs-btn-hover-bg: var(--cc-accent-hover);
+  --bs-btn-hover-border-color: var(--cc-accent-hover);
+  --bs-btn-hover-color: #141414;
+  --bs-btn-active-bg: var(--cc-accent-hover);
+  --bs-btn-active-border-color: var(--cc-accent-hover);
+  --bs-btn-disabled-bg: var(--cc-accent);
+  --bs-btn-disabled-border-color: var(--cc-accent);
+}
+.btn-outline-primary {
+  --bs-btn-color: var(--cc-accent);
+  --bs-btn-border-color: var(--cc-accent);
+  --bs-btn-hover-bg: var(--cc-accent);
+  --bs-btn-hover-border-color: var(--cc-accent);
+  --bs-btn-hover-color: #141414;
+  --bs-btn-active-bg: var(--cc-accent);
+  --bs-btn-active-color: #141414;
+}
+.btn-outline-secondary { --bs-btn-color: var(--cc-dim); --bs-btn-border-color: var(--cc-border); --bs-btn-hover-bg: var(--cc-bg-hover); --bs-btn-hover-color: var(--cc-fg); --bs-btn-hover-border-color: var(--cc-dim); }
+.btn { font-family: var(--bs-font-monospace); }
+
+.badge.bg-primary { background-color: var(--cc-accent) !important; color: #141414; }
+.alert { --bs-alert-bg: var(--cc-bg-elevated); --bs-alert-border-color: var(--cc-border); }
+.alert-danger { --bs-alert-color: #e5534b; --bs-alert-border-color: #e5534b; }
+.alert-warning { --bs-alert-color: #e3b341; --bs-alert-border-color: #e3b341; }
+
+pre { color: var(--cc-fg); }
+.pre-dark {
+  background: var(--cc-bg);
+  border: 1px solid var(--cc-border);
+  border-radius: 4px;
+}

@@ -1,4 +1,6 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
+import { contextService, HUMAN } from '../context/service.js';
+import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
 import { workspaceExists, workspaceGitInfo, workspacePath } from '../projects/workspace.js';
@@ -22,8 +24,21 @@ export const resolvers = {
   JSON: JSONResolver,
   DateTime: DateTimeResolver,
 
+  ContextInstruction: {
+    versions: (instruction: ContextInstruction) => contextService.versions(instruction.id),
+  },
+  ContextInstructionVersion: {
+    authorSession: (v: ContextInstructionVersion) => (v.authorSessionId ? sessionService.get(v.authorSessionId) : null),
+  },
+  ContextChange: {
+    authorSession: (c: ContextChange) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
+  },
+
   Project: {
     workspacePath: (project: Project) => workspacePath(project),
+    contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
+    contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
+    contextChanges: (project: Project, args: { limit?: number | null }) => contextService.changes(project.id, args.limit ?? undefined),
     workspaceExists: (project: Project) => workspaceExists(project),
     git: (project: Project) => workspaceGitInfo(project),
     sessions: (project: Project, args: { status?: GqlStatus | null; limit?: number | null; offset?: number | null }) =>
@@ -38,6 +53,7 @@ export const resolvers = {
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
     status: (session: Session) => toGqlStatus(session.status),
+    activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
@@ -58,9 +74,16 @@ export const resolvers = {
     session: (_: unknown, args: { id: string }) => sessionService.get(args.id),
     projects: () => projectService.list(),
     project: (_: unknown, args: { id: string }) => projectService.get(args.id),
-    requests: (_: unknown, args: { status?: GqlRequestStatus | null; sessionId?: string | null; limit?: number | null }) =>
-      requestService.list({ status: fromGqlRequestStatus(args.status), sessionId: args.sessionId ?? undefined, limit: args.limit ?? undefined }),
+    requests: (_: unknown, args: { status?: GqlRequestStatus | null; sessionId?: string | null; limit?: number | null; newestFirst?: boolean | null }) =>
+      requestService.list({
+        status: fromGqlRequestStatus(args.status),
+        sessionId: args.sessionId ?? undefined,
+        limit: args.limit ?? undefined,
+        newestFirst: args.newestFirst ?? false,
+      }),
     request: (_: unknown, args: { id: string }) => requestService.get(args.id),
+    contextInstruction: (_: unknown, args: { id: string }) => contextService.getInstruction(args.id),
+    searchContext: (_: unknown, args: { projectId: string; query: string }) => contextService.search(args.projectId, args.query),
   },
 
   Mutation: {
@@ -75,8 +98,27 @@ export const resolvers = {
     startSession: (_: unknown, args: { id: string }) => sessionService.start(args.id),
     stopSession: (_: unknown, args: { id: string }) => sessionService.stop(args.id),
     deleteSession: (_: unknown, args: { id: string }) => sessionService.delete(args.id),
+    sendSessionMessage: (_: unknown, args: { id: string; text: string }) => sessionService.sendMessage(args.id, args.text),
+    endSession: (_: unknown, args: { id: string }) => sessionService.end(args.id),
+    interruptSession: (_: unknown, args: { id: string }) => sessionService.interrupt(args.id),
     answerRequest: (_: unknown, args: { id: string; response: Record<string, unknown> }) => requestService.answer(args.id, args.response ?? {}),
     cancelRequest: (_: unknown, args: { id: string }) => requestService.cancel(args.id),
+
+    createContextFolder: (_: unknown, args: { projectId: string; parentId?: string | null; name: string }) =>
+      contextService.createFolder(args.projectId, { parentId: args.parentId ?? null, name: args.name }, HUMAN),
+    renameContextFolder: (_: unknown, args: { id: string; name: string }) => contextService.renameFolder(args.id, args.name, HUMAN),
+    moveContextFolder: (_: unknown, args: { id: string; parentId?: string | null }) => contextService.moveFolder(args.id, args.parentId ?? null, HUMAN),
+    deleteContextFolder: (_: unknown, args: { id: string }) => contextService.deleteFolder(args.id, HUMAN),
+    createContextInstruction: (
+      _: unknown,
+      { input }: { input: { projectId: string; folderId?: string | null; name: string; description?: string | null; content?: string | null; changeNote?: string | null } },
+    ) => contextService.createInstruction(input.projectId, input, HUMAN),
+    updateContextInstruction: (
+      _: unknown,
+      { id, input }: { id: string; input: { name?: string | null; description?: string | null; content?: string | null; folderId?: string | null; changeNote?: string | null } },
+    ) => contextService.updateInstruction(id, input, HUMAN),
+    deleteContextInstruction: (_: unknown, args: { id: string }) => contextService.deleteInstruction(args.id, HUMAN),
+    restoreContextInstructionVersion: (_: unknown, args: { id: string; version: number }) => contextService.restoreVersion(args.id, args.version, HUMAN),
   },
 
   Subscription: {

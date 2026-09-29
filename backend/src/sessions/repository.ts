@@ -1,5 +1,5 @@
 import { pool } from '../db/pool.js';
-import type { CreateSessionInput, Session, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { CreateSessionInput, Session, SessionActivity, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
@@ -7,6 +7,7 @@ interface SessionRow {
   name: string;
   provider: string;
   status: SessionStatus;
+  activity: SessionActivity | null;
   prompt: string | null;
   config: Record<string, unknown>;
   external_id: string | null;
@@ -33,6 +34,7 @@ function toSession(row: SessionRow): Session {
     name: row.name,
     provider: row.provider,
     status: row.status,
+    activity: row.activity,
     prompt: row.prompt,
     config: row.config ?? {},
     externalId: row.external_id,
@@ -57,6 +59,7 @@ function toEvent(row: EventRow): SessionEvent {
 
 export interface SessionPatch {
   status?: SessionStatus;
+  activity?: SessionActivity | null;
   externalId?: string | null;
   exitCode?: number | null;
   error?: string | null;
@@ -66,6 +69,7 @@ export interface SessionPatch {
 
 const patchColumns: Record<keyof SessionPatch, string> = {
   status: 'status',
+  activity: 'activity',
   externalId: 'external_id',
   exitCode: 'exit_code',
   error: 'error',
@@ -143,7 +147,7 @@ export const sessionRepository = {
   async markRunningAsInterrupted(): Promise<number> {
     const { rowCount } = await pool.query(
       `UPDATE sessions
-       SET status = 'interrupted', ended_at = now(), updated_at = now(),
+       SET status = 'interrupted', activity = NULL, ended_at = now(), updated_at = now(),
            error = COALESCE(error, 'Serveur redémarré pendant l''exécution')
        WHERE status = 'running'`,
     );

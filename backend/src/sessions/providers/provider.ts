@@ -1,6 +1,6 @@
 import type { Project } from '../../projects/types.js';
 import type { CreateRequestInput } from '../../requests/types.js';
-import type { Session } from '../types.js';
+import type { Session, SessionActivity } from '../types.js';
 
 /** Description d'un champ de configuration, exposée au front pour générer le formulaire. */
 export interface ConfigField {
@@ -17,6 +17,8 @@ export interface ProviderDescription {
   type: string;
   label: string;
   description: string;
+  /** true si la session accepte des instructions en cours d'exécution (sendMessage). */
+  interactive: boolean;
   configFields: ConfigField[];
 }
 
@@ -27,6 +29,10 @@ export interface RunContext {
   project: Project;
   /** Dossier de travail : le workspace du projet, déjà créé. */
   cwd: string;
+  /** Première instruction à traiter : le prompt de la session, ou le message qui a relancé une session terminée. */
+  initialMessage: string | null;
+  /** Signale si l'agent travaille ou attend des instructions. */
+  setActivity(activity: SessionActivity): Promise<void>;
   /** Journalise un événement (persisté et diffusé en temps réel). */
   emit(type: string, payload?: Record<string, unknown>): Promise<void>;
   /** Enregistre l'identifiant de la session côté provider (ex. session_id Claude). */
@@ -46,7 +52,14 @@ export interface RunResult {
 /** Poignée sur une exécution en cours, permettant de l'attendre ou de l'arrêter. */
 export interface RunningHandle {
   wait(): Promise<RunResult>;
+  /** Arrêt immédiat (abandon du travail en cours). */
   stop(): Promise<void>;
+  /** Envoie une instruction à l'agent en cours d'exécution (providers interactifs). */
+  sendMessage?(text: string): Promise<void>;
+  /** Fin propre : plus d'instructions, l'agent termine son tour puis la session se termine. */
+  end?(): Promise<void>;
+  /** Interrompt le tour en cours sans terminer la session. */
+  interrupt?(): Promise<void>;
 }
 
 /**

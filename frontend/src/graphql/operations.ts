@@ -2,6 +2,7 @@ import { gql } from '@apollo/client';
 
 export type SessionStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'INTERRUPTED';
 export type RequestStatus = 'PENDING' | 'ANSWERED' | 'CANCELLED' | 'EXPIRED';
+export type SessionActivity = 'BUSY' | 'IDLE';
 
 export interface ConfigField {
   key: string;
@@ -17,6 +18,7 @@ export interface Provider {
   type: string;
   label: string;
   description: string;
+  interactive: boolean;
   configFields: ConfigField[];
 }
 
@@ -40,6 +42,7 @@ export interface Session {
   name: string;
   provider: string;
   status: SessionStatus;
+  activity: SessionActivity | null;
   prompt: string | null;
   config: Record<string, unknown>;
   externalId: string | null;
@@ -50,7 +53,55 @@ export interface Session {
   updatedAt: string;
   startedAt: string | null;
   endedAt: string | null;
-  project: Pick<Project, 'id' | 'name' | 'slug'>;
+  project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
+}
+
+export interface ContextFolder {
+  id: string;
+  projectId: string;
+  parentId: string | null;
+  name: string;
+  slug: string;
+  path: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContextInstructionVersion {
+  id: string;
+  version: number;
+  name: string;
+  description: string;
+  content: string;
+  changeNote: string | null;
+  authorType: 'human' | 'agent';
+  authorSession: { id: string; name: string } | null;
+  createdAt: string;
+}
+
+export interface ContextInstruction {
+  id: string;
+  projectId: string;
+  folderId: string | null;
+  name: string;
+  slug: string;
+  path: string;
+  description: string;
+  content: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  versions?: ContextInstructionVersion[];
+}
+
+export interface ContextChange {
+  id: string;
+  kind: string;
+  path: string;
+  details: Record<string, unknown>;
+  authorType: 'human' | 'agent';
+  authorSession: { id: string; name: string } | null;
+  createdAt: string;
 }
 
 export interface SessionEvent {
@@ -100,6 +151,7 @@ export const SESSION_FIELDS = gql`
     name
     provider
     status
+    activity
     prompt
     config
     externalId
@@ -114,6 +166,7 @@ export const SESSION_FIELDS = gql`
       id
       name
       slug
+      workspacePath
     }
   }
 `;
@@ -146,6 +199,7 @@ export const PROVIDERS = gql`
       type
       label
       description
+      interactive
       configFields {
         key
         label
@@ -270,6 +324,33 @@ export const STOP_SESSION = gql`
   }
 `;
 
+export const SEND_SESSION_MESSAGE = gql`
+  ${SESSION_FIELDS}
+  mutation SendSessionMessage($id: ID!, $text: String!) {
+    sendSessionMessage(id: $id, text: $text) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const END_SESSION = gql`
+  ${SESSION_FIELDS}
+  mutation EndSession($id: ID!) {
+    endSession(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const INTERRUPT_SESSION = gql`
+  ${SESSION_FIELDS}
+  mutation InterruptSession($id: ID!) {
+    interruptSession(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const DELETE_SESSION = gql`
   mutation DeleteSession($id: ID!) {
     deleteSession(id: $id)
@@ -278,8 +359,8 @@ export const DELETE_SESSION = gql`
 
 export const REQUESTS = gql`
   ${REQUEST_FIELDS}
-  query Requests($status: RequestStatus, $sessionId: ID) {
-    requests(status: $status, sessionId: $sessionId) {
+  query Requests($status: RequestStatus, $sessionId: ID, $limit: Int, $newestFirst: Boolean) {
+    requests(status: $status, sessionId: $sessionId, limit: $limit, newestFirst: $newestFirst) {
       ...RequestFields
     }
   }
@@ -299,6 +380,137 @@ export const CANCEL_REQUEST = gql`
   mutation CancelRequest($id: ID!) {
     cancelRequest(id: $id) {
       ...RequestFields
+    }
+  }
+`;
+
+export const CONTEXT_INSTRUCTION_FIELDS = gql`
+  fragment ContextInstructionFields on ContextInstruction {
+    id
+    projectId
+    folderId
+    name
+    slug
+    path
+    description
+    content
+    version
+    createdAt
+    updatedAt
+  }
+`;
+
+export const PROJECT_CONTEXT = gql`
+  ${CONTEXT_INSTRUCTION_FIELDS}
+  query ProjectContext($id: ID!) {
+    project(id: $id) {
+      id
+      name
+      contextFolders {
+        id
+        projectId
+        parentId
+        name
+        slug
+        path
+        createdAt
+        updatedAt
+      }
+      contextInstructions {
+        ...ContextInstructionFields
+      }
+      contextChanges(limit: 100) {
+        id
+        kind
+        path
+        details
+        authorType
+        authorSession {
+          id
+          name
+        }
+        createdAt
+      }
+    }
+  }
+`;
+
+export const CONTEXT_INSTRUCTION = gql`
+  ${CONTEXT_INSTRUCTION_FIELDS}
+  query ContextInstruction($id: ID!) {
+    contextInstruction(id: $id) {
+      ...ContextInstructionFields
+      versions {
+        id
+        version
+        name
+        description
+        content
+        changeNote
+        authorType
+        authorSession {
+          id
+          name
+        }
+        createdAt
+      }
+    }
+  }
+`;
+
+export const CREATE_CONTEXT_FOLDER = gql`
+  mutation CreateContextFolder($projectId: ID!, $parentId: ID, $name: String!) {
+    createContextFolder(projectId: $projectId, parentId: $parentId, name: $name) {
+      id
+      path
+    }
+  }
+`;
+
+export const RENAME_CONTEXT_FOLDER = gql`
+  mutation RenameContextFolder($id: ID!, $name: String!) {
+    renameContextFolder(id: $id, name: $name) {
+      id
+      path
+    }
+  }
+`;
+
+export const DELETE_CONTEXT_FOLDER = gql`
+  mutation DeleteContextFolder($id: ID!) {
+    deleteContextFolder(id: $id)
+  }
+`;
+
+export const CREATE_CONTEXT_INSTRUCTION = gql`
+  ${CONTEXT_INSTRUCTION_FIELDS}
+  mutation CreateContextInstruction($input: CreateContextInstructionInput!) {
+    createContextInstruction(input: $input) {
+      ...ContextInstructionFields
+    }
+  }
+`;
+
+export const UPDATE_CONTEXT_INSTRUCTION = gql`
+  ${CONTEXT_INSTRUCTION_FIELDS}
+  mutation UpdateContextInstruction($id: ID!, $input: UpdateContextInstructionInput!) {
+    updateContextInstruction(id: $id, input: $input) {
+      ...ContextInstructionFields
+    }
+  }
+`;
+
+export const DELETE_CONTEXT_INSTRUCTION = gql`
+  mutation DeleteContextInstruction($id: ID!) {
+    deleteContextInstruction(id: $id)
+  }
+`;
+
+export const RESTORE_CONTEXT_INSTRUCTION_VERSION = gql`
+  ${CONTEXT_INSTRUCTION_FIELDS}
+  mutation RestoreContextInstructionVersion($id: ID!, $version: Int!) {
+    restoreContextInstructionVersion(id: $id, version: $version) {
+      ...ContextInstructionFields
     }
   }
 `;

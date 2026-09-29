@@ -1,4 +1,6 @@
 export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+/** Pour une session en cours : l'agent travaille ('busy') ou attend des instructions ('idle'). */
+export type SessionActivity = 'busy' | 'idle';
 
 export interface Session {
   id: string;
@@ -6,6 +8,7 @@ export interface Session {
   name: string;
   provider: string;
   status: SessionStatus;
+  activity: SessionActivity | null;
   prompt: string | null;
   config: Record<string, unknown>;
   externalId: string | null;
