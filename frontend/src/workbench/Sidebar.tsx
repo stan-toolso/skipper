@@ -2,7 +2,23 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { CREATE_TERMINAL, CREATE_WORKTREE, REQUESTS, SIDEBAR, type HumanRequest, type Session, type SessionActivity, type SessionStatus, type Terminal } from '../graphql/operations';
+import {
+  CLOSE_TERMINAL,
+  CREATE_TERMINAL,
+  CREATE_WORKTREE,
+  DELETE_SESSION,
+  DELETE_TERMINAL,
+  DELETE_WORKTREE,
+  REQUESTS,
+  SIDEBAR,
+  STOP_SESSION,
+  type HumanRequest,
+  type Session,
+  type SessionActivity,
+  type SessionStatus,
+  type Terminal,
+} from '../graphql/operations';
+import { useTabs } from './TabsContext';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
@@ -51,9 +67,13 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [onClose]);
+  const [deleteWorktree] = useMutation(DELETE_WORKTREE, { refetchQueries: ['Sidebar', 'ProjectWorktrees'] });
   const wtParam = worktreeId ? `&worktreeId=${worktreeId}` : '';
   return (
     <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
+      <Link to={worktreeId ? `/worktrees/${worktreeId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
+        <i className="bi bi-folder2-open wb-icon" /> Fichiers
+      </Link>
       <Link to={`/sessions/new?projectId=${projectId}${wtParam}`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-chat-dots wb-icon" /> Nouvelle session d'agent
       </Link>
@@ -72,6 +92,23 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
         >
           <i className="bi bi-diagram-2 wb-icon" /> {creatingWt ? 'Création…' : 'Nouveau worktree'}
         </button>
+      )}
+      {worktreeId && (
+        <>
+          <div className="wb-pop-sep" />
+          <button
+            type="button"
+            className="wb-pop-item danger"
+            onClick={() => {
+              if (!window.confirm('Supprimer ce worktree (son dossier) ? Les fichiers non validés seront perdus.')) return;
+              const deleteBranch = window.confirm('Supprimer aussi la branche locale ? (Annuler = la garder)');
+              onClose();
+              deleteWorktree({ variables: { id: worktreeId, deleteBranch } }).catch((err) => window.alert(err.message));
+            }}
+          >
+            <i className="bi bi-trash wb-icon" /> Supprimer le worktree
+          </button>
+        </>
       )}
       {!worktreeId && (
         <>
@@ -100,25 +137,163 @@ function FilesRow({ to, active, indent }: { to: string; active: boolean; indent:
   );
 }
 
+interface MenuItem {
+  label: string;
+  icon: string;
+  to?: string;
+  onClick?: () => void;
+  danger?: boolean;
+  separatorBefore?: boolean;
+}
+
+/**
+ * Ligne de l'explorateur (session, terminal) avec menu « ⋯ » au survol et au clic droit.
+ * Le menu propose notamment la suppression.
+ */
+function RowWithMenu({ to, active, indent, title, items, children }: { to: string; active: boolean; indent: number; title: string; items: MenuItem[]; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+    };
+  }, [open]);
+  return (
+    <Link
+      to={to}
+      className={`wb-row wb-session-row${active ? ' active' : ''}`}
+      style={{ paddingLeft: indent }}
+      title={title}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(true);
+      }}
+    >
+      {children}
+      <span className={`wb-row-actions${open ? ' open' : ''}`}>
+        <button
+          type="button"
+          className="wb-plus"
+          title="Actions"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+        >
+          <i className="bi bi-three-dots" />
+        </button>
+        {open && (
+          <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
+            {items.map((it) => (
+              <div key={it.label}>
+                {it.separatorBefore && <div className="wb-pop-sep" />}
+                {it.to ? (
+                  <Link to={it.to} className={`wb-pop-item${it.danger ? ' danger' : ''}`} onClick={() => setOpen(false)}>
+                    <i className={`bi ${it.icon} wb-icon`} /> {it.label}
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className={`wb-pop-item${it.danger ? ' danger' : ''}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setOpen(false);
+                      it.onClick?.();
+                    }}
+                  >
+                    <i className={`bi ${it.icon} wb-icon`} /> {it.label}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </span>
+    </Link>
+  );
+}
+
+function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean; indent: number }) {
+  const navigate = useNavigate();
+  const { closeTab } = useTabs();
+  const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
+  const [deleteSession] = useMutation(DELETE_SESSION, { refetchQueries: ['Sidebar', 'Sessions'] });
+  const dot = statusDot(s.status, s.activity);
+  const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
+  const items: MenuItem[] = [
+    { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
+    ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch((e: Error) => window.alert(e.message)) }] : []),
+    {
+      label: 'Supprimer',
+      icon: 'bi-trash',
+      danger: true,
+      separatorBefore: true,
+      onClick: () => {
+        if (!window.confirm(`Supprimer la session « ${s.name} » et son historique ?`)) return;
+        deleteSession({ variables: { id: s.id } })
+          .then(() => {
+            closeTab(`/sessions/${s.id}`);
+            if (active) navigate('/sessions');
+          })
+          .catch((e: Error) => window.alert(e.message));
+      },
+    },
+  ];
+  return (
+    <RowWithMenu to={`/sessions/${s.id}`} active={active} indent={indent} title={dot.title} items={items}>
+      <span className={`wb-dot ${dot.cls}`} />
+      <span className="wb-row-label">{s.name}</span>
+      {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
+    </RowWithMenu>
+  );
+}
+
+function TerminalRow({ t, active, indent }: { t: SidebarTerminal; active: boolean; indent: number }) {
+  const navigate = useNavigate();
+  const { closeTab } = useTabs();
+  const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'] });
+  const [deleteTerminal] = useMutation(DELETE_TERMINAL, { refetchQueries: ['Sidebar'] });
+  const items: MenuItem[] = [
+    { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
+    ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch((e: Error) => window.alert(e.message)) }] : []),
+    {
+      label: 'Supprimer',
+      icon: 'bi-trash',
+      danger: true,
+      separatorBefore: true,
+      onClick: () => {
+        if (!window.confirm(`Supprimer le terminal « ${t.name} » ?`)) return;
+        deleteTerminal({ variables: { id: t.id } })
+          .then(() => {
+            closeTab(`/terminals/${t.id}`);
+            if (active) navigate('/');
+          })
+          .catch((e: Error) => window.alert(e.message));
+      },
+    },
+  ];
+  return (
+    <RowWithMenu to={`/terminals/${t.id}`} active={active} indent={indent} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'} items={items}>
+      <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />
+      <span className="wb-row-label">{t.name}</span>
+    </RowWithMenu>
+  );
+}
+
 function SessionRows({ sessions, terminals, activeSessionId, activeTerminalId, indent }: { sessions: SidebarSession[]; terminals: SidebarTerminal[]; activeSessionId?: string; activeTerminalId?: string; indent: number }) {
   return (
     <>
-      {sessions.map((s) => {
-        const dot = statusDot(s.status, s.activity);
-        const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
-        return (
-          <Link key={s.id} to={`/sessions/${s.id}`} className={`wb-row wb-session-row${s.id === activeSessionId ? ' active' : ''}`} style={{ paddingLeft: indent }} title={dot.title}>
-            <span className={`wb-dot ${dot.cls}`} />
-            <span className="wb-row-label">{s.name}</span>
-            {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
-          </Link>
-        );
-      })}
+      {sessions.map((s) => (
+        <SessionRow key={s.id} s={s} active={s.id === activeSessionId} indent={indent} />
+      ))}
       {terminals.map((t) => (
-        <Link key={t.id} to={`/terminals/${t.id}`} className={`wb-row wb-session-row${t.id === activeTerminalId ? ' active' : ''}`} style={{ paddingLeft: indent }} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'}>
-          <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />
-          <span className="wb-row-label">{t.name}</span>
-        </Link>
+        <TerminalRow key={t.id} t={t} active={t.id === activeTerminalId} indent={indent} />
       ))}
     </>
   );
@@ -254,7 +429,15 @@ export default function Sidebar() {
                   const wOpen = !collapsed[w.id];
                   return (
                     <div key={w.id}>
-                      <div className="wb-row wb-worktree-row" title={w.exists ? `Worktree · branche ${w.branch}` : 'Worktree absent du disque'}>
+                      <div
+                        className="wb-row wb-worktree-row"
+                        title={w.exists ? `Worktree · branche ${w.branch}` : 'Worktree absent du disque'}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setMenuFor(w.id);
+                        }}
+                      >
                         <button type="button" className="wb-chevron" onClick={() => toggle(w.id)}>
                           <i className={`bi bi-chevron-${wOpen ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
                         </button>
@@ -265,13 +448,13 @@ export default function Sidebar() {
                           <button
                             type="button"
                             className="wb-plus"
-                            title="Nouvelle session ou terminal dans ce worktree"
+                            title="Actions du worktree"
                             onClick={(e) => {
                               e.stopPropagation();
                               setMenuFor(menuFor === w.id ? null : w.id);
                             }}
                           >
-                            <i className="bi bi-plus-lg" />
+                            <i className="bi bi-three-dots" />
                           </button>
                           {menuFor === w.id && <AddMenu projectId={p.id} worktreeId={w.id} canWorktree={false} onClose={() => setMenuFor(null)} />}
                         </span>

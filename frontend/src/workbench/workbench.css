@@ -73,7 +73,11 @@
 .wb-row-actions { visibility: hidden; display: flex; gap: 6px; }
 .wb-row-actions a { color: var(--cc-dim); text-decoration: none; }
 .wb-row-actions a:hover { color: var(--cc-accent); }
-.wb-project-row:hover .wb-row-actions, .wb-row-actions.open { visibility: visible; }
+.wb-project-row:hover .wb-row-actions, .wb-session-row:hover .wb-row-actions, .wb-row-actions.open { visibility: visible; }
+.wb-session-row .wb-row-actions { margin-left: 4px; }
+.wb-pop-sep { border-top: 1px solid var(--cc-border); margin: 4px 0; }
+.wb-pop-item.danger { color: #e5534b; }
+.wb-pop-item.danger:hover { color: #ff6b63; }
 .wb-row-actions { position: relative; }
 .wb-plus { background: none; border: 0; color: var(--cc-dim); font: inherit; font-size: 15px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 3px; }
 .wb-plus:hover { color: var(--cc-fg); background: var(--cc-border); }
