@@ -9,7 +9,7 @@ import { AppError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { worktreesRoot } from '../worktrees/service.js';
-import type { Runner, RunnerConfig, RunnerStatus, SpawnSpec } from './types.js';
+import { PLAYWRIGHT_MCP_ARGS, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +37,7 @@ export class DockerRunner implements Runner {
     return `skipper-${project.slug}`;
   }
 
-  private settings(project: Project): Required<RunnerConfig> {
+  private settings(project: Project): Required<Pick<RunnerConfig, 'image' | 'memory' | 'cpus'>> {
     const c = (project.runnerConfig ?? {}) as RunnerConfig;
     return { image: c.image || config.runnerImage, memory: c.memory || config.runnerMemory, cpus: c.cpus || config.runnerCpus };
   }
@@ -137,5 +137,11 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   async shellCommand(project: Project, cwd: string, _shell: string, script: string): Promise<SpawnSpec> {
     await this.ensureReady(project);
     return { command: 'docker', args: ['exec', '-i', '-w', cwd, ...PASSTHROUGH_ENV.flatMap((v) => ['-e', v]), this.containerName(project), 'sh', '-c', script] };
+  }
+
+  /** Playwright MCP installé dans l'image (`playwright-mcp`), captures d'écran dans le dossier de travail. */
+  async browserMcpCommand(project: Project, cwd: string): Promise<SpawnSpec> {
+    await this.ensureReady(project);
+    return { command: 'docker', args: ['exec', '-i', '-w', cwd, this.containerName(project), 'playwright-mcp', ...PLAYWRIGHT_MCP_ARGS, '--output-dir', `${cwd}/.playwright-mcp`] };
   }
 }

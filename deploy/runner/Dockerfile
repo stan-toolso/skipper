@@ -11,6 +11,13 @@ RUN apt-get update \
 # CLI Claude Code (mis à jour en reconstruisant l'image).
 RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
+# Navigateur headless pour les agents (option « navigateur » du projet) : serveur MCP Playwright et
+# son Chromium, installés dans un dossier lisible par tout uid (les conteneurs tournent avec l'uid hôte).
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npm install -g @playwright/mcp \
+ && cd "$(npm root -g)/@playwright/mcp" && npx playwright install --with-deps chromium \
+ && chmod -R a+rX /opt/ms-playwright && npm cache clean --force && rm -rf /var/lib/apt/lists/*
+
 # Les conteneurs sont lancés avec l'uid/gid de l'utilisateur hôte ; ce dossier accueille les caches npm.
 RUN mkdir -p /tmp/home && chmod 1777 /tmp/home
 ENV TERM=xterm-256color LANG=C.UTF-8

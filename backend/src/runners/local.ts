@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import type { Project } from '../projects/types.js';
-import type { Runner, RunnerStatus, SpawnSpec } from './types.js';
+import { PLAYWRIGHT_MCP_ARGS, type Runner, type RunnerStatus, type SpawnSpec } from './types.js';
 
 /** Exécution directe sur le serveur, avec l'utilisateur système de Skipper. */
 export class LocalRunner implements Runner {
@@ -26,5 +26,9 @@ export class LocalRunner implements Runner {
   }
   async shellCommand(_project: Project, _cwd: string, shell: string, script: string): Promise<SpawnSpec> {
     return { command: shell || '/bin/sh', args: ['-c', script] };
+  }
+  /** Playwright MCP via npx ; Chromium doit avoir été installé sur le serveur (`npx playwright install chromium`). */
+  async browserMcpCommand(_project: Project, cwd: string): Promise<SpawnSpec> {
+    return { command: 'npx', args: ['-y', '@playwright/mcp@latest', ...PLAYWRIGHT_MCP_ARGS, '--output-dir', `${cwd}/.playwright-mcp`] };
   }
 }

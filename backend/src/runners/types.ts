@@ -10,6 +10,8 @@ export interface RunnerConfig {
   memory?: string;
   /** Limite CPU, ex. "1" ou "0.5". */
   cpus?: string;
+  /** Navigateur headless (serveur MCP Playwright) mis à disposition des agents. */
+  browser?: boolean;
 }
 
 export interface RunnerStatus {
@@ -51,4 +53,9 @@ export interface Runner {
   terminalCommand(project: Project, cwd: string): Promise<SpawnSpec>;
   /** Exécution d'un script shell dans `cwd` (provider shell). */
   shellCommand(project: Project, cwd: string, shell: string, script: string): Promise<SpawnSpec>;
+  /** Serveur MCP Playwright (navigateur headless) lancé dans l'environnement du projet, en stdio. */
+  browserMcpCommand(project: Project, cwd: string): Promise<SpawnSpec>;
 }
+
+/** Options communes du serveur MCP Playwright : sans fenêtre, profil jetable, une seule origine de sortie. */
+export const PLAYWRIGHT_MCP_ARGS = ['--headless', '--isolated', '--browser', 'chromium', '--no-sandbox'];

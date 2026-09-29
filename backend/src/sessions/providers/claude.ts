@@ -157,12 +157,18 @@ export class ClaudeProvider implements SessionProvider {
     Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
+    const runner = runnerFor(ctx.project);
+    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans l'environnement du runner.
+    const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
     // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches et des connexions.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
       await contextService.promptSummary(ctx.project.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
+      browserEnabled
+        ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles."
+        : '',
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -171,6 +177,9 @@ export class ClaudeProvider implements SessionProvider {
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
     const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
+    const browserServer = browserEnabled ? await runner.browserMcpCommand(ctx.project, ctx.cwd) : null;
+    // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
+    const browserReadTools = ['mcp__playwright__browser_snapshot', 'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_console_messages', 'mcp__playwright__browser_network_requests', 'mcp__playwright__browser_wait_for'];
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
@@ -178,6 +187,7 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
+        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, env: { ...process.env, ...browserServer.env } as Record<string, string> } } : {}),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
@@ -190,11 +200,11 @@ export class ClaudeProvider implements SessionProvider {
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
-      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks'],
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', ...(browserServer ? browserReadTools : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
-      pathToClaudeCodeExecutable: await runnerFor(ctx.project).claudeExecutable(ctx.project),
+      pathToClaudeCodeExecutable: await runner.claudeExecutable(ctx.project),
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
@@ -203,7 +213,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();

@@ -74,7 +74,7 @@ export interface Project {
   gitUrl: string | null;
   gitBranch: string | null;
   runner: 'local' | 'docker';
-  runnerConfig: { image?: string; memory?: string; cpus?: string };
+  runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean };
   runnerStatus: RunnerStatus;
   workspacePath: string;
   workspaceExists: boolean;

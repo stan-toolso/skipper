@@ -152,6 +152,14 @@ Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no
 (bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
 prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 
+## Image du runner Docker
+
+Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, Playwright/Chromium pour
+l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
+(≈ 1 Go, l'ARM64 télécharge son propre Chromium), puis « Recréer » le conteneur sur la page de
+chaque projet concerné. Le serveur n'a que 1,8 Go de RAM : une session avec navigateur prend 300 à
+500 Mo de plus, donc une seule à la fois et une limite mémoire du conteneur à 1,5 Go.
+
 ## Vérifications
 
 ```bash

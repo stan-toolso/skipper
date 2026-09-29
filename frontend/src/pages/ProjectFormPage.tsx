@@ -68,6 +68,7 @@ export default function ProjectFormPage() {
   const [runnerImage, setRunnerImage] = useState('');
   const [runnerMemory, setRunnerMemory] = useState('');
   const [runnerCpus, setRunnerCpus] = useState('');
+  const [runnerBrowser, setRunnerBrowser] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(isEdit);
 
   useEffect(() => {
@@ -83,11 +84,13 @@ export default function ProjectFormPage() {
     setRunnerImage(p.runnerConfig?.image ?? '');
     setRunnerMemory(p.runnerConfig?.memory ?? '');
     setRunnerCpus(p.runnerConfig?.cpus ?? '');
+    setRunnerBrowser(Boolean(p.runnerConfig?.browser));
   }, [data]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const runnerConfig = Object.fromEntries(Object.entries({ image: runnerImage.trim(), memory: runnerMemory.trim(), cpus: runnerCpus.trim() }).filter(([, v]) => v));
+    const runnerConfig: Record<string, unknown> = Object.fromEntries(Object.entries({ image: runnerImage.trim(), memory: runnerMemory.trim(), cpus: runnerCpus.trim() }).filter(([, v]) => v));
+    if (runnerBrowser) runnerConfig.browser = true;
     const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runner, runnerConfig };
     if (isEdit) updateProject({ variables: { id, input: common } });
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
@@ -139,6 +142,20 @@ export default function ProjectFormPage() {
                 {runner === 'docker'
                   ? "Les agents, terminaux et commandes tournent dans un conteneur qui ne voit que ce projet, avec des limites de mémoire et de CPU. Nécessite Docker sur le serveur."
                   : "Les agents et terminaux tournent directement sur le serveur, avec l'utilisateur de Skipper."}
+              </Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Check
+                type="switch"
+                id="runnerBrowser"
+                label="Navigateur headless pour les agents (Playwright)"
+                checked={runnerBrowser}
+                onChange={(e) => setRunnerBrowser(e.target.checked)}
+              />
+              <Form.Text>
+                Les agents peuvent ouvrir des pages, cliquer et remplir des formulaires dans un Chromium sans fenêtre, pour tester une interface web. Compte 300 à 500 Mo de mémoire en plus par session
+                {runner === 'docker' ? ' : prévoyez une limite mémoire de 1,5 Go pour le conteneur.' : ' ; Chromium doit être installé sur le serveur (npx playwright install chromium).'}
               </Form.Text>
             </Form.Group>
 

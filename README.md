@@ -282,6 +282,16 @@ projet ; les autres membres les voient sans les modifier.
   web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
   page du projet (démarrer, arrêter, recréer).
 
+- **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
+  `runner_config.browser`) : un serveur MCP Playwright (`@playwright/mcp`, Chromium sans fenêtre)
+  est déclaré à chaque session sous le nom `playwright`. Avec le runner docker il est lancé par
+  `docker exec` dans le conteneur (image `skipper-runner` : Playwright et Chromium sont dans
+  `/opt/ms-playwright`) ; avec le runner local via `npx @playwright/mcp` (installer Chromium sur le
+  serveur : `npx playwright install chromium`). Les outils d'observation (instantané de la page,
+  capture d'écran, console, réseau, attente) sont autorisés d'office ; navigation, clics et saisies
+  passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
+  `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.
+
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
 demandes en attente à `expired` et les terminaux à `closed`.
 
