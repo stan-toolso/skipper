@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Card, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool, suggestedRules } from '../lib/humanize';
+import { describeTool, editableRules, parseRuleLines, suggestedModes } from '../lib/humanize';
 import Markdown from './Markdown';
 
 interface Question {
@@ -17,8 +17,12 @@ interface Question {
 function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; onAnswer: (r: Record<string, unknown>) => void; busy: boolean }) {
   const [message, setMessage] = useState('');
   const p = request.payload as { toolName?: string; input?: Record<string, unknown>; suggestions?: unknown[] };
-  const rules = suggestedRules(p.suggestions);
-  const canAlways = rules.length > 0;
+  // Règles à mémoriser : suggestions du SDK généralisées par préfixe, modifiables avant de répondre.
+  const proposed = editableRules(p.suggestions);
+  const [ruleText, setRuleText] = useState(proposed.join('\n'));
+  const rules = [...suggestedModes(p.suggestions), ...parseRuleLines(ruleText)];
+  const canAlways = proposed.length > 0 || rules.length > 0;
+  const remember = (scope: 'session' | 'project') => onAnswer({ decision: 'allow', scope, ...(proposed.length ? { rules: parseRuleLines(ruleText) } : {}) });
   const desc = describeTool(p.toolName ?? 'outil', p.input ?? {});
   const content = typeof p.input?.content === 'string' ? p.input.content : undefined;
   return (
@@ -29,6 +33,12 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
           {[desc.detail, content].filter(Boolean).join('\n\n')}
         </pre>
       )}
+      {proposed.length > 0 && (
+        <Form.Group className="mb-2">
+          <Form.Label className="small text-secondary mb-1">Règle retenue par « Toujours » (modifiable, une par ligne)</Form.Label>
+          <Form.Control as="textarea" size="sm" className="font-monospace" rows={Math.min(Math.max(proposed.length, 1), 6)} spellCheck={false} value={ruleText} onChange={(e) => setRuleText(e.target.value)} />
+        </Form.Group>
+      )}
       <Form.Control size="sm" className="mb-2" placeholder="Motif ou consigne en cas de refus (optionnel)" value={message} onChange={(e) => setMessage(e.target.value)} />
       <div className="d-flex gap-2">
         <Button size="sm" variant="success" disabled={busy} onClick={() => onAnswer({ decision: 'allow' })}>
@@ -36,10 +46,10 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
         </Button>
         {canAlways && (
           <>
-            <Button size="sm" variant="outline-success" disabled={busy} title={rules.join(', ')} onClick={() => onAnswer({ decision: 'allow', scope: 'session' })}>
+            <Button size="sm" variant="outline-success" disabled={busy} title={rules.join(', ')} onClick={() => remember('session')}>
               Toujours pour cette session
             </Button>
-            <Button size="sm" variant="outline-success" disabled={busy} title={`${rules.join(', ')} — mémorisé pour toutes les sessions du projet`} onClick={() => onAnswer({ decision: 'allow', scope: 'project' })}>
+            <Button size="sm" variant="outline-success" disabled={busy} title={`${rules.join(', ')} — mémorisé pour toutes les sessions du projet`} onClick={() => remember('project')}>
               Toujours dans ce projet
             </Button>
           </>

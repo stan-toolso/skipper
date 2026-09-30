@@ -1,7 +1,7 @@
 import { useMutation } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool, suggestedRules } from '../lib/humanize';
+import { describeTool, editableRules, parseRuleLines, suggestedModes } from '../lib/humanize';
 import { canAutoFocus } from '../lib/device';
 import Markdown from './Markdown';
 
@@ -59,9 +59,14 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
   const p = request.payload as { toolName?: string; input?: Record<string, unknown>; suggestions?: unknown[] };
   const [denying, setDenying] = useState(false);
   const [message, setMessage] = useState('');
-  const rules = suggestedRules(p.suggestions);
-  const canAlways = rules.length > 0;
-  const ruleHint = rules.join(', ');
+  // Règles à mémoriser : suggestions du SDK généralisées par préfixe, modifiables avant de répondre.
+  const proposed = editableRules(p.suggestions);
+  const [ruleText, setRuleText] = useState(proposed.join('\n'));
+  const rules = parseRuleLines(ruleText);
+  const modes = suggestedModes(p.suggestions);
+  const canAlways = proposed.length > 0 || modes.length > 0;
+  const ruleHint = [...modes, ...(proposed.length ? [rules.length ? `règle${rules.length > 1 ? 's' : ''} ci-dessus` : 'aucune règle'] : [])].join(', ');
+  const remember = (scope: 'session' | 'project') => ({ decision: 'allow', scope, ...(proposed.length ? { rules } : {}) });
   const input = p.input ?? {};
   const desc = describeTool(p.toolName ?? 'outil', input);
   const detail = desc.detail ?? (typeof input.content === 'string' ? undefined : JSON.stringify(input, null, 2));
@@ -71,8 +76,8 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
     { label: 'Oui, autoriser', value: () => ({ decision: 'allow' }) },
     ...(canAlways
       ? [
-          { label: 'Oui, et ne plus demander pour cette session', description: ruleHint, value: () => ({ decision: 'allow', scope: 'session' }) } as Option,
-          { label: 'Oui, et ne plus demander dans ce projet', description: `${ruleHint} (mémorisé pour toutes les sessions du projet)`, value: () => ({ decision: 'allow', scope: 'project' }) } as Option,
+          { label: 'Oui, et ne plus demander pour cette session', description: ruleHint, value: () => remember('session') } as Option,
+          { label: 'Oui, et ne plus demander dans ce projet', description: `${ruleHint} (mémorisé pour toutes les sessions du projet)`, value: () => remember('project') } as Option,
         ]
       : []),
     { label: "Non, et expliquer ce qu'il faut faire à la place", value: () => 'deny-with-message' as const },
@@ -84,6 +89,12 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
       {detail && <div className="cc-prompt-body">{detail}</div>}
       {content && <div className="cc-prompt-body">{content.length > 1500 ? `${content.slice(0, 1500)}\n…` : content}</div>}
       {request.message && <Markdown className="cc-prompt-body" text={request.message} />}
+      {proposed.length > 0 && !denying && (
+        <label className="cc-rule-edit">
+          <span className="cc-desc">Règle à retenir si vous ne voulez plus être sollicité (modifiable, une par ligne) :</span>
+          <textarea rows={Math.min(Math.max(rules.length, 1), 6)} spellCheck={false} disabled={busy} value={ruleText} onChange={(e) => setRuleText(e.target.value)} />
+        </label>
+      )}
       <div>Êtes-vous d'accord ?</div>
       {!denying ? (
         <OptionList

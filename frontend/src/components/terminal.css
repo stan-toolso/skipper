@@ -152,6 +152,11 @@
   margin-top: 6px;
 }
 
+/* Règle à mémoriser, modifiable avant de répondre */
+.cc-prompt .cc-rule-edit { display: block; margin: 4px 0 8px; }
+.cc-prompt .cc-rule-edit .cc-desc { color: var(--cc-dim); }
+.cc-prompt .cc-rule-edit textarea { resize: vertical; white-space: pre; }
+
 /* Barre d'état + zone de saisie */
 .cc-status {
   font-family: var(--bs-font-sans-serif);

@@ -92,9 +92,15 @@ import {
   type Session,
   type Worktree,
 } from '../graphql/operations';
-import { projectRoleLabels } from '../lib/humanize';
+import { projectRoleLabels, timeAgo } from '../lib/humanize';
 import { useAuth } from '../auth/AuthContext';
-import { ADD_PROJECT_PERMISSION_RULE, DELETE_PROJECT_PERMISSION_RULE, PROJECT_PERMISSION_RULES, type PermissionRule } from '../graphql/operations';
+import { ADD_PROJECT_PERMISSION_RULE, DELETE_PROJECT_PERMISSION_RULE, DELETE_PROJECT_PERMISSION_RULES, PROJECT_PERMISSION_RULES, UPDATE_PROJECT_PERMISSION_RULE, type PermissionRule } from '../graphql/operations';
+
+/** Utilisation d'une règle : nombre d'appels autorisés et dernière utilisation, ou absence d'utilisation depuis le début du suivi. */
+function ruleUsage(r: PermissionRule): string {
+  if (!r.useCount || !r.lastUsedAt) return `jamais utilisée depuis le ${new Date(r.usageTrackedSince).toLocaleDateString()}`;
+  return `utilisée ${r.useCount} fois, dernière fois ${timeAgo(r.lastUsedAt)}`;
+}
 
 /** Autorisations d'outils mémorisées pour le projet (réponse « ne plus demander dans ce projet »), avec ajout et retrait. */
 function PermissionRulesCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
@@ -102,17 +108,49 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
   const refetch = { refetchQueries: ['ProjectPermissionRules'] };
   const [addRule, { loading: adding, error: addError }] = useMutation(ADD_PROJECT_PERMISSION_RULE, refetch);
   const [deleteRule, { error: deleteError }] = useMutation(DELETE_PROJECT_PERMISSION_RULE, refetch);
+  const [deleteRules, { loading: deletingMany, error: deleteManyError }] = useMutation(DELETE_PROJECT_PERMISSION_RULES, refetch);
+  const [updateRule, { loading: updating, error: updateError }] = useMutation(UPDATE_PROJECT_PERMISSION_RULE, refetch);
+  const { confirm } = useDialogs();
   const [toolName, setToolName] = useState('');
   const [ruleContent, setRuleContent] = useState('');
+  // Règle en cours de modification : identifiant et texte complet (Outil ou Outil(motif)).
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const rules = data?.project?.permissionRules ?? [];
-  const error = addError ?? deleteError;
+  const unused = rules.filter((r) => !r.useCount);
+  const error = addError ?? deleteError ?? deleteManyError ?? updateError;
+  const saveEdit = () => {
+    if (!editing?.text.trim()) return;
+    updateRule({ variables: { id: editing.id, rule: editing.text.trim() } })
+      .then(() => setEditing(null))
+      .catch(() => undefined);
+  };
+  const removeUnused = async () => {
+    const ok = await confirm({
+      title: 'Retirer les règles jamais utilisées',
+      message: (
+        <>
+          <p>Ces règles n'ont autorisé aucun appel d'outil depuis le début du suivi : les prochaines sessions redemanderont.</p>
+          <ul className="small mb-0">
+            {unused.map((r) => (
+              <li key={r.id}>
+                <code>{r.rule}</code> <span className="text-secondary">— {ruleUsage(r)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ),
+      confirmLabel: `Retirer ${unused.length} règle${unused.length > 1 ? 's' : ''}`,
+      danger: true,
+    });
+    if (ok) deleteRules({ variables: { projectId, ids: unused.map((r) => r.id) } }).catch(() => undefined);
+  };
   return (
     <Card className="mt-3">
       <Card.Header>Autorisations mémorisées</Card.Header>
       <Card.Body className="small">
         <p className="text-secondary">
-          Quand un agent demande une autorisation, « ne plus demander dans ce projet » enregistre la règle ici : toutes les sessions du projet l'appliquent sans redemander. Retirer une règle ne
-          concerne que les prochaines sessions.
+          Quand un agent demande une autorisation, « ne plus demander dans ce projet » enregistre la règle ici : toutes les sessions du projet l'appliquent sans redemander. Modifier ou retirer une
+          règle ne concerne que les prochaines sessions. Une règle Bash en <code>préfixe *</code> (ex. <code>git checkout *</code>) couvre toutes les commandes qui commencent ainsi.
         </p>
         <Table size="sm" className="mb-3 align-middle">
           <tbody>
@@ -124,9 +162,29 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
             {rules.map((r) => (
               <tr key={r.id}>
                 <td>
-                  <code>{r.rule}</code>
+                  {editing?.id === r.id ? (
+                    <Form
+                      className="d-flex gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEdit();
+                      }}
+                    >
+                      <Form.Control size="sm" className="font-monospace" autoFocus value={editing.text} onChange={(e) => setEditing({ id: r.id, text: e.target.value })} onKeyDown={(e) => e.key === 'Escape' && setEditing(null)} />
+                      <Button type="submit" size="sm" variant="outline-primary" disabled={updating || !editing.text.trim()}>
+                        Enregistrer
+                      </Button>
+                      <Button size="sm" variant="link" className="text-secondary" onClick={() => setEditing(null)}>
+                        Annuler
+                      </Button>
+                    </Form>
+                  ) : (
+                    <code role={canManage ? 'button' : undefined} title={canManage ? 'Cliquer pour modifier' : undefined} onClick={() => canManage && setEditing({ id: r.id, text: r.rule })}>
+                      {r.rule}
+                    </code>
+                  )}
                   <div className="text-secondary">
-                    {new Date(r.createdAt).toLocaleDateString()}
+                    {ruleUsage(r)} · créée le {new Date(r.createdAt).toLocaleDateString()}
                     {r.createdBySession && (
                       <>
                         {' '}
@@ -136,7 +194,12 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
                   </div>
                 </td>
                 {canManage && (
-                  <td className="text-end" style={{ width: 90 }}>
+                  <td className="text-end text-nowrap" style={{ width: 170 }}>
+                    {editing?.id !== r.id && (
+                      <Button size="sm" variant="outline-secondary" className="me-2" onClick={() => setEditing({ id: r.id, text: r.rule })}>
+                        Modifier
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline-danger" onClick={() => deleteRule({ variables: { id: r.id } })}>
                       Retirer
                     </Button>
@@ -146,6 +209,11 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
             ))}
           </tbody>
         </Table>
+        {canManage && unused.length > 0 && (
+          <Button size="sm" variant="outline-danger" className="mb-3" disabled={deletingMany} onClick={() => void removeUnused()}>
+            Retirer les règles jamais utilisées ({unused.length})
+          </Button>
+        )}
         {canManage && (
           <Form
             className="d-flex gap-2 align-items-end flex-wrap"
@@ -164,7 +232,7 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
             </Form.Group>
             <Form.Group>
               <Form.Label className="mb-1">Motif (optionnel)</Form.Label>
-              <Form.Control size="sm" value={ruleContent} onChange={(e) => setRuleContent(e.target.value)} placeholder="ex. git status:* ou npm test:*" style={{ width: 260 }} />
+              <Form.Control size="sm" value={ruleContent} onChange={(e) => setRuleContent(e.target.value)} placeholder="ex. git status * ou npm test *" style={{ width: 260 }} />
             </Form.Group>
             <Button type="submit" size="sm" variant="outline-primary" disabled={adding || !toolName.trim()}>
               {adding ? 'Ajout…' : 'Ajouter'}

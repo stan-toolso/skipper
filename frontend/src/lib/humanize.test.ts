@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { describeTool, formatCost, formatDuration, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
+import { describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
 
 describe('describeTool', () => {
   it('décrit une commande Bash et tronque une longue commande dans la demande', () => {
@@ -85,5 +85,31 @@ describe('suggestedRules', () => {
       ]),
     ).toEqual(['Bash(git status:*)', 'Read', 'Modifications de fichiers (Edit, Write, NotebookEdit)']);
     expect(suggestedRules(null)).toEqual([]);
+  });
+});
+
+describe('generalizeBashRule / editableRules', () => {
+  it('généralise une commande exacte par préfixe', () => {
+    expect(generalizeBashRule(`sed -n '/^export const SIDEBAR/,/^\`;/p' frontend/src/graphql/operations.ts`)).toEqual(['sed *']);
+    expect(generalizeBashRule('git checkout main')).toEqual(['git checkout *']);
+    expect(generalizeBashRule('git -C /w status')).toEqual(['git *']);
+    expect(generalizeBashRule('echo "exit $?"')).toEqual(['echo *']);
+    expect(generalizeBashRule('cat /tmp/skipper-agentic-tc-backend.log | tail -5')).toEqual(['cat *', 'tail *']);
+    expect(generalizeBashRule('cd backend && NODE_OPTIONS=--max-old-space-size=400 npm run typecheck')).toEqual(['NODE_OPTIONS=--max-old-space-size=400 npm run *']);
+  });
+
+  it('garde les motifs existants et les commandes dangereuses', () => {
+    expect(generalizeBashRule('git add *')).toEqual(['git add *']);
+    expect(generalizeBashRule('npm test:*')).toEqual(['npm test *']);
+    expect(generalizeBashRule('rm -rf dist')).toEqual(['rm -rf dist']);
+  });
+
+  it('propose les règles des suggestions du SDK, sans doublon', () => {
+    const suggestions = [
+      { type: 'addRules', behavior: 'allow', rules: [{ toolName: 'Bash', ruleContent: 'git checkout main' }, { toolName: 'Bash', ruleContent: 'git checkout -b x' }, { toolName: 'Read', ruleContent: '//tmp/**' }] },
+      { type: 'setMode', mode: 'acceptEdits' },
+    ];
+    expect(editableRules(suggestions)).toEqual(['Bash(git checkout *)', 'Read(//tmp/**)']);
+    expect(parseRuleLines(' Bash(git *)\n\n Read \n')).toEqual(['Bash(git *)', 'Read']);
   });
 });

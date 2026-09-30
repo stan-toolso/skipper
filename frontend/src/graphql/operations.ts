@@ -64,6 +64,9 @@ export interface PermissionRule {
   rule: string;
   createdBySession: { id: string; name: string } | null;
   createdAt: string;
+  lastUsedAt: string | null;
+  useCount: number;
+  usageTrackedSince: string;
 }
 
 export interface ProjectMember {
@@ -2474,6 +2477,9 @@ export const PROJECT_PERMISSION_RULES = gql`
         ruleContent
         rule
         createdAt
+        lastUsedAt
+        useCount
+        usageTrackedSince
         createdBySession {
           id
           name
@@ -2489,6 +2495,23 @@ export const ADD_PROJECT_PERMISSION_RULE = gql`
       id
       rule
     }
+  }
+`;
+
+export const UPDATE_PROJECT_PERMISSION_RULE = gql`
+  mutation UpdateProjectPermissionRule($id: ID!, $rule: String!) {
+    updateProjectPermissionRule(id: $id, rule: $rule) {
+      id
+      toolName
+      ruleContent
+      rule
+    }
+  }
+`;
+
+export const DELETE_PROJECT_PERMISSION_RULES = gql`
+  mutation DeleteProjectPermissionRules($projectId: ID!, $ids: [ID!]!) {
+    deleteProjectPermissionRules(projectId: $projectId, ids: $ids)
   }
 `;
 

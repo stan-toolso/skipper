@@ -216,6 +216,96 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
  * « allow » (addRules, au format Read ou Bash(git status:*)) ou, pour les modifications de fichiers, le mode
  * acceptEdits (setMode), décrit par les outils qu'il libère.
  */
+/** Commandes dont le deuxième mot est une sous-commande : la règle proposée la garde (`git checkout *`). */
+const SUBCOMMAND_TOOLS = new Set(['git', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'docker', 'pm2', 'gh', 'cargo', 'go', 'kubectl', 'pip', 'pip3', 'make', 'systemctl', 'apt', 'apt-get', 'brew', 'terraform', 'aws', 'gcloud']);
+/** Commandes trop puissantes pour être autorisées par simple préfixe : la règle proposée reste la commande exacte. */
+const EXACT_ONLY = new Set(['rm', 'sudo', 'su', 'sh', 'bash', 'zsh', 'eval', 'exec', 'xargs', 'env', 'ssh', 'scp', 'dd', 'chmod', 'chown', 'kill', 'pkill', 'killall', 'curl', 'wget', 'python', 'python3', 'node', 'perl', 'ruby', 'find', 'awk', 'tee', 'source', '.']);
+
+/** Découpe une commande shell aux opérateurs `&&`, `||`, `;`, `|` et retours à la ligne situés hors guillemets. */
+export function splitShellCommand(command: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let quote: string | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (quote) {
+      current += ch;
+      if (ch === '\\' && quote === '"' && i + 1 < command.length) current += command[++i];
+      else if (ch === quote) quote = null;
+    } else if (ch === '\\' && i + 1 < command.length) current += ch + command[++i];
+    else if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+    } else if (command.startsWith('&&', i) || command.startsWith('||', i)) {
+      parts.push(current);
+      current = '';
+      i++;
+    } else if (ch === ';' || ch === '|' || ch === '\n') {
+      parts.push(current);
+      current = '';
+    } else current += ch;
+  }
+  parts.push(current);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/**
+ * Règle Bash généralisée pour une commande complète : un préfixe par commande simple (`sed -n '…' f.ts` →
+ * `sed *`, `git checkout main` → `git checkout *`), sauf pour les commandes dangereuses, gardées telles quelles.
+ * Un motif contenant déjà un joker est conservé ; `cd` est omis.
+ */
+export function generalizeBashRule(content: string): string[] {
+  const c = content.trim().replace(/\s*:\*$/, ' *');
+  if (c.includes('*')) return [c];
+  const out: string[] = [];
+  for (const segment of splitShellCommand(c)) {
+    const tokens = segment.split(/\s+/);
+    let i = 0;
+    while (i < tokens.length - 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+    const cmd = tokens[i];
+    if (cmd === 'cd') continue;
+    let rule: string;
+    if (EXACT_ONLY.has(cmd) || /["'`$()]/.test(cmd)) rule = segment;
+    else {
+      const sub = tokens[i + 1];
+      const words = tokens.slice(0, i + 1);
+      if (SUBCOMMAND_TOOLS.has(cmd) && sub && /^[A-Za-z][\w:.-]*$/.test(sub)) words.push(sub);
+      rule = `${words.join(' ')} *`;
+    }
+    if (!out.includes(rule)) out.push(rule);
+  }
+  return out.length ? out : [c];
+}
+
+/**
+ * Règles proposées à la mémorisation (`Outil` ou `Outil(motif)`), à partir des suggestions du SDK, les commandes
+ * Bash exactes étant généralisées par préfixe. L'humain peut les modifier avant de répondre (champ `rules` de la réponse).
+ */
+export function editableRules(suggestions: unknown[] | undefined | null): string[] {
+  const out: string[] = [];
+  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+    if (s?.type !== 'addRules' || (s.behavior ?? 'allow') !== 'allow') continue;
+    for (const r of s.rules ?? []) {
+      if (!r.toolName) continue;
+      const rules = r.toolName === 'Bash' && r.ruleContent ? generalizeBashRule(r.ruleContent).map((c) => `Bash(${c})`) : [r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName];
+      for (const rule of rules) if (!out.includes(rule)) out.push(rule);
+    }
+  }
+  return out;
+}
+
+/** Règles saisies dans le champ d'édition, une par ligne. */
+export const parseRuleLines = (text: string): string[] =>
+  text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+/** Suggestions de changement de mode (setMode) sous forme de libellés. */
+export function suggestedModes(suggestions: unknown[] | undefined | null): string[] {
+  return suggestedRules((suggestions ?? []).filter((s) => (s as { type?: string })?.type === 'setMode'));
+}
+
 export function suggestedRules(suggestions: unknown[] | undefined | null): string[] {
   const out: string[] = [];
   for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; mode?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {

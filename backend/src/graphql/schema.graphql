@@ -131,6 +131,12 @@ type PermissionRule {
   "Session pendant laquelle la règle a été mémorisée, le cas échéant."
   createdBySession: Session
   createdAt: DateTime!
+  "Dernier appel d'outil autorisé d'office par la règle ; null = jamais depuis usageTrackedSince."
+  lastUsedAt: DateTime
+  "Nombre d'appels d'outils autorisés d'office par la règle depuis usageTrackedSince."
+  useCount: Int!
+  "Début du suivi de l'utilisation (création de la règle, ou mise en place du suivi pour les règles plus anciennes)."
+  usageTrackedSince: DateTime!
 }
 
 "Dossier de la bibliothèque de contexte d'un projet."
@@ -1218,8 +1224,12 @@ type Mutation {
   removeProjectMember(projectId: ID!, userId: ID!): Boolean!
   "Ajoute une autorisation mémorisée au projet (membres). ruleContent vide = tout l'outil."
   addProjectPermissionRule(projectId: ID!, toolName: String!, ruleContent: String): PermissionRule!
+  "Modifie une autorisation mémorisée (texte complet : Outil ou Outil(motif), ex. Bash(git status *))."
+  updateProjectPermissionRule(id: ID!, rule: String!): PermissionRule!
   "Retire une autorisation mémorisée : les prochaines sessions redemanderont."
   deleteProjectPermissionRule(id: ID!): Boolean!
+  "Retire plusieurs autorisations mémorisées du projet ; renvoie les identifiants retirés."
+  deleteProjectPermissionRules(projectId: ID!, ids: [ID!]!): [ID!]!
 
   "Crée le projet et prépare son workspace (clone git si une URL est fournie). Le créateur en devient administrateur."
   createProject(input: CreateProjectInput!): Project!

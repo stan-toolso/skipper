@@ -5,6 +5,7 @@ import {
   type Options,
   type PermissionMode,
   type PermissionResult,
+  type PermissionUpdate,
   type SDKMessage,
   type SDKResultMessage,
   type SDKUserMessage,
@@ -20,8 +21,8 @@ import { AppError } from '../../errors.js';
 import { liveBrowserService } from '../../browser/live.js';
 import { createGoogleMcpServer } from '../../google/mcp.js';
 import { googleAccountService, googleReadTools } from '../../google/service.js';
-import { permissionRuleService, suggestedMode } from '../../permissions/service.js';
-import { formatRule } from '../../permissions/types.js';
+import { permissionRuleService, suggestedMode, withEditedRules } from '../../permissions/service.js';
+import { formatRule, type PermissionRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
@@ -190,7 +191,8 @@ export class ClaudeProvider implements SessionProvider {
     const pluginDir = await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
-    const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
+    const projectRules = await permissionRuleService.list(ctx.project.id);
+    const ruleUsage: RuleUsage = { rules: projectRules, asked: new Set(), pending: new Map() };
     // Les secrets des sites web (connexions « site web » en mode outils) sont fournis au navigateur, jamais à l'agent.
     let browserServer: Awaited<ReturnType<typeof runner.browserMcpCommand>> | null = null;
     if (browserEnabled) {
@@ -240,14 +242,14 @@ export class ClaudeProvider implements SessionProvider {
       // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
-      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       pathToClaudeCodeExecutable: claudeExecutable,
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
-      canUseTool: this.canUseTool(ctx),
+      canUseTool: this.canUseTool(ctx, ruleUsage),
     };
 
     await ctx.emit('system', {
@@ -283,6 +285,7 @@ export class ClaudeProvider implements SessionProvider {
       try {
         for await (const message of stream) {
           await this.handleMessage(ctx, message, run);
+          await this.trackRuleUsage(ctx, message, ruleUsage).catch((e) => console.error('[permissions] suivi des règles', e));
           if (message.type === 'assistant' && !message.parent_tool_use_id) {
             const u = (message.message as { usage?: { input_tokens?: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null } }).usage;
             if (u && typeof u.input_tokens === 'number') contextTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
@@ -367,8 +370,10 @@ export class ClaudeProvider implements SessionProvider {
    * - AskUserQuestion -> demande de type 'question', la réponse est réinjectée dans l'outil ;
    * - tout autre outil -> demande de type 'permission' (allow / deny, éventuellement "toujours").
    */
-  private canUseTool(ctx: RunContext): CanUseTool {
+  private canUseTool(ctx: RunContext, ruleUsage: RuleUsage): CanUseTool {
     return async (toolName, input, options): Promise<PermissionResult> => {
+      // Appel soumis à canUseTool : aucune règle mémorisée ne l'a autorisé d'office.
+      ruleUsage.asked.add(options.toolUseID);
       try {
         if (toolName === 'AskUserQuestion') {
           const questions = (input.questions as Array<{ question: string }> | undefined) ?? [];
@@ -402,23 +407,26 @@ export class ClaudeProvider implements SessionProvider {
 
         if (response.decision === 'allow') {
           const remember = response.scope === 'project' || response.scope === 'session' || response.always === true;
+          // Règles relues (et souvent généralisées) par l'humain dans le prompt : elles remplacent les suggestions du SDK.
+          const suggestions = Array.isArray(response.rules) ? withEditedRules(options.suggestions ?? [], response.rules.map(String)) : (options.suggestions ?? []);
           if (response.scope === 'project') {
             // Mémorisé pour le projet : les prochaines sessions reçoivent la règle dans allowedTools ;
             // la session courante l'applique tout de suite via updatedPermissions.
-            const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
-            if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+            const added = await permissionRuleService.addFromSuggestions(ctx.project.id, suggestions, ctx.session.id);
+            if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${[...new Set(added.map(formatRule))].join(', ')}` });
+            ruleUsage.rules = await permissionRuleService.list(ctx.project.id);
           }
           // Pour les modifications de fichiers, le SDK suggère un changement de mode (acceptEdits) plutôt qu'une
           // règle : updatedPermissions l'applique à la session en cours ; on l'enregistre aussi dans la configuration
           // de la session (affichage, prochain lancement).
-          const mode = remember ? suggestedMode(options.suggestions ?? []) : null;
+          const mode = remember ? suggestedMode(suggestions) : null;
           if (mode && permissionModes.includes(mode as PermissionMode) && mode !== ctx.session.config.permissionMode) {
             await ctx.recordConfig({ permissionMode: mode });
           }
           return {
             behavior: 'allow',
             updatedInput: input,
-            updatedPermissions: remember ? options.suggestions : undefined,
+            updatedPermissions: remember ? (suggestions as PermissionUpdate[]) : undefined,
             toolUseID: options.toolUseID,
           };
         }
@@ -479,6 +487,26 @@ export class ClaudeProvider implements SessionProvider {
     return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
   }
 
+  /**
+   * Date la dernière utilisation des règles mémorisées : un appel d'outil dont le résultat arrive sans être
+   * passé par canUseTool a été autorisé d'office ; il est compté pour les règles du projet qui lui correspondent.
+   */
+  private async trackRuleUsage(ctx: RunContext, message: SDKMessage, usage: RuleUsage): Promise<void> {
+    if (message.type === 'assistant') {
+      for (const b of message.message.content) if (b.type === 'tool_use') usage.pending.set(b.id, { name: b.name, input: (b.input ?? {}) as Record<string, unknown> });
+      return;
+    }
+    if (message.type !== 'user' || !Array.isArray(message.message.content)) return;
+    for (const b of message.message.content as Array<{ type?: string; tool_use_id?: string }>) {
+      if (b.type !== 'tool_result' || !b.tool_use_id) continue;
+      const use = usage.pending.get(b.tool_use_id);
+      usage.pending.delete(b.tool_use_id);
+      if (!use) continue;
+      if (usage.asked.delete(b.tool_use_id) || !usage.rules.length) continue;
+      await permissionRuleService.recordUse(usage.rules, use.name, use.input, ctx.cwd);
+    }
+  }
+
   private async handleMessage(ctx: RunContext, message: SDKMessage, run: RunState): Promise<void> {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
@@ -504,6 +532,15 @@ export class ClaudeProvider implements SessionProvider {
     const payload = message.type === 'user' ? withoutBinaryData(message) : message;
     await ctx.emit(`claude.${message.type}`, payload as unknown as Record<string, unknown>);
   }
+}
+
+/** Suivi de l'utilisation des règles mémorisées pendant une exécution. */
+interface RuleUsage {
+  rules: PermissionRule[];
+  /** Appels d'outils passés par canUseTool (non autorisés d'office). */
+  asked: Set<string>;
+  /** Appels d'outils annoncés par l'agent, en attente de leur résultat. */
+  pending: Map<string, { name: string; input: Record<string, unknown> }>;
 }
 
 /** État propre à une exécution du provider (un processus Claude Code). */

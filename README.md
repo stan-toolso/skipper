@@ -346,10 +346,19 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   planifiées gardent le mode de leur session. Le formulaire de nouvelle session propose le dernier mode
   choisi sur ce projet dans ce navigateur (localStorage), sinon celui du projet.
 - **PermissionRule** : autorisation d'outil mémorisée pour un projet (`toolName`, `ruleContent`
-  optionnel, ex. `Bash(git status:*)`). Créée en répondant « ne plus demander dans ce projet » à une
-  demande d'autorisation (les règles suggérées par le SDK sont enregistrées) ou à la main sur la page
-  du projet ; chaque session Claude du projet les reçoit dans `allowedTools`, donc ne redemande pas.
-  Retirer une règle ne concerne que les prochaines sessions. Pour les modifications de fichiers
+  optionnel, ex. `Bash(git status *)`). Créée en répondant « ne plus demander dans ce projet » à une
+  demande d'autorisation ou à la main sur la page du projet ; chaque session Claude du projet les
+  reçoit dans `allowedTools`, donc ne redemande pas. Le prompt d'autorisation propose les règles
+  suggérées par le SDK en généralisant les commandes Bash exactes par préfixe (`git checkout main` →
+  `Bash(git checkout *)`, `sed -n '…' f` → `Bash(sed *)`, commandes dangereuses comme `rm` gardées
+  telles quelles) dans un champ modifiable ; la réponse porte les règles relues (`rules`), qui
+  remplacent les suggestions pour la session comme pour le projet. Les règles sont stockées sous forme
+  canonique (`git add:*` ≡ `git add *`) et sans doublon : une règle déjà couverte par une règle plus
+  large n'est pas ajoutée, une règle plus large retire les plus étroites (`permissions/rules.ts`). Le
+  provider compte les appels d'outils autorisés d'office par chaque règle (`use_count`,
+  `last_used_at`, suivi depuis `usage_tracked_since`) ; la page du projet permet de modifier une règle
+  en place et de retirer d'un coup celles jamais utilisées. Retirer ou modifier une règle ne concerne
+  que les prochaines sessions. Pour les modifications de fichiers
   (`Edit`, `Write`, `NotebookEdit`), le SDK ne suggère pas de règle mais le mode `acceptEdits` :
   « ne plus demander pour cette session » passe la session dans ce mode (appliqué par le SDK et
   enregistré dans sa configuration, événement `config`) ; « dans ce projet » mémorise en plus les

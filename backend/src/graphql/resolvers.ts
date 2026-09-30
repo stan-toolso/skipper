@@ -572,9 +572,17 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       return permissionRuleService.add(args.projectId, args.toolName, args.ruleContent ?? null);
     },
+    updateProjectPermissionRule: async (_: unknown, args: { id: string; rule: string }, ctx: Ctx) => {
+      await requireProject(ctx, (await permissionRuleService.get(args.id)).projectId, 'member');
+      return permissionRuleService.update(args.id, args.rule);
+    },
     deleteProjectPermissionRule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, (await permissionRuleService.get(args.id)).projectId, 'member');
       return permissionRuleService.remove(args.id);
+    },
+    deleteProjectPermissionRules: async (_: unknown, args: { projectId: string; ids: string[] }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return permissionRuleService.removeMany(args.projectId, args.ids);
     },
     removeProjectMember: async (_: unknown, args: { projectId: string; userId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');

@@ -29,6 +29,8 @@ export interface PermissionResponse {
   always?: boolean;
   /** 'project' : les règles suggérées sont mémorisées pour le projet (toutes ses sessions futures) en plus de la session courante. */
   scope?: 'session' | 'project';
+  /** Règles relues par l'humain (ex. `Bash(git checkout *)`), qui remplacent les règles suggérées par le SDK ; absent = suggestions telles quelles. */
+  rules?: string[];
   message?: string;
 }
 
