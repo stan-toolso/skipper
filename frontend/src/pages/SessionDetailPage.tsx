@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -60,6 +60,28 @@ export default function SessionDetailPage() {
     });
   };
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Instructions déjà envoyées, dans l'ordre, sans doublons consécutifs : parcourues avec flèche haut / bas, comme dans Claude Code.
+  const history = useMemo(() => {
+    const list: string[] = [];
+    for (const e of data?.session?.events ?? []) {
+      if (e.type !== 'instruction') continue;
+      const t = String((e.payload as { text?: unknown }).text ?? '').trim();
+      if (t && list[list.length - 1] !== t) list.push(t);
+    }
+    return list;
+  }, [data?.session?.events]);
+  const historyPos = useRef<number | null>(null); // null : on édite le brouillon ; sinon index dans history
+  const draftRef = useRef('');
+  const recall = (value: string) => {
+    setText(value);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      el.setSelectionRange(value.length, value.length);
+    });
+  };
   const session = data?.session;
   useTabTitle(session?.name);
   useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.branch}` : session.project.name } : null);
@@ -211,6 +233,7 @@ export default function SessionDetailPage() {
             placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
             disabled={sending || encoding}
             onChange={(e) => {
+              historyPos.current = null;
               setText(e.target.value);
               e.target.style.height = 'auto';
               e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
@@ -219,7 +242,24 @@ export default function SessionDetailPage() {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
+                historyPos.current = null;
                 void submit();
+                return;
+              }
+              // Flèche haut sur la première ligne : instruction précédente ; flèche bas sur la dernière : suivante, puis retour au brouillon.
+              const el = e.currentTarget;
+              if (e.key === 'ArrowUp' && history.length && !el.value.slice(0, el.selectionStart).includes('\n')) {
+                const next = historyPos.current === null ? history.length - 1 : historyPos.current - 1;
+                if (next < 0) return;
+                e.preventDefault();
+                if (historyPos.current === null) draftRef.current = text;
+                historyPos.current = next;
+                recall(history[next]);
+              } else if (e.key === 'ArrowDown' && historyPos.current !== null && !el.value.slice(el.selectionEnd).includes('\n')) {
+                e.preventDefault();
+                const next = historyPos.current + 1;
+                historyPos.current = next < history.length ? next : null;
+                recall(next < history.length ? history[next] : draftRef.current);
               }
             }}
           />
@@ -242,7 +282,7 @@ export default function SessionDetailPage() {
         </div>
       </div>
       <div className="cc-hint">
-        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne · collez ou déposez des fichiers pour les joindre</span>
+        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne · flèche haut pour reprendre une instruction précédente · collez ou déposez des fichiers pour les joindre</span>
         <span title="Dossier de travail de la session">{technical ? (session.worktree?.path ?? session.project.workspacePath) : ''}</span>
       </div>
     </div>

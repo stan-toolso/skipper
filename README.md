@@ -308,7 +308,8 @@ Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de ses
 (`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
 réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
-pour envoyer et échap pour interrompre.
+pour envoyer, échap pour interrompre, flèche haut et flèche bas pour reprendre une instruction déjà
+envoyée.
 
 ## Mobile
 
