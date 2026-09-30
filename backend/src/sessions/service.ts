@@ -134,7 +134,8 @@ export const sessionService = {
         payload: { childSessionId: session.id },
       });
     }
-    return input.autoStart === false ? session : this.start(session.id);
+    // Sans consigne ni fichier joint, la session attend sa première instruction (envoyée depuis sa page) pour démarrer.
+    return input.autoStart === false || !session.prompt ? session : this.start(session.id);
   },
 
   /**
@@ -175,6 +176,7 @@ export const sessionService = {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (session.status === 'running') throw new AppError('La session est déjà en cours');
+    if (!(initialMessage ?? session.prompt)) throw new AppError('Envoyez une première instruction pour démarrer la session');
     const provider = getProvider(session.provider);
     const project = await projectService.get(session.projectId);
 

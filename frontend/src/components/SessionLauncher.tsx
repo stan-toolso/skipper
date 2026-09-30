@@ -84,8 +84,9 @@ interface LaunchModalProps {
 
 /**
  * Formulaire de lancement. Mode « session » : projet, branche de travail (dossier principal, worktree
- * existant ou nouveau worktree), consigne et options de l'agent. Mode « worktree » : branche à créer,
+ * existant ou nouveau worktree), consigne facultative et options de l'agent. Mode « worktree » : branche à créer,
  * puis, par défaut, une session lancée dans ce worktree avec les mêmes options.
+ * Sans consigne ni fichier joint, la session est créée sans démarrer : la première instruction envoyée depuis sa page la lance.
  */
 function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const navigate = useNavigate();
@@ -142,7 +143,9 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const creatingNewWorktree = worktreeChoice === NEW_WORKTREE;
   const sessionWanted = mode === 'session' || withSession;
   const busy = creatingSession || creatingWorktree;
-  const canSubmit = Boolean(project) && !busy && (!creatingNewWorktree || branch.trim()) && (!sessionWanted || (provider && (prompt.trim() || attachments.items.length)));
+  const hasInstruction = Boolean(prompt.trim() || attachments.items.length);
+  const launching = autoStart && hasInstruction;
+  const canSubmit = Boolean(project) && !busy && (!creatingNewWorktree || branch.trim()) && (!sessionWanted || Boolean(provider));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,7 +168,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
             prompt: prompt || null,
             attachments: attachments.items.length ? await toAttachmentInputs(attachments.items) : null,
             config: buildConfig(provider!.configFields, values),
-            autoStart,
+            autoStart: launching,
           },
         },
       });
@@ -242,14 +245,16 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                     Un worktree extrait une branche dans son propre dossier, à côté du dossier principal{mainBranch ? ` (${mainBranch})` : ''} : les agents y travaillent sans le gêner.
                   </p>
                   {worktreeFields}
-                  <Form.Check className="mb-3" type="switch" id="launch-with-session" label="Lancer une session d'agent dans ce worktree" checked={withSession} onChange={(e) => setWithSession(e.target.checked)} />
+                  <Form.Check className="mb-3" type="switch" id="launch-with-session" label="Lancer une session dans ce worktree" checked={withSession} onChange={(e) => setWithSession(e.target.checked)} />
                 </>
               )}
 
               {sessionWanted && (
                 <>
                   <Form.Group className="mb-3">
-                    <Form.Label className="mb-1">Que doit faire l'agent ?</Form.Label>
+                    <Form.Label className="mb-1">
+                      Que doit faire l'agent ? <span className="text-secondary fw-normal">(facultatif)</span>
+                    </Form.Label>
                     <Form.Control
                       as="textarea"
                       rows={5}
@@ -262,7 +267,12 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                       onDragOver={attachments.onDragOver}
                     />
                     <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={busy} error={attachments.error} />
-                    <Form.Text>Vous pourrez préciser, corriger ou relancer l'agent à tout moment pendant la session. Images, PDF et autres fichiers joints sont lisibles par l'agent.</Form.Text>
+                    <Form.Text>
+                      {hasInstruction
+                        ? "Vous pourrez préciser, corriger ou relancer l'agent à tout moment pendant la session."
+                        : 'Sans consigne, la session est créée sans démarrer : vous écrirez la première instruction depuis sa page.'}{' '}
+                      Images, PDF et autres fichiers joints sont lisibles par l'agent.
+                    </Form.Text>
                   </Form.Group>
 
                   <Form.Group className="mb-3">
@@ -288,7 +298,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                     <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
                   ))}
 
-                  <Form.Check className="mb-3" type="switch" id="launch-autostart" label="Démarrer tout de suite" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />
+                  {hasInstruction && <Form.Check className="mb-3" type="switch" id="launch-autostart" label="Démarrer tout de suite" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />}
 
                   {advancedFields.length > 0 && (
                     <div className="mb-2">
@@ -321,7 +331,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
             Annuler
           </Button>
           <Button type="submit" size="sm" disabled={!canSubmit}>
-            {busy ? (creatingNewWorktree ? 'Création du worktree…' : 'Lancement…') : !sessionWanted ? 'Créer le worktree' : autoStart ? 'Lancer la session' : 'Créer la session'}
+            {busy ? (creatingNewWorktree ? 'Création du worktree…' : launching ? 'Lancement…' : 'Création…') : !sessionWanted ? 'Créer le worktree' : launching ? 'Lancer la session' : 'Créer la session'}
           </Button>
         </Modal.Footer>
       </Form>

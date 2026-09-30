@@ -19,7 +19,9 @@ Trois notions :
   on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
   défaut d'y lancer aussitôt une session d'agent.
 - **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
-  workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
+  workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). La consigne de départ est
+  facultative : sans consigne, la session est créée sans démarrer et la première instruction envoyée
+  depuis sa page la lance. On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
   terminée est relancée (reprise de la conversation) par un simple message. Un agent peut lui-même
   lancer d'autres sessions (outils MCP `sessions` et `worktrees`) ; elles gardent la trace de la
   session qui les a lancées.
