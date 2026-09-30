@@ -103,8 +103,16 @@ export default function SessionDetailPage() {
   const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
   const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
   const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
-  const changeSetting = (field: ConfigField, value: string) => {
-    if (field.key === 'permissionMode' && value === 'bypassPermissions' && !window.confirm("Tout autoriser : l'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?")) return;
+  const changeSetting = async (field: ConfigField, value: string) => {
+    if (field.key === 'permissionMode' && value === 'bypassPermissions') {
+      const ok = await confirm({
+        title: 'Tout autoriser',
+        message: "L'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?",
+        confirmLabel: 'Tout autoriser',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     updateConfig({ variables: { id, config: { [field.key]: value || null } } });
   };
 
