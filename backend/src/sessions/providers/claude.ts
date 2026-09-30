@@ -19,16 +19,20 @@ import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { createGoogleMcpServer } from '../../google/mcp.js';
 import { googleAccountService, googleReadTools } from '../../google/service.js';
-import { permissionRuleService } from '../../permissions/service.js';
+import { permissionRuleService, suggestedMode } from '../../permissions/service.js';
 import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
+import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
+import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { settingsService } from '../../settings/service.js';
 import { usageService } from '../../settings/usage.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
+import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.js';
+import type { Attachment } from '../types.js';
 import type { ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 
 interface ClaudeConfig {
@@ -51,9 +55,9 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
   private waiter: (() => void) | null = null;
   private closed = false;
 
-  push(text: string): void {
+  push(content: SDKUserMessage['message']['content']): void {
     if (this.closed) throw new AppError("La session n'accepte plus d'instructions");
-    this.buffer.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+    this.buffer.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
     this.waiter?.();
   }
 
@@ -146,7 +150,8 @@ export class ClaudeProvider implements SessionProvider {
     // Réglages généraux : authentification, modèle par défaut, budgets, plafond mensuel.
     const general = settingsService.claude;
     await settingsService.assertBudgetAvailable();
-    const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
+    // Modèle courant : modifiable en cours de session (updateConfig), d'où la variable.
+    let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
@@ -169,6 +174,7 @@ export class ClaudeProvider implements SessionProvider {
       await contextService.promptSummary(ctx.project.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
+      sessionsPromptSummary(ctx.project),
       await googleAccountService.promptSummary(ctx.project),
       browserEnabled
         ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du projet (connexions de type « site web »), tape le nom de variable d'un secret tel quel dans le champ du formulaire : le navigateur le remplace par la valeur."
@@ -204,6 +210,8 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id),
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
+        worktrees: createWorktreesMcpServer(ctx.project, ctx.session.id),
+        sessions: createSessionsMcpServer(ctx.project, ctx.session.id),
         ...(googleAccount ? { google: createGoogleMcpServer({ project: ctx.project, account: googleAccount, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
         // Le serveur hérite de l'environnement du CLI (dans le conteneur). La configuration MCP passe sur la ligne
         // de commande du CLI, visible de tout utilisateur du serveur (ps) : l'environnement du backend n'y figure jamais.
@@ -214,13 +222,18 @@ export class ClaudeProvider implements SessionProvider {
       fallbackModel: general.fallbackModel ?? undefined,
       env,
       permissionMode: cfg.permissionMode || 'default',
-      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé.
-      allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
+      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé. Toujours vrai ici, car il rend
+      // ce mode *disponible* sans l'activer (drapeau --allow-dangerously-skip-permissions du CLI) : c'est la
+      // condition pour pouvoir y passer en cours de session (setPermissionMode), choix explicite de l'humain.
+      allowDangerouslySkipPermissions: true,
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils des connexions passent par canUseTool, qui applique la politique de chaque connexion.
-      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', ...(browserServer ? browserReadTools : []), ...(googleAccount ? googleReadTools(googleAccount) : [])],
+      // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
+      // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
+      // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccount ? googleReadTools(googleAccount) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Script de relais qui exécute le CLI dans le conteneur du projet.
@@ -237,8 +250,7 @@ export class ClaudeProvider implements SessionProvider {
     });
 
     const queue = new MessageQueue();
-    await ctx.emit('instruction', { text: ctx.initialMessage });
-    queue.push(ctx.initialMessage);
+    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments));
     // Un tour est en cours entre l'envoi d'une instruction et le message `result` qui le clôt.
     let turnInProgress = true;
     await ctx.setActivity('busy');
@@ -258,14 +270,27 @@ export class ClaudeProvider implements SessionProvider {
     const done: Promise<RunResult> = (async () => {
       let lastResult: SDKResultMessage | undefined;
       let previousModelTotals: Record<string, number> = {};
+      // Taille du contexte : tokens d'entrée (dont cache) du dernier appel au modèle, relevée sur les messages assistant.
+      let contextTokens: number | null = null;
       try {
         for await (const message of stream) {
           await this.handleMessage(ctx, message);
+          if (message.type === 'assistant' && !message.parent_tool_use_id) {
+            const u = (message.message as { usage?: { input_tokens?: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null } }).usage;
+            if (u && typeof u.input_tokens === 'number') contextTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+          }
+          if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+            // Conversation compactée : la taille annoncée après compaction remplace la mesure précédente.
+            const meta = (message as { compact_metadata?: { post_tokens?: number } }).compact_metadata;
+            contextTokens = typeof meta?.post_tokens === 'number' ? meta.post_tokens : null;
+            await ctx.setContextTokens?.(contextTokens);
+          }
           if (message.type === 'result') {
             // Fin d'un tour : l'agent attend la prochaine instruction.
             lastResult = message;
             turnInProgress = false;
             previousModelTotals = await this.recordUsage(ctx, message, previousModelTotals, model ?? 'default');
+            await ctx.setContextTokens?.(contextTokens);
             await ctx.setActivity('idle');
           }
         }
@@ -295,10 +320,9 @@ export class ClaudeProvider implements SessionProvider {
         stream.close();
         await done;
       },
-      async sendMessage(text) {
+      sendMessage: async (text, attachments = []) => {
         await settingsService.assertBudgetAvailable();
-        await ctx.emit('instruction', { text });
-        queue.push(text);
+        queue.push(await this.instruction(ctx, text, attachments));
         turnInProgress = true;
         await ctx.setActivity('busy');
       },
@@ -307,6 +331,25 @@ export class ClaudeProvider implements SessionProvider {
       },
       async interrupt() {
         await stream.interrupt();
+      },
+      // Changements à chaud pris en charge par le SDK : mode d'autorisation et modèle (les autres clés
+      // valent pour le prochain lancement).
+      async updateConfig(patch) {
+        const applied: string[] = [];
+        if ('permissionMode' in patch) {
+          const mode = (patch.permissionMode || 'default') as PermissionMode;
+          if (!permissionModes.includes(mode)) throw new AppError(`permissionMode invalide : ${String(mode)}`);
+          await stream.setPermissionMode(mode);
+          applied.push('permissionMode');
+        }
+        if ('model' in patch) {
+          const next = patch.model ? String(patch.model) : settingsService.claude.defaultModel ?? undefined;
+          settingsService.assertModelAllowed(next);
+          await stream.setModel(next);
+          model = next;
+          applied.push('model');
+        }
+        return applied;
       },
     };
   }
@@ -356,6 +399,13 @@ export class ClaudeProvider implements SessionProvider {
             // la session courante l'applique tout de suite via updatedPermissions.
             const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
             if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+          }
+          // Pour les modifications de fichiers, le SDK suggère un changement de mode (acceptEdits) plutôt qu'une
+          // règle : updatedPermissions l'applique à la session en cours ; on l'enregistre aussi dans la configuration
+          // de la session (affichage, prochain lancement).
+          const mode = remember ? suggestedMode(options.suggestions ?? []) : null;
+          if (mode && permissionModes.includes(mode as PermissionMode) && mode !== ctx.session.config.permissionMode) {
+            await ctx.recordConfig({ permissionMode: mode });
           }
           return {
             behavior: 'allow',
@@ -409,10 +459,41 @@ export class ClaudeProvider implements SessionProvider {
     return modelTotals;
   }
 
+  /**
+   * Journalise l'instruction (événement `instruction`, avec les pièces jointes sans leur contenu) et construit le
+   * message utilisateur : le texte, complété par la liste des fichiers joints et leur chemin, puis les images et
+   * PDF en blocs de contenu pour que le modèle les voie directement.
+   */
+  private async instruction(ctx: RunContext, text: string, attachments: Attachment[]): Promise<SDKUserMessage['message']['content']> {
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
+    if (!attachments.length) return text;
+    const note = attachmentsNote(attachments);
+    return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
+  }
+
   private async handleMessage(ctx: RunContext, message: SDKMessage): Promise<void> {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
     }
-    await ctx.emit(`claude.${message.type}`, message as unknown as Record<string, unknown>);
+    // Compteur de tokens de réflexion : des dizaines de messages par seconde, sans contenu pour le transcript.
+    // Les journaliser ralentit la lecture du flux (une écriture en base chacun) et gonfle l'historique.
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'thinking_tokens') return;
+    const payload = message.type === 'user' ? withoutBinaryData(message) : message;
+    await ctx.emit(`claude.${message.type}`, payload as unknown as Record<string, unknown>);
   }
+}
+
+/**
+ * Copie d'un message utilisateur renvoyé par le SDK sans les données base64 des blocs image et document
+ * (pièces jointes rejouées) : le fichier est déjà sur disque, inutile d'en garder une copie dans chaque événement.
+ */
+function withoutBinaryData(message: SDKMessage): SDKMessage {
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return message;
+  const stripped = content.map((block: { type?: string; source?: { type?: string; data?: string } }) =>
+    (block.type === 'image' || block.type === 'document') && block.source?.type === 'base64' && typeof block.source.data === 'string'
+      ? { ...block, source: { ...block.source, data: `[${block.source.data.length} caractères base64 omis]` } }
+      : block,
+  );
+  return { ...message, message: { ...(message as { message: object }).message, content: stripped } } as SDKMessage;
 }

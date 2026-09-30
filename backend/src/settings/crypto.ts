@@ -42,7 +42,8 @@ export function encryptSecret(plain: string): string {
 
 export function decryptSecret(encoded: string): string {
   const [version, iv, tag, data] = encoded.split(':');
-  if (version !== 'v1' || !iv || !tag || !data) throw new Error('Secret chiffré illisible');
+  // `data` est vide pour un secret vide : seule son absence est une erreur.
+  if (version !== 'v1' || !iv || !tag || data === undefined) throw new Error('Secret chiffré illisible');
   const decipher = createDecipheriv('aes-256-gcm', loadKey(), Buffer.from(iv, 'base64'));
   decipher.setAuthTag(Buffer.from(tag, 'base64'));
   return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');

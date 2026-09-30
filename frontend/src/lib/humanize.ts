@@ -86,6 +86,32 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
         const [label, action] = verbs[op] ?? [`Contexte : ${op}`, `utiliser le contexte (${op})`];
         return { label, action };
       }
+      if (name.startsWith('mcp__sessions__')) {
+        const op = name.slice('mcp__sessions__'.length);
+        const short = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
+        const target = str(input, 'new_branch') ? ` dans un nouveau worktree (${str(input, 'new_branch')})` : str(input, 'worktree') ? ` dans le worktree ${str(input, 'worktree')}` : '';
+        const verbs: Record<string, [string, string | undefined, string]> = {
+          list: ['Consultation des sessions du projet', undefined, 'consulter les sessions du projet'],
+          get: ["Consultation d'une session", undefined, 'consulter une session'],
+          create: [`Lancement d'une session d'agent${target}`, short(str(input, 'prompt') ?? ''), `lancer une autre session d'agent${target}`],
+          wait: ["Attente de la réponse d'une session", undefined, "attendre la réponse d'une session"],
+          send: ["Instruction à une session qu'il a lancée", short(str(input, 'text') ?? ''), 'envoyer une instruction à une session'],
+          end: ["Fin d'une session qu'il a lancée", undefined, 'terminer une session'],
+        };
+        const [label, detail, action] = verbs[op] ?? [`Sessions : ${op}`, undefined, `utiliser les sessions (${op})`];
+        return { label, detail, action };
+      }
+      if (name.startsWith('mcp__worktrees__')) {
+        const op = name.slice('mcp__worktrees__'.length);
+        const branch = str(input, 'branch') ?? str(input, 'name') ?? '';
+        const verbs: Record<string, [string, string]> = {
+          list: ['Consultation des worktrees du projet', 'consulter les worktrees'],
+          create: [`Création du worktree ${branch}`, `créer le worktree ${branch}`],
+          delete: [`Suppression du worktree ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer le worktree ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
+        };
+        const [label, action] = verbs[op] ?? [`Worktrees : ${op}`, `utiliser les worktrees (${op})`];
+        return { label, action };
+      }
       if (name.startsWith('mcp__connections__')) {
         const op = name.slice('mcp__connections__'.length);
         const conn = str(input, 'connection') ?? '';
@@ -178,10 +204,18 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
   VIEWER: { label: 'Lecteur', hint: 'Consulte sessions, tâches et contexte sans rien modifier.' },
 };
 
-/** Règles « allow » contenues dans les suggestions du SDK (PermissionUpdate addRules), au format Read ou Bash(git status:*). */
+/**
+ * Ce que « ne plus demander » appliquerait, d'après les suggestions du SDK (PermissionUpdate) : des règles
+ * « allow » (addRules, au format Read ou Bash(git status:*)) ou, pour les modifications de fichiers, le mode
+ * acceptEdits (setMode), décrit par les outils qu'il libère.
+ */
 export function suggestedRules(suggestions: unknown[] | undefined | null): string[] {
   const out: string[] = [];
-  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; mode?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+    if (s?.type === 'setMode' && s.mode) {
+      out.push(s.mode === 'acceptEdits' ? 'Modifications de fichiers (Edit, Write, NotebookEdit)' : `mode « ${permissionModeLabels[s.mode] ?? s.mode} »`);
+      continue;
+    }
     if (s?.type !== 'addRules' || (s.behavior ?? 'allow') !== 'allow') continue;
     for (const r of s.rules ?? []) if (r.toolName) out.push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
   }

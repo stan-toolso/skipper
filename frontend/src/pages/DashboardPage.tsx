@@ -6,6 +6,7 @@ import StatusBadge from '../components/StatusBadge';
 import { DASHBOARD, type Dashboard, type DashboardProject, type DashboardUsage, type HumanRequest, type Session, type Task } from '../graphql/operations';
 import { formatCost, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useSessionLauncher } from '../components/SessionLauncher';
 import './dashboard.css';
 
 /**
@@ -15,6 +16,7 @@ import './dashboard.css';
  * rafraîchie régulièrement.
  */
 export default function DashboardPage() {
+  const { openNewSession } = useSessionLauncher();
   useTabTitle('Tableau de bord');
   const { data, loading, error, refetch } = useQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
   const d = data?.dashboard;
@@ -44,7 +46,7 @@ export default function DashboardPage() {
           <Button size="sm" variant="outline-secondary" onClick={() => refetch()} title="Rafraîchir">
             <i className="bi bi-arrow-clockwise" />
           </Button>
-          <Button as={Link as any} to="/sessions/new" size="sm" variant="primary">
+          <Button size="sm" variant="primary" onClick={() => openNewSession()}>
             <i className="bi bi-plus-lg me-1" /> Session
           </Button>
         </div>
@@ -424,7 +426,7 @@ function EmptyState() {
       <Row className="g-3">
         {[
           { n: 1, icon: 'bi-folder2', title: 'Créez un projet', text: 'Un projet regroupe un dossier de travail (avec, si vous voulez, un dépôt git), des instructions permanentes pour les agents, et leurs sessions.', to: '/projects/new', cta: 'Nouveau projet', primary: true },
-          { n: 2, icon: 'bi-chat-dots', title: 'Lancez une session', text: "Décrivez ce que l'agent doit faire. Il travaille en arrière-plan, vous suivez ses actions en direct et pouvez lui écrire à tout moment.", to: '/sessions/new', cta: 'Nouvelle session', disabled: true },
+          { n: 2, icon: 'bi-chat-dots', title: 'Lancez une session', text: "Décrivez ce que l'agent doit faire. Il travaille en arrière-plan, vous suivez ses actions en direct et pouvez lui écrire à tout moment.", to: '/sessions', cta: 'Nouvelle session', disabled: true },
           { n: 3, icon: 'bi-bell', title: 'Répondez aux demandes', text: "Quand un agent veut modifier un fichier, lancer une commande ou a une question, il vous demande. Autorisez, refusez ou expliquez.", to: '/requests', cta: 'Voir les demandes' },
         ].map((step) => (
           <Col md={4} key={step.n}>

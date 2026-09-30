@@ -3,11 +3,14 @@ import { Alert, Button, ButtonGroup, Form, Spinner, Table } from 'react-bootstra
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
+import { useDialogs } from '../components/Dialogs';
 import { DELETE_SESSION, PROJECTS, SESSIONS, STOP_SESSION, type Project, type Session, type SessionStatus } from '../graphql/operations';
+import { useSessionLauncher } from '../components/SessionLauncher';
 
 const statuses: SessionStatus[] = ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'STOPPED', 'INTERRUPTED'];
 
 export default function SessionsPage() {
+  const { openNewSession } = useSessionLauncher();
   const [status, setStatus] = useState<SessionStatus | ''>('');
   const [projectId, setProjectId] = useState('');
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
@@ -16,6 +19,7 @@ export default function SessionsPage() {
     pollInterval: 3000,
   });
   const [stopSession] = useMutation(STOP_SESSION);
+  const { confirm } = useDialogs();
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => refetch() });
 
   return (
@@ -39,7 +43,7 @@ export default function SessionsPage() {
               </option>
             ))}
           </Form.Select>
-          <Button as={Link as any} to="/sessions/new" size="sm">
+          <Button size="sm" onClick={() => openNewSession({ projectId: projectId || null })}>
             Nouvelle session
           </Button>
         </div>
@@ -73,6 +77,7 @@ export default function SessionsPage() {
               <tr key={s.id}>
                 <td>
                   <Link to={`/sessions/${s.id}`}>{s.name}</Link>
+                  {s.schedule?.enabled && <i className="bi bi-alarm ms-2 text-secondary" title={`Planifiée : ${s.schedule.cron}${s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : ''}`} />}
                 </td>
                 <td>
                   <Link to={`/projects/${s.project.id}`}>{s.project.name}</Link>
@@ -94,8 +99,8 @@ export default function SessionsPage() {
                     )}
                     <Button
                       variant="outline-danger"
-                      onClick={() => {
-                        if (window.confirm(`Supprimer la session « ${s.name} » ?`)) deleteSession({ variables: { id: s.id } });
+                      onClick={async () => {
+                        if (await confirm({ title: 'Supprimer la session', message: `Supprimer la session « ${s.name} » et tout son historique ?`, confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id: s.id } });
                       }}
                     >
                       Supprimer
