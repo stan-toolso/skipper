@@ -1243,6 +1243,8 @@ type Mutation {
   sendSessionMessage(id: ID!, text: String!, attachments: [AttachmentInput!]): Session!
   "Fin propre : l'agent termine son tour, puis la session se termine."
   endSession(id: ID!): Session!
+  "Reprend une session interrompue par un redémarrage : l'agent reprend son tour s'il travaillait, sinon attend la suite."
+  resumeSession(id: ID!): Session!
   "Interrompt le tour en cours ; la session reste ouverte aux instructions."
   interruptSession(id: ID!): Session!
   """
