@@ -50,6 +50,8 @@ export interface Session {
   contextTokens: number | null;
   /** Coût estimé cumulé (USD, tarif API), d'après le SDK. */
   costUsd: number;
+  /** Commit HEAD du dossier de travail au premier démarrage (référence de l'onglet « Modifications »), null sans git. */
+  baseCommit: string | null;
   createdAt: Date;
   updatedAt: Date;
   startedAt: Date | null;

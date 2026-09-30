@@ -20,6 +20,7 @@ interface SessionRow {
   cleanup: SessionCleanup | null;
   context_tokens: number | null;
   cost_usd: string | number | null;
+  base_commit: string | null;
   created_at: Date;
   updated_at: Date;
   started_at: Date | null;
@@ -53,6 +54,7 @@ function toSession(row: SessionRow): Session {
     cleanup: row.cleanup ?? {},
     contextTokens: row.context_tokens,
     costUsd: Number(row.cost_usd ?? 0),
+    baseCommit: row.base_commit ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
@@ -75,6 +77,7 @@ export interface SessionPatch {
   name?: string;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
+  baseCommit?: string | null;
   promptAttachments?: Attachment[];
   config?: Record<string, unknown>;
   activity?: SessionActivity | null;
@@ -90,6 +93,7 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   name: 'name',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
+  baseCommit: 'base_commit',
   promptAttachments: 'prompt_attachments',
   config: 'config',
   activity: 'activity',

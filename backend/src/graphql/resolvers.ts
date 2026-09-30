@@ -26,6 +26,7 @@ import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
 import { publicAttachment } from '../sessions/attachments.js';
 import { sessionService } from '../sessions/service.js';
+import { sessionChangesService, type SessionChanges } from '../sessions/changes.js';
 import { serverAuthStatus, serverLogout } from '../settings/cli.js';
 import { loginService, type ClaudeLoginKind } from '../settings/login.js';
 import { githubService } from '../settings/github.js';
@@ -61,6 +62,11 @@ const projectOfSession = async (id: string) => {
   return session.projectId;
 };
 const projectOfRequest = async (id: string) => projectOfSession((await requestService.get(id)).sessionId);
+const loadSession = async (id: string) => {
+  const session = await sessionService.get(id);
+  if (!session) throw new NotFoundError('Session introuvable');
+  return session;
+};
 const guardSession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfSession(id), min);
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
@@ -244,6 +250,10 @@ export const resolvers = {
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
   },
 
+  SessionChanges: {
+    mode: (c: SessionChanges) => c.mode.toUpperCase(),
+  },
+
   Query: {
     gitStatus: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
@@ -309,6 +319,14 @@ export const resolvers = {
       const session = await sessionService.get(args.id);
       if (session) await requireProject(ctx, session.projectId);
       return session;
+    },
+    sessionChanges: async (_: unknown, args: { sessionId: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.sessionId, 'viewer');
+      return sessionChangesService.list(await loadSession(args.sessionId));
+    },
+    sessionFileDiff: async (_: unknown, args: { sessionId: string; path: string; origPath?: string | null }, ctx: Ctx) => {
+      await guardSession(ctx, args.sessionId, 'viewer');
+      return sessionChangesService.diff(await loadSession(args.sessionId), args.path, args.origPath);
     },
     scheduleNextRuns: (_: unknown, args: { cron: string; timezone?: string | null; count?: number | null }, ctx: Ctx) => {
       requireUser(ctx);
@@ -388,6 +406,10 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       await gitService.discard(args, args.paths);
       return gitService.status(args);
+    },
+    discardSessionFile: async (_: unknown, args: { sessionId: string; path: string; origPath?: string | null }, ctx: Ctx) => {
+      await guardSession(ctx, args.sessionId, 'member');
+      return sessionChangesService.discard(await loadSession(args.sessionId), args.path, args.origPath);
     },
     gitCommit: async (_: unknown, args: WorkspaceRef & { message: string; stageAll?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');

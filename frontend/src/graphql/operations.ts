@@ -2251,3 +2251,69 @@ export const DELETE_PROJECT_PERMISSION_RULE = gql`
     deleteProjectPermissionRule(id: $id)
   }
 `;
+
+// ---- Modifications d'une session ----------------------------------------------------------------
+
+export type SessionChangesMode = 'COMMIT' | 'HEAD' | 'MTIME';
+
+export interface SessionFileChange {
+  path: string;
+  origPath: string | null;
+  status: string;
+  additions: number | null;
+  deletions: number | null;
+  untracked: boolean;
+}
+
+export interface SessionChanges {
+  mode: SessionChangesMode;
+  baseCommit: string | null;
+  files: SessionFileChange[];
+  truncated: boolean;
+}
+
+const SESSION_CHANGES_FIELDS = gql`
+  fragment SessionChangesFields on SessionChanges {
+    mode
+    baseCommit
+    truncated
+    files {
+      path
+      origPath
+      status
+      additions
+      deletions
+      untracked
+    }
+  }
+`;
+
+export const SESSION_CHANGES = gql`
+  ${SESSION_CHANGES_FIELDS}
+  query SessionChanges($sessionId: ID!) {
+    sessionChanges(sessionId: $sessionId) {
+      ...SessionChangesFields
+    }
+  }
+`;
+
+export const SESSION_FILE_DIFF = gql`
+  query SessionFileDiff($sessionId: ID!, $path: String!, $origPath: String) {
+    sessionFileDiff(sessionId: $sessionId, path: $path, origPath: $origPath) {
+      path
+      staged
+      text
+      binary
+      truncated
+    }
+  }
+`;
+
+export const DISCARD_SESSION_FILE = gql`
+  ${SESSION_CHANGES_FIELDS}
+  mutation DiscardSessionFile($sessionId: ID!, $path: String!, $origPath: String) {
+    discardSessionFile(sessionId: $sessionId, path: $path, origPath: $origPath) {
+      ...SessionChangesFields
+    }
+  }
+`;

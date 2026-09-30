@@ -475,6 +475,17 @@ commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queri
 `gitDiff`, `gitCommitDiff`, `gitBranches`, `gitLog` ; mutations `gitStage`, `gitUnstage`,
 `gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
 
+La page de session a un onglet **Modifications** (`frontend/src/components/SessionChanges.tsx`) : les
+fichiers modifiés dans son dossier de travail depuis le début de la session, avec le nombre de lignes
+et le diff coloré de chacun, un bouton pour l'ouvrir dans l'éditeur et un pour l'abandonner (retour à
+l'état de départ, index et arbre de travail, sans toucher aux commits). La référence est le commit HEAD
+enregistré au premier démarrage (`sessions.base_commit`), donc les commits faits par l'agent sont inclus ;
+sans ce commit (session plus ancienne, commit disparu), la comparaison se fait avec HEAD ; dans un
+dossier sans git, la liste vient des dates de modification, sans diff. La liste se recharge après
+chaque résultat d'un outil Edit, Write ou Bash de la session. Backend : `backend/src/sessions/changes.ts`
+et `gitService.changesSince` / `diffSince` / `restoreFromBase` (queries `sessionChanges`,
+`sessionFileDiff` ; mutation `discardSessionFile`).
+
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
 (`frontend/src/components/Transcript.tsx`) reproduit son affichage : instructions préfixées par `>`,
 réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Update(fichier)`,

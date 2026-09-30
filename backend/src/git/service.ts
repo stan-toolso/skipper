@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import { AppError } from '../errors.js';
 import { resolveRoot, type WorkspaceRef } from '../files/service.js';
@@ -54,7 +56,29 @@ export interface GitDiff {
   truncated: boolean;
 }
 
+/** Fichier modifié depuis un commit de référence (onglet « Modifications » d'une session). */
+export interface GitChangeSince {
+  path: string;
+  origPath: string | null;
+  /** A, M, D, R, C, T ; '?' pour un fichier non suivi. */
+  status: string;
+  additions: number | null;
+  deletions: number | null;
+  untracked: boolean;
+}
+
+export interface GitChangesSince {
+  /** Référence effectivement utilisée : le commit demandé, sinon HEAD (commit inconnu ou introuvable). */
+  base: string | null;
+  baseFound: boolean;
+  files: GitChangeSince[];
+}
+
 const DIFF_LIMIT = 400_000;
+/** Arbre vide de git : référence d'un dépôt sans aucun commit. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+/** Taille au-delà de laquelle les lignes d'un fichier non suivi ne sont pas comptées. */
+const COUNT_LINES_LIMIT = 1024 * 1024;
 
 function parseCommitLine(line: string): GitCommit | null {
   const [hash, shortHash, author, date, ...subject] = line.split('\u001f');
@@ -81,7 +105,121 @@ function checkPath(p: string): string {
   return p;
 }
 
+/** Hash du commit HEAD d'un dossier, null s'il n'est pas un dépôt git ou n'a aucun commit. */
+export async function headCommitOf(cwd: string): Promise<string | null> {
+  const { stdout, code } = await gitRaw(['rev-parse', '--verify', '-q', 'HEAD'], cwd).catch(() => ({ stdout: '', code: 1 }));
+  return code === 0 && stdout.trim() ? stdout.trim() : null;
+}
+
+/** Référence de comparaison : `base` s'il existe encore dans le dépôt, sinon HEAD, sinon l'arbre vide. */
+async function resolveBase(cwd: string, base: string | null): Promise<{ ref: string; found: boolean }> {
+  if (base && /^[0-9a-f]{7,40}$/i.test(base) && (await gitRaw(['cat-file', '-e', `${base}^{commit}`], cwd)).code === 0) return { ref: base, found: true };
+  return { ref: (await headCommitOf(cwd)) ?? EMPTY_TREE, found: false };
+}
+
+async function isGitRepo(cwd: string): Promise<boolean> {
+  const { stdout, code } = await gitRaw(['rev-parse', '--is-inside-work-tree'], cwd).catch(() => ({ stdout: '', code: 1 }));
+  return code === 0 && stdout.trim() === 'true';
+}
+
+async function countLines(file: string): Promise<number | null> {
+  try {
+    if ((await stat(file)).size > COUNT_LINES_LIMIT) return null;
+    const buf = await readFile(file);
+    if (buf.includes(0)) return null;
+    if (!buf.length) return 0;
+    let n = 0;
+    for (const b of buf) if (b === 10) n++;
+    return buf[buf.length - 1] === 10 ? n : n + 1;
+  } catch {
+    return null;
+  }
+}
+
+function tidyDiff(path: string, text: string): GitDiff {
+  const binary = /^Binary files .* differ$/m.test(text);
+  const truncated = text.length > DIFF_LIMIT;
+  return { path, staged: false, text: truncated ? `${text.slice(0, DIFF_LIMIT)}\n… (diff tronqué)` : text, binary, truncated };
+}
+
 export const gitService = {
+  isRepo: (ref: WorkspaceRef) => resolveRoot(ref).then(isGitRepo),
+
+  /**
+   * Fichiers modifiés dans l'arbre de travail depuis le commit `base` : commits faits depuis, modifications
+   * indexées ou non, fichiers non suivis (hors .gitignore). Sans `base` exploitable, compare à HEAD.
+   */
+  async changesSince(ref: WorkspaceRef, base: string | null): Promise<GitChangesSince> {
+    const cwd = await resolveRoot(ref);
+    const { ref: from, found } = await resolveBase(cwd, base);
+    const files = new Map<string, GitChangeSince>();
+    const names = (await gitRaw(['diff', '--name-status', '-z', '-M', from, '--'], cwd)).stdout.split('\0');
+    for (let i = 0; i < names.length; i++) {
+      const code = names[i];
+      if (!code) continue;
+      const status = code[0];
+      const renamed = status === 'R' || status === 'C';
+      const origPath = renamed ? names[++i] : null;
+      const p = names[++i];
+      if (p) files.set(p, { path: p, origPath, status, additions: null, deletions: null, untracked: false });
+    }
+    // numstat -z : « ajouts\tsuppressions\tchemin\0 », ou pour un renommage « ajouts\tsuppressions\t\0ancien\0nouveau\0 » ; « - » pour un binaire.
+    const nums = (await gitRaw(['diff', '--numstat', '-z', '-M', from, '--'], cwd)).stdout.split('\0');
+    for (let i = 0; i < nums.length; i++) {
+      const m = nums[i].match(/^(-|\d+)\t(-|\d+)\t(.*)$/s);
+      if (!m) continue;
+      let p = m[3];
+      if (!p) {
+        i += 2;
+        p = nums[i];
+      }
+      const entry = files.get(p);
+      if (entry) {
+        entry.additions = m[1] === '-' ? null : Number(m[1]);
+        entry.deletions = m[2] === '-' ? null : Number(m[2]);
+      }
+    }
+    const others = (await gitRaw(['ls-files', '--others', '--exclude-standard', '-z'], cwd)).stdout.split('\0').filter(Boolean);
+    for (const p of others) {
+      if (files.has(p)) continue;
+      files.set(p, { path: p, origPath: null, status: '?', additions: await countLines(path.join(cwd, p)), deletions: 0, untracked: true });
+    }
+    return { base: from === EMPTY_TREE ? null : from, baseFound: found, files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)) };
+  },
+
+  /** Diff d'un fichier entre le commit `base` (ou HEAD) et l'arbre de travail ; `origPath` pour un renommage. */
+  async diffSince(ref: WorkspaceRef, base: string | null, file: string, origPath?: string | null): Promise<GitDiff> {
+    const cwd = await resolveRoot(ref);
+    checkPath(file);
+    if (origPath) checkPath(origPath);
+    const { ref: from } = await resolveBase(cwd, base);
+    const tracked = (await gitRaw(['ls-files', '--error-unmatch', '--', file], cwd)).code === 0;
+    const inBase = (await gitRaw(['cat-file', '-e', `${from}:${file}`], cwd)).code === 0;
+    const result =
+      !tracked && !inBase && !origPath
+        ? await gitRaw(['diff', '--no-index', '--', '/dev/null', file], cwd)
+        : await gitRaw(['diff', '-M', from, '--', ...(origPath ? [origPath] : []), file], cwd);
+    return tidyDiff(file, result.stdout);
+  },
+
+  /**
+   * Remet un fichier dans son état du commit `base` (index et arbre de travail), sans toucher aux commits :
+   * restauré s'il existait, supprimé sinon. Pour un renommage, l'ancien chemin est restauré aussi.
+   */
+  async restoreFromBase(ref: WorkspaceRef, base: string | null, file: string, origPath?: string | null): Promise<void> {
+    const cwd = await resolveRoot(ref);
+    const { ref: from } = await resolveBase(cwd, base);
+    for (const p of [file, ...(origPath ? [origPath] : [])].map(checkPath)) {
+      if ((await gitRaw(['cat-file', '-e', `${from}:${p}`], cwd)).code === 0) {
+        await git(['checkout', from, '--', p], cwd);
+      } else if ((await gitRaw(['ls-files', '--error-unmatch', '--', p], cwd)).code === 0) {
+        await git(['rm', '-f', '-q', '--', p], cwd);
+      } else {
+        await git(['clean', '-f', '-q', '--', p], cwd);
+      }
+    }
+  },
+
   async status(ref: WorkspaceRef): Promise<GitStatus> {
     const cwd = await resolveRoot(ref);
     const { stdout } = await gitRaw(['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'], cwd);

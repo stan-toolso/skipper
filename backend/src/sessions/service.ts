@@ -11,6 +11,7 @@ import { scheduledRuns } from './scheduledRuns.js';
 import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
+import { headCommitOf } from '../git/service.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
@@ -234,6 +235,11 @@ export const sessionService = {
     try {
       // La session s'exécute dans le worktree choisi, sinon dans le checkout principal du projet.
       const cwd = await worktreeService.resolveCwd(project, session.worktreeId);
+      // Premier démarrage : le commit courant sert de référence à l'onglet « Modifications » (commits de l'agent compris).
+      if (!session.baseCommit) {
+        const baseCommit = await headCommitOf(cwd);
+        if (baseCommit) await sessionRepository.update(id, { baseCommit });
+      }
       handle = await provider.start({
         session: started,
         project,

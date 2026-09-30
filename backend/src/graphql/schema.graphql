@@ -465,6 +465,39 @@ type GitBranch {
   commit: GitCommit
 }
 
+"Référence de l'onglet « Modifications » d'une session."
+enum SessionChangesMode {
+  "Depuis le commit HEAD au premier démarrage de la session (commits de l'agent compris)."
+  COMMIT
+  "Modifications non validées seulement : commit de départ inconnu ou disparu du dépôt."
+  HEAD
+  "Dossier sans git : fichiers modifiés depuis la création de la session, sans diff."
+  MTIME
+}
+
+"Fichier modifié dans le dossier de travail d'une session depuis son démarrage."
+type SessionFileChange {
+  path: String!
+  "Ancien chemin d'un fichier renommé."
+  origPath: String
+  "A, M, D, R, C, T ; ? pour un fichier non suivi."
+  status: String!
+  "Lignes ajoutées et supprimées (null : binaire ou inconnu)."
+  additions: Int
+  deletions: Int
+  untracked: Boolean!
+}
+
+"Modifications du dossier de travail d'une session depuis son démarrage."
+type SessionChanges {
+  mode: SessionChangesMode!
+  "Commit de référence (null sans git)."
+  baseCommit: String
+  files: [SessionFileChange!]!
+  "Liste incomplète (dossier sans git trop volumineux)."
+  truncated: Boolean!
+}
+
 type GitDiff {
   "Chemin du fichier, ou hash pour un commit."
   path: String!
@@ -882,6 +915,10 @@ type Query {
   providers: [Provider!]!
   sessions(projectId: ID, status: SessionStatus, provider: String, limit: Int, offset: Int): [Session!]!
   session(id: ID!): Session
+  "Fichiers modifiés dans le dossier de travail de la session depuis son démarrage."
+  sessionChanges(sessionId: ID!): SessionChanges!
+  "Diff d'un fichier depuis le démarrage de la session ; origPath pour un renommage."
+  sessionFileDiff(sessionId: ID!, path: String!, origPath: String): GitDiff!
   projects: [Project!]!
   project(id: ID!): Project
   "Demandes, toutes sessions confondues. `status` à null renvoie tout l'historique (par défaut : celles en attente)."
@@ -1072,6 +1109,8 @@ type Mutation {
   gitUnstage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
   "Abandonne les modifications non indexées ; supprime un fichier non suivi."
   gitDiscard(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  "Remet un fichier dans son état du démarrage de la session (index et arbre de travail, commits inchangés)."
+  discardSessionFile(sessionId: ID!, path: String!, origPath: String): SessionChanges!
   gitCommit(projectId: ID!, worktreeId: ID, message: String!, stageAll: Boolean = false): GitStatus!
   gitFetch(projectId: ID!, worktreeId: ID): GitStatus!
   gitPull(projectId: ID!, worktreeId: ID): GitStatus!

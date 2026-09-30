@@ -229,6 +229,31 @@
 .cc-toggle { display: flex; justify-content: flex-end; gap: 6px; padding: 4px 16px 0; font-family: var(--bs-font-sans-serif); font-size: 12px; color: var(--cc-dimmer); }
 .cc-toggle label { cursor: pointer; }
 
+/* Onglets de la page de session (conversation, modifications). */
+.cc-tabs { display: flex; gap: 2px; margin-right: auto; }
+.cc-tab { font: inherit; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--cc-dim); padding: 0 8px 2px; cursor: pointer; }
+.cc-tab:hover { color: var(--cc-fg); }
+.cc-tab.active { color: var(--cc-fg); border-bottom-color: var(--cc-accent); }
+.cc-tab .cc-tab-count { color: var(--cc-accent); margin-left: 4px; }
+.cc-toggle { align-items: center; }
+
+/* Onglet « Modifications » : fichiers modifiés depuis le début de la session et leur diff. */
+.cc-changes { white-space: normal; }
+.cc-changes-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; font-family: var(--bs-font-sans-serif); }
+.cc-changes-head code { color: var(--cc-dim); background: none; padding: 0; }
+.cc-changes-tools { display: flex; gap: 6px; }
+.cc-changes-file { border: 1px solid var(--cc-border); border-radius: 4px; margin-bottom: 6px; overflow: hidden; }
+.cc-changes-row { display: flex; align-items: center; gap: 6px; padding-right: 6px; }
+.cc-changes-row:hover { background: var(--cc-bg-user); }
+.cc-changes-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font: inherit; color: var(--cc-fg); background: none; border: 0; padding: 5px 8px; text-align: left; cursor: pointer; }
+.cc-changes-main:disabled { cursor: default; }
+.cc-changes-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-changes-count { flex: 0 0 auto; font-size: 12px; }
+.cc-changes-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.cc-changes-actions .cc-btn { padding: 0 6px; text-decoration: none; }
+.cc-changes-file .diff-view { border-top: 1px solid var(--cc-border); max-height: 70vh; overflow: auto; }
+.cc-changes-note { padding: 6px 10px; font-family: var(--bs-font-sans-serif); font-size: 12px; }
+
 /* Bouton d'envoi : discret au clavier, visible sur mobile où Entrée ne suffit pas. */
 .cc-send {
   display: none; flex: 0 0 auto; align-self: flex-end; background: none; border: 0; color: var(--cc-accent); font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer;

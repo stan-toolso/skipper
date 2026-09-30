@@ -14,6 +14,8 @@ import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
 import SessionSettingsModal from '../components/SessionSettingsModal';
 import Transcript from '../components/Transcript';
+import SessionChanges from '../components/SessionChanges';
+import { fileToolResultCount } from '../lib/sessionChanges';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
 import {
@@ -24,17 +26,21 @@ import {
   RUN_SESSION_SCHEDULE_NOW,
   SEND_SESSION_MESSAGE,
   SESSION,
+  SESSION_CHANGES,
   STOP_SESSION,
   UPDATE_SESSION_CONFIG,
   type ConfigField,
   type HumanRequest,
   type Provider,
   type Session,
+  type SessionChanges as SessionChangesData,
 } from '../graphql/operations';
 
 type SessionWithRequests = Session & { requests: HumanRequest[] };
 
 const TECH_KEY = 'skipper.session.technical';
+const TAB_KEY = 'skipper.session.tab';
+type PageTab = 'conversation' | 'changes';
 
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
@@ -74,6 +80,25 @@ export default function SessionDetailPage() {
       return !v;
     });
   };
+  const [tab, setTab] = useState<PageTab>(() => {
+    try {
+      return localStorage.getItem(TAB_KEY) === 'changes' ? 'changes' : 'conversation';
+    } catch {
+      return 'conversation';
+    }
+  });
+  const selectTab = (next: PageTab) => {
+    setTab(next);
+    try {
+      localStorage.setItem(TAB_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
+  // Onglet « Modifications » : la liste est rechargée après chaque résultat d'un outil qui modifie des fichiers
+  // (Edit, Write, Bash...) et à chaque changement d'état de la session (fin de tour d'un agent sans outils).
+  const changesQ = useQuery<{ sessionChanges: SessionChangesData }>(SESSION_CHANGES, { variables: { sessionId: id }, fetchPolicy: 'cache-and-network' });
+  const toolResults = useMemo(() => fileToolResultCount(events), [events]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Instructions déjà envoyées, dans l'ordre, sans doublons consécutifs : parcourues avec flèche haut / bas, comme dans Claude Code.
   const history = useMemo(() => {
@@ -103,6 +128,21 @@ export default function SessionDetailPage() {
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
+  const changesKey = `${toolResults}:${session?.status}:${session?.activity}`;
+  const [refreshCount, setRefreshCount] = useState(0);
+  const refetchChanges = changesQ.refetch;
+  const firstKey = useRef(changesKey);
+  useEffect(() => {
+    if (changesKey === firstKey.current) return;
+    firstKey.current = changesKey;
+    void refetchChanges().catch(() => undefined);
+    setRefreshCount((n) => n + 1);
+  }, [changesKey, refetchChanges]);
+  const refreshChanges = () => {
+    void refetchChanges().catch(() => undefined);
+    setRefreshCount((n) => n + 1);
+  };
+  const changedFiles = changesQ.data?.sessionChanges.files.length ?? 0;
 
   // Focus dans la zone de saisie à l'ouverture, sauf sur mobile (le clavier virtuel masquerait la page).
   useEffect(() => {
@@ -254,11 +294,41 @@ export default function SessionDetailPage() {
       </div>
 
       <div className="cc-toggle">
-        <label>
-          <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
-        </label>
+        <div className="cc-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'conversation'} className={`cc-tab${tab === 'conversation' ? ' active' : ''}`} onClick={() => selectTab('conversation')}>
+            Conversation
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'changes'}
+            className={`cc-tab${tab === 'changes' ? ' active' : ''}`}
+            title="Fichiers modifiés dans le dossier de travail depuis le début de la session"
+            onClick={() => selectTab('changes')}
+          >
+            Modifications
+            {changedFiles > 0 && <span className="cc-tab-count">{changedFiles}</span>}
+          </button>
+        </div>
+        {tab === 'conversation' && (
+          <label>
+            <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
+          </label>
+        )}
       </div>
-      <Transcript events={events} loading={!eventsLoaded} technical={technical} />
+      {tab === 'conversation' ? (
+        <Transcript events={events} loading={!eventsLoaded} technical={technical} />
+      ) : (
+        <SessionChanges
+          sessionId={id}
+          workspace={{ projectId: session.project.id, worktreeId: session.worktree?.id ?? null }}
+          changes={changesQ.data?.sessionChanges}
+          loading={changesQ.loading}
+          error={changesQ.error}
+          refreshKey={refreshCount}
+          onRefresh={refreshChanges}
+        />
+      )}
       {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
       {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
 
