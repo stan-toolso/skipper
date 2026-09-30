@@ -3,6 +3,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
 import { pubSub } from '../pubsub.js';
+import { cleanupService } from '../sessions/cleanup.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { scheduledRuns } from '../sessions/scheduledRuns.js';
 import { sessionService } from '../sessions/service.js';
@@ -18,10 +19,13 @@ const TICK_MS = 30_000;
 const MISSED_GRACE_MS = 10 * 60_000;
 /** Durée maximale d'attente de la fin d'une exécution avant de conclure. */
 const RUN_TIMEOUT_MS = 4 * 3_600_000;
+/** Fréquence du balayage de purge des transcripts (durée de conservation). */
+const SWEEP_MS = 3_600_000;
 const DEFAULT_TIMEZONE = 'UTC';
 
 let timer: NodeJS.Timeout | null = null;
 let ticking = false;
+let lastSweep = 0;
 
 function formatUsd(usd: number): string {
   return `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
@@ -154,6 +158,14 @@ export const scheduleService = {
       if (runningCount >= config.maxRunningSessions) return skip(`${runningCount} sessions tournent déjà (limite : ${config.maxRunningSessions})`);
     }
 
+    // Nettoyage avant l'exécution : purge du transcript, puis compaction ou remise à zéro de la conversation si elle est trop grosse.
+    try {
+      await cleanupService.applyRetention(session);
+      await cleanupService.prepareContext(id);
+    } catch (err) {
+      console.error(`[schedules] nettoyage de la session ${id}`, err);
+      await emit(id, 'cleanup', { action: 'failed', error: (err as Error).message });
+    }
     const startedAt = Date.now();
     const eventId = await emit(id, 'schedule', { action: 'run', cron: schedule.cron, timezone: schedule.timezone, manual });
     scheduledRuns.add(id);
@@ -207,6 +219,11 @@ export const scheduleService = {
     ticking = true;
     try {
       const now = new Date();
+      if (now.getTime() - lastSweep >= SWEEP_MS) {
+        lastSweep = now.getTime();
+        const swept = await cleanupService.sweep();
+        if (swept.deleted) console.log(`[cleanup] ${swept.deleted} événement(s) purgé(s) sur ${swept.sessions} session(s)`);
+      }
       for (const due of await scheduleRepository.listDue(now)) {
         if (!due.nextRunAt) continue;
         let next: Date | null = null;

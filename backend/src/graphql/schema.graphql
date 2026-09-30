@@ -1152,3 +1152,39 @@ extend type Mutation {
   "Exécute la planification maintenant, sans attendre l'échéance."
   runSessionScheduleNow(id: ID!): Session!
 }
+
+# ---- Réglages et nettoyage des sessions -----------------------------------------------------------
+
+"Nettoyage automatique de l'historique d'une session (utile aux sessions planifiées)."
+type SessionCleanup {
+  "Les événements du transcript plus vieux que N jours sont supprimés (null : jamais)."
+  retentionDays: Int
+  "Quand le contexte de l'agent dépasse contextMaxTokens : « compact » (compacter la conversation) ou « reset » (repartir d'une conversation neuve). Null : rien."
+  contextAction: String
+  contextMaxTokens: Int
+}
+
+input SessionCleanupInput {
+  retentionDays: Int
+  contextAction: String
+  contextMaxTokens: Int
+}
+
+input UpdateSessionInput {
+  name: String
+  "Remplace les réglages de nettoyage (un objet vide les retire)."
+  cleanup: SessionCleanupInput
+}
+
+extend type Session {
+  cleanup: SessionCleanup!
+  "Taille du contexte de l'agent au dernier tour (tokens), null si inconnue."
+  contextTokens: Int
+}
+
+extend type Mutation {
+  "Renomme la session et/ou remplace ses réglages de nettoyage."
+  updateSession(id: ID!, input: UpdateSessionInput!): Session!
+  "Applique tout de suite le nettoyage configuré : purge du transcript, puis compaction ou remise à zéro de la conversation si elle dépasse le seuil."
+  applySessionCleanup(id: ID!): Session!
+}

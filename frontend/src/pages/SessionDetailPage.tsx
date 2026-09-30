@@ -12,6 +12,7 @@ import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
+import SessionSettingsModal from '../components/SessionSettingsModal';
 import Transcript from '../components/Transcript';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
@@ -51,6 +52,7 @@ export default function SessionDetailPage() {
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
   const [scheduling, setScheduling] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [text, setText] = useState('');
   const [encoding, setEncoding] = useState(false);
@@ -166,7 +168,9 @@ export default function SessionDetailPage() {
       ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
       : running
         ? "⏵ L'agent attend vos instructions"
-        : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
+        : session.status === 'PENDING'
+          ? "■ Pas encore démarrée — écrivez la première instruction pour lancer l'agent"
+          : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
 
   return (
     <div className="cc">
@@ -211,6 +215,9 @@ export default function SessionDetailPage() {
           </span>
         </div>
         <div className="cc-actions">
+          <button type="button" className="cc-btn" title="Nom de la session et nettoyage automatique de l'historique" onClick={() => setSettingsOpen(true)}>
+            <i className="bi bi-gear" /> Réglages
+          </button>
           <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
             <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
           </button>
@@ -253,6 +260,7 @@ export default function SessionDetailPage() {
       </div>
       <Transcript events={events} loading={!eventsLoaded} technical={technical} />
       {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
+      {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />
