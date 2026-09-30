@@ -37,7 +37,9 @@ Trois notions :
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
   contexte par un agent. La notification d'une demande est marquée lue d'elle-même dès que la demande
   est réglée (répondue, annulée avec la session, expirée au redémarrage) : la cloche ne réclame que ce
-  qui attend encore. Notifications natives du navigateur activables en option.
+  qui attend encore. Réservées aux administrateurs de l'application : les limites d'utilisation de
+  l'abonnement Claude (fenêtre à 75 % puis 90 %, tours refusés). Notifications natives du navigateur
+  activables en option.
 - **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
   agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
   MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
@@ -59,7 +61,7 @@ Trois notions :
 Mise en production (serveur, nginx, base RDS, pm2) : voir `DEPLOY.md`.
 
 Paramètres (menu en bas de la sidebar) : une section par service. **Claude** (authentification,
-modèles, budgets et consommation) et **GitHub** (jeton d'accès personnel collé, ou OAuth App et device flow ;
+modèles, limites d'utilisation de l'abonnement, budgets et consommation) et **GitHub** (jeton d'accès personnel collé, ou OAuth App et device flow ;
 jeton chiffré en base, dépôts privés en https sans clé de déploiement, liste des dépôts dans le
 formulaire de projet).
 
@@ -101,7 +103,9 @@ Le déploiement reste manuel (`DEPLOY.md`).
 
 Le provider Claude s'appuie sur le [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk)
 (`@anthropic-ai/claude-agent-sdk`), qui embarque son propre binaire Claude Code : chaque message du
-flux `query()` est journalisé comme événement `claude.<type>`. L'authentification est celle de
+flux `query()` est journalisé comme événement `claude.<type>`, sauf les `rate_limit_event` (un par
+appel au modèle) : le dernier état des limites est gardé par `settings/rateLimits.ts` (clé
+`claude.rate_limits` de app_settings) et le transcript ne garde que les changements de statut. L'authentification est celle de
 Claude Code sur la machine qui héberge le backend (connexion `claude` ou `ANTHROPIC_API_KEY`).
 `CLAUDE_BIN` permet, si besoin, d'imposer le binaire utilisé pour les commandes d'authentification du
 compte ; les sessions utilisent toujours le CLI de l'image Docker du projet.

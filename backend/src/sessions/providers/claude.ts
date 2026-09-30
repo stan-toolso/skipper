@@ -31,6 +31,7 @@ import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { settingsService } from '../../settings/service.js';
 import { usageService } from '../../settings/usage.js';
+import { describeRejection, rateLimitService } from '../../settings/rateLimits.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
 import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.js';
 import type { Attachment } from '../types.js';
@@ -277,9 +278,11 @@ export class ClaudeProvider implements SessionProvider {
       let previousModelTotals: Record<string, number> = {};
       // Taille du contexte : tokens d'entrée (dont cache) du dernier appel au modèle, relevée sur les messages assistant.
       let contextTokens: number | null = null;
+      // Statut de limite d'utilisation rapporté en dernier à cette session : seuls ses changements sont journalisés.
+      const run: RunState = { rateLimitStatus: null };
       try {
         for await (const message of stream) {
-          await this.handleMessage(ctx, message);
+          await this.handleMessage(ctx, message, run);
           if (message.type === 'assistant' && !message.parent_tool_use_id) {
             const u = (message.message as { usage?: { input_tokens?: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null } }).usage;
             if (u && typeof u.input_tokens === 'number') contextTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
@@ -476,13 +479,24 @@ export class ClaudeProvider implements SessionProvider {
     return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
   }
 
-  private async handleMessage(ctx: RunContext, message: SDKMessage): Promise<void> {
+  private async handleMessage(ctx: RunContext, message: SDKMessage, run: RunState): Promise<void> {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
     }
     // Compteur de tokens de réflexion : des dizaines de messages par seconde, sans contenu pour le transcript.
     // Les journaliser ralentit la lecture du flux (une écriture en base chacun) et gonfle l'historique.
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'thinking_tokens') return;
+    // Limites d'utilisation de l'abonnement : un événement par appel au modèle. Le dernier état est gardé
+    // par rateLimitService (Paramètres, tableau de bord, alertes) ; le transcript ne garde que les changements.
+    if (message.type === 'rate_limit_event') {
+      rateLimitService.record(message.rate_limit_info);
+      if (message.rate_limit_info.status === run.rateLimitStatus) return;
+      run.rateLimitStatus = message.rate_limit_info.status;
+    }
+    // Tour refusé pour cause de limite : le message du CLI (« You've reached your … limit ») est peu explicite.
+    if (message.type === 'assistant' && message.error === 'rate_limit') {
+      await ctx.emit('system', { notice: true, rateLimit: true, message: describeRejection(rateLimitService.current()) });
+    }
     // Premier outil du navigateur utilisé par l'agent : la vue en direct est proposée dans la sidebar.
     if (message.type === 'assistant' && message.message.content.some((b) => b.type === 'tool_use' && b.name.startsWith('mcp__playwright__'))) {
       liveBrowserService.markUsed(ctx.session.id);
@@ -490,6 +504,11 @@ export class ClaudeProvider implements SessionProvider {
     const payload = message.type === 'user' ? withoutBinaryData(message) : message;
     await ctx.emit(`claude.${message.type}`, payload as unknown as Record<string, unknown>);
   }
+}
+
+/** État propre à une exécution du provider (un processus Claude Code). */
+interface RunState {
+  rateLimitStatus: string | null;
 }
 
 /**

@@ -747,6 +747,8 @@ type DashboardUsage {
   byDay: [DashboardUsageDay!]!
   "Sessions les plus coûteuses du mois."
   topSessions: [UsageBySession!]!
+  "Limites d'utilisation de l'abonnement Claude (null : aucun événement reçu)."
+  rateLimits: ClaudeRateLimits
 }
 
 "Indicateurs d'un projet sur le tableau de bord."
@@ -820,8 +822,37 @@ type GithubRepository {
   pushedAt: DateTime
 }
 
+"Une fenêtre de limite d'utilisation de l'abonnement Claude (claude.ai)."
+type ClaudeRateLimitWindow {
+  "five_hour, seven_day, seven_day_overage_included, seven_day_opus, seven_day_sonnet, overage..."
+  type: String!
+  label: String!
+  "Part consommée, de 0 à 1."
+  utilization: Float
+  resetsAt: DateTime
+  "Dernier événement qui a rapporté cette fenêtre."
+  observedAt: DateTime!
+}
+
+"Dernier état connu des limites d'utilisation de l'abonnement Claude, d'après les événements des sessions."
+type ClaudeRateLimits {
+  updatedAt: DateTime!
+  "allowed, allowed_warning ou rejected : statut du dernier événement reçu."
+  status: String!
+  "Fenêtre à laquelle se rapporte ce statut."
+  rateLimitType: String
+  rateLimitLabel: String
+  resetsAt: DateTime
+  overageStatus: String
+  overageDisabledReason: String
+  isUsingOverage: Boolean!
+  windows: [ClaudeRateLimitWindow!]!
+}
+
 type AppSettings {
   claude: ClaudeSettings!
+  "Limites d'utilisation de l'abonnement (null : aucun événement reçu, ex. authentification par clé API)."
+  rateLimits: ClaudeRateLimits
   "État du serveur : mode maintenance, sessions actives, reprise automatique."
   server: ServerState!
   claudeAuth: ClaudeAuthStatus!

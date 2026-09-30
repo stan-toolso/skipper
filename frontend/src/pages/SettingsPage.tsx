@@ -26,6 +26,7 @@ import GithubSection from '../components/GithubSection';
 import { Nav } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
 import { canAutoFocus } from '../lib/device';
+import RateLimitGauges from '../components/RateLimitGauges';
 
 const modeLabels: Record<ClaudeAuthMode, { title: string; hint: string }> = {
   server: { title: 'Compte du serveur', hint: "Le compte connecté dans Claude Code pour l'utilisateur système qui fait tourner Skipper (connexion depuis cette page ou par SSH), ou les variables d'environnement du serveur. Recommandé : les identifiants se renouvellent seuls." },
@@ -382,6 +383,24 @@ function ModelsCard({ settings }: { settings: AppSettings }) {
   );
 }
 
+/** Limites d'utilisation de l'abonnement (fenêtres 5 h / 7 j), d'après le dernier événement reçu d'une session. */
+function RateLimitsCard({ settings }: { settings: AppSettings }) {
+  const limits = settings.rateLimits;
+  return (
+    <Card className="mb-4" border={limits?.status === 'rejected' ? 'danger' : limits?.status === 'allowed_warning' ? 'warning' : undefined}>
+      <Card.Header>Limites d'utilisation de l'abonnement</Card.Header>
+      <Card.Body>
+        <div style={{ maxWidth: 560 }}>
+          <RateLimitGauges limits={limits} />
+        </div>
+        <div className="small text-secondary mt-2">
+          Les administrateurs sont notifiés quand une fenêtre dépasse 75 % puis 90 %, et quand Anthropic refuse les tours.
+        </div>
+      </Card.Body>
+    </Card>
+  );
+}
+
 function BudgetCard({ settings }: { settings: AppSettings }) {
   const { claude, usage } = settings;
   const [monthly, setMonthly] = useState(claude.monthlyBudgetUsd?.toString() ?? '');
@@ -606,6 +625,7 @@ export default function SettingsPage() {
           <>
             <AuthCard settings={data.settings} />
             <ModelsCard settings={data.settings} />
+            <RateLimitsCard settings={data.settings} />
             <BudgetCard settings={data.settings} />
           </>
         )}

@@ -10,6 +10,7 @@ const icons: Record<string, string> = {
   'task.completed': 'bi-check2-square',
   'session.completed': 'bi-check-circle',
   'session.failed': 'bi-x-octagon',
+  'claude.rate_limit': 'bi-speedometer2',
   'context.created': 'bi-journal-plus',
   'schedule.run': 'bi-alarm',
   'schedule.skipped': 'bi-alarm',
