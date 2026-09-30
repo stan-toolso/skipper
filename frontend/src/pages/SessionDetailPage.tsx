@@ -15,10 +15,14 @@ import {
   DELETE_SESSION,
   END_SESSION,
   INTERRUPT_SESSION,
+  PROVIDERS,
   SEND_SESSION_MESSAGE,
   SESSION,
   STOP_SESSION,
+  UPDATE_SESSION_CONFIG,
+  type ConfigField,
   type HumanRequest,
+  type Provider,
   type Session,
   type SessionEvent,
 } from '../graphql/operations';
@@ -38,6 +42,8 @@ export default function SessionDetailPage() {
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
   const { confirm } = useDialogs();
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
+  const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
+  const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
 
   const [text, setText] = useState('');
   const [technical, setTechnical] = useState<boolean>(() => {
@@ -90,9 +96,17 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? interruptError ?? endError ?? stopError;
+  const actionError = sendError ?? interruptError ?? endError ?? stopError ?? configError;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
+  // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
+  const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
+  const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
+  const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
+  const changeSetting = (field: ConfigField, value: string) => {
+    if (field.key === 'permissionMode' && value === 'bypassPermissions' && !window.confirm("Tout autoriser : l'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?")) return;
+    updateConfig({ variables: { id, config: { [field.key]: value || null } } });
+  };
 
   const statusLine = pending.length
     ? `⏸ L'agent attend votre réponse ci-dessus`
@@ -120,7 +134,6 @@ export default function SessionDetailPage() {
               <>
                 {' '}
                 · <code>{session.provider}</code>
-                {model && <> · {model}</>}
                 {session.exitCode !== null && <> · exit {session.exitCode}</>}
               </>
             )}
@@ -173,7 +186,45 @@ export default function SessionDetailPage() {
         <span>
           {session.error && <span className="cc-red">{session.error} · </span>}
           {actionError && <span className="cc-red">{actionError.message} · </span>}
-          <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
+          <span className="cc-settings">
+            {modelField ? (
+              <select
+                className="cc-select"
+                title="Modèle de cette session (modifiable à tout moment)"
+                aria-label="Modèle"
+                value={model ?? ''}
+                disabled={updatingConfig}
+                onChange={(e) => changeSetting(modelField, e.target.value)}
+              >
+                {model && !(modelField.options ?? []).some((o) => o.value === model) && <option value={model}>{model}</option>}
+                {(modelField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              model && <span title="Modèle de cette session">{model}</span>
+            )}
+            {permissionField ? (
+              <select
+                className="cc-select"
+                title="Autorisations de cette session (modifiables à tout moment)"
+                aria-label="Autorisations"
+                value={permissionMode}
+                disabled={updatingConfig}
+                onChange={(e) => changeSetting(permissionField, e.target.value)}
+              >
+                {(permissionField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value} title={o.description ?? undefined}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
+            )}
+          </span>
         </span>
       </div>
 

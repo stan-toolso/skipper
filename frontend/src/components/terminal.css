@@ -150,6 +150,21 @@
   gap: 12px;
 }
 .cc-status .cc-spinner { color: var(--cc-accent); display: inline-block; animation: cc-blink 1s ease-in-out infinite; }
+/* Réglages modifiables en cours de session (modèle, autorisations) : listes déroulantes discrètes dans la barre d'état */
+.cc-status .cc-settings { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cc-select {
+  font: inherit;
+  color: var(--cc-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  max-width: 260px;
+  cursor: pointer;
+}
+.cc-select:hover, .cc-select:focus { border-color: var(--cc-border); color: var(--cc-fg); outline: none; }
+.cc-select:disabled { opacity: 0.5; cursor: default; }
+.cc-select option { background: #1a1a1a; color: var(--cc-fg); }
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .cc-input {
   display: flex;

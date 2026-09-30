@@ -64,6 +64,7 @@ function toEvent(row: EventRow): SessionEvent {
 
 export interface SessionPatch {
   status?: SessionStatus;
+  config?: Record<string, unknown>;
   activity?: SessionActivity | null;
   externalId?: string | null;
   exitCode?: number | null;
@@ -74,6 +75,7 @@ export interface SessionPatch {
 
 const patchColumns: Record<keyof SessionPatch, string> = {
   status: 'status',
+  config: 'config',
   activity: 'activity',
   externalId: 'external_id',
   exitCode: 'exit_code',
@@ -140,7 +142,7 @@ export const sessionRepository = {
     const params: unknown[] = [id];
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
-        params.push(patch[key]);
+        params.push(key === 'config' ? toJson(patch[key]) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }

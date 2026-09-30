@@ -619,6 +619,15 @@ export const INTERRUPT_SESSION = gql`
   }
 `;
 
+export const UPDATE_SESSION_CONFIG = gql`
+  ${SESSION_FIELDS}
+  mutation UpdateSessionConfig($id: ID!, $config: JSON!) {
+    updateSessionConfig(id: $id, config: $config) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const DELETE_SESSION = gql`
   mutation DeleteSession($id: ID!) {
     deleteSession(id: $id)

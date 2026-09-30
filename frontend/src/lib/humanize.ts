@@ -177,10 +177,18 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
   VIEWER: { label: 'Lecteur', hint: 'Consulte sessions, tâches et contexte sans rien modifier.' },
 };
 
-/** Règles « allow » contenues dans les suggestions du SDK (PermissionUpdate addRules), au format Read ou Bash(git status:*). */
+/**
+ * Ce que « ne plus demander » appliquerait, d'après les suggestions du SDK (PermissionUpdate) : des règles
+ * « allow » (addRules, au format Read ou Bash(git status:*)) ou, pour les modifications de fichiers, le mode
+ * acceptEdits (setMode), décrit par les outils qu'il libère.
+ */
 export function suggestedRules(suggestions: unknown[] | undefined | null): string[] {
   const out: string[] = [];
-  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; mode?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+    if (s?.type === 'setMode' && s.mode) {
+      out.push(s.mode === 'acceptEdits' ? 'Modifications de fichiers (Edit, Write, NotebookEdit)' : `mode « ${permissionModeLabels[s.mode] ?? s.mode} »`);
+      continue;
+    }
     if (s?.type !== 'addRules' || (s.behavior ?? 'allow') !== 'allow') continue;
     for (const r of s.rules ?? []) if (r.toolName) out.push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
   }

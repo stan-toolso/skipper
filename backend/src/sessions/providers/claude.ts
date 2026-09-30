@@ -19,7 +19,7 @@ import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
 import { createGoogleMcpServer } from '../../google/mcp.js';
 import { googleAccountService, googleReadTools } from '../../google/service.js';
-import { permissionRuleService } from '../../permissions/service.js';
+import { permissionRuleService, suggestedMode } from '../../permissions/service.js';
 import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runner } from '../../runners/index.js';
@@ -146,7 +146,8 @@ export class ClaudeProvider implements SessionProvider {
     // Réglages généraux : authentification, modèle par défaut, budgets, plafond mensuel.
     const general = settingsService.claude;
     await settingsService.assertBudgetAvailable();
-    const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
+    // Modèle courant : modifiable en cours de session (updateConfig), d'où la variable.
+    let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
@@ -214,8 +215,10 @@ export class ClaudeProvider implements SessionProvider {
       fallbackModel: general.fallbackModel ?? undefined,
       env,
       permissionMode: cfg.permissionMode || 'default',
-      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé.
-      allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
+      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé. Toujours vrai ici, car il rend
+      // ce mode *disponible* sans l'activer (drapeau --allow-dangerously-skip-permissions du CLI) : c'est la
+      // condition pour pouvoir y passer en cours de session (setPermissionMode), choix explicite de l'humain.
+      allowDangerouslySkipPermissions: true,
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
@@ -299,6 +302,25 @@ export class ClaudeProvider implements SessionProvider {
       async interrupt() {
         await stream.interrupt();
       },
+      // Changements à chaud pris en charge par le SDK : mode d'autorisation et modèle (les autres clés
+      // valent pour le prochain lancement).
+      async updateConfig(patch) {
+        const applied: string[] = [];
+        if ('permissionMode' in patch) {
+          const mode = (patch.permissionMode || 'default') as PermissionMode;
+          if (!permissionModes.includes(mode)) throw new AppError(`permissionMode invalide : ${String(mode)}`);
+          await stream.setPermissionMode(mode);
+          applied.push('permissionMode');
+        }
+        if ('model' in patch) {
+          const next = patch.model ? String(patch.model) : settingsService.claude.defaultModel ?? undefined;
+          settingsService.assertModelAllowed(next);
+          await stream.setModel(next);
+          model = next;
+          applied.push('model');
+        }
+        return applied;
+      },
     };
   }
 
@@ -347,6 +369,13 @@ export class ClaudeProvider implements SessionProvider {
             // la session courante l'applique tout de suite via updatedPermissions.
             const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
             if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+          }
+          // Pour les modifications de fichiers, le SDK suggère un changement de mode (acceptEdits) plutôt qu'une
+          // règle : updatedPermissions l'applique à la session en cours ; on l'enregistre aussi dans la configuration
+          // de la session (affichage, prochain lancement).
+          const mode = remember ? suggestedMode(options.suggestions ?? []) : null;
+          if (mode && permissionModes.includes(mode as PermissionMode) && mode !== ctx.session.config.permissionMode) {
+            await ctx.recordConfig({ permissionMode: mode });
           }
           return {
             behavior: 'allow',

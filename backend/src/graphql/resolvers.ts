@@ -555,6 +555,10 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return sessionService.interrupt(args.id);
     },
+    updateSessionConfig: async (_: unknown, args: { id: string; config: Record<string, unknown> }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.updateConfig(args.id, args.config ?? {});
+    },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');
       return requestService.answer(args.id, args.response ?? {});

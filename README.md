@@ -282,12 +282,21 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   `externalId` (ex. `session_id` Claude), `exitCode`, `error`, horodatages. Le provider Claude utilise
   le mode « streaming input » du SDK : la session reste ouverte entre les tours, `sendSessionMessage`
   envoie une instruction, `interruptSession` interrompt le tour en cours (échap dans l'interface),
-  `endSession` termine proprement, `stopSession` tue le processus.
+  `endSession` termine proprement, `stopSession` tue le processus. `updateSessionConfig` modifie la
+  configuration (fusion clé par clé) : une session Claude en cours change immédiatement de modèle
+  (`setModel`) ou de mode d'autorisation (`setPermissionMode`) ; les autres clés valent pour le prochain
+  lancement. Pour que « tout autoriser » reste accessible en cours de session, le CLI est toujours
+  lancé avec `--allow-dangerously-skip-permissions` (rend ce mode disponible sans l'activer). Chaque
+  changement est journalisé comme événement `config`.
 - **PermissionRule** : autorisation d'outil mémorisée pour un projet (`toolName`, `ruleContent`
   optionnel, ex. `Bash(git status:*)`). Créée en répondant « ne plus demander dans ce projet » à une
   demande d'autorisation (les règles suggérées par le SDK sont enregistrées) ou à la main sur la page
   du projet ; chaque session Claude du projet les reçoit dans `allowedTools`, donc ne redemande pas.
-  Retirer une règle ne concerne que les prochaines sessions.
+  Retirer une règle ne concerne que les prochaines sessions. Pour les modifications de fichiers
+  (`Edit`, `Write`, `NotebookEdit`), le SDK ne suggère pas de règle mais le mode `acceptEdits` :
+  « ne plus demander pour cette session » passe la session dans ce mode (appliqué par le SDK et
+  enregistré dans sa configuration, événement `config`) ; « dans ce projet » mémorise en plus les
+  règles `Edit`, `Write`, `MultiEdit`, `NotebookEdit`.
 - **Request** : `sessionId`, `type` (`permission`, `question`, `input`, ... extensible), `status`
   (`pending`, `answered`, `cancelled`, `expired`), `title`, `message`, `payload`, `response`. Un
   provider appelle `ctx.ask(...)` et reçoit la réponse humaine sous forme de JSON libre. Le provider
@@ -389,7 +398,8 @@ Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de ses
 (`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
 réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
-pour envoyer et échap pour interrompre.
+pour envoyer et échap pour interrompre. La barre d'état propose deux listes déroulantes pour changer
+le modèle et les autorisations de la session, y compris pendant qu'elle tourne.
 
 Aucune alerte native du navigateur (`window.alert`, `confirm`, `prompt`) : les confirmations, saisies
 courtes et messages d'erreur passent par les modales de `frontend/src/components/Dialogs.tsx`
@@ -505,7 +515,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
 - `createSession(input)`, `startSession(id)`, `stopSession(id)`, `deleteSession(id)`
-- `sendSessionMessage(id, text)`, `interruptSession(id)`, `endSession(id)`
+- `sendSessionMessage(id, text)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)`
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`

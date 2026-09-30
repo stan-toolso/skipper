@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionEvent } from '../graphql/operations';
-import { describeTool, formatCost, formatDuration } from '../lib/humanize';
+import { describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
 import Markdown from './Markdown';
 
 interface ContentBlock {
@@ -184,6 +184,26 @@ export default function Transcript({ events, autoScroll = true, technical = fals
           );
         }
         break;
+      case 'config': {
+        // Réglage modifié par un humain en cours de session (modèle, autorisations...).
+        const changes = (p.changes ?? {}) as Record<string, unknown>;
+        const applied = new Set(Array.isArray(p.applied) ? (p.applied as string[]) : []);
+        const parts = Object.entries(changes).map(([key, value]) => {
+          const label =
+            key === 'permissionMode'
+              ? `autorisations : ${permissionModeLabels[String(value ?? 'default')] ?? String(value)}`
+              : key === 'model'
+                ? `modèle : ${value ? String(value) : 'réglage général'}`
+                : `${key} : ${value === null ? '(retiré)' : JSON.stringify(value)}`;
+          return applied.has(key) ? label : `${label} (au prochain lancement)`;
+        });
+        nodes.push(
+          <div key={e.id} className="cc-note">
+            ⚙ Réglages modifiés · {parts.join(' · ')}
+          </div>,
+        );
+        break;
+      }
       case 'system':
         if (technical) {
           nodes.push(
