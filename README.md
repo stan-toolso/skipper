@@ -265,7 +265,9 @@ HTTP : les formulaires de connexion sont tous différents, c'est l'agent qui se 
 humaine (comme les autres permissions) ; on peut la désactiver par connexion (« sans approbation »).
 `list` est toujours libre. En mode d'autorisation « tout autoriser » de la session, aucune demande n'est
 faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
-shell suit le mode d'autorisation de la session (permission Bash).
+shell suit le mode d'autorisation de la session (permission Bash). L'interface le signale (formulaires de
+session et de projet, barre d'état de la session) quand « tout autoriser » est choisi sur un projet ayant
+des connexions avec approbation.
 
 **Isolation.** Les sessions tournent dans le conteneur du projet, jamais sur la machine du backend : un
 agent ne peut pas lire ce que le backend lit. En contrepartie l'accès « shell » n'est pas disponible (pas
@@ -338,7 +340,11 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   (`setModel`) ou de mode d'autorisation (`setPermissionMode`) ; les autres clés valent pour le prochain
   lancement. Pour que « tout autoriser » reste accessible en cours de session, le CLI est toujours
   lancé avec `--allow-dangerously-skip-permissions` (rend ce mode disponible sans l'activer). Chaque
-  changement est journalisé comme événement `config`.
+  changement est journalisé comme événement `config`. Une session créée sans `permissionMode` (session
+  de tâche, notamment) reçoit le mode par défaut du projet (`defaultPermissionMode` : `default`,
+  `acceptEdits`, `bypassPermissions` ou `plan`, réglable dans le formulaire du projet) ; les sessions
+  planifiées gardent le mode de leur session. Le formulaire de nouvelle session propose le dernier mode
+  choisi sur ce projet dans ce navigateur (localStorage), sinon celui du projet.
 - **PermissionRule** : autorisation d'outil mémorisée pour un projet (`toolName`, `ruleContent`
   optionnel, ex. `Bash(git status:*)`). Créée en répondant « ne plus demander dans ce projet » à une
   demande d'autorisation (les règles suggérées par le SDK sont enregistrées) ou à la main sur la page

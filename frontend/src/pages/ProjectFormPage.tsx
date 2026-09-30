@@ -2,7 +2,11 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Col, Collapse, Form, Row, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { bypassConnectionsWarning, permissionModeLabels } from '../lib/humanize';
 import { CREATE_PROJECT, GITHUB_REPOSITORIES, GITHUB_STATUS, PROJECT, PROJECTS, UPDATE_PROJECT, type GithubAuthStatus, type GithubRepository, type Project } from '../graphql/operations';
+
+/** Modes proposés comme réglage de projet (même liste que le backend, projects/types.ts). */
+const projectPermissionModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan'];
 
 /** Liste des dépôts GitHub de l'utilisateur connecté, pour remplir l'URL et la branche. */
 function GithubRepoPicker({ onPick }: { onPick: (repo: GithubRepository) => void }) {
@@ -68,6 +72,7 @@ export default function ProjectFormPage() {
   const [runnerMemory, setRunnerMemory] = useState('');
   const [runnerCpus, setRunnerCpus] = useState('');
   const [runnerBrowser, setRunnerBrowser] = useState(false);
+  const [permissionMode, setPermissionMode] = useState('default');
   const [showAdvanced, setShowAdvanced] = useState(isEdit);
 
   useEffect(() => {
@@ -83,13 +88,14 @@ export default function ProjectFormPage() {
     setRunnerMemory(p.runnerConfig?.memory ?? '');
     setRunnerCpus(p.runnerConfig?.cpus ?? '');
     setRunnerBrowser(Boolean(p.runnerConfig?.browser));
+    setPermissionMode(p.defaultPermissionMode ?? 'default');
   }, [data]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const runnerConfig: Record<string, unknown> = Object.fromEntries(Object.entries({ image: runnerImage.trim(), memory: runnerMemory.trim(), cpus: runnerCpus.trim() }).filter(([, v]) => v));
     if (runnerBrowser) runnerConfig.browser = true;
-    const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runnerConfig };
+    const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runnerConfig, defaultPermissionMode: permissionMode };
     if (isEdit) updateProject({ variables: { id, input: common } });
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
   };
@@ -142,6 +148,26 @@ export default function ProjectFormPage() {
                 Les agents peuvent ouvrir des pages, cliquer et remplir des formulaires dans un Chromium sans fenêtre, pour tester une interface web. Compte 300 à 500 Mo de mémoire en plus par session :
                 prévoyez une limite mémoire de 1,5 Go pour le conteneur.
               </Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Autorisations des agents par défaut</Form.Label>
+              <Form.Select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)}>
+                {projectPermissionModes.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {permissionModeLabels[mode]}
+                  </option>
+                ))}
+              </Form.Select>
+              <Form.Text>
+                Appliqué aux sessions lancées depuis une tâche et proposé par défaut dans le formulaire de nouvelle session (qui retient ensuite votre dernier choix). Modifiable à tout moment depuis la page d'une session.
+              </Form.Text>
+              {permissionMode === 'bypassPermissions' && bypassConnectionsWarning(data?.project?.approvalConnections ?? []) && (
+                <Alert variant="warning" className="py-2 small mt-2 mb-0">
+                  <i className="bi bi-exclamation-triangle me-1" />
+                  {bypassConnectionsWarning(data?.project?.approvalConnections ?? [])}
+                </Alert>
+              )}
             </Form.Group>
 
             <div className="mb-3">

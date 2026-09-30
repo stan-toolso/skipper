@@ -89,6 +89,10 @@ type Project {
   gitBranch: String
   "Réglages du conteneur Docker du projet : { image, memory, cpus, browser }."
   runnerConfig: JSON!
+  "Mode d'autorisation des nouvelles sessions qui n'en précisent pas (default, acceptEdits, bypassPermissions, plan)."
+  defaultPermissionMode: String!
+  "Noms des connexions dont les appels sont soumis à l'approbation d'un humain (non soumis en mode bypassPermissions)."
+  approvalConnections: [String!]!
   runnerStatus: RunnerStatus!
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
@@ -965,6 +969,7 @@ input CreateProjectInput {
   gitUrl: String
   gitBranch: String
   runnerConfig: JSON
+  defaultPermissionMode: String
 }
 
 input UpdateProjectInput {
@@ -974,6 +979,7 @@ input UpdateProjectInput {
   gitUrl: String
   gitBranch: String
   runnerConfig: JSON
+  defaultPermissionMode: String
 }
 
 "Worktree à créer en même temps que la session, qui s'y exécutera."
