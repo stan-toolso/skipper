@@ -197,7 +197,7 @@ HTTP : les formulaires de connexion sont tous différents, c'est l'agent qui se 
 - **Outils** (par défaut) : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
   `tasks`. Outils `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `sql_query`, `sql_schema`. Le backend
   déchiffre, exécute, tronque les sorties, et journalise chaque usage comme événement `connection` de la
-  session (visible dans le transcript). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
+  session (visible dans le transcript avec les détails techniques). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
 - **Navigateur** (sites web, mode « outils ») : les champs secrets sont écrits, pour la durée de la
   session, dans un fichier dotenv passé au serveur MCP Playwright (`--secrets`). Quand l'agent tape le nom
   d'une variable dans un champ de formulaire (`browser_type`, `browser_fill_form`), Playwright saisit la
@@ -395,8 +395,16 @@ commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queri
 `gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
 
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
-(`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
-réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
+(`frontend/src/components/Transcript.tsx`) reproduit son affichage : instructions préfixées par `>`,
+réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Update(fichier)`,
+`Search(pattern: "x")`, `serveur - outil (MCP)(...)`) suivis de leur résultat `⎿` repliable : résumé
+pour les lectures et recherches, diff numéroté pour les modifications, début de la sortie pour les
+commandes. Les chemins sont relatifs au dossier de travail ; les messages internes des sous-agents
+sont résumés sur l'appel qui les lance ; les autorisations accordées ne laissent pas de trace (un
+refus apparaît comme l'erreur de l'outil). « Afficher les détails techniques » ajoute les lignes de
+service : démarrage, demandes d'autorisation, audit des connexions, erreurs brutes. Les événements
+sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
+seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre. La barre d'état propose deux listes déroulantes pour changer
 le modèle et les autorisations de la session, y compris pendant qu'elle tourne.

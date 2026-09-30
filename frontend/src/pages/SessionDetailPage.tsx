@@ -4,6 +4,7 @@ import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
+import { useSessionEvents } from '../lib/sessionEvents';
 import { useGitTarget } from '../workbench/GitTargetContext';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
@@ -23,10 +24,9 @@ import {
   type HumanRequest,
   type Provider,
   type Session,
-  type SessionEvent,
 } from '../graphql/operations';
 
-type SessionWithEvents = Session & { events: SessionEvent[]; requests: HumanRequest[] };
+type SessionWithRequests = Session & { requests: HumanRequest[] };
 
 const TECH_KEY = 'skipper.session.technical';
 
@@ -34,7 +34,8 @@ const TECH_KEY = 'skipper.session.technical';
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error } = useQuery<{ session: SessionWithEvents | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
   const [endSession, { error: endError }] = useMutation(END_SESSION);
@@ -170,7 +171,7 @@ export default function SessionDetailPage() {
           <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
         </label>
       </div>
-      <Transcript events={session.events} technical={technical} />
+      <Transcript events={events} loading={!eventsLoaded} technical={technical} />
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />
