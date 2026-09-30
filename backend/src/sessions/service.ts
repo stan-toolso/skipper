@@ -34,7 +34,7 @@ const SHUTDOWN_TIMEOUT_MS = 1200;
 const AUTO_RESUME_WINDOW_MS = 60 * 60 * 1000;
 const AUTO_RESUME_MAX = 3;
 const AUTO_RESUME_MESSAGE =
-  "Le serveur Skipper a redémarré pendant ton tour et l'a interrompu. Reprends là où tu en étais : vérifie l'état des fichiers et des commandes en cours avant de continuer.";
+  "Le serveur Skipper a redémarré pendant ton tour et l'a interrompu. Reprends là où tu en étais : vérifie l'état des fichiers et des commandes en cours avant de continuer. Les demandes d'autorisation ou questions en attente ont été annulées : refais l'action ou repose la question si elle est encore utile.";
 
 async function emitEvent(sessionId: string, type: string, payload: Record<string, unknown> = {}): Promise<void> {
   const event = await sessionRepository.addEvent(sessionId, type, payload);
@@ -433,7 +433,7 @@ export const sessionService = {
   },
 
   /**
-   * Reprise automatique (réglage du serveur, désactivé par défaut) : relance les sessions interrompues
+   * Reprise automatique (réglage du serveur, activé par défaut) : relance les sessions interrompues
    * au milieu d'un tour par l'arrêt récent du serveur, avec une instruction qui explique la coupure.
    * Les sessions qui attendaient des instructions restent interrompues : un message suffit à les reprendre.
    */

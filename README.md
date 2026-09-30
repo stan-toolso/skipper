@@ -453,9 +453,11 @@ tour (erreur).
 **Paramètres → Serveur.** Le **mode maintenance** (mémoire seulement, levé par le redémarrage)
 refuse tout démarrage de session (création, relance par un message, tâche confiée à un agent ;
 erreur `MAINTENANCE`) et affiche le nombre de sessions encore actives, au travail ou en attente,
-pour choisir le moment du redémarrage. La **reprise automatique** (désactivée par défaut) relance au
+pour choisir le moment du redémarrage. La **reprise automatique** (activée par défaut, désactivable) relance au
 démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, trois au plus, avec
-une instruction qui explique la coupure.
+une instruction qui explique la coupure et signale que les demandes en attente ont été annulées (elles
+ne sont pas rejouées : l'agent refait l'action s'il en a encore besoin). Les sessions qui attendaient
+des instructions restent interrompues, sans occuper de mémoire, jusqu'au prochain message.
 
 `node-pty` a besoin que son binaire `spawn-helper` soit exécutable : le script `postinstall` s'en charge.
 

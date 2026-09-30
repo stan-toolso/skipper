@@ -175,7 +175,8 @@ Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 
 **Redémarrer le backend interrompt toutes les sessions en cours** : les processus Claude Code sont des
 enfants du backend. Elles passent à « Interrompue » (pas en erreur) et un message relance la
-conversation. Avant `pm2 restart`, activer **Paramètres → Serveur → mode maintenance** : aucune
+conversation. Au démarrage, celles qui étaient au milieu d'un tour (trois au plus, dont l'agent qui a
+lancé le redémarrage) sont relancées automatiquement (réglage **Paramètres → Serveur**, activé par défaut). Avant `pm2 restart`, activer **Paramètres → Serveur → mode maintenance** : aucune
 nouvelle session ne démarre, et la page indique combien d'agents travaillent encore. Redémarrer quand
 ce nombre est à zéro si possible, en pensant à l'agent qui déploie depuis Skipper. Le redémarrage
 lève la maintenance. Si seul `frontend/` a changé (`git diff --stat HEAD@{1} HEAD`), le `cp`
