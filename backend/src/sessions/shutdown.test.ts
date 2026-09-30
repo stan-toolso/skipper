@@ -169,18 +169,42 @@ describe('mode maintenance', () => {
 });
 
 describe('reprise automatique au démarrage', () => {
-  it("ne fait rien si le réglage est désactivé, relance les sessions coupées en plein tour sinon", async () => {
+  it("relance par défaut les sessions coupées en plein tour, ne fait rien si le réglage est désactivé", async () => {
     const { sessionService, serverSettings } = await load();
     const starts: (string | null)[] = [];
     providers.current = { ...fakeProvider().provider, start: async (ctx) => (starts.push(ctx.initialMessage), { wait: () => new Promise(() => undefined), stop: async () => undefined }) };
     store.sessions.set('x', { id: 'x', projectId: 'p', name: 'x', provider: 'fake', status: 'interrupted', activity: 'busy', prompt: 'p', promptAttachments: [], config: {}, externalId: 'conv' });
     repo.listInterruptedMidTurn.mockResolvedValue([{ ...store.sessions.get('x') }]);
 
+    await serverSettings.update({ autoResumeInterrupted: false });
     expect(await sessionService.resumeInterruptedAfterRestart()).toEqual([]);
     await serverSettings.update({ autoResumeInterrupted: true });
     expect(await sessionService.resumeInterruptedAfterRestart()).toEqual(['x']);
     expect(session('x').status).toBe('running');
     expect(starts[0]).toMatch(/a redémarré/);
+    expect(starts[0]).toMatch(/demandes .* annulées/);
     expect(eventsOf('x').some((e) => e.type === 'system' && e.payload.reason === 'auto_resume')).toBe(true);
+  });
+});
+
+describe('reprise manuelle (bouton « Reprendre »)', () => {
+  it("reprend le tour coupé si l'agent travaillait, rouvre la conversation sinon, refuse une session non interrompue", async () => {
+    const { sessionService } = await load();
+    const starts: (string | null)[] = [];
+    providers.current = { ...fakeProvider().provider, start: async (ctx) => (starts.push(ctx.initialMessage), { wait: () => new Promise(() => undefined), stop: async () => undefined }) };
+    const base = { projectId: 'p', provider: 'fake', status: 'interrupted', prompt: 'consigne initiale', promptAttachments: [], config: {}, externalId: 'conv' };
+    store.sessions.set('b', { ...base, id: 'b', name: 'b', activity: 'busy' });
+    store.sessions.set('i', { ...base, id: 'i', name: 'i', activity: 'idle' });
+    store.sessions.set('c', { ...base, id: 'c', name: 'c', activity: null, status: 'completed' });
+
+    await sessionService.resume('b');
+    await sessionService.resume('i');
+    expect(session('b').status).toBe('running');
+    expect(session('i').status).toBe('running');
+    expect(starts[0]).toMatch(/pendant ton tour/);
+    expect(starts[1]).toMatch(/attendais une instruction/);
+    expect(starts).not.toContain('consigne initiale');
+    expect(eventsOf('b').some((e) => e.type === 'system' && e.payload.reason === 'manual_resume')).toBe(true);
+    await expect(sessionService.resume('c')).rejects.toThrow(/interrompue/);
   });
 });

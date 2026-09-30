@@ -7,12 +7,13 @@ const KEY = 'server';
 export interface ServerSettings {
   /**
    * Au démarrage, relancer les sessions interrompues pendant un tour (activité `busy`) par
-   * l'arrêt précédent du serveur. Désactivé par défaut : chaque session relancée occupe de la mémoire.
+   * l'arrêt précédent du serveur. Activé par défaut ; désactivable quand la mémoire manque (chaque
+   * session relancée occupe plusieurs centaines de Mo).
    */
   autoResumeInterrupted: boolean;
 }
 
-export const defaultServerSettings: ServerSettings = { autoResumeInterrupted: false };
+export const defaultServerSettings: ServerSettings = { autoResumeInterrupted: true };
 
 /** Mode maintenance : tant qu'il est actif, aucune session ne démarre (mémoire uniquement, levé par un redémarrage). */
 export interface MaintenanceState {

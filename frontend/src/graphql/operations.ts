@@ -693,6 +693,15 @@ export const END_SESSION = gql`
   }
 `;
 
+export const RESUME_SESSION = gql`
+  ${SESSION_FIELDS}
+  mutation ResumeSession($id: ID!) {
+    resumeSession(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const INTERRUPT_SESSION = gql`
   ${SESSION_FIELDS}
   mutation InterruptSession($id: ID!) {

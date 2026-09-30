@@ -37,6 +37,7 @@ import type { PermissionResponse, QuestionResponse } from '../../requests/types.
 import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.js';
 import type { Attachment } from '../types.js';
 import type { ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
+import { isNoise } from './claudeNoise.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -511,9 +512,10 @@ export class ClaudeProvider implements SessionProvider {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
     }
-    // Compteur de tokens de réflexion : des dizaines de messages par seconde, sans contenu pour le transcript.
-    // Les journaliser ralentit la lecture du flux (une écriture en base chacun) et gonfle l'historique.
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'thinking_tokens') return;
+    // Compteurs et états intermédiaires (réflexion, progression des outils et tâches de fond) : des dizaines
+    // de messages par minute, sans contenu pour le transcript. Les journaliser ralentit la lecture du flux
+    // (une écriture en base chacun) et gonfle l'historique.
+    if (isNoise(message)) return;
     // Limites d'utilisation de l'abonnement : un événement par appel au modèle. Le dernier état est gardé
     // par rateLimitService (Paramètres, tableau de bord, alertes) ; le transcript ne garde que les changements.
     if (message.type === 'rate_limit_event') {

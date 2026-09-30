@@ -34,7 +34,11 @@ const SHUTDOWN_TIMEOUT_MS = 1200;
 const AUTO_RESUME_WINDOW_MS = 60 * 60 * 1000;
 const AUTO_RESUME_MAX = 3;
 const AUTO_RESUME_MESSAGE =
-  "Le serveur Skipper a redémarré pendant ton tour et l'a interrompu. Reprends là où tu en étais : vérifie l'état des fichiers et des commandes en cours avant de continuer.";
+  "Le serveur Skipper a redémarré pendant ton tour et l'a interrompu. Reprends là où tu en étais : vérifie l'état des fichiers et des commandes en cours avant de continuer. Les demandes d'autorisation ou questions en attente ont été annulées : refais l'action ou repose la question si elle est encore utile.";
+
+/** Reprise manuelle d'une session qui attendait des instructions : rouvrir la conversation sans lui donner de travail. */
+const IDLE_RESUME_MESSAGE =
+  "Le serveur Skipper a redémarré pendant que tu attendais une instruction ; la conversation reprend. Ne fais rien d'autre que répondre « Prêt » et attends la suite.";
 
 async function emitEvent(sessionId: string, type: string, payload: Record<string, unknown> = {}): Promise<void> {
   const event = await sessionRepository.addEvent(sessionId, type, payload);
@@ -433,7 +437,21 @@ export const sessionService = {
   },
 
   /**
-   * Reprise automatique (réglage du serveur, désactivé par défaut) : relance les sessions interrompues
+   * Reprise manuelle d'une session interrompue par un redémarrage (bouton « Reprendre ») : si l'agent
+   * travaillait, il reprend son tour avec l'instruction de reprise ; sinon la conversation est rouverte
+   * et l'agent attend la suite. Les demandes expirées ne sont pas rejouées.
+   */
+  async resume(id: string): Promise<Session> {
+    const session = await sessionRepository.findById(id);
+    if (!session) throw new NotFoundError('Session introuvable');
+    if (session.status !== 'interrupted') throw new AppError("Seule une session interrompue par un redémarrage peut être reprise ainsi : envoyez-lui un message");
+    const midTurn = session.activity === 'busy';
+    await emitEvent(id, 'system', { message: 'Reprise après le redémarrage du serveur', notice: true, reason: 'manual_resume', activity: session.activity });
+    return this.start(id, midTurn ? AUTO_RESUME_MESSAGE : IDLE_RESUME_MESSAGE);
+  },
+
+  /**
+   * Reprise automatique (réglage du serveur, activé par défaut) : relance les sessions interrompues
    * au milieu d'un tour par l'arrêt récent du serveur, avec une instruction qui explique la coupure.
    * Les sessions qui attendaient des instructions restent interrompues : un message suffit à les reprendre.
    */

@@ -98,7 +98,7 @@ export default function DashboardPage() {
               {d.pendingRequests.map((r) => <RequestRow key={r.id} request={r} />)}
               {d.runningSessions.filter((s) => s.activity !== 'BUSY' && s.pendingRequestCount === 0).map((s) => <SessionRow key={s.id} session={s} hint="attend vos instructions" icon="bi-chat-left-dots warn" />)}
               {d.recentSessions.filter((s) => s.status === 'FAILED' && isRecent(s.endedAt ?? s.updatedAt, 24)).map((s) => <SessionRow key={s.id} session={s} hint={s.error ? shorten(s.error, 80) : 'en erreur'} icon="bi-x-octagon bad" />)}
-              {interruptedMidTurn.map((s) => <SessionRow key={s.id} session={s} hint="interrompue en plein travail par un redémarrage, un message la reprend" icon="bi-pause-circle warn" />)}
+              {interruptedMidTurn.map((s) => <SessionRow key={s.id} session={s} hint="interrompue en plein travail par un redémarrage : bouton « Reprendre » sur sa page" icon="bi-pause-circle warn" />)}
               {waiting === 0 && counts.failedSessions24h === 0 && interruptedMidTurn.length === 0 && <li className="empty">Rien à traiter : les agents n’ont besoin de rien pour l’instant.</li>}
             </ul>
           </section>

@@ -455,16 +455,20 @@ redémarrage du serveur » dans le transcript ; leurs demandes en attente passen
 flux sont fermés, et aucune notification n'est émise. L'arrêt est borné à 1,2 s (pm2 tue le
 processus au bout de 1,6 s par défaut). Au démarrage suivant, ce qui est encore `running` en base
 (arrêt brutal) passe de même à `interrupted`, les demandes en attente à `expired` et les terminaux à
-`closed`. Une session interrompue reprend sa conversation au prochain message. Le provider distingue
+`closed`. Une session interrompue reprend sa conversation au prochain message, ou avec le bouton
+**Reprendre** de sa page (`resumeSession`) : l'agent reprend son tour avec une instruction qui explique
+la coupure s'il travaillait, sinon la conversation est rouverte et il attend la suite. Le provider distingue
 un flux fermé par le serveur (`RunResult.closedByServer`) d'un agent qui s'est arrêté au milieu d'un
 tour (erreur).
 
 **Paramètres → Serveur.** Le **mode maintenance** (mémoire seulement, levé par le redémarrage)
 refuse tout démarrage de session (création, relance par un message, tâche confiée à un agent ;
 erreur `MAINTENANCE`) et affiche le nombre de sessions encore actives, au travail ou en attente,
-pour choisir le moment du redémarrage. La **reprise automatique** (désactivée par défaut) relance au
+pour choisir le moment du redémarrage. La **reprise automatique** (activée par défaut, désactivable) relance au
 démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, trois au plus, avec
-une instruction qui explique la coupure.
+une instruction qui explique la coupure et signale que les demandes en attente ont été annulées (elles
+ne sont pas rejouées : l'agent refait l'action s'il en a encore besoin). Les sessions qui attendaient
+des instructions restent interrompues, sans occuper de mémoire, jusqu'au prochain message.
 
 `node-pty` a besoin que son binaire `spawn-helper` soit exécutable : le script `postinstall` s'en charge.
 
@@ -749,7 +753,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
 - `createSession(input)` (`input.worktreeId` ou `input.newWorktree { branch, name, baseRef }`), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
-- `sendSessionMessage(id, text, attachments)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
+- `sendSessionMessage(id, text, attachments)`, `resumeSession(id)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`

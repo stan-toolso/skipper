@@ -22,6 +22,7 @@ import {
   DELETE_SESSION,
   END_SESSION,
   INTERRUPT_SESSION,
+  RESUME_SESSION,
   PROVIDERS,
   RUN_SESSION_SCHEDULE_NOW,
   SEND_SESSION_MESSAGE,
@@ -50,6 +51,7 @@ export default function SessionDetailPage() {
   const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
+  const [resumeSession, { loading: resuming, error: resumeError }] = useMutation(RESUME_SESSION);
   const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
   const { confirm } = useDialogs();
@@ -181,7 +183,7 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError;
+  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError;
   const schedule = session.schedule;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
@@ -265,6 +267,17 @@ export default function SessionDetailPage() {
           {schedule && !busy && (
             <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
               Exécuter maintenant
+            </button>
+          )}
+          {session?.status === 'INTERRUPTED' && (
+            <button
+              type="button"
+              className="cc-btn accent"
+              disabled={resuming}
+              title={session.activity === 'BUSY' ? "L'agent reprend le travail coupé par le redémarrage du serveur" : "Rouvre la conversation ; l'agent attend votre prochaine instruction"}
+              onClick={() => void resumeSession({ variables: { id } }).catch(() => undefined)}
+            >
+              <i className="bi bi-play-fill" /> Reprendre
             </button>
           )}
           {busy && (

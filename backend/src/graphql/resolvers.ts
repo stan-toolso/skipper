@@ -653,6 +653,10 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return sessionService.end(args.id);
     },
+    resumeSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.resume(args.id);
+    },
     interruptSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return sessionService.interrupt(args.id);
