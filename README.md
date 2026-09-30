@@ -139,7 +139,7 @@ frontend/
     apollo.ts                  # client GraphQL
     graphql/operations.ts      # queries / mutations + types TS
     pages/                     # projets, sessions, demandes en attente
-    components/                # layout, badge de statut, journal, carte de demande
+    components/                # layout, badge de statut, journal, carte de demande, dialogues (Dialogs.tsx)
 ```
 
 ## Utilisateurs et droits
@@ -408,6 +408,12 @@ seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et q
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre. La barre d'état propose deux listes déroulantes pour changer
 le modèle et les autorisations de la session, y compris pendant qu'elle tourne.
+
+Aucune alerte native du navigateur (`window.alert`, `confirm`, `prompt`) : les confirmations, saisies
+courtes et messages d'erreur passent par les modales de `frontend/src/components/Dialogs.tsx`
+(`useDialogs()` → `confirm`, `prompt`, `alert`, `showError`, toutes asynchrones, fournies par
+`DialogProvider` dans `App.tsx`). Une confirmation peut porter une case à cocher (« Supprimer aussi la
+branche locale »).
 
 ## Mobile
 

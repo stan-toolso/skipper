@@ -4,6 +4,7 @@ import { Alert, Badge, Button, ButtonGroup, Col, Form, Nav, Row, Spinner, Table 
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useDialogs } from '../components/Dialogs';
 
 import {
   CONTEXT_INSTRUCTION,
@@ -136,6 +137,7 @@ function InstructionEditor({ id, folders, onDeleted }: { id: string; folders: Co
   const { data, loading, error, refetch } = useQuery<{ contextInstruction: ContextInstruction | null }>(CONTEXT_INSTRUCTION, { variables: { id } });
   const [update, { loading: saving, error: saveError }] = useMutation(UPDATE_CONTEXT_INSTRUCTION, { refetchQueries: ['ProjectContext', 'ContextInstruction'] });
   const [restore, { loading: restoring }] = useMutation(RESTORE_CONTEXT_INSTRUCTION_VERSION, { refetchQueries: ['ProjectContext', 'ContextInstruction'] });
+  const { confirm } = useDialogs();
   const [remove] = useMutation(DELETE_CONTEXT_INSTRUCTION, { refetchQueries: ['ProjectContext'], onCompleted: onDeleted });
 
   const [name, setName] = useState('');
@@ -175,8 +177,8 @@ function InstructionEditor({ id, folders, onDeleted }: { id: string; folders: Co
         <Button
           size="sm"
           variant="outline-danger"
-          onClick={() => {
-            if (window.confirm(`Supprimer l'instruction « ${instruction.name} » ?`)) remove({ variables: { id } });
+          onClick={async () => {
+            if (await confirm({ title: "Supprimer l'instruction", message: `Supprimer l'instruction « ${instruction.name} » et son historique de versions ?`, confirmLabel: 'Supprimer', danger: true })) remove({ variables: { id } });
           }}
         >
           Supprimer
@@ -273,6 +275,7 @@ export default function ContextPage() {
   const { data, loading, error } = useQuery<{ project: ProjectContext | null }>(PROJECT_CONTEXT, { variables: { id }, pollInterval: 5000 });
   const [createFolder, { error: folderError }] = useMutation(CREATE_CONTEXT_FOLDER, { refetchQueries: ['ProjectContext'] });
   const [renameFolder] = useMutation(RENAME_CONTEXT_FOLDER, { refetchQueries: ['ProjectContext'] });
+  const { confirm, prompt } = useDialogs();
   const [deleteFolder] = useMutation(DELETE_CONTEXT_FOLDER, { refetchQueries: ['ProjectContext'] });
   const [createInstruction, { error: instructionError }] = useMutation<{ createContextInstruction: ContextInstruction }>(CREATE_CONTEXT_INSTRUCTION, {
     refetchQueries: ['ProjectContext'],
@@ -285,13 +288,13 @@ export default function ContextPage() {
   const folders = useMemo(() => project?.contextFolders ?? [], [project]);
   const instructions = useMemo(() => project?.contextInstructions ?? [], [project]);
 
-  const newFolder = (parentId: string | null) => {
-    const name = window.prompt('Nom du dossier');
-    if (name?.trim()) createFolder({ variables: { projectId: id, parentId, name: name.trim() } });
+  const newFolder = async (parentId: string | null) => {
+    const name = await prompt({ title: 'Nouveau dossier', message: 'Nom du dossier', confirmLabel: 'Créer' });
+    if (name) createFolder({ variables: { projectId: id, parentId, name } });
   };
-  const newInstruction = (folderId: string | null) => {
-    const name = window.prompt("Nom de l'instruction");
-    if (name?.trim()) createInstruction({ variables: { input: { projectId: id, folderId, name: name.trim(), content: '' } } });
+  const newInstruction = async (folderId: string | null) => {
+    const name = await prompt({ title: 'Nouvelle instruction', message: "Nom de l'instruction", confirmLabel: 'Créer' });
+    if (name) createInstruction({ variables: { input: { projectId: id, folderId, name, content: '' } } });
   };
 
   if (loading && !data) return <Spinner animation="border" size="sm" />;
@@ -340,12 +343,12 @@ export default function ContextPage() {
               onSelect={(iid) => setSearchParams({ instruction: iid })}
               onNewFolder={newFolder}
               onNewInstruction={newInstruction}
-              onRenameFolder={(f) => {
-                const name = window.prompt('Nouveau nom du dossier', f.name);
-                if (name?.trim() && name.trim() !== f.name) renameFolder({ variables: { id: f.id, name: name.trim() } });
+              onRenameFolder={async (f) => {
+                const name = await prompt({ title: 'Renommer le dossier', message: 'Nouveau nom du dossier', defaultValue: f.name, confirmLabel: 'Renommer' });
+                if (name && name !== f.name) renameFolder({ variables: { id: f.id, name } });
               }}
-              onDeleteFolder={(f) => {
-                if (window.confirm(`Supprimer le dossier « ${f.path} » et tout son contenu ?`)) deleteFolder({ variables: { id: f.id } });
+              onDeleteFolder={async (f) => {
+                if (await confirm({ title: 'Supprimer le dossier', message: `Supprimer le dossier « ${f.path} » et tout son contenu ?`, confirmLabel: 'Supprimer', danger: true })) deleteFolder({ variables: { id: f.id } });
               }}
             />
           </Col>

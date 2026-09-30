@@ -6,6 +6,7 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useSessionEvents } from '../lib/sessionEvents';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useDialogs } from '../components/Dialogs';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import RequestPrompt from '../components/RequestPrompt';
@@ -40,6 +41,7 @@ export default function SessionDetailPage() {
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
   const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
+  const { confirm } = useDialogs();
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
@@ -102,8 +104,16 @@ export default function SessionDetailPage() {
   const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
   const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
   const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
-  const changeSetting = (field: ConfigField, value: string) => {
-    if (field.key === 'permissionMode' && value === 'bypassPermissions' && !window.confirm("Tout autoriser : l'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?")) return;
+  const changeSetting = async (field: ConfigField, value: string) => {
+    if (field.key === 'permissionMode' && value === 'bypassPermissions') {
+      const ok = await confirm({
+        title: 'Tout autoriser',
+        message: "L'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?",
+        confirmLabel: 'Tout autoriser',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     updateConfig({ variables: { id, config: { [field.key]: value || null } } });
   };
 
@@ -157,8 +167,8 @@ export default function SessionDetailPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={() => {
-              if (window.confirm('Supprimer cette session ?')) deleteSession({ variables: { id } });
+            onClick={async () => {
+              if (await confirm({ title: 'Supprimer la session', message: 'Supprimer cette session et tout son historique ?', confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id } });
             }}
           >
             Supprimer

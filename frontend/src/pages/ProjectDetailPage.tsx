@@ -6,11 +6,13 @@ import { useGitTarget } from '../workbench/GitTargetContext';
 
 import GoogleAccountCard from '../components/GoogleAccountCard';
 import StatusBadge from '../components/StatusBadge';
+import { useDialogs } from '../components/Dialogs';
 
 /** Conteneur Docker du projet : son état et ses commandes. */
 function RunnerCard({ project }: { project: Project }) {
   const [start, { loading: starting, error: startError }] = useMutation(START_PROJECT_RUNNER, { refetchQueries: ['Project'] });
   const [stop, { loading: stopping, error: stopError }] = useMutation(STOP_PROJECT_RUNNER, { refetchQueries: ['Project'] });
+  const { confirm } = useDialogs();
   const [reset, { loading: resetting, error: resetError }] = useMutation(RESET_PROJECT_RUNNER, { refetchQueries: ['Project'] });
   const s = project.runnerStatus;
   const error = startError ?? stopError ?? resetError;
@@ -54,8 +56,8 @@ function RunnerCard({ project }: { project: Project }) {
               variant="outline-secondary"
               disabled={busy}
               title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
-              onClick={() => {
-                if (window.confirm('Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.')) reset({ variables: { id: project.id } });
+              onClick={async () => {
+                if (await confirm({ title: 'Recréer le conteneur', message: 'Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.', confirmLabel: 'Recréer', danger: true })) reset({ variables: { id: project.id } });
               }}
             >
               {resetting ? 'Suppression…' : 'Recréer'}
@@ -188,6 +190,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
   const refetch = { refetchQueries: ['ProjectMembers'] };
   const [invite, { loading: inviting, error: inviteError }] = useMutation(INVITE_PROJECT_MEMBER, refetch);
   const [setRole, { error: roleError }] = useMutation(UPDATE_PROJECT_MEMBER_ROLE, refetch);
+  const { confirm } = useDialogs();
   const [remove, { error: removeError }] = useMutation(REMOVE_PROJECT_MEMBER, refetch);
   const [email, setEmail] = useState('');
   const [role, setRoleInput] = useState<ProjectRole>('MEMBER');
@@ -229,8 +232,8 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
                     <Button
                       size="sm"
                       variant="outline-danger"
-                      onClick={() => {
-                        if (window.confirm(`Retirer ${m.user.name} du projet ?`)) remove({ variables: { projectId, userId: m.user.id } });
+                      onClick={async () => {
+                        if (await confirm({ title: 'Retirer le membre', message: `Retirer ${m.user.name} du projet ? Cette personne n'y aura plus accès.`, confirmLabel: 'Retirer', danger: true })) remove({ variables: { projectId, userId: m.user.id } });
                       }}
                     >
                       Retirer
@@ -284,6 +287,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
 function WorktreesCard({ projectId }: { projectId: string }) {
   const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
   const [createWorktree, { loading: creating, error: createError }] = useMutation(CREATE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
+  const { confirm } = useDialogs();
   const [deleteWorktree, { error: deleteError }] = useMutation(DELETE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
   const [branch, setBranch] = useState('');
   const [baseRef, setBaseRef] = useState('');
@@ -323,9 +327,15 @@ function WorktreesCard({ projectId }: { projectId: string }) {
                   <Button
                     size="sm"
                     variant="outline-danger"
-                    onClick={() => {
-                      if (!window.confirm(`Supprimer le worktree « ${w.branch} » ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés.`)) return;
-                      deleteWorktree({ variables: { id: w.id, deleteBranch: window.confirm('Supprimer aussi la branche locale ? (Annuler = garder la branche)') } });
+                    onClick={async () => {
+                      const res = await confirm({
+                        title: 'Supprimer le worktree',
+                        message: `Supprimer le worktree « ${w.branch} » ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.`,
+                        confirmLabel: 'Supprimer',
+                        danger: true,
+                        checkbox: { label: 'Supprimer aussi la branche locale' },
+                      });
+                      if (res) deleteWorktree({ variables: { id: w.id, deleteBranch: res.checked } });
                     }}
                   >
                     Supprimer
@@ -377,6 +387,7 @@ export default function ProjectDetailPage() {
   useTabTitle(data?.project?.name);
   useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
+  const { confirm } = useDialogs();
   const [deleteProject, { error: deleteError }] = useMutation(DELETE_PROJECT, {
     refetchQueries: [{ query: PROJECTS }],
     onCompleted: () => navigate('/projects'),
@@ -423,8 +434,8 @@ export default function ProjectDetailPage() {
               <Button
                 size="sm"
                 variant="outline-danger"
-                onClick={() => {
-                  if (window.confirm(`Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, worktrees, son conteneur et son dossier de travail seront supprimés. Irréversible.`)) {
+                onClick={async () => {
+                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, worktrees, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
                     deleteProject({ variables: { id } });
                   }
                 }}

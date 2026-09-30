@@ -2,6 +2,7 @@ import { Spinner } from 'react-bootstrap';
 import { Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import Layout from './components/Layout';
+import { DialogProvider } from './components/Dialogs';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectFormPage from './pages/ProjectFormPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
@@ -67,7 +68,9 @@ function Gate() {
 export default function App() {
   return (
     <AuthProvider>
-      <Gate />
+      <DialogProvider>
+        <Gate />
+      </DialogProvider>
     </AuthProvider>
   );
 }

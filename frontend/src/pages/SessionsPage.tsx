@@ -3,6 +3,7 @@ import { Alert, Button, ButtonGroup, Form, Spinner, Table } from 'react-bootstra
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
+import { useDialogs } from '../components/Dialogs';
 import { DELETE_SESSION, PROJECTS, SESSIONS, STOP_SESSION, type Project, type Session, type SessionStatus } from '../graphql/operations';
 
 const statuses: SessionStatus[] = ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'STOPPED', 'INTERRUPTED'];
@@ -16,6 +17,7 @@ export default function SessionsPage() {
     pollInterval: 3000,
   });
   const [stopSession] = useMutation(STOP_SESSION);
+  const { confirm } = useDialogs();
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => refetch() });
 
   return (
@@ -94,8 +96,8 @@ export default function SessionsPage() {
                     )}
                     <Button
                       variant="outline-danger"
-                      onClick={() => {
-                        if (window.confirm(`Supprimer la session « ${s.name} » ?`)) deleteSession({ variables: { id: s.id } });
+                      onClick={async () => {
+                        if (await confirm({ title: 'Supprimer la session', message: `Supprimer la session « ${s.name} » et tout son historique ?`, confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id: s.id } });
                       }}
                     >
                       Supprimer
