@@ -31,11 +31,14 @@ function stateCookie(value: string | null): string {
 const toApp = (path: string) => `${config.appUrl}${path}`;
 const loginError = (code: string) => toApp(`/?authError=${encodeURIComponent(code)}`);
 
-/** Contenu du cookie d'état : connexion d'un utilisateur (`next`) ou rattachement d'un compte Google à un projet (`project`). */
+/**
+ * Contenu du cookie d'état : connexion d'un utilisateur (`next`) ou rattachement d'un compte Google à un projet
+ * (`project`, avec `replaceId` quand il remplace un compte déjà relié).
+ */
 interface OAuthState {
   state: string;
   next?: string;
-  project?: { id: string; userId: string };
+  project?: { id: string; userId: string; replaceId?: string };
 }
 const projectPage = (id: string, params: Record<string, string>) => toApp(`/projects/${id}?${new URLSearchParams(params)}`);
 
@@ -43,8 +46,9 @@ const projectPage = (id: string, params: Record<string, string>) => toApp(`/proj
  * Routes HTTP d'authentification, à côté de GraphQL :
  * - GET  /auth/google?next=/chemin : redirige vers Google ;
  * - GET  /auth/google/callback      : retour de Google, ouvre la session et renvoie vers l'application ;
- * - GET  /auth/google/connect?projectId=…&gmail=read|write|none&drive=read|write|none : relie un compte
- *   Google au projet (administrateur du projet) ; le retour passe par le même callback ;
+ * - GET  /auth/google/connect?projectId=…&gmail=read|write|none&drive=read|write|none[&accountId=…] : relie un
+ *   compte Google (de plus) au projet, ou remplace le compte `accountId` (administrateur du projet) ; le retour
+ *   passe par le même callback ;
  * - POST /auth/logout               : ferme la session.
  * Renvoie false si l'URL n'est pas une route d'authentification.
  */
@@ -73,8 +77,10 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse)
     try {
       if ((await userService.roleFor(user.id, projectId)) !== 'admin') throw new AppError('Réservé aux administrateurs du projet', 'FORBIDDEN');
       const access = { gmail: parseAccess(url.searchParams.get('gmail'), 'messagerie'), drive: parseAccess(url.searchParams.get('drive'), 'Drive') };
+      const replaceId = url.searchParams.get('accountId') || undefined;
+      if (replaceId && (await googleAccountService.get(replaceId)).projectId !== projectId) throw new AppError('Compte Google introuvable dans ce projet', 'NOT_FOUND');
       const state = randomBytes(16).toString('base64url');
-      const payload = Buffer.from(JSON.stringify({ state, project: { id: projectId, userId: user.id } } satisfies OAuthState)).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({ state, project: { id: projectId, userId: user.id, replaceId } } satisfies OAuthState)).toString('base64url');
       redirect(res, googleAccountService.authorizationUrl(state, access), [stateCookie(payload)]);
     } catch (err) {
       redirect(res, projectPage(projectId, { googleError: (err as Error).message }));
@@ -107,7 +113,7 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse)
         const user = await authSession.resolve(readCookie(req.headers.cookie, SESSION_COOKIE));
         if (!user || user.id !== project.userId) throw new AppError('Session expirée, reconnectez-vous puis recommencez', 'UNAUTHENTICATED');
         if ((await userService.roleFor(user.id, project.id)) !== 'admin') throw new AppError('Réservé aux administrateurs du projet', 'FORBIDDEN');
-        const account = await googleAccountService.connect(project.id, code, user.id);
+        const account = await googleAccountService.connect(project.id, code, user.id, project.replaceId);
         redirect(res, projectPage(project.id, { google: 'connected', email: account.email }), [stateCookie(null)]);
       } catch (err) {
         console.error('[google] rattachement refusé :', (err as Error).message);

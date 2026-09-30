@@ -2,6 +2,7 @@ import { pool } from '../db/pool.js';
 import type { GoogleAccess, GoogleAccount } from './types.js';
 
 interface Row {
+  id: string;
   project_id: string;
   email: string;
   name: string | null;
@@ -20,6 +21,7 @@ interface Row {
 }
 
 const toAccount = (r: Row): GoogleAccount => ({
+  id: r.id,
   projectId: r.project_id,
   email: r.email,
   name: r.name,
@@ -51,18 +53,34 @@ export interface GoogleAccountRecordInput {
 }
 
 export const googleAccountRepository = {
-  async findByProject(projectId: string): Promise<GoogleAccount | null> {
-    const { rows } = await pool.query<Row>('SELECT * FROM project_google_accounts WHERE project_id = $1', [projectId]);
+  async listByProject(projectId: string): Promise<GoogleAccount[]> {
+    const { rows } = await pool.query<Row>('SELECT * FROM project_google_accounts WHERE project_id = $1 ORDER BY created_at, email', [projectId]);
+    return rows.map(toAccount);
+  },
+
+  async findById(id: string): Promise<GoogleAccount | null> {
+    const { rows } = await pool.query<Row>('SELECT * FROM project_google_accounts WHERE id = $1', [id]);
     return rows[0] ? toAccount(rows[0]) : null;
   },
 
-  /** Crée ou remplace le compte du projet (relier un autre compte, ou changer les accès). */
+  async findByProjectAndSub(projectId: string, googleSub: string): Promise<GoogleAccount | null> {
+    const { rows } = await pool.query<Row>('SELECT * FROM project_google_accounts WHERE project_id = $1 AND google_sub = $2', [projectId, googleSub]);
+    return rows[0] ? toAccount(rows[0]) : null;
+  },
+
+  /** Nombre de rattachements (tous projets) d'un même compte Google, pour ne pas révoquer un jeton encore partagé. */
+  async countBySub(googleSub: string): Promise<number> {
+    const { rows } = await pool.query<{ n: number }>('SELECT count(*)::int AS n FROM project_google_accounts WHERE google_sub = $1', [googleSub]);
+    return rows[0]?.n ?? 0;
+  },
+
+  /** Crée le compte, ou le met à jour si ce compte Google est déjà relié au projet (reconnexion, changement d'accès). */
   async upsert(projectId: string, input: GoogleAccountRecordInput): Promise<GoogleAccount> {
     const { rows } = await pool.query<Row>(
       `INSERT INTO project_google_accounts (project_id, email, name, avatar_url, google_sub, gmail_access, drive_access, scopes, refresh_token, connected_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
-       ON CONFLICT (project_id) DO UPDATE SET
-         email = EXCLUDED.email, name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, google_sub = EXCLUDED.google_sub,
+       ON CONFLICT (project_id, google_sub) DO UPDATE SET
+         email = EXCLUDED.email, name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url,
          gmail_access = EXCLUDED.gmail_access, drive_access = EXCLUDED.drive_access, scopes = EXCLUDED.scopes,
          refresh_token = EXCLUDED.refresh_token, connected_by = EXCLUDED.connected_by,
          last_check_at = NULL, last_check_ok = NULL, last_check_error = NULL, updated_at = now()
@@ -72,12 +90,12 @@ export const googleAccountRepository = {
     return toAccount(rows[0]);
   },
 
-  async recordCheck(projectId: string, ok: boolean, error: string | null): Promise<void> {
-    await pool.query('UPDATE project_google_accounts SET last_check_at = now(), last_check_ok = $2, last_check_error = $3 WHERE project_id = $1', [projectId, ok, error]);
+  async recordCheck(id: string, ok: boolean, error: string | null): Promise<void> {
+    await pool.query('UPDATE project_google_accounts SET last_check_at = now(), last_check_ok = $2, last_check_error = $3 WHERE id = $1', [id, ok, error]);
   },
 
-  async delete(projectId: string): Promise<boolean> {
-    const { rowCount } = await pool.query('DELETE FROM project_google_accounts WHERE project_id = $1', [projectId]);
+  async delete(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM project_google_accounts WHERE id = $1', [id]);
     return (rowCount ?? 0) > 0;
   },
 };

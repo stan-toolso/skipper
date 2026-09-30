@@ -1,7 +1,7 @@
 import { AppError } from '../errors.js';
 import { googleAccountService } from './service.js';
 
-/** Client Gmail minimal (API REST v1) au nom du compte relié à un projet. */
+/** Client Gmail minimal (API REST v1) au nom d'un compte Google relié à un projet. */
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const MAX_BODY_CHARS = 60_000;
@@ -115,20 +115,20 @@ function toSummary(m: Message): MessageSummary {
   };
 }
 
-export async function search(projectId: string, query: string, maxResults: number): Promise<{ messages: MessageSummary[]; estimate: number }> {
+export async function search(accountId: string, query: string, maxResults: number): Promise<{ messages: MessageSummary[]; estimate: number }> {
   const params = new URLSearchParams({ q: query, maxResults: String(maxResults) });
-  const list = await googleAccountService.json<{ messages?: Array<{ id: string }>; resultSizeEstimate?: number }>(projectId, `${BASE}/messages?${params}`);
+  const list = await googleAccountService.json<{ messages?: Array<{ id: string }>; resultSizeEstimate?: number }>(accountId, `${BASE}/messages?${params}`);
   const ids = list.messages ?? [];
   const messages = await Promise.all(
     ids.map((m) =>
-      googleAccountService.json<Message>(projectId, `${BASE}/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`),
+      googleAccountService.json<Message>(accountId, `${BASE}/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`),
     ),
   );
   return { messages: messages.map(toSummary), estimate: list.resultSizeEstimate ?? ids.length };
 }
 
-export async function read(projectId: string, messageId: string): Promise<MessageContent> {
-  const m = await googleAccountService.json<Message>(projectId, `${BASE}/messages/${encodeURIComponent(messageId)}?format=full`);
+export async function read(accountId: string, messageId: string): Promise<MessageContent> {
+  const m = await googleAccountService.json<Message>(accountId, `${BASE}/messages/${encodeURIComponent(messageId)}?format=full`);
   const { text, html, attachments } = extract(m.payload);
   const full = (text.trim() || htmlToText(html)).trim();
   return {
@@ -154,14 +154,14 @@ export interface SendInput {
 /** Encodage RFC 2047 d'un en-tête non ASCII. */
 const encodeHeader = (v: string) => (/^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${Buffer.from(v, 'utf8').toString('base64')}?=`);
 
-export async function send(projectId: string, input: SendInput): Promise<{ id: string; threadId: string; to: string; subject: string }> {
+export async function send(accountId: string, input: SendInput): Promise<{ id: string; threadId: string; to: string; subject: string }> {
   let to = input.to.trim();
   let subject = input.subject.trim();
   let threadId: string | undefined;
   const extraHeaders: string[] = [];
   if (input.replyToMessageId) {
     const original = await googleAccountService.json<Message>(
-      projectId,
+      accountId,
       `${BASE}/messages/${encodeURIComponent(input.replyToMessageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=Subject&metadataHeaders=Message-ID&metadataHeaders=References`,
     );
     const h = original.payload?.headers;
@@ -191,7 +191,7 @@ export async function send(projectId: string, input: SendInput): Promise<{ id: s
   ].filter(Boolean);
   const mime = `${headers.join('\r\n')}\r\n\r\n${Buffer.from(input.body, 'utf8').toString('base64')}`;
   const raw = Buffer.from(mime, 'utf8').toString('base64url');
-  const sent = await googleAccountService.json<{ id: string; threadId: string }>(projectId, `${BASE}/messages/send`, {
+  const sent = await googleAccountService.json<{ id: string; threadId: string }>(accountId, `${BASE}/messages/send`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(threadId ? { raw, threadId } : { raw }),

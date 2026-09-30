@@ -106,8 +106,8 @@ type Project {
   tasks(status: [TaskStatus!]): [Task!]!
   worktrees: [Worktree!]!
   connections: [Connection!]!
-  "Compte Google relié au projet (Gmail, Drive), null si aucun."
-  googleAccount: GoogleAccount
+  "Comptes Google reliés au projet (Gmail, Drive)."
+  googleAccounts: [GoogleAccount!]!
   members: [ProjectMember!]!
   "Rôle de l'utilisateur connecté sur ce projet."
   myRole: ProjectRole!
@@ -501,8 +501,9 @@ enum GoogleAccess {
   WRITE
 }
 
-"Compte Google relié à un projet par OAuth : les agents accèdent à sa messagerie et/ou à son Drive via le serveur MCP `google`. Le rattachement se fait par GET /auth/google/connect?projectId=…&gmail=…&drive=… ; les jetons ne sont jamais renvoyés."
+"Compte Google relié à un projet par OAuth (plusieurs par projet) : les agents accèdent à sa messagerie et/ou à son Drive via le serveur MCP `google`. Le rattachement se fait par GET /auth/google/connect?projectId=…&gmail=…&drive=…[&accountId=… pour remplacer un compte] ; les jetons ne sont jamais renvoyés."
 type GoogleAccount {
+  id: ID!
   email: String!
   name: String
   avatarUrl: String
@@ -1095,10 +1096,10 @@ type Mutation {
   regenerateConnectionKey(id: ID!): Connection!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
   forgetConnectionHostKey(id: ID!): Connection!
-  "Vérifie que le compte Google du projet répond encore (jeton renouvelé, profil, Gmail, Drive)."
-  checkGoogleAccount(projectId: ID!): GoogleAccountCheck!
-  "Détache le compte Google du projet et révoque le jeton côté Google."
-  disconnectGoogleAccount(projectId: ID!): Project!
+  "Vérifie qu'un compte Google du projet répond encore (jeton renouvelé, profil, Gmail, Drive)."
+  checkGoogleAccount(id: ID!): GoogleAccountCheck!
+  "Détache un compte Google du projet et révoque le jeton côté Google."
+  disconnectGoogleAccount(id: ID!): Project!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

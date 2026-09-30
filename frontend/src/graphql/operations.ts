@@ -1942,11 +1942,12 @@ const CONNECTION_FIELDS = gql`
   }
 `;
 
-// ---- Compte Google du projet ---------------------------------------------------------------------
+// ---- Comptes Google du projet --------------------------------------------------------------------
 
 export type GoogleAccess = 'NONE' | 'READ' | 'WRITE';
 
 export interface GoogleAccount {
+  id: string;
   email: string;
   name: string | null;
   avatarUrl: string | null;
@@ -1963,6 +1964,7 @@ export interface GoogleAccount {
 
 export const GOOGLE_ACCOUNT_FIELDS = gql`
   fragment GoogleAccountFields on GoogleAccount {
+    id
     email
     name
     avatarUrl
@@ -1982,12 +1984,12 @@ export const GOOGLE_ACCOUNT_FIELDS = gql`
   }
 `;
 
-export const PROJECT_GOOGLE_ACCOUNT = gql`
+export const PROJECT_GOOGLE_ACCOUNTS = gql`
   ${GOOGLE_ACCOUNT_FIELDS}
-  query ProjectGoogleAccount($id: ID!) {
+  query ProjectGoogleAccounts($id: ID!) {
     project(id: $id) {
       id
-      googleAccount {
+      googleAccounts {
         ...GoogleAccountFields
       }
     }
@@ -1996,8 +1998,8 @@ export const PROJECT_GOOGLE_ACCOUNT = gql`
 
 export const CHECK_GOOGLE_ACCOUNT = gql`
   ${GOOGLE_ACCOUNT_FIELDS}
-  mutation CheckGoogleAccount($projectId: ID!) {
-    checkGoogleAccount(projectId: $projectId) {
+  mutation CheckGoogleAccount($id: ID!) {
+    checkGoogleAccount(id: $id) {
       ok
       error
       detail
@@ -2009,11 +2011,11 @@ export const CHECK_GOOGLE_ACCOUNT = gql`
 `;
 
 export const DISCONNECT_GOOGLE_ACCOUNT = gql`
-  mutation DisconnectGoogleAccount($projectId: ID!) {
-    disconnectGoogleAccount(projectId: $projectId) {
+  mutation DisconnectGoogleAccount($id: ID!) {
+    disconnectGoogleAccount(id: $id) {
       id
-      googleAccount {
-        email
+      googleAccounts {
+        id
       }
     }
   }

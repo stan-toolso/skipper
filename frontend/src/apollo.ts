@@ -40,8 +40,8 @@ export function googleLoginUrl(next: string): string {
 }
 
 /** Écran de consentement Google pour relier un compte (Gmail, Drive) à un projet ; le retour ramène sur la page du projet. */
-export function googleConnectUrl(projectId: string, gmail: string, drive: string): string {
-  return `${apiBaseUrl}/auth/google/connect?${new URLSearchParams({ projectId, gmail, drive })}`;
+export function googleConnectUrl(projectId: string, gmail: string, drive: string, accountId?: string): string {
+  return `${apiBaseUrl}/auth/google/connect?${new URLSearchParams({ projectId, gmail, drive, ...(accountId ? { accountId } : {}) })}`;
 }
 
 /** Ferme la session côté serveur (le cookie est effacé par la réponse). */
