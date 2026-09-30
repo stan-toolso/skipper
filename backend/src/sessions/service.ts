@@ -7,12 +7,53 @@ import { requestService } from '../requests/service.js';
 import { sessionRepository } from './repository.js';
 import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
-import type { CreateSessionInput, Session, SessionFilter } from './types.js';
+import { serverSettings } from '../settings/server.js';
+import type { CreateSessionInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Processus en cours, indexés par id de session (mémoire du serveur). */
 const running = new Map<string, RunningHandle>();
 /** Traitement de fin de session (mise à jour du statut) en cours, par id de session. */
 const finishing = new Map<string, Promise<void>>();
+/**
+ * Arrêt du serveur en cours. Posé de façon synchrone dès la réception du signal : pm2 signale tout
+ * l'arbre de processus, donc les agents peuvent mourir avant que leur `stop()` ne soit appelé ; leur
+ * fin doit alors donner une session « interrompue », pas « en erreur ».
+ */
+let stopping = false;
+
+/** Délai laissé aux sessions pour se clôturer à l'arrêt (pm2 tue le processus après 1,6 s par défaut). */
+const SHUTDOWN_TIMEOUT_MS = 1200;
+/** Reprise automatique : sessions interrompues depuis moins d'une heure, trois au plus (mémoire du serveur). */
+const AUTO_RESUME_WINDOW_MS = 60 * 60 * 1000;
+const AUTO_RESUME_MAX = 3;
+const AUTO_RESUME_MESSAGE =
+  "Le serveur Skipper a redémarré pendant ton tour et l'a interrompu. Reprends là où tu en étais : vérifie l'état des fichiers et des commandes en cours avant de continuer.";
+
+async function emitEvent(sessionId: string, type: string, payload: Record<string, unknown> = {}): Promise<void> {
+  const event = await sessionRepository.addEvent(sessionId, type, payload);
+  pubSub.publish('sessionEvent', sessionId, event);
+}
+
+/**
+ * Clôture d'une session par l'arrêt du serveur : statut « interrupted » (sans erreur ni code de
+ * sortie, activité conservée), événement explicite dans le transcript, demandes en attente expirées.
+ * Sans effet si la session n'était plus « running ». Aucune notification : ce n'est pas un échec.
+ */
+async function interruptForShutdown(id: string): Promise<void> {
+  const session = await sessionRepository.markInterrupted(id);
+  if (!session) return;
+  await emitEvent(id, 'system', {
+    message: session.activity === 'busy' ? 'Session interrompue par un redémarrage du serveur, pendant que l\'agent travaillait' : 'Session interrompue par un redémarrage du serveur',
+    notice: true,
+    reason: 'server_shutdown',
+    activity: session.activity,
+  });
+  await emitEvent(id, 'status', { status: 'interrupted', activity: session.activity });
+  pubSub.publish('sessionUpdated', session);
+  await requestService.cancelAllForSession(id, 'expired');
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 async function publishSession(session: Session | null): Promise<Session> {
   if (!session) throw new NotFoundError('Session introuvable');
@@ -27,6 +68,7 @@ export const sessionService = {
   isRunning: (id: string) => running.has(id),
 
   async create(input: CreateSessionInput & { autoStart?: boolean }): Promise<Session> {
+    serverSettings.assertNotInMaintenance();
     const provider = getProvider(input.provider);
     provider.validateConfig?.(input.config ?? {});
     const project = await projectService.get(input.projectId); // lève NotFoundError si le projet n'existe pas
@@ -44,6 +86,8 @@ export const sessionService = {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (session.status === 'running') throw new AppError('La session est déjà en cours');
+    if (stopping) throw new AppError('Le serveur redémarre : réessayez dans quelques secondes', 'MAINTENANCE');
+    serverSettings.assertNotInMaintenance();
     const provider = getProvider(session.provider);
     const project = await projectService.get(session.projectId);
 
@@ -51,10 +95,7 @@ export const sessionService = {
       await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null }),
     );
 
-    const emit = async (type: string, payload: Record<string, unknown> = {}) => {
-      const event = await sessionRepository.addEvent(id, type, payload);
-      pubSub.publish('sessionEvent', id, event);
-    };
+    const emit = (type: string, payload: Record<string, unknown> = {}) => emitEvent(id, type, payload);
 
     let handle: RunningHandle;
     try {
@@ -87,6 +128,7 @@ export const sessionService = {
           await emit('request.answered', { type: input.type, title: input.title, response });
           return response;
         },
+        isServerStopping: () => stopping,
       });
     } catch (err) {
       const message = (err as Error).message;
@@ -98,11 +140,18 @@ export const sessionService = {
     // Fin du processus gérée en tâche de fond : la mutation `start` rend la main immédiatement.
     const finished = handle.wait().then(async (result) => {
       running.delete(id);
-      await requestService.cancelAllForSession(id);
       const current = await sessionRepository.findById(id);
+      // Arrêt du serveur : la session est « interrompue », quelle que soit la façon dont son flux s'est
+      // terminé (fermé par `stop()`, ou agent tué par le signal de pm2 avant). Statut peut-être déjà posé par `shutdown()`.
+      if (stopping || current?.status === 'interrupted') {
+        await interruptForShutdown(id);
+        return;
+      }
+      await requestService.cancelAllForSession(id);
       // Si `stop()` a déjà posé le statut "stopped", on le conserve.
-      const status = current?.status === 'stopped' ? 'stopped' : result.error || result.exitCode !== 0 ? 'failed' : 'completed';
-      const error = result.error ?? (status === 'failed' ? `Code de sortie ${result.exitCode}` : null);
+      const status: SessionStatus =
+        current?.status === 'stopped' || result.closedByServer ? 'stopped' : result.error || result.exitCode !== 0 ? 'failed' : 'completed';
+      const error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
       if (status === 'completed' || status === 'failed') {
@@ -170,16 +219,74 @@ export const sessionService = {
     return sessionRepository.delete(id);
   },
 
-  /** À appeler au démarrage : les sessions "running" en base ne le sont plus réellement. */
+  /**
+   * À appeler au démarrage : les sessions "running" en base ne le sont plus réellement. Normalement
+   * `shutdown()` les a déjà clôturées ; il en reste après un arrêt brutal (SIGKILL, plantage, délai dépassé).
+   */
   async recoverAfterRestart(): Promise<{ sessions: number; requests: number }> {
     const sessions = await sessionRepository.markRunningAsInterrupted();
+    for (const session of sessions) {
+      await sessionRepository.addEvent(session.id, 'system', {
+        message: "Session interrompue : le serveur s'est arrêté sans pouvoir la clôturer (arrêt brutal)",
+        notice: true,
+        reason: 'server_crash',
+        activity: session.activity,
+      });
+      await sessionRepository.addEvent(session.id, 'status', { status: 'interrupted', activity: session.activity });
+    }
     const requests = await requestService.expireAllPending();
-    return { sessions, requests };
+    return { sessions: sessions.length, requests };
   },
 
-  /** Arrêt propre du serveur : tue les processus encore en cours et attend la mise à jour de leur statut. */
-  async shutdown(): Promise<void> {
-    await Promise.all([...running.keys()].map((id) => this.stop(id).catch(() => undefined)));
-    await Promise.all([...finishing.values()]);
+  /**
+   * Reprise automatique (réglage du serveur, désactivé par défaut) : relance les sessions interrompues
+   * au milieu d'un tour par l'arrêt récent du serveur, avec une instruction qui explique la coupure.
+   * Les sessions qui attendaient des instructions restent interrompues : un message suffit à les reprendre.
+   */
+  async resumeInterruptedAfterRestart(): Promise<string[]> {
+    if (!serverSettings.current.autoResumeInterrupted) return [];
+    const sessions = await sessionRepository.listInterruptedMidTurn(new Date(Date.now() - AUTO_RESUME_WINDOW_MS), AUTO_RESUME_MAX);
+    const resumed: string[] = [];
+    for (const session of sessions) {
+      try {
+        await emitEvent(session.id, 'system', { message: 'Reprise automatique après le redémarrage du serveur', notice: true, reason: 'auto_resume' });
+        await this.start(session.id, AUTO_RESUME_MESSAGE);
+        resumed.push(session.id);
+      } catch (err) {
+        console.error(`[sessions] reprise automatique de ${session.id} impossible`, err);
+        await emitEvent(session.id, 'system', { message: `Reprise automatique impossible : ${(err as Error).message}`, notice: true, reason: 'auto_resume' }).catch(() => undefined);
+      }
+    }
+    return resumed;
+  },
+
+  /** Sessions actives sur ce serveur (à consulter avant un redémarrage). */
+  async activeSummary(): Promise<{ active: number; busy: number; idle: number }> {
+    const ids = [...running.keys()];
+    return { active: ids.length, ...(await sessionRepository.countByActivity(ids)) };
+  },
+
+  /**
+   * Début de l'arrêt du serveur, à appeler de façon synchrone dès la réception du signal : à partir
+   * de là, toute fin de session est une interruption et aucune session ne démarre plus.
+   */
+  beginShutdown(): void {
+    stopping = true;
+  },
+
+  /**
+   * Arrêt propre du serveur : les sessions en cours passent à « interrupted » (avant tout, pour que
+   * l'état en base soit juste même si pm2 tue le processus), puis leurs flux sont fermés. Borné dans le temps.
+   */
+  async shutdown(): Promise<number> {
+    stopping = true;
+    const ids = [...running.keys()];
+    const work = (async () => {
+      await Promise.all(ids.map((id) => interruptForShutdown(id).catch((err) => console.error(`[sessions] interruption de ${id}`, err))));
+      await Promise.all(ids.map((id) => running.get(id)?.stop().catch(() => undefined)));
+      await Promise.all([...finishing.values()]);
+    })();
+    await Promise.race([work, delay(SHUTDOWN_TIMEOUT_MS)]);
+    return ids.length;
   },
 };

@@ -160,6 +160,7 @@ export function sessionStateHint(status: string, activity: string | null, pendin
   if (pendingRequests > 0) return 'a besoin de vous';
   if (status === 'RUNNING') return activity === 'BUSY' ? 'travaille' : 'attend vos instructions';
   if (status === 'FAILED') return 'en erreur';
+  if (status === 'INTERRUPTED' && activity === 'BUSY') return 'interrompue en plein travail';
   return null;
 }
 

@@ -28,6 +28,7 @@ import { serverAuthStatus, serverLogout } from '../settings/cli.js';
 import { loginService, type ClaudeLoginKind } from '../settings/login.js';
 import { githubService } from '../settings/github.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
+import { serverSettings } from '../settings/server.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { terminalService } from '../terminals/service.js';
@@ -100,6 +101,18 @@ const appSettings = () => ({
   github: githubService.status(),
   models: settingsService.models(),
   usage: () => usageService.summary(),
+  server: async () => {
+    const maintenance = serverSettings.maintenance;
+    const active = await sessionService.activeSummary();
+    return {
+      maintenance: Boolean(maintenance),
+      maintenanceSince: maintenance?.since ?? null,
+      maintenanceMessage: maintenance?.message ?? null,
+      activeSessions: active.active,
+      busySessions: active.busy,
+      autoResumeInterrupted: serverSettings.current.autoResumeInterrupted,
+    };
+  },
 });
 
 export const resolvers = {
@@ -424,6 +437,17 @@ export const resolvers = {
     disconnectGithub: async (_: unknown, __: unknown, ctx: Ctx) => {
       requireAdmin(ctx);
       await githubService.disconnect();
+      return appSettings();
+    },
+    setMaintenanceMode: (_: unknown, args: { enabled: boolean; message?: string | null }, ctx: Ctx) => {
+      const user = requireAdmin(ctx);
+      serverSettings.setMaintenance(args.enabled, args.message ?? null, user.id);
+      console.log(`[server] mode maintenance ${args.enabled ? 'activé' : 'levé'} par ${user.email}`);
+      return appSettings();
+    },
+    updateServerSettings: async (_: unknown, args: { autoResumeInterrupted: boolean }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      await serverSettings.update({ autoResumeInterrupted: args.autoResumeInterrupted });
       return appSettings();
     },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {

@@ -1148,8 +1148,19 @@ export interface GithubRepository {
   pushedAt: string | null;
 }
 
+/** État du serveur (mode maintenance, sessions actives, reprise automatique). */
+export interface ServerState {
+  maintenance: boolean;
+  maintenanceSince: string | null;
+  maintenanceMessage: string | null;
+  activeSessions: number;
+  busySessions: number;
+  autoResumeInterrupted: boolean;
+}
+
 export interface AppSettings {
   claude: ClaudeSettings;
+  server: ServerState;
   claudeAuth: ClaudeAuthStatus;
   github: GithubAuthStatus;
   models: ClaudeModel[];
@@ -1167,6 +1178,14 @@ export interface ClaudeLogin {
 
 export const APP_SETTINGS_FIELDS = gql`
   fragment AppSettingsFields on AppSettings {
+    server {
+      maintenance
+      maintenanceSince
+      maintenanceMessage
+      activeSessions
+      busySessions
+      autoResumeInterrupted
+    }
     claude {
       authMode
       defaultModel
@@ -1353,6 +1372,24 @@ export const DISCONNECT_GITHUB = gql`
       github {
         ...GithubAuthFields
       }
+    }
+  }
+`;
+
+export const SET_MAINTENANCE_MODE = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation SetMaintenanceMode($enabled: Boolean!, $message: String) {
+    setMaintenanceMode(enabled: $enabled, message: $message) {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+export const UPDATE_SERVER_SETTINGS = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation UpdateServerSettings($autoResumeInterrupted: Boolean!) {
+    updateServerSettings(autoResumeInterrupted: $autoResumeInterrupted) {
+      ...AppSettingsFields
     }
   }
 `;

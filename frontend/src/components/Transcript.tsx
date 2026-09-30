@@ -185,7 +185,14 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         }
         break;
       case 'system':
-        if (technical) {
+        // Les avis (`notice`, ex. interruption par un redémarrage du serveur) sont toujours affichés ; le reste en mode technique.
+        if (p.notice) {
+          nodes.push(
+            <div key={e.id} className="cc-note warn">
+              ⚠ {String(p.message ?? '')}
+            </div>,
+          );
+        } else if (technical) {
           nodes.push(
             <div key={e.id} className="cc-note">
               · {String(p.message ?? JSON.stringify(p))}

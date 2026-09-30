@@ -354,8 +354,25 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
   `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.
 
-Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
-demandes en attente à `expired` et les terminaux à `closed`.
+**Arrêt et redémarrage du backend.** À la réception de SIGINT / SIGTERM, le backend note d'abord,
+de façon synchrone, qu'il s'arrête : pm2 envoie le signal à tout l'arbre de processus, les agents
+meurent donc en même temps que lui et la fin de leur flux ne doit pas passer pour une erreur. Les
+sessions en cours passent alors à `interrupted` (ni `exitCode` ni erreur, `activity` conservée :
+`busy` si l'agent était au milieu d'un tour), avec l'événement `system` « Session interrompue par un
+redémarrage du serveur » dans le transcript ; leurs demandes en attente passent à `expired`, leurs
+flux sont fermés, et aucune notification n'est émise. L'arrêt est borné à 1,2 s (pm2 tue le
+processus au bout de 1,6 s par défaut). Au démarrage suivant, ce qui est encore `running` en base
+(arrêt brutal) passe de même à `interrupted`, les demandes en attente à `expired` et les terminaux à
+`closed`. Une session interrompue reprend sa conversation au prochain message. Le provider distingue
+un flux fermé par le serveur (`RunResult.closedByServer`) d'un agent qui s'est arrêté au milieu d'un
+tour (erreur).
+
+**Paramètres → Serveur.** Le **mode maintenance** (mémoire seulement, levé par le redémarrage)
+refuse tout démarrage de session (création, relance par un message, tâche confiée à un agent ;
+erreur `MAINTENANCE`) et affiche le nombre de sessions encore actives, au travail ou en attente,
+pour choisir le moment du redémarrage. La **reprise automatique** (désactivée par défaut) relance au
+démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, trois au plus, avec
+une instruction qui explique la coupure.
 
 `node-pty` a besoin que son binaire `spawn-helper` soit exécutable : le script `postinstall` s'en charge.
 
@@ -494,6 +511,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `Project.permissionRules` ; `addProjectPermissionRule(projectId, toolName, ruleContent)`, `deleteProjectPermissionRule(id)` (membres)
 - `Project.members`, `Project.myRole` ; `inviteProjectMember(projectId, email, role)`, `updateProjectMemberRole(projectId, userId, role)`, `removeProjectMember(projectId, userId)` (administrateurs du projet)
 - `settings` (réglages Claude, statut d'authentification, modèles connus, consommation ; administrateurs de l'application) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
+- `AppSettings.server` (maintenance, sessions actives, reprise automatique) ; `setMaintenanceMode(enabled, message)`, `updateServerSettings(autoResumeInterrupted)`
 - Connexion OAuth : `startClaudeLogin` (URL à ouvrir), `completeClaudeLogin(id, code)`, `cancelClaudeLogin`, `claudeLogin(id)`
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`

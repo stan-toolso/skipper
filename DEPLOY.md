@@ -156,6 +156,11 @@ pm2 restart skipper --update-env
 
 Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 
+Avant `pm2 restart`, activer **Paramètres → Serveur → mode maintenance** : aucune nouvelle session ne
+démarre, et la page indique combien d'agents travaillent encore. Redémarrer quand ce nombre est à zéro
+si possible : les sessions encore ouvertes passent à « interrompue » (pas en erreur) et reprennent au
+prochain message. Le redémarrage lève la maintenance.
+
 ## Application installable
 
 Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx

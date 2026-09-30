@@ -50,11 +50,21 @@ export interface RunContext {
    * Rejette avec RequestCancelledError si la demande est annulée ou `signal` déclenché.
    */
   ask(input: CreateRequestInput, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  /**
+   * true dès que le serveur a commencé à s'arrêter. pm2 envoie son signal à tout l'arbre de
+   * processus : l'agent peut mourir avant que `stop()` ne soit appelé, sa fin n'est alors pas une erreur.
+   */
+  isServerStopping(): boolean;
 }
 
 export interface RunResult {
   exitCode: number | null;
   error?: string;
+  /**
+   * true si le flux a été fermé par le serveur (`stop()` ou arrêt du serveur), par opposition à
+   * un agent qui s'est terminé de lui-même ; `error` est alors absent.
+   */
+  closedByServer?: boolean;
 }
 
 /** Poignée sur une exécution en cours, permettant de l'attendre ou de l'arrêter. */

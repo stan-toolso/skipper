@@ -805,11 +805,27 @@ type GithubRepository {
 
 type AppSettings {
   claude: ClaudeSettings!
+  "État du serveur : mode maintenance, sessions actives, reprise automatique."
+  server: ServerState!
   claudeAuth: ClaudeAuthStatus!
   github: GithubAuthStatus!
   "Modèles connus (dernière vérification, sinon liste de base)."
   models: [ClaudeModel!]!
   usage: UsageSummary!
+}
+
+"État du serveur, à consulter avant un redémarrage."
+type ServerState {
+  "Mode maintenance : aucune session ne démarre (création, relance, reprise). Levé par un redémarrage."
+  maintenance: Boolean!
+  maintenanceSince: DateTime
+  maintenanceMessage: String
+  "Sessions dont le processus tourne sur ce serveur : elles seront interrompues par un redémarrage."
+  activeSessions: Int!
+  "Parmi elles, celles dont l'agent travaille (tour en cours)."
+  busySessions: Int!
+  "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (trois au plus, depuis moins d'une heure)."
+  autoResumeInterrupted: Boolean!
 }
 
 "Connexion OAuth en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
@@ -931,6 +947,10 @@ type Mutation {
   "Supprime un fichier ou un dossier (récursivement)."
   deleteWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!): Boolean!
 
+  "Active ou lève le mode maintenance (refuse les nouvelles sessions avant un redémarrage)."
+  setMaintenanceMode(enabled: Boolean!, message: String): AppSettings!
+  "Réglages du serveur : reprise automatique des sessions interrompues."
+  updateServerSettings(autoResumeInterrupted: Boolean!): AppSettings!
   "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
   updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
   "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."

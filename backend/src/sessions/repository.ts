@@ -156,15 +156,62 @@ export const sessionRepository = {
     return (rowCount ?? 0) > 0;
   },
 
-  /** Marque comme "interrupted" toute session encore "running" (utilisé au démarrage du serveur). */
-  async markRunningAsInterrupted(): Promise<number> {
-    const { rowCount } = await pool.query(
+  /**
+   * Passe une session "running" à "interrupted" (arrêt du serveur). Ce n'est pas une erreur : ni
+   * code de sortie ni message d'erreur. L'activité est conservée pour savoir si un tour était en
+   * cours ('busy') ou si l'agent attendait des instructions ('idle'). Renvoie null si la session
+   * n'était plus "running" (déjà arrêtée ou déjà interrompue).
+   */
+  async markInterrupted(id: string): Promise<Session | null> {
+    const { rows } = await pool.query<SessionRow>(
       `UPDATE sessions
-       SET status = 'interrupted', activity = NULL, ended_at = now(), updated_at = now(),
-           error = COALESCE(error, 'Serveur redémarré pendant l''exécution')
-       WHERE status = 'running'`,
+       SET status = 'interrupted', exit_code = NULL, error = NULL, ended_at = now(), updated_at = now()
+       WHERE id = $1 AND status = 'running'
+       RETURNING *`,
+      [id],
     );
-    return rowCount ?? 0;
+    return rows[0] ? toSession(rows[0]) : null;
+  },
+
+  /**
+   * Marque comme "interrupted" toute session encore "running" (utilisé au démarrage du serveur,
+   * après un arrêt brutal qui n'a pas pu les clôturer). L'activité est conservée, comme ci-dessus.
+   */
+  async markRunningAsInterrupted(): Promise<Session[]> {
+    const { rows } = await pool.query<SessionRow>(
+      `UPDATE sessions
+       SET status = 'interrupted', exit_code = NULL, error = NULL, ended_at = now(), updated_at = now()
+       WHERE status = 'running'
+       RETURNING *`,
+    );
+    return rows.map(toSession);
+  },
+
+  /**
+   * Sessions interrompues par un arrêt du serveur au milieu d'un tour (activité 'busy'), depuis
+   * `since`, à relancer au démarrage si la reprise automatique est activée.
+   */
+  async listInterruptedMidTurn(since: Date, limit: number): Promise<Session[]> {
+    const { rows } = await pool.query<SessionRow>(
+      `SELECT * FROM sessions
+       WHERE status = 'interrupted' AND activity = 'busy' AND external_id IS NOT NULL AND ended_at >= $1
+       ORDER BY ended_at DESC
+       LIMIT $2`,
+      [since, limit],
+    );
+    return rows.map(toSession);
+  },
+
+  /** Activité des sessions données (comptage des sessions actives avant un redémarrage). */
+  async countByActivity(ids: string[]): Promise<{ busy: number; idle: number }> {
+    if (!ids.length) return { busy: 0, idle: 0 };
+    const { rows } = await pool.query<{ busy: string; idle: string }>(
+      `SELECT count(*) FILTER (WHERE activity = 'busy')::text AS busy,
+              count(*) FILTER (WHERE activity IS DISTINCT FROM 'busy')::text AS idle
+       FROM sessions WHERE id = ANY($1::uuid[])`,
+      [ids],
+    );
+    return { busy: Number(rows[0].busy), idle: Number(rows[0].idle) };
   },
 
   async addEvent(sessionId: string, type: string, payload: Record<string, unknown> = {}): Promise<SessionEvent> {
