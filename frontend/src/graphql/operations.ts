@@ -95,6 +95,10 @@ export interface Project {
   gitUrl: string | null;
   gitBranch: string | null;
   runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean };
+  /** Mode d'autorisation des nouvelles sessions : default, acceptEdits, bypassPermissions ou plan. */
+  defaultPermissionMode: string;
+  /** Connexions soumises à approbation (requête PROJECT seulement). */
+  approvalConnections?: string[];
   runnerStatus: RunnerStatus;
   workspacePath: string;
   workspaceExists: boolean;
@@ -127,7 +131,7 @@ export interface Session {
   updatedAt: string;
   startedAt: string | null;
   endedAt: string | null;
-  project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
+  project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath' | 'approvalConnections'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
   parentSession: { id: string; name: string } | null;
@@ -308,6 +312,7 @@ export const PROJECT_FIELDS = gql`
     gitUrl
     gitBranch
     runnerConfig
+    defaultPermissionMode
     runnerStatus {
       kind
       ready
@@ -527,6 +532,7 @@ export const PROJECT = gql`
   query Project($id: ID!) {
     project(id: $id) {
       ...ProjectFields
+      approvalConnections
       sessions {
         ...SessionFields
       }
@@ -609,6 +615,10 @@ export const SESSION = gql`
   query Session($id: ID!) {
     session(id: $id) {
       ...SessionFields
+      project {
+        id
+        approvalConnections
+      }
       requests(status: PENDING) {
         ...RequestFields
       }
@@ -981,6 +991,8 @@ export const PROJECT_WORKTREES = gql`
     project(id: $id) {
       id
       gitUrl
+      defaultPermissionMode
+      approvalConnections
       git {
         branch
         commit

@@ -1,6 +1,6 @@
 import { AppError, NotFoundError } from '../errors.js';
 import { projectRepository } from './repository.js';
-import type { CreateProjectInput, Project, UpdateProjectInput } from './types.js';
+import { projectPermissionModes, type CreateProjectInput, type Project, type UpdateProjectInput } from './types.js';
 import { ensureWorkspace } from './workspace.js';
 
 /** Dérive un identifiant de dossier sûr à partir du nom du projet. */
@@ -20,6 +20,10 @@ function validateSlug(slug: string): void {
   }
 }
 
+function validatePermissionMode(mode: string | null | undefined): void {
+  if (mode && !(projectPermissionModes as readonly string[]).includes(mode)) throw new AppError(`Mode d'autorisation invalide : ${mode}`);
+}
+
 export const projectService = {
   list: () => projectRepository.list(),
   listForUser: (userId: string) => projectRepository.listForUser(userId),
@@ -35,6 +39,7 @@ export const projectService = {
     const slug = input.slug?.trim() || slugify(input.name);
     validateSlug(slug);
     if (await projectRepository.slugExists(slug)) throw new AppError(`Le slug "${slug}" est déjà utilisé`);
+    validatePermissionMode(input.defaultPermissionMode);
 
     const project = await projectRepository.create({ ...input, name: input.name.trim(), slug });
     try {
@@ -49,6 +54,7 @@ export const projectService = {
 
   async update(id: string, input: UpdateProjectInput): Promise<Project> {
     if (input.name !== undefined && !input.name?.trim()) throw new AppError('Le nom du projet est obligatoire');
+    validatePermissionMode(input.defaultPermissionMode);
     const project = await projectRepository.update(id, { ...input, name: input.name?.trim() });
     if (!project) throw new NotFoundError('Projet introuvable');
     return project;
