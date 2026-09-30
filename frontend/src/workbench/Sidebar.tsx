@@ -52,7 +52,7 @@ function statusDot(status: SessionStatus, activity: SessionActivity | null): { c
   return { cls: 'pending', title: 'Pas encore démarrée' };
 }
 
-/** Menu « + » d'un projet ou d'un worktree : session d'agent, terminal, et pour un projet git : worktree. */
+/** Menu « + » d'un projet ou d'un worktree : session, terminal, et pour un projet git : worktree. */
 function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: string; worktreeId?: string; canWorktree: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const [createTerminal, { loading }] = useMutation<{ createTerminal: { id: string } }>(CREATE_TERMINAL, {
@@ -83,7 +83,7 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
           openNewSession({ projectId, worktreeId: worktreeId ?? null });
         }}
       >
-        <i className="bi bi-chat-dots wb-icon" /> Nouvelle session d'agent
+        <i className="bi bi-chat-dots wb-icon" /> Nouvelle session
       </button>
       <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId, worktreeId: worktreeId ?? null } })}>
         <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal'}

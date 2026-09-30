@@ -166,7 +166,9 @@ export default function SessionDetailPage() {
       ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
       : running
         ? "⏵ L'agent attend vos instructions"
-        : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
+        : session.status === 'PENDING'
+          ? "■ Pas encore démarrée — écrivez la première instruction pour lancer l'agent"
+          : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
 
   return (
     <div className="cc">

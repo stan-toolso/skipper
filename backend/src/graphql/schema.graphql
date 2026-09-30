@@ -949,11 +949,12 @@ input CreateSessionInput {
   newWorktree: NewWorktreeInput
   name: String!
   provider: String!
+  "Première instruction. Facultative : sans consigne ni fichier joint, la session est créée sans démarrer et attend sa première instruction."
   prompt: String
   "Fichiers joints à la première instruction."
   attachments: [AttachmentInput!]
   config: JSON
-  "Démarre la session immédiatement après création (défaut : true)."
+  "Démarre la session immédiatement après création (défaut : true) ; sans effet sans consigne."
   autoStart: Boolean
 }
 
