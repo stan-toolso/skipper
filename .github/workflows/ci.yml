@@ -1,0 +1,58 @@
+name: CI
+
+# Typecheck, build et tests à chaque push et pull request. Le déploiement reste manuel (DEPLOY.md).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Typecheck, build et tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # Base de test : le test des migrations y crée puis supprime ses propres bases.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: skipper
+          POSTGRES_PASSWORD: skipper
+          POSTGRES_DB: skipper
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U skipper -d skipper"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://skipper:skipper@localhost:5432/skipper
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installation
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests
+        run: npm test
