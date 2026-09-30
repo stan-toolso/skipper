@@ -44,9 +44,12 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
   if (!task) throw new NotFoundError('Tâche introuvable');
 
   let worktreeId = options.worktreeId ?? null;
+  let branch = worktreeId ? (await worktreeService.get(worktreeId)).branch : null;
   if (!worktreeId && options.dedicatedWorktree !== false) {
     try {
-      worktreeId = (await createTaskWorktree(task))?.id ?? null;
+      const wt = await createTaskWorktree(task);
+      worktreeId = wt?.id ?? null;
+      branch = wt?.branch ?? null;
     } catch (err) {
       throw new AppError(`Impossible de créer le worktree de la tâche : ${(err as Error).message}`);
     }
@@ -63,6 +66,7 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
     config: options.config ?? {},
     autoStart: false,
   });
-  await taskService.update(task.id, { sessionId: session.id });
+  // La branche reste attachée à la tâche (pull request) même après suppression du worktree.
+  await taskService.update(task.id, { sessionId: session.id, ...(branch ? { branch } : {}) });
   return sessionService.start(session.id);
 }

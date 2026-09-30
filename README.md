@@ -485,6 +485,18 @@ commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queri
 `gitDiff`, `gitCommitDiff`, `gitBranches`, `gitLog` ; mutations `gitStage`, `gitUnstage`,
 `gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
 
+**Pull requests GitHub** (section du panneau git, `backend/src/git/pullRequests.ts`), pour un projet
+dont le dépôt est sur GitHub, avec le jeton de Paramètres → GitHub : la PR de la branche courante, ou
+« Créer une pull request » (titre et description pré-remplis avec la tâche liée à la branche et les
+commits, base = branche du projet sinon celle du dépôt ; la branche est poussée au besoin), puis les
+autres PR ouvertes avec l'état des checks, des conflits et des revues (API GraphQL de GitHub, une
+requête, cache de 20 s). La fenêtre d'une PR la fusionne (squash, commit de fusion, rebase) et
+propose le nettoyage : branche distante, worktree et branche locale (sessions encore ouvertes
+arrêtées au choix, historique conservé, terminaux fermés), tâches liées passées à « terminée » ; le
+dossier principal est ensuite mis à jour (fetch, pull s'il est sur la base). API : queries
+`githubPullRequests`, `githubPullRequest`, `githubPullRequestDraft` ; mutations `createPullRequest`,
+`mergePullRequest`.
+
 La page de session a un onglet **Modifications** (`frontend/src/components/SessionChanges.tsx`) : les
 fichiers modifiés dans son dossier de travail depuis le début de la session, avec le nombre de lignes
 et le diff coloré de chacun, un bouton pour l'ouvrir dans l'éditeur et un pour l'abandonner (retour à
@@ -554,7 +566,9 @@ relié à un dépôt git : dossier `task-<slug du titre>` et branche `task/<slug
 principal (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà). Le menu du
 bouton permet de préférer le dossier principal ou un worktree existant ; un projet sans dépôt git
 travaille dans son dossier principal. Le worktree apparaît dans la sidebar avec sa session, et la
-tâche affiche sa branche. Il reste après la tâche : fusion ou suppression depuis le panneau git.
+tâche affiche sa branche (colonne `tasks.branch`, conservée après suppression du worktree) et sa pull
+request GitHub avec ses checks et revues ; un clic ouvre la fenêtre de fusion. Cycle complet sans
+quitter Skipper : tâche → worktree → PR (panneau git) → fusion → nettoyage du worktree et de la branche.
 
 ## Lancer des sessions et des worktrees
 
@@ -732,6 +746,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
 - `notifications(unreadOnly, limit)`, `unreadNotificationCount` ; `markNotificationRead(id)`, `markAllNotificationsRead` ; subscription `notificationCreated`
 - `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
+- `githubPullRequests(projectId, state, limit)`, `githubPullRequest(projectId, number)`, `githubPullRequestDraft(projectId, worktreeId)` ; `createPullRequest(projectId, worktreeId, title, body, base, draft)`, `mergePullRequest(projectId, number, method, cleanup)` ; `Task.branch`, `Task.pullRequest`
 - `Project.worktrees`, `worktree(id)` avec `sessions` et `terminals` ; `createWorktree(projectId, branch, name, baseRef)`, `deleteWorktree(id, deleteBranch)` ; `CreateSessionInput.worktreeId`, `createTerminal(..., worktreeId)`, `startTaskSession(..., worktreeId)`
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`

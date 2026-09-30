@@ -8,6 +8,7 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { canAutoFocus } from '../lib/device';
+import { PullRequestChip } from '../components/PullRequests';
 
 
 const columns: { status: TaskStatus; label: string; hint: string }[] = [
@@ -150,12 +151,20 @@ function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProje
               {task.session.status === 'RUNNING' && (task.session.activity === 'BUSY' ? ' · travaille' : ' · attend')}
             </Link>
           )}
-          {task.session?.worktree && (
+          {task.session?.worktree ? (
             <Link to={`/worktrees/${task.session.worktree.id}/files`} title="Worktree dédié à cette tâche">
               <i className="bi bi-diagram-2 me-1" />
               {task.session.worktree.branch}
             </Link>
+          ) : (
+            task.branch && (
+              <span className="font-monospace" title="Branche de la tâche (worktree supprimé)">
+                <i className="bi bi-diagram-2 me-1" />
+                {task.branch}
+              </span>
+            )
           )}
+          {task.pullRequest && <PullRequestChip projectId={task.project.id} pr={task.pullRequest} />}
           {task.dueDate && <span className={overdue ? 'text-danger' : ''}>{overdue ? 'En retard : ' : 'Pour le '}{new Date(task.dueDate).toLocaleDateString()}</span>}
           <span title={task.createdBySession ? `Créée par la session ${task.createdBySession.name}` : 'Créée depuis l\'interface'}>
             {task.createdByType === 'agent' ? <i className="bi bi-robot" /> : <i className="bi bi-person" />}

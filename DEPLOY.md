@@ -89,8 +89,9 @@ Deux possibilités.
 
 **Connexion GitHub depuis l'interface (recommandé)** : Paramètres → GitHub. Le plus simple est de
 coller un **jeton d'accès personnel** (Settings → Developer settings → Personal access tokens ;
-« fine-grained » limité aux dépôts voulus avec *Contents : Read and write*, ou « classic » avec la
-portée `repo`). Alternative sans jeton à copier : une OAuth App GitHub (Settings → Developer
+« fine-grained » limité aux dépôts voulus avec *Contents : Read and write* et, pour les pull requests
+du panneau git, *Pull requests : Read and write* plus *Commit statuses* et *Checks* en lecture ; ou
+« classic » avec la portée `repo`). Alternative sans jeton à copier : une OAuth App GitHub (Settings → Developer
 settings → OAuth Apps, « Enable Device Flow » coché) dont le client id se saisit dans la page ou dans
 `GITHUB_CLIENT_ID` du `.env`, puis connexion par device flow. Dans les deux cas le jeton est chiffré
 en base (même clé que les secrets Claude) et injecté dans les commandes git pour les URL https de

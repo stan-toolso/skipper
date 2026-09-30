@@ -1,7 +1,9 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
+import { useLocation, useNavigate } from 'react-router-dom';
 import DiffView from '../components/DiffView';
+import { CreatePullRequestModal, PullRequestIndicators, PullRequestModal } from '../components/PullRequests';
 import { useDialogs } from '../components/Dialogs';
 import {
   GIT_BRANCHES,
@@ -17,11 +19,13 @@ import {
   GIT_STAGE,
   GIT_STATUS,
   GIT_UNSTAGE,
+  GITHUB_PULL_REQUESTS,
   type GitBranch,
   type GitCommit,
   type GitDiff,
   type GitFileChange,
   type GitStatus,
+  type PullRequest,
 } from '../graphql/operations';
 import { useGitPanel } from './GitTargetContext';
 
@@ -131,7 +135,76 @@ function Section({ title, count, defaultOpen = true, children, action }: { title
   );
 }
 
-/** Panneau git (sidebar droite) : modifications, commit, branches, historique. */
+/** Pull requests GitHub : celle de la branche courante (ou bouton de création), puis les autres PR ouvertes du dépôt. */
+function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: string; worktreeId: string | null; branch: string | null }) {
+  const q = useQuery<{ githubPullRequests: PullRequest[] }>(GITHUB_PULL_REQUESTS, { variables: { projectId, state: 'OPEN', limit: 50 }, pollInterval: 30000 });
+  const [creating, setCreating] = useState(false);
+  const [openNumber, setOpenNumber] = useState<number | null>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const prs = q.data?.githubPullRequests ?? [];
+  const mine = branch ? prs.find((p) => p.headRefName === branch && !p.isCrossRepository) : undefined;
+  const others = prs.filter((p) => p !== mine);
+  const row = (p: PullRequest) => (
+    <div key={p.number} className="git-row" title={`${p.headRefName} → ${p.baseRefName}${p.author ? ` · ${p.author}` : ''}`}>
+      <button type="button" className="git-row-main" onClick={() => setOpenNumber(p.number)}>
+        <span className="git-hash">#{p.number}</span>
+        <span className="git-name">{p.title}</span>
+        <span className="ms-auto ps-1">
+          <PullRequestIndicators pr={p} showState={p.isDraft} />
+        </span>
+      </button>
+    </div>
+  );
+  return (
+    <Section
+      title="Pull requests"
+      count={q.data ? prs.length : undefined}
+      action={
+        <button type="button" className="git-icon-btn" title="Rafraîchir" onClick={() => void q.refetch()}>
+          <i className={`bi bi-arrow-clockwise${q.loading ? ' spin' : ''}`} />
+        </button>
+      }
+    >
+      {q.error && <div className="git-empty">{q.error.message}</div>}
+      {!q.error && branch && (
+        <>
+          <div className="git-subhead">Branche courante</div>
+          {mine ? (
+            row(mine)
+          ) : (
+            <div className="px-2 pb-1">
+              <Button size="sm" variant="outline-primary" className="w-100" onClick={() => setCreating(true)}>
+                <i className="bi bi-git me-1" /> Créer une pull request
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+      {!q.error && q.data && (
+        <>
+          {branch && <div className="git-subhead">Ouvertes dans le dépôt</div>}
+          {others.length === 0 && <div className="git-empty">{mine ? 'Aucune autre.' : 'Aucune pull request ouverte.'}</div>}
+          {others.map(row)}
+        </>
+      )}
+      {creating && <CreatePullRequestModal projectId={projectId} worktreeId={worktreeId} onClose={() => setCreating(false)} onCreated={(pr) => { setCreating(false); setOpenNumber(pr.number); }} />}
+      {openNumber !== null && (
+        <PullRequestModal
+          projectId={projectId}
+          number={openNumber}
+          onClose={() => setOpenNumber(null)}
+          onMerged={(deleted) => {
+            // Le worktree affiché vient d'être supprimé : retour au projet.
+            if (worktreeId && deleted.includes(worktreeId) && location.pathname.startsWith('/worktrees/')) navigate(`/projects/${projectId}`);
+          }}
+        />
+      )}
+    </Section>
+  );
+}
+
+/** Panneau git (sidebar droite) : modifications, commit, pull requests, branches, historique. */
 export default function GitPanel() {
   const { target, open, setOpen } = useGitPanel();
   const vars = target ? { projectId: target.projectId, worktreeId: target.worktreeId } : null;
@@ -285,6 +358,8 @@ export default function GitPanel() {
             )}
           </div>
         </div>
+
+        <PullRequestsSection projectId={target.projectId} worktreeId={target.worktreeId} branch={status && !status.detached ? status.branch : null} />
 
         <Section title="Branches" count={local.length} defaultOpen={false}>
           <Form

@@ -10,6 +10,7 @@ interface Row {
   status: TaskStatus;
   priority: TaskPriority;
   session_id: string | null;
+  branch: string | null;
   created_by_type: 'human' | 'agent';
   created_by_session_id: string | null;
   due_date: string | null;
@@ -26,6 +27,7 @@ const toTask = (r: Row): Task => ({
   status: r.status,
   priority: r.priority,
   sessionId: r.session_id,
+  branch: r.branch,
   createdByType: r.created_by_type,
   createdBySessionId: r.created_by_session_id,
   dueDate: r.due_date ? String(r.due_date).slice(0, 10) : null,
@@ -73,6 +75,7 @@ export const taskRepository = {
     if (input.description != null) sets.push(`description = $${params.push(input.description)}`);
     if (input.priority != null) sets.push(`priority = $${params.push(input.priority)}`);
     if (input.sessionId !== undefined) sets.push(`session_id = $${params.push(input.sessionId)}`);
+    if (input.branch !== undefined) sets.push(`branch = $${params.push(input.branch)}`);
     if (input.dueDate !== undefined) sets.push(`due_date = $${params.push(input.dueDate)}`);
     if (input.status != null) {
       sets.push(`status = $${params.push(input.status)}`);
