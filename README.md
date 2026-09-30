@@ -30,7 +30,9 @@ Trois notions :
   le CLI `claude`.
 - **Notification** : cloche en haut à droite de l'interface. Signale une demande d'un agent, une
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
-  contexte par un agent. Notifications natives du navigateur activables en option.
+  contexte par un agent. La notification d'une demande est marquée lue d'elle-même dès que la demande
+  est réglée (répondue, annulée avec la session, expirée au redémarrage) : la cloche ne réclame que ce
+  qui attend encore. Notifications natives du navigateur activables en option.
 - **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
   agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
   MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.

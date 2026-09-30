@@ -100,16 +100,18 @@ export const sessionService = {
         },
         ask: async (input, signal) => {
           await emit('request', { type: input.type, title: input.title, payload: input.payload ?? {} });
-          void notificationService.notify({
-            type: 'request.created',
-            title: input.type === 'question' ? `Question de l'agent « ${session.name} »` : `« ${session.name} » attend votre autorisation`,
-            message: input.title,
-            link: `/sessions/${id}`,
-            projectId: session.projectId,
-            sessionId: id,
-            payload: { requestType: input.type },
+          // La notification porte l'identifiant de la demande : elle sera marquée lue quand la demande sera réglée.
+          const response = await requestService.ask(id, input, signal, (request) => {
+            void notificationService.notify({
+              type: 'request.created',
+              title: input.type === 'question' ? `Question de l'agent « ${session.name} »` : `« ${session.name} » attend votre autorisation`,
+              message: input.title,
+              link: `/sessions/${id}`,
+              projectId: session.projectId,
+              sessionId: id,
+              payload: { requestType: input.type, requestId: request.id },
+            });
           });
-          const response = await requestService.ask(id, input, signal);
           await emit('request.answered', { type: input.type, title: input.title, response });
           return response;
         },
