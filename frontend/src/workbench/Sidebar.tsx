@@ -5,7 +5,6 @@ import { useAuth } from '../auth/AuthContext';
 import {
   CLOSE_TERMINAL,
   CREATE_TERMINAL,
-  CREATE_WORKTREE,
   DELETE_SESSION,
   DELETE_TERMINAL,
   DELETE_WORKTREE,
@@ -22,6 +21,8 @@ import { useTabs } from './TabsContext';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
+import { useSessionLauncher } from '../components/SessionLauncher';
+import { useDialogs } from '../components/Dialogs';
 
 type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'> & { worktree?: { id: string } | null };
 type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'> & { worktree?: { id: string } | null };
@@ -51,7 +52,7 @@ function statusDot(status: SessionStatus, activity: SessionActivity | null): { c
   return { cls: 'pending', title: 'Pas encore démarrée' };
 }
 
-/** Menu « + » d'un projet ou d'un worktree : session d'agent, terminal, et pour un projet git : worktree. */
+/** Menu « + » d'un projet ou d'un worktree : session, terminal, et pour un projet git : worktree. */
 function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: string; worktreeId?: string; canWorktree: boolean; onClose: () => void }) {
   const navigate = useNavigate();
   const [createTerminal, { loading }] = useMutation<{ createTerminal: { id: string } }>(CREATE_TERMINAL, {
@@ -61,22 +62,29 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
       navigate(`/terminals/${res.createTerminal.id}`);
     },
   });
-  const [createWorktree, { loading: creatingWt }] = useMutation(CREATE_WORKTREE, { refetchQueries: ['Sidebar'], onCompleted: onClose });
+  const { openNewSession, openNewWorktree } = useSessionLauncher();
+  const { confirm, showError } = useDialogs();
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [onClose]);
   const [deleteWorktree] = useMutation(DELETE_WORKTREE, { refetchQueries: ['Sidebar', 'ProjectWorktrees'] });
-  const wtParam = worktreeId ? `&worktreeId=${worktreeId}` : '';
   return (
     <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
       <Link to={worktreeId ? `/worktrees/${worktreeId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-folder2-open wb-icon" /> Fichiers
       </Link>
-      <Link to={`/sessions/new?projectId=${projectId}${wtParam}`} className="wb-pop-item" onClick={onClose}>
-        <i className="bi bi-chat-dots wb-icon" /> Nouvelle session d'agent
-      </Link>
+      <button
+        type="button"
+        className="wb-pop-item"
+        onClick={() => {
+          onClose();
+          openNewSession({ projectId, worktreeId: worktreeId ?? null });
+        }}
+      >
+        <i className="bi bi-chat-dots wb-icon" /> Nouvelle session
+      </button>
       <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId, worktreeId: worktreeId ?? null } })}>
         <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal'}
       </button>
@@ -84,13 +92,12 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
         <button
           type="button"
           className="wb-pop-item"
-          disabled={creatingWt}
           onClick={() => {
-            const branch = window.prompt('Nom de la branche du worktree (créée si elle n\'existe pas)');
-            if (branch?.trim()) createWorktree({ variables: { projectId, branch: branch.trim() } }).catch((err) => window.alert(err.message));
+            onClose();
+            openNewWorktree({ projectId });
           }}
         >
-          <i className="bi bi-diagram-2 wb-icon" /> {creatingWt ? 'Création…' : 'Nouveau worktree'}
+          <i className="bi bi-diagram-2 wb-icon" /> Nouveau worktree
         </button>
       )}
       {worktreeId && (
@@ -99,11 +106,17 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
           <button
             type="button"
             className="wb-pop-item danger"
-            onClick={() => {
-              if (!window.confirm('Supprimer ce worktree ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.')) return;
-              const deleteBranch = window.confirm('Supprimer aussi la branche locale ? (Annuler = la garder)');
+            onClick={async () => {
+              const res = await confirm({
+                title: 'Supprimer le worktree',
+                message: 'Supprimer ce worktree ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.',
+                confirmLabel: 'Supprimer',
+                danger: true,
+                checkbox: { label: 'Supprimer aussi la branche locale' },
+              });
+              if (!res) return;
               onClose();
-              deleteWorktree({ variables: { id: worktreeId, deleteBranch } }).catch((err) => window.alert(err.message));
+              deleteWorktree({ variables: { id: worktreeId, deleteBranch: res.checked } }).catch(showError);
             }}
           >
             <i className="bi bi-trash wb-icon" /> Supprimer le worktree
@@ -212,26 +225,27 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
 function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean; indent: number }) {
   const navigate = useNavigate();
   const { closeTab } = useTabs();
+  const { confirm, showError } = useDialogs();
   const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
   const [deleteSession] = useMutation(DELETE_SESSION, { refetchQueries: ['Sidebar', 'Sessions'] });
   const dot = statusDot(s.status, s.activity);
   const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
-    ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch((e: Error) => window.alert(e.message)) }] : []),
+    ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch(showError) }] : []),
     {
       label: 'Supprimer',
       icon: 'bi-trash',
       danger: true,
       separatorBefore: true,
-      onClick: () => {
-        if (!window.confirm(`Supprimer la session « ${s.name} » et son historique ?`)) return;
+      onClick: async () => {
+        if (!(await confirm({ title: 'Supprimer la session', message: `Supprimer la session « ${s.name} » et son historique ?`, confirmLabel: 'Supprimer', danger: true }))) return;
         deleteSession({ variables: { id: s.id } })
           .then(() => {
             closeTab(`/sessions/${s.id}`);
             if (active) navigate('/sessions');
           })
-          .catch((e: Error) => window.alert(e.message));
+          .catch(showError);
       },
     },
   ];
@@ -247,24 +261,25 @@ function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean;
 function TerminalRow({ t, active, indent }: { t: SidebarTerminal; active: boolean; indent: number }) {
   const navigate = useNavigate();
   const { closeTab } = useTabs();
+  const { confirm, showError } = useDialogs();
   const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'] });
   const [deleteTerminal] = useMutation(DELETE_TERMINAL, { refetchQueries: ['Sidebar'] });
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
-    ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch((e: Error) => window.alert(e.message)) }] : []),
+    ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
     {
       label: 'Supprimer',
       icon: 'bi-trash',
       danger: true,
       separatorBefore: true,
-      onClick: () => {
-        if (!window.confirm(`Supprimer le terminal « ${t.name} » ?`)) return;
+      onClick: async () => {
+        if (!(await confirm({ title: 'Supprimer le terminal', message: `Supprimer le terminal « ${t.name} » ?`, confirmLabel: 'Supprimer', danger: true }))) return;
         deleteTerminal({ variables: { id: t.id } })
           .then(() => {
             closeTab(`/terminals/${t.id}`);
             if (active) navigate('/');
           })
-          .catch((e: Error) => window.alert(e.message));
+          .catch(showError);
       },
     },
   ];
@@ -472,9 +487,6 @@ export default function Sidebar() {
             Aucun projet. <Link to="/projects/new">Créer le premier</Link>
           </div>
         )}
-      </div>
-      <div className="wb-hint">
-        Un point orange qui clignote : l'agent travaille. Vert : il attend vos instructions. Un badge jaune : il a besoin de vous.
       </div>
       <nav className="wb-menu wb-menu-bottom">
         <InstallButton />

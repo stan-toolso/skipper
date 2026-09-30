@@ -43,8 +43,6 @@
 .wb-menu-item.active .wb-icon { color: var(--cc-accent); }
 .wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; }
 .wb-row.active .wb-state, .wb-row:hover .wb-state { color: var(--cc-dim); }
-.wb-hint { padding: 8px 14px; font-size: 11.5px; color: var(--cc-dimmer); border-top: 1px solid var(--cc-border); }
-.wb-hint a { color: var(--cc-dim); }
 
 .wb-section-title {
   display: flex;
@@ -433,7 +431,6 @@
   .wb-resizer { display: none; }
   .wb-backdrop { display: block; position: fixed; inset: 0; z-index: 45; background: rgba(0,0,0,.5); }
   .wb-burger { display: flex; }
-  .wb-hint { display: none; }
   .wb-main { width: 100%; }
   .wb-topbar { height: 44px; }
   .wb-tab { max-width: 170px; padding-left: 10px; }

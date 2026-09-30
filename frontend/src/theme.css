@@ -122,3 +122,19 @@ pre { color: var(--cc-fg); }
   border: 1px solid var(--cc-border);
   border-radius: 4px;
 }
+
+/* Boîtes de dialogue (confirmations, saisies, erreurs : components/Dialogs.tsx) et autres modales. */
+.modal {
+  --bs-modal-bg: var(--cc-bg-elevated);
+  --bs-modal-border-color: var(--cc-border);
+  --bs-modal-header-border-color: var(--cc-border);
+  --bs-modal-footer-border-color: var(--cc-border);
+  --bs-modal-box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+}
+.modal-backdrop { --bs-backdrop-opacity: 0.65; }
+.app-dialog .modal-dialog { max-width: 460px; }
+.app-dialog .modal-header { padding-bottom: 0.5rem; }
+.app-dialog .modal-body { padding-top: 0.5rem; }
+.app-dialog .app-dialog-message { line-height: 1.5; overflow-wrap: anywhere; }
+.app-dialog code { color: var(--cc-fg); background: var(--cc-bg); padding: 0 0.3em; border-radius: 3px; }
+.app-dialog .modal-footer { padding-top: 0.5rem; }

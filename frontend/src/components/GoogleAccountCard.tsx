@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
 import { googleConnectUrl } from '../apollo';
+import { useDialogs } from './Dialogs';
 import { CHECK_GOOGLE_ACCOUNT, DISCONNECT_GOOGLE_ACCOUNT, PROJECT_GOOGLE_ACCOUNT, type GoogleAccess, type GoogleAccount } from '../graphql/operations';
 
 const accessLabels: Record<GoogleAccess, string> = { NONE: 'aucun accès', READ: 'lecture', WRITE: 'lecture et écriture' };
@@ -70,6 +71,7 @@ export default function GoogleAccountCard({ projectId, canManage }: { projectId:
   const [check, { loading: checking, data: checkData, error: checkError, reset: resetCheck }] = useMutation<{ checkGoogleAccount: { ok: boolean; error: string | null; detail: string | null } }>(CHECK_GOOGLE_ACCOUNT, {
     refetchQueries: ['ProjectGoogleAccount'],
   });
+  const { confirm } = useDialogs();
   const [disconnect, { loading: disconnecting, error: disconnectError }] = useMutation(DISCONNECT_GOOGLE_ACCOUNT, { refetchQueries: ['ProjectGoogleAccount'] });
   const [editing, setEditing] = useState(false);
   // Retour du flux OAuth : ?google=connected&email=… ou ?googleError=…, lus puis retirés de l'URL.
@@ -190,8 +192,9 @@ export default function GoogleAccountCard({ projectId, canManage }: { projectId:
                   size="sm"
                   variant="outline-danger"
                   disabled={disconnecting}
-                  onClick={() => {
-                    if (window.confirm(`Détacher le compte ${account.email} du projet ? L'accès accordé à Skipper sera révoqué côté Google.`)) disconnect({ variables: { projectId } });
+                  onClick={async () => {
+                    if (await confirm({ title: 'Déconnecter le compte Google', message: `Détacher le compte ${account.email} du projet ? L'accès accordé à Skipper sera révoqué côté Google.`, confirmLabel: 'Déconnecter', danger: true }))
+                      disconnect({ variables: { projectId } });
                   }}
                 >
                   {disconnecting ? 'Déconnexion…' : 'Déconnecter'}

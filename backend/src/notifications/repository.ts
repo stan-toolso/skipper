@@ -59,6 +59,25 @@ export const notificationRepository = {
     const { rows } = await pool.query<Row>('UPDATE notifications SET read_at = COALESCE(read_at, now()) WHERE id = $1 RETURNING *', [id]);
     return rows[0] ? toNotification(rows[0]) : null;
   },
+  /** Marque lues les notifications « demande » (type request.created) portant sur ces demandes. */
+  async markReadForRequests(requestIds: string[]): Promise<number> {
+    if (requestIds.length === 0) return 0;
+    const { rowCount } = await pool.query(
+      `UPDATE notifications SET read_at = now()
+       WHERE read_at IS NULL AND type = 'request.created' AND payload->>'requestId' = ANY($1::text[])`,
+      [requestIds],
+    );
+    return rowCount ?? 0;
+  },
+  /** Marque lues les notifications « demande » dont la demande n'est plus en attente (rattrapage au démarrage). */
+  async markReadForSettledRequests(): Promise<number> {
+    const { rowCount } = await pool.query(
+      `UPDATE notifications n SET read_at = now()
+       FROM requests r
+       WHERE n.read_at IS NULL AND n.type = 'request.created' AND r.id::text = n.payload->>'requestId' AND r.status <> 'pending'`,
+    );
+    return rowCount ?? 0;
+  },
   async markAllRead(projectIds?: string[]): Promise<number> {
     const { rowCount } = await pool.query(
       `UPDATE notifications SET read_at = now() WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''}`,

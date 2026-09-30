@@ -1,4 +1,5 @@
 import { gql } from '@apollo/client';
+import type { AttachmentRef } from '../lib/attachments';
 
 export type SessionStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'INTERRUPTED';
 export type RequestStatus = 'PENDING' | 'ANSWERED' | 'CANCELLED' | 'EXPIRED';
@@ -13,6 +14,26 @@ export interface ConfigField {
   options?: { value: string; label: string; description?: string | null }[] | null;
   defaultValue?: string | null;
   advanced?: boolean | null;
+}
+
+/** Planification d'une session : l'instruction est envoyée à chaque échéance de l'expression cron. */
+/** Nettoyage automatique de l'historique d'une session. */
+export interface SessionCleanup {
+  retentionDays: number | null;
+  contextAction: 'compact' | 'reset' | null;
+  contextMaxTokens: number | null;
+}
+
+export interface SessionSchedule {
+  cron: string;
+  timezone: string;
+  prompt: string;
+  enabled: boolean;
+  endAfterRun: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastResult: string | null;
+  updatedAt: string;
 }
 
 export interface Provider {
@@ -90,11 +111,15 @@ export interface Session {
   status: SessionStatus;
   activity: SessionActivity | null;
   prompt: string | null;
+  promptAttachments: AttachmentRef[];
   config: Record<string, unknown>;
   externalId: string | null;
   exitCode: number | null;
   error: string | null;
   costUsd: number;
+  cleanup: SessionCleanup;
+  /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
+  contextTokens: number | null;
   pendingRequestCount: number;
   createdAt: string;
   updatedAt: string;
@@ -102,6 +127,10 @@ export interface Session {
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
+  /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
+  parentSession: { id: string; name: string } | null;
+  /** Planification (null si la session n'est pas planifiée). */
+  schedule: SessionSchedule | null;
 }
 
 export interface ContextFolder {
@@ -382,11 +411,23 @@ export const SESSION_FIELDS = gql`
     status
     activity
     prompt
+    promptAttachments {
+      id
+      name
+      mediaType
+      size
+    }
     config
     externalId
     exitCode
     error
     costUsd
+    cleanup {
+      retentionDays
+      contextAction
+      contextMaxTokens
+    }
+    contextTokens
     pendingRequestCount
     createdAt
     updatedAt
@@ -403,6 +444,21 @@ export const SESSION_FIELDS = gql`
       name
       branch
       path
+    }
+    parentSession {
+      id
+      name
+    }
+    schedule {
+      cron
+      timezone
+      prompt
+      enabled
+      endAfterRun
+      nextRunAt
+      lastRunAt
+      lastResult
+      updatedAt
     }
   }
 `;
@@ -548,18 +604,27 @@ export const SESSIONS = gql`
 export const SESSION = gql`
   ${SESSION_FIELDS}
   ${REQUEST_FIELDS}
-  query Session($id: ID!, $after: ID) {
+  query Session($id: ID!) {
     session(id: $id) {
       ...SessionFields
-      events(after: $after) {
+      requests(status: PENDING) {
+        ...RequestFields
+      }
+    }
+  }
+`;
+
+/** Une page d'événements d'une session, dans l'ordre, après l'événement `after` (voir useSessionEvents). */
+export const SESSION_EVENTS = gql`
+  query SessionEvents($id: ID!, $after: ID, $limit: Int) {
+    session(id: $id) {
+      id
+      events(after: $after, limit: $limit) {
         id
         sessionId
         type
         payload
         createdAt
-      }
-      requests(status: PENDING) {
-        ...RequestFields
       }
     }
   }
@@ -594,8 +659,8 @@ export const STOP_SESSION = gql`
 
 export const SEND_SESSION_MESSAGE = gql`
   ${SESSION_FIELDS}
-  mutation SendSessionMessage($id: ID!, $text: String!) {
-    sendSessionMessage(id: $id, text: $text) {
+  mutation SendSessionMessage($id: ID!, $text: String!, $attachments: [AttachmentInput!]) {
+    sendSessionMessage(id: $id, text: $text, attachments: $attachments) {
       ...SessionFields
     }
   }
@@ -619,9 +684,69 @@ export const INTERRUPT_SESSION = gql`
   }
 `;
 
+export const UPDATE_SESSION_CONFIG = gql`
+  ${SESSION_FIELDS}
+  mutation UpdateSessionConfig($id: ID!, $config: JSON!) {
+    updateSessionConfig(id: $id, config: $config) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const DELETE_SESSION = gql`
   mutation DeleteSession($id: ID!) {
     deleteSession(id: $id)
+  }
+`;
+
+export const SET_SESSION_SCHEDULE = gql`
+  ${SESSION_FIELDS}
+  mutation SetSessionSchedule($id: ID!, $input: SessionScheduleInput!) {
+    setSessionSchedule(id: $id, input: $input) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const CLEAR_SESSION_SCHEDULE = gql`
+  ${SESSION_FIELDS}
+  mutation ClearSessionSchedule($id: ID!) {
+    clearSessionSchedule(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const RUN_SESSION_SCHEDULE_NOW = gql`
+  ${SESSION_FIELDS}
+  mutation RunSessionScheduleNow($id: ID!) {
+    runSessionScheduleNow(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const UPDATE_SESSION = gql`
+  ${SESSION_FIELDS}
+  mutation UpdateSession($id: ID!, $input: UpdateSessionInput!) {
+    updateSession(id: $id, input: $input) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const APPLY_SESSION_CLEANUP = gql`
+  ${SESSION_FIELDS}
+  mutation ApplySessionCleanup($id: ID!) {
+    applySessionCleanup(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const SCHEDULE_NEXT_RUNS = gql`
+  query ScheduleNextRuns($cron: String!, $timezone: String, $count: Int) {
+    scheduleNextRuns(cron: $cron, timezone: $timezone, count: $count)
   }
 `;
 
@@ -1148,8 +1273,19 @@ export interface GithubRepository {
   pushedAt: string | null;
 }
 
+/** État du serveur (mode maintenance, sessions actives, reprise automatique). */
+export interface ServerState {
+  maintenance: boolean;
+  maintenanceSince: string | null;
+  maintenanceMessage: string | null;
+  activeSessions: number;
+  busySessions: number;
+  autoResumeInterrupted: boolean;
+}
+
 export interface AppSettings {
   claude: ClaudeSettings;
+  server: ServerState;
   claudeAuth: ClaudeAuthStatus;
   github: GithubAuthStatus;
   models: ClaudeModel[];
@@ -1167,6 +1303,14 @@ export interface ClaudeLogin {
 
 export const APP_SETTINGS_FIELDS = gql`
   fragment AppSettingsFields on AppSettings {
+    server {
+      maintenance
+      maintenanceSince
+      maintenanceMessage
+      activeSessions
+      busySessions
+      autoResumeInterrupted
+    }
     claude {
       authMode
       defaultModel
@@ -1353,6 +1497,24 @@ export const DISCONNECT_GITHUB = gql`
       github {
         ...GithubAuthFields
       }
+    }
+  }
+`;
+
+export const SET_MAINTENANCE_MODE = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation SetMaintenanceMode($enabled: Boolean!, $message: String) {
+    setMaintenanceMode(enabled: $enabled, message: $message) {
+      ...AppSettingsFields
+    }
+  }
+`;
+
+export const UPDATE_SERVER_SETTINGS = gql`
+  ${APP_SETTINGS_FIELDS}
+  mutation UpdateServerSettings($autoResumeInterrupted: Boolean!) {
+    updateServerSettings(autoResumeInterrupted: $autoResumeInterrupted) {
+      ...AppSettingsFields
     }
   }
 `;

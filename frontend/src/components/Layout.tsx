@@ -5,6 +5,7 @@ import TabBar from '../workbench/TabBar';
 import { TabsProvider } from '../workbench/TabsContext';
 import GitPanel from '../workbench/GitPanel';
 import { GitTargetProvider } from '../workbench/GitTargetContext';
+import { SessionLauncherProvider } from './SessionLauncher';
 import '../workbench/workbench.css';
 
 const SIDEBAR_WIDTH_KEY = 'skipper.workbench.sidebarWidth';
@@ -67,36 +68,37 @@ export default function Layout({ children }: { children: ReactNode }) {
   useEffect(() => setSidebarOpen(false), [pathname]);
   const rootRef = useRef<HTMLDivElement>(null);
   const sidebar = useSidebarWidth(rootRef);
-  const flush =
-    (/^\/sessions\/[^/]+$/.test(pathname) && pathname !== '/sessions/new') || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|worktrees)\/[^/]+\/files(?:\/|$)/.test(pathname);
+  const flush = /^\/sessions\/[^/]+$/.test(pathname) || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|worktrees)\/[^/]+\/files(?:\/|$)/.test(pathname);
   return (
     <TabsProvider>
       <GitTargetProvider>
-        <div
-          ref={rootRef}
-          className={`wb${sidebarOpen ? ' sidebar-open' : ''}${sidebar.dragging ? ' resizing' : ''}`}
-          style={{ '--wb-sidebar-w': `${sidebar.width}px` } as CSSProperties}
-        >
-          <Sidebar />
+        <SessionLauncherProvider>
           <div
-            className={`wb-resizer${sidebar.dragging ? ' dragging' : ''}`}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Largeur de la barre latérale"
-            aria-valuenow={sidebar.width}
-            aria-valuemin={SIDEBAR_MIN}
-            aria-valuemax={SIDEBAR_MAX}
-            tabIndex={0}
-            title="Glisser pour redimensionner · double-clic pour revenir à la largeur par défaut"
-            {...sidebar.handleProps}
-          />
-          {sidebarOpen && <div className="wb-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
-          <div className="wb-main">
-            <TabBar onToggleSidebar={() => setSidebarOpen((v) => !v)} sidebarOpen={sidebarOpen} />
-            <div className={`wb-content${flush ? ' flush' : ''}`}>{children}</div>
+            ref={rootRef}
+            className={`wb${sidebarOpen ? ' sidebar-open' : ''}${sidebar.dragging ? ' resizing' : ''}`}
+            style={{ '--wb-sidebar-w': `${sidebar.width}px` } as CSSProperties}
+          >
+            <Sidebar />
+            <div
+              className={`wb-resizer${sidebar.dragging ? ' dragging' : ''}`}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Largeur de la barre latérale"
+              aria-valuenow={sidebar.width}
+              aria-valuemin={SIDEBAR_MIN}
+              aria-valuemax={SIDEBAR_MAX}
+              tabIndex={0}
+              title="Glisser pour redimensionner · double-clic pour revenir à la largeur par défaut"
+              {...sidebar.handleProps}
+            />
+            {sidebarOpen && <div className="wb-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
+            <div className="wb-main">
+              <TabBar onToggleSidebar={() => setSidebarOpen((v) => !v)} sidebarOpen={sidebarOpen} />
+              <div className={`wb-content${flush ? ' flush' : ''}`}>{children}</div>
+            </div>
+            <GitPanel />
           </div>
-          <GitPanel />
-        </div>
+        </SessionLauncherProvider>
       </GitTargetProvider>
     </TabsProvider>
   );

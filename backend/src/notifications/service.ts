@@ -32,4 +32,24 @@ export const notificationService = {
   },
 
   markAllRead: (projectIds?: string[]) => notificationRepository.markAllRead(projectIds),
+
+  /**
+   * Une demande réglée (répondue, annulée, expirée) n'a plus à attirer l'attention : sa notification
+   * est marquée lue. Ne lève jamais : le règlement de la demande ne doit pas en dépendre.
+   */
+  async markReadForRequests(requestIds: string[]): Promise<void> {
+    try {
+      await notificationRepository.markReadForRequests(requestIds);
+    } catch (err) {
+      console.error('[notifications] marquage des demandes réglées impossible', err);
+    }
+  },
+
+  async markReadForSettledRequests(): Promise<void> {
+    try {
+      await notificationRepository.markReadForSettledRequests();
+    } catch (err) {
+      console.error('[notifications] rattrapage des demandes réglées impossible', err);
+    }
+  },
 };

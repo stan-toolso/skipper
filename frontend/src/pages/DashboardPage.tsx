@@ -6,6 +6,7 @@ import StatusBadge from '../components/StatusBadge';
 import { DASHBOARD, type Dashboard, type DashboardProject, type DashboardUsage, type HumanRequest, type Session, type Task } from '../graphql/operations';
 import { formatCost, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
+import { useSessionLauncher } from '../components/SessionLauncher';
 import './dashboard.css';
 
 /**
@@ -15,6 +16,7 @@ import './dashboard.css';
  * rafraîchie régulièrement.
  */
 export default function DashboardPage() {
+  const { openNewSession } = useSessionLauncher();
   useTabTitle('Tableau de bord');
   const { data, loading, error, refetch } = useQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
   const d = data?.dashboard;
@@ -32,6 +34,8 @@ export default function DashboardPage() {
 
   const { counts, usage } = d;
   const waiting = counts.pendingRequests + counts.idleSessions;
+  // Sessions coupées en plein tour par un redémarrage du serveur (pas une erreur, mais un travail à reprendre).
+  const interruptedMidTurn = d.recentSessions.filter((s) => s.status === 'INTERRUPTED' && s.activity === 'BUSY' && isRecent(s.endedAt ?? s.updatedAt, 24));
 
   return (
     <>
@@ -42,7 +46,7 @@ export default function DashboardPage() {
           <Button size="sm" variant="outline-secondary" onClick={() => refetch()} title="Rafraîchir">
             <i className="bi bi-arrow-clockwise" />
           </Button>
-          <Button as={Link as any} to="/sessions/new" size="sm" variant="primary">
+          <Button size="sm" variant="primary" onClick={() => openNewSession()}>
             <i className="bi bi-plus-lg me-1" /> Session
           </Button>
         </div>
@@ -92,8 +96,9 @@ export default function DashboardPage() {
             <ul className="dash-list">
               {d.pendingRequests.map((r) => <RequestRow key={r.id} request={r} />)}
               {d.runningSessions.filter((s) => s.activity !== 'BUSY' && s.pendingRequestCount === 0).map((s) => <SessionRow key={s.id} session={s} hint="attend vos instructions" icon="bi-chat-left-dots warn" />)}
-              {d.recentSessions.filter((s) => (s.status === 'FAILED' || s.status === 'INTERRUPTED') && isRecent(s.endedAt ?? s.updatedAt, 24)).map((s) => <SessionRow key={s.id} session={s} hint={s.error ? shorten(s.error, 80) : 'en erreur'} icon="bi-x-octagon bad" />)}
-              {waiting === 0 && counts.failedSessions24h === 0 && <li className="empty">Rien à traiter : les agents n’ont besoin de rien pour l’instant.</li>}
+              {d.recentSessions.filter((s) => s.status === 'FAILED' && isRecent(s.endedAt ?? s.updatedAt, 24)).map((s) => <SessionRow key={s.id} session={s} hint={s.error ? shorten(s.error, 80) : 'en erreur'} icon="bi-x-octagon bad" />)}
+              {interruptedMidTurn.map((s) => <SessionRow key={s.id} session={s} hint="interrompue en plein travail par un redémarrage, un message la reprend" icon="bi-pause-circle warn" />)}
+              {waiting === 0 && counts.failedSessions24h === 0 && interruptedMidTurn.length === 0 && <li className="empty">Rien à traiter : les agents n’ont besoin de rien pour l’instant.</li>}
             </ul>
           </section>
 
@@ -421,7 +426,7 @@ function EmptyState() {
       <Row className="g-3">
         {[
           { n: 1, icon: 'bi-folder2', title: 'Créez un projet', text: 'Un projet regroupe un dossier de travail (avec, si vous voulez, un dépôt git), des instructions permanentes pour les agents, et leurs sessions.', to: '/projects/new', cta: 'Nouveau projet', primary: true },
-          { n: 2, icon: 'bi-chat-dots', title: 'Lancez une session', text: "Décrivez ce que l'agent doit faire. Il travaille en arrière-plan, vous suivez ses actions en direct et pouvez lui écrire à tout moment.", to: '/sessions/new', cta: 'Nouvelle session', disabled: true },
+          { n: 2, icon: 'bi-chat-dots', title: 'Lancez une session', text: "Décrivez ce que l'agent doit faire. Il travaille en arrière-plan, vous suivez ses actions en direct et pouvez lui écrire à tout moment.", to: '/sessions', cta: 'Nouvelle session', disabled: true },
           { n: 3, icon: 'bi-bell', title: 'Répondez aux demandes', text: "Quand un agent veut modifier un fichier, lancer une commande ou a une question, il vous demande. Autorisez, refusez ou expliquez.", to: '/requests', cta: 'Voir les demandes' },
         ].map((step) => (
           <Col md={4} key={step.n}>
@@ -449,4 +454,4 @@ function EmptyState() {
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 const shorten = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const isRecent = (iso: string, hours: number) => Date.now() - new Date(iso).getTime() < hours * 3600_000;
-const statusIcon = (s: Session) => (s.status === 'COMPLETED' ? 'bi-check-circle' : s.status === 'FAILED' || s.status === 'INTERRUPTED' ? 'bi-x-octagon bad' : 'bi-stop-circle');
+const statusIcon = (s: Session) => (s.status === 'COMPLETED' ? 'bi-check-circle' : s.status === 'FAILED' ? 'bi-x-octagon bad' : s.status === 'INTERRUPTED' ? 'bi-pause-circle' : 'bi-stop-circle');

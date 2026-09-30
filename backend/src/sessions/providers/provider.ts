@@ -1,6 +1,6 @@
 import type { Project } from '../../projects/types.js';
 import type { CreateRequestInput } from '../../requests/types.js';
-import type { Session, SessionActivity } from '../types.js';
+import type { Attachment, Session, SessionActivity } from '../types.js';
 
 /** Description d'un champ de configuration, exposée au front pour générer le formulaire. */
 export interface ConfigOption {
@@ -39,22 +39,41 @@ export interface RunContext {
   cwd: string;
   /** Première instruction à traiter : le prompt de la session, ou le message qui a relancé une session terminée. */
   initialMessage: string | null;
+  /** Fichiers joints à la première instruction (chemins sur disque ; images et PDF peuvent aussi être transmis au modèle). */
+  initialAttachments: Attachment[];
   /** Signale si l'agent travaille ou attend des instructions. */
   setActivity(activity: SessionActivity): Promise<void>;
   /** Journalise un événement (persisté et diffusé en temps réel). */
   emit(type: string, payload?: Record<string, unknown>): Promise<void>;
   /** Enregistre l'identifiant de la session côté provider (ex. session_id Claude). */
   setExternalId(externalId: string): Promise<void>;
+  /** Enregistre la taille du contexte de l'agent (tokens d'entrée du dernier appel au modèle), null si inconnue. */
+  setContextTokens?(tokens: number | null): Promise<void>;
   /**
    * Soumet une demande à l'humain (autorisation, question...) et attend sa réponse.
    * Rejette avec RequestCancelledError si la demande est annulée ou `signal` déclenché.
    */
   ask(input: CreateRequestInput, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  /**
+   * true dès que le serveur a commencé à s'arrêter. pm2 envoie son signal à tout l'arbre de
+   * processus : l'agent peut mourir avant que `stop()` ne soit appelé, sa fin n'est alors pas une erreur.
+   */
+  isServerStopping(): boolean;
+  /**
+   * Enregistre un changement de configuration que le provider a déjà appliqué lui-même (ex. mode
+   * d'autorisation accordé par l'humain en réponse à une demande), pour l'afficher et le conserver au prochain lancement.
+   */
+  recordConfig(changes: Record<string, unknown>): Promise<void>;
 }
 
 export interface RunResult {
   exitCode: number | null;
   error?: string;
+  /**
+   * true si le flux a été fermé par le serveur (`stop()` ou arrêt du serveur), par opposition à
+   * un agent qui s'est terminé de lui-même ; `error` est alors absent.
+   */
+  closedByServer?: boolean;
 }
 
 /** Poignée sur une exécution en cours, permettant de l'attendre ou de l'arrêter. */
@@ -63,11 +82,16 @@ export interface RunningHandle {
   /** Arrêt immédiat (abandon du travail en cours). */
   stop(): Promise<void>;
   /** Envoie une instruction à l'agent en cours d'exécution (providers interactifs). */
-  sendMessage?(text: string): Promise<void>;
+  sendMessage?(text: string, attachments?: Attachment[]): Promise<void>;
   /** Fin propre : plus d'instructions, l'agent termine son tour puis la session se termine. */
   end?(): Promise<void>;
   /** Interrompt le tour en cours sans terminer la session. */
   interrupt?(): Promise<void>;
+  /**
+   * Applique en cours d'exécution une partie de la configuration (ex. modèle, mode d'autorisation).
+   * Ne reçoit que les clés modifiées et renvoie celles qu'il a appliquées ; les autres valent pour le prochain lancement.
+   */
+  updateConfig?(patch: Record<string, unknown>): Promise<string[]>;
 }
 
 /**

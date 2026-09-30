@@ -137,7 +137,7 @@ async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts,
   if (!projectIds.length) return { failedSessions24h: 0, endedSessions24h: 0, doneTasks7d: 0 };
   const { rows } = await pool.query<{ failed: string; ended: string; done: string }>(
     `SELECT
-       (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND status IN ('failed', 'interrupted') AND ended_at >= now() - interval '24 hours')::text AS failed,
+       (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND status = 'failed' AND ended_at >= now() - interval '24 hours')::text AS failed,
        (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND status IN ('completed', 'failed', 'stopped', 'interrupted') AND ended_at >= now() - interval '24 hours')::text AS ended,
        (SELECT count(*) FROM tasks WHERE project_id = ANY($1::uuid[]) AND status = 'done' AND completed_at >= now() - interval '7 days')::text AS done`,
     [projectIds],

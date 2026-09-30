@@ -1,5 +1,6 @@
 import { AppError, NotFoundError } from '../errors.js';
 import { pubSub } from '../pubsub.js';
+import { notificationService } from '../notifications/service.js';
 import { requestRepository } from './repository.js';
 import type { CreateRequestInput, HumanRequest, RequestStatus } from './types.js';
 
@@ -39,10 +40,12 @@ export const requestService = {
   /**
    * Crée une demande et attend la réponse humaine. Rejette avec RequestCancelledError
    * si la demande est annulée (arrêt de la session, abandon explicite) ou si `signal` est déclenché.
+   * `onCreated` reçoit la demande une fois enregistrée (pour la notifier avec son identifiant).
    */
-  async ask(sessionId: string, input: CreateRequestInput, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async ask(sessionId: string, input: CreateRequestInput, signal?: AbortSignal, onCreated?: (request: HumanRequest) => void): Promise<Record<string, unknown>> {
     const request = await requestRepository.create(sessionId, input);
     pubSub.publish('requestCreated', request);
+    onCreated?.(request);
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       waiters.set(request.id, { resolve, reject });
       signal?.addEventListener('abort', () => void this.cancel(request.id).catch(() => undefined), { once: true });
@@ -57,6 +60,7 @@ export const requestService = {
     }
     pubSub.publish('requestUpdated', request);
     settleWaiter(request);
+    void notificationService.markReadForRequests([request.id]);
     return request;
   },
 
@@ -65,6 +69,7 @@ export const requestService = {
     if (!request) return this.get(id);
     pubSub.publish('requestUpdated', request);
     settleWaiter(request);
+    void notificationService.markReadForRequests([request.id]);
     return request;
   },
 
@@ -75,7 +80,13 @@ export const requestService = {
       pubSub.publish('requestUpdated', request);
       settleWaiter(request);
     }
+    void notificationService.markReadForRequests(requests.map((r) => r.id));
   },
 
-  expireAllPending: () => requestRepository.expireAllPending(),
+  /** Au redémarrage : expire les demandes en attente et marque lues leurs notifications. */
+  async expireAllPending(): Promise<number> {
+    const n = await requestRepository.expireAllPending();
+    await notificationService.markReadForSettledRequests();
+    return n;
+  },
 };

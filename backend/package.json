@@ -8,7 +8,9 @@
     "dev": "tsx watch --env-file=../.env src/index.ts",
     "start": "node --env-file=../.env dist/index.js",
     "build": "node scripts/check-schema.mjs && tsc -p tsconfig.json && mkdir -p dist/graphql dist/db/migrations && cp src/graphql/schema.graphql dist/graphql/ && cp src/db/migrations/*.sql dist/db/migrations/",
-    "typecheck": "node scripts/check-schema.mjs && tsc -p tsconfig.json --noEmit",
+    "typecheck": "node scripts/check-schema.mjs && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "migrate": "tsx --env-file=../.env src/db/migrate.ts",
     "check:schema": "node scripts/check-schema.mjs"
   },
@@ -30,6 +32,7 @@
     "@types/ssh2": "^1.15.6",
     "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.7"
   }
 }

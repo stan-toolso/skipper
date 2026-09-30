@@ -531,12 +531,18 @@ type Session {
   project: Project!
   "Worktree dans lequel la session s'exécute (null : checkout principal)."
   worktree: Worktree
+  "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
+  parentSession: Session
+  "Sessions lancées par l'agent de cette session."
+  childSessions: [Session!]!
   name: String!
   provider: String!
   status: SessionStatus!
   activity: SessionActivity
   "Première instruction de la session."
   prompt: String
+  "Fichiers joints à la première instruction."
+  promptAttachments: [Attachment!]!
   config: JSON!
   externalId: String
   exitCode: Int
@@ -576,6 +582,14 @@ type Request {
   response: JSON
   createdAt: DateTime!
   answeredAt: DateTime
+}
+
+"Fichier joint à une instruction ; téléchargeable sur GET /api/attachments/<session>/<id> (cookie de session)."
+type Attachment {
+  id: ID!
+  name: String!
+  mediaType: String!
+  size: Int!
 }
 
 type SessionEvent {
@@ -805,11 +819,27 @@ type GithubRepository {
 
 type AppSettings {
   claude: ClaudeSettings!
+  "État du serveur : mode maintenance, sessions actives, reprise automatique."
+  server: ServerState!
   claudeAuth: ClaudeAuthStatus!
   github: GithubAuthStatus!
   "Modèles connus (dernière vérification, sinon liste de base)."
   models: [ClaudeModel!]!
   usage: UsageSummary!
+}
+
+"État du serveur, à consulter avant un redémarrage."
+type ServerState {
+  "Mode maintenance : aucune session ne démarre (création, relance, reprise). Levé par un redémarrage."
+  maintenance: Boolean!
+  maintenanceSince: DateTime
+  maintenanceMessage: String
+  "Sessions dont le processus tourne sur ce serveur : elles seront interrompues par un redémarrage."
+  activeSessions: Int!
+  "Parmi elles, celles dont l'agent travaille (tour en cours)."
+  busySessions: Int!
+  "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (trois au plus, depuis moins d'une heure)."
+  autoResumeInterrupted: Boolean!
 }
 
 "Connexion OAuth en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
@@ -912,14 +942,35 @@ input UpdateProjectInput {
   runnerConfig: JSON
 }
 
+"Worktree à créer en même temps que la session, qui s'y exécutera."
+input NewWorktreeInput {
+  "Branche extraite si elle existe (localement ou sur origin), sinon créée depuis baseRef."
+  branch: String!
+  "Nom du dossier (défaut : dérivé de la branche)."
+  name: String
+  baseRef: String
+}
+
+"Fichier joint à une instruction : contenu encodé en base64 (10 Mo par fichier, 12 Mo par instruction, 10 fichiers au plus)."
+input AttachmentInput {
+  name: String!
+  mediaType: String!
+  data: String!
+}
+
 input CreateSessionInput {
   projectId: ID!
   worktreeId: ID
+  "Crée d'abord ce worktree et y lance la session (exclusif avec worktreeId)."
+  newWorktree: NewWorktreeInput
   name: String!
   provider: String!
+  "Première instruction. Facultative : sans consigne ni fichier joint, la session est créée sans démarrer et attend sa première instruction."
   prompt: String
+  "Fichiers joints à la première instruction."
+  attachments: [AttachmentInput!]
   config: JSON
-  "Démarre la session immédiatement après création (défaut : true)."
+  "Démarre la session immédiatement après création (défaut : true) ; sans effet sans consigne."
   autoStart: Boolean
 }
 
@@ -931,6 +982,10 @@ type Mutation {
   "Supprime un fichier ou un dossier (récursivement)."
   deleteWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!): Boolean!
 
+  "Active ou lève le mode maintenance (refuse les nouvelles sessions avant un redémarrage)."
+  setMaintenanceMode(enabled: Boolean!, message: String): AppSettings!
+  "Réglages du serveur : reprise automatique des sessions interrompues."
+  updateServerSettings(autoResumeInterrupted: Boolean!): AppSettings!
   "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
   updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
   "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."
@@ -983,12 +1038,17 @@ type Mutation {
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
   deleteSession(id: ID!): Boolean!
-  "Envoie une instruction : transmise à l'agent si la session est en cours, sinon relance la session avec cette instruction."
-  sendSessionMessage(id: ID!, text: String!): Session!
+  "Envoie une instruction (texte et fichiers joints ; l'un des deux au moins). Une session terminée est relancée."
+  sendSessionMessage(id: ID!, text: String!, attachments: [AttachmentInput!]): Session!
   "Fin propre : l'agent termine son tour, puis la session se termine."
   endSession(id: ID!): Session!
   "Interrompt le tour en cours ; la session reste ouverte aux instructions."
   interruptSession(id: ID!): Session!
+  """
+  Modifie la configuration d'une session (fusion clé par clé ; null retire une clé). Une session en cours applique
+  immédiatement ce qu'elle peut (Claude : modèle et autorisations) ; le reste vaut pour son prochain lancement.
+  """
+  updateSessionConfig(id: ID!, config: JSON!): Session!
   "Répond à une demande en attente ; la session reprend avec cette réponse."
   answerRequest(id: ID!, response: JSON!): Request!
   "Abandonne une demande : l'agent reçoit un refus."
@@ -1064,4 +1124,88 @@ type Subscription {
   "Demande répondue, annulée ou expirée."
   requestUpdated: Request!
   notificationCreated: Notification!
+}
+
+# ---- Planification des sessions --------------------------------------------------------------------
+
+"Planification d'une session : à chaque échéance de l'expression cron, l'instruction est envoyée à la session (relancée si elle est terminée)."
+type SessionSchedule {
+  "Cinq champs : minute heure jour mois jour-de-semaine, ou alias (@hourly, @daily, @weekly, @monthly)."
+  cron: String!
+  "Fuseau IANA dans lequel l'expression est interprétée (ex. Europe/Paris)."
+  timezone: String!
+  "Instruction envoyée à la session à chaque exécution."
+  prompt: String!
+  enabled: Boolean!
+  "Terminer la session à la fin de chaque exécution (défaut) ; sinon elle reste ouverte aux instructions."
+  endAfterRun: Boolean!
+  nextRunAt: DateTime
+  lastRunAt: DateTime
+  "Compte rendu de la dernière exécution : terminée (durée, coût), ignorée (raison) ou en erreur."
+  lastResult: String
+  updatedAt: DateTime!
+}
+
+input SessionScheduleInput {
+  cron: String!
+  timezone: String
+  prompt: String!
+  "Défaut : true."
+  enabled: Boolean
+  "Défaut : true."
+  endAfterRun: Boolean
+}
+
+extend type Session {
+  "Planification de la session (null si elle n'est pas planifiée)."
+  schedule: SessionSchedule
+}
+
+extend type Query {
+  "Prochaines échéances d'une expression cron (aperçu) ; erreur si l'expression ou le fuseau est invalide."
+  scheduleNextRuns(cron: String!, timezone: String, count: Int = 5): [DateTime!]!
+}
+
+extend type Mutation {
+  "Crée ou remplace la planification de la session."
+  setSessionSchedule(id: ID!, input: SessionScheduleInput!): Session!
+  clearSessionSchedule(id: ID!): Session!
+  "Exécute la planification maintenant, sans attendre l'échéance."
+  runSessionScheduleNow(id: ID!): Session!
+}
+
+# ---- Réglages et nettoyage des sessions -----------------------------------------------------------
+
+"Nettoyage automatique de l'historique d'une session (utile aux sessions planifiées)."
+type SessionCleanup {
+  "Les événements du transcript plus vieux que N jours sont supprimés (null : jamais)."
+  retentionDays: Int
+  "Quand le contexte de l'agent dépasse contextMaxTokens : « compact » (compacter la conversation) ou « reset » (repartir d'une conversation neuve). Null : rien."
+  contextAction: String
+  contextMaxTokens: Int
+}
+
+input SessionCleanupInput {
+  retentionDays: Int
+  contextAction: String
+  contextMaxTokens: Int
+}
+
+input UpdateSessionInput {
+  name: String
+  "Remplace les réglages de nettoyage (un objet vide les retire)."
+  cleanup: SessionCleanupInput
+}
+
+extend type Session {
+  cleanup: SessionCleanup!
+  "Taille du contexte de l'agent au dernier tour (tokens), null si inconnue."
+  contextTokens: Int
+}
+
+extend type Mutation {
+  "Renomme la session et/ou remplace ses réglages de nettoyage."
+  updateSession(id: ID!, input: UpdateSessionInput!): Session!
+  "Applique tout de suite le nettoyage configuré : purge du transcript, puis compaction ou remise à zéro de la conversation si elle dépasse le seuil."
+  applySessionCleanup(id: ID!): Session!
 }

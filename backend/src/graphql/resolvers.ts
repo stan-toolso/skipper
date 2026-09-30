@@ -23,13 +23,18 @@ import { pubSub } from '../pubsub.js';
 import { requestService } from '../requests/service.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
+import { publicAttachment } from '../sessions/attachments.js';
 import { sessionService } from '../sessions/service.js';
 import { serverAuthStatus, serverLogout } from '../settings/cli.js';
 import { loginService, type ClaudeLoginKind } from '../settings/login.js';
 import { githubService } from '../settings/github.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
+import { serverSettings } from '../settings/server.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
+import { scheduleService } from '../schedules/service.js';
+import { cleanupService } from '../sessions/cleanup.js';
+import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreePath, worktreeService } from '../worktrees/service.js';
 import type { Worktree } from '../worktrees/types.js';
@@ -37,9 +42,10 @@ import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
 import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
-import type { Session, SessionStatus } from '../sessions/types.js';
+import type { AttachmentInput, CreateSessionInput, Session, SessionStatus } from '../sessions/types.js';
 import { permissionRuleService } from '../permissions/service.js';
 import { formatRule, type PermissionRule } from '../permissions/types.js';
+import type { SessionScheduleInput } from '../schedules/types.js';
 import { userService } from '../users/service.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
 
@@ -100,6 +106,18 @@ const appSettings = () => ({
   github: githubService.status(),
   models: settingsService.models(),
   usage: () => usageService.summary(),
+  server: async () => {
+    const maintenance = serverSettings.maintenance;
+    const active = await sessionService.activeSummary();
+    return {
+      maintenance: Boolean(maintenance),
+      maintenanceSince: maintenance?.since ?? null,
+      maintenanceMessage: maintenance?.message ?? null,
+      activeSessions: active.active,
+      busySessions: active.busy,
+      autoResumeInterrupted: serverSettings.current.autoResumeInterrupted,
+    };
+  },
 });
 
 export const resolvers = {
@@ -211,11 +229,15 @@ export const resolvers = {
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
     worktree: (session: Session) => (session.worktreeId ? worktreeService.get(session.worktreeId).catch(() => null) : null),
+    parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
+    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
+    promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
+    schedule: (session: Session) => scheduleService.get(session.id),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
   },
@@ -285,6 +307,10 @@ export const resolvers = {
       const session = await sessionService.get(args.id);
       if (session) await requireProject(ctx, session.projectId);
       return session;
+    },
+    scheduleNextRuns: (_: unknown, args: { cron: string; timezone?: string | null; count?: number | null }, ctx: Ctx) => {
+      requireUser(ctx);
+      return scheduleService.preview(args.cron, args.timezone, args.count ?? 5);
     },
     projects: (_: unknown, __: unknown, ctx: Ctx) => projectService.listForUser(requireUser(ctx).id),
     project: async (_: unknown, args: { id: string }, ctx: Ctx) => {
@@ -426,6 +452,17 @@ export const resolvers = {
       await githubService.disconnect();
       return appSettings();
     },
+    setMaintenanceMode: (_: unknown, args: { enabled: boolean; message?: string | null }, ctx: Ctx) => {
+      const user = requireAdmin(ctx);
+      serverSettings.setMaintenance(args.enabled, args.message ?? null, user.id);
+      console.log(`[server] mode maintenance ${args.enabled ? 'activé' : 'levé'} par ${user.email}`);
+      return appSettings();
+    },
+    updateServerSettings: async (_: unknown, args: { autoResumeInterrupted: boolean }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      await serverSettings.update({ autoResumeInterrupted: args.autoResumeInterrupted });
+      return appSettings();
+    },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {
       requireAdmin(ctx);
       await settingsService.update(input);
@@ -525,7 +562,7 @@ export const resolvers = {
     },
     createSession: async (
       _: unknown,
-      { input }: { input: { projectId: string; worktreeId?: string | null; name: string; provider: string; prompt?: string | null; config?: Record<string, unknown> | null; autoStart?: boolean | null } },
+      { input }: { input: CreateSessionInput & { autoStart?: boolean | null } },
       ctx: Ctx,
     ) => {
       await requireProject(ctx, input.projectId, 'member');
@@ -543,9 +580,9 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return sessionService.delete(args.id);
     },
-    sendSessionMessage: async (_: unknown, args: { id: string; text: string }, ctx: Ctx) => {
+    sendSessionMessage: async (_: unknown, args: { id: string; text: string; attachments?: AttachmentInput[] | null }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
-      return sessionService.sendMessage(args.id, args.text);
+      return sessionService.sendMessage(args.id, args.text, args.attachments);
     },
     endSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
@@ -554,6 +591,33 @@ export const resolvers = {
     interruptSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return sessionService.interrupt(args.id);
+    },
+    updateSessionConfig: async (_: unknown, args: { id: string; config: Record<string, unknown> }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.updateConfig(args.id, args.config ?? {});
+    },
+    setSessionSchedule: async (_: unknown, args: { id: string; input: SessionScheduleInput }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      await scheduleService.set(args.id, args.input);
+      return sessionService.get(args.id);
+    },
+    clearSessionSchedule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return scheduleService.remove(args.id);
+    },
+    runSessionScheduleNow: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return scheduleService.runNow(args.id);
+    },
+    updateSession: async (_: unknown, args: { id: string; input: { name?: string | null; cleanup?: SessionCleanup | null } }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      if (args.input.name !== undefined && args.input.name !== null) await sessionService.rename(args.id, args.input.name);
+      if (args.input.cleanup) await cleanupService.set(args.id, args.input.cleanup);
+      return sessionService.get(args.id);
+    },
+    applySessionCleanup: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.applyNow(args.id);
     },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');

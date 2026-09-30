@@ -8,15 +8,18 @@ import { sweepStaleSessionDirs } from './connections/runtime.js';
 import { createAuthContext } from './auth/access.js';
 import { googleAuth } from './auth/google.js';
 import { handleAuthRoute } from './auth/routes.js';
+import { handleAttachmentRoute } from './sessions/attachmentRoute.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
 import { AppError } from './errors.js';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
+import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { loginService } from './settings/login.js';
 import { settingsService } from './settings/service.js';
+import { serverSettings } from './settings/server.js';
 import { terminalService } from './terminals/service.js';
 import { attachTerminalWebSockets } from './terminals/ws.js';
 
@@ -28,6 +31,7 @@ async function main() {
   if (applied.length) console.log(`[db] migrations appliquées : ${applied.join(', ')}`);
 
   await settingsService.load();
+  await serverSettings.load();
   console.log(`[settings] authentification Claude : ${settingsService.claude.authMode}`);
 
   const recovered = await sessionService.recoverAfterRestart();
@@ -37,6 +41,8 @@ async function main() {
   if (staleDirs) console.log(`[connections] ${staleDirs} dossier(s) de session orphelin(s) nettoyé(s)`);
   const closedTerminals = await terminalService.recoverAfterRestart();
   if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
+  const missedRuns = await scheduleService.start();
+  if (missedRuns) console.log(`[schedules] ${missedRuns} échéance(s) manquée(s) pendant l'arrêt, non rattrapée(s)`);
   const purged = await authSession.purgeExpired();
   if (purged) console.log(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
   console.log(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
@@ -69,11 +75,12 @@ async function main() {
 
   const server = createServer((req, res) => {
     handleAuthRoute(req, res)
+      .then((handled) => handled || handleAttachmentRoute(req, res))
       .then((handled) => {
         if (!handled) return yoga(req, res);
       })
       .catch((err) => {
-        console.error('[auth]', err);
+        console.error('[http]', err);
         if (!res.headersSent) res.writeHead(500);
         res.end();
       });
@@ -81,15 +88,27 @@ async function main() {
   attachTerminalWebSockets(server);
   server.listen(config.port, () => {
     console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
+    // Reprise automatique des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur).
+    sessionService
+      .resumeInterruptedAfterRestart()
+      .then((ids) => ids.length && console.log(`[sessions] ${ids.length} session(s) interrompue(s) relancée(s)`))
+      .catch((err) => console.error('[sessions] reprise automatique', err));
   });
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    // Avant tout await : pm2 envoie le signal à tout l'arbre de processus, les agents meurent en même
+    // temps que nous et leur fin doit être vue comme une interruption, pas comme une erreur.
+    sessionService.beginShutdown();
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`[http] ${signal} reçu, arrêt en cours...`);
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
+    scheduleService.stop();
     loginService.shutdown();
-    await terminalService.shutdown();
-    await sessionService.shutdown();
+    const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
+    if (interrupted) console.log(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);
     await pool.end();
     process.exit(0);
   };
