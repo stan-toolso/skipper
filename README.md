@@ -103,6 +103,9 @@ backend/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     notifications/
       service.ts               # notifications (cloche) émises par les autres services
+    schedules/
+      cron.ts                  # expressions cron à cinq champs, fuseaux IANA, prochaine échéance
+      service.ts               # planification des sessions : ordonnanceur, exécution, compte rendu et notification
     tasks/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
@@ -130,6 +133,7 @@ backend/
       types.ts                 # modèle Session / SessionEvent
       repository.ts            # accès SQL
       service.ts               # orchestration : création, démarrage, arrêt, suivi des processus
+      scheduledRuns.ts         # sessions dont l'exécution en cours vient de leur planification
       providers/
         provider.ts            # interface SessionProvider (à implémenter pour un nouvel agent)
         registry.ts            # enregistrement des providers disponibles
@@ -454,6 +458,37 @@ principal (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe d�
 bouton permet de préférer le dossier principal ou un worktree existant ; un projet sans dépôt git
 travaille dans son dossier principal. Le worktree apparaît dans la sidebar avec sa session, et la
 tâche affiche sa branche. Il reste après la tâche : fusion ou suppression depuis le panneau git.
+
+## Sessions planifiées
+
+Une session peut être **planifiée** : bouton « Planifier » sur sa page (`frontend/src/components/ScheduleModal.tsx`).
+On choisit une fréquence simple (toutes les heures, tous les jours, du lundi au vendredi, toutes les
+semaines, tous les mois, à une heure donnée) ou une expression cron à cinq champs (alias `@hourly`,
+`@daily`, `@weekly`, `@monthly`), le fuseau horaire (celui du navigateur par défaut), et l'instruction
+envoyée à chaque exécution. La modale montre les prochaines échéances (`scheduleNextRuns`).
+
+À chaque échéance, l'ordonnanceur (`backend/src/schedules/service.ts`, vérification toutes les
+trente secondes) envoie l'instruction à la session comme le ferait `sendSessionMessage` : une session
+terminée est relancée en reprenant sa conversation, une session ouverte reçoit l'instruction. Par
+défaut, la session est **terminée à la fin de chaque exécution** (option « Terminer la session à la
+fin de chaque exécution ») pour ne pas garder un processus ouvert entre deux échéances. La fin d'une
+exécution produit une notification `schedule.run` avec la durée et le coût (ou `schedule.failed`), et
+les événements `schedule` jalonnent le transcript. « Exécuter maintenant » lance l'exécution sans
+attendre l'échéance ; le compte rendu de la dernière exécution est visible dans la modale.
+
+Garde-fous : une échéance est **ignorée** (notification `schedule.skipped`, raison dans le compte
+rendu) si l'agent travaille encore, si le plafond mensuel de budget est atteint, ou si
+`SKIPPER_MAX_RUNNING_SESSIONS` sessions (4 par défaut) tournent déjà. Une planification désactivée
+ne se lance pas. Les échéances manquées pendant un arrêt du serveur ne sont pas rattrapées : au
+démarrage, seule une échéance de moins de dix minutes est encore exécutée, les autres sont recalculées
+depuis maintenant. La réservation d'une échéance est atomique en base (`session_schedules.next_run_at`
+avancé sous condition), donc une seule instance du backend l'exécute. L'analyseur cron
+(`backend/src/schedules/cron.ts`) n'a pas de dépendance et gère les fuseaux IANA, changements d'heure
+compris (une heure locale inexistante est sautée).
+
+Modèle : `SessionSchedule` (`session_schedules`, une ligne par session au plus : `cron`, `timezone`,
+`prompt`, `enabled`, `endAfterRun`, `nextRunAt`, `lastRunAt`, `lastResult`), exposée par
+`Session.schedule` ; mutations `setSessionSchedule`, `clearSessionSchedule`, `runSessionScheduleNow`.
 
 ## Explorateur de fichiers et éditeur
 

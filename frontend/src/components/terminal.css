@@ -267,3 +267,7 @@
 .cc-md img { max-width: 100%; }
 .cc-md input[type='checkbox'] { margin-right: 6px; }
 .cc-prompt .cc-prompt-body.cc-md { white-space: normal; }
+
+/* Lien discret dans l'en-tête (planification) */
+.cc-link { background: none; border: none; padding: 0; color: var(--cc-dim); cursor: pointer; font: inherit; }
+.cc-link:hover { color: var(--cc-fg); text-decoration: underline; }

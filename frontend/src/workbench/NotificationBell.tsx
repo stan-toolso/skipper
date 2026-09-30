@@ -11,6 +11,9 @@ const icons: Record<string, string> = {
   'session.completed': 'bi-check-circle',
   'session.failed': 'bi-x-octagon',
   'context.created': 'bi-journal-plus',
+  'schedule.run': 'bi-alarm',
+  'schedule.skipped': 'bi-alarm',
+  'schedule.failed': 'bi-alarm',
 };
 
 const BROWSER_KEY = 'skipper.notifications.browser';

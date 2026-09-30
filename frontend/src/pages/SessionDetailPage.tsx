@@ -10,6 +10,7 @@ import { useDialogs } from '../components/Dialogs';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import RequestPrompt from '../components/RequestPrompt';
+import ScheduleModal from '../components/ScheduleModal';
 import Transcript from '../components/Transcript';
 import '../components/terminal.css';
 import {
@@ -17,6 +18,7 @@ import {
   END_SESSION,
   INTERRUPT_SESSION,
   PROVIDERS,
+  RUN_SESSION_SCHEDULE_NOW,
   SEND_SESSION_MESSAGE,
   SESSION,
   STOP_SESSION,
@@ -45,6 +47,8 @@ export default function SessionDetailPage() {
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
+  const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
+  const [scheduling, setScheduling] = useState(false);
 
   const [text, setText] = useState('');
   const [technical, setTechnical] = useState<boolean>(() => {
@@ -97,7 +101,8 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? interruptError ?? endError ?? stopError ?? configError;
+  const actionError = sendError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError;
+  const schedule = session.schedule;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
   // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
@@ -139,6 +144,16 @@ export default function SessionDetailPage() {
                 · <i className="bi bi-diagram-2" /> {session.worktree.branch}
               </>
             )}
+            {schedule && (
+              <>
+                {' '}
+                ·{' '}
+                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={() => setScheduling(true)}>
+                  <i className="bi bi-alarm" />{' '}
+                  {schedule.enabled ? (schedule.nextRunAt ? `prochaine exécution le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'planification désactivée'}
+                </button>
+              </>
+            )}
             {technical && (
               <>
                 {' '}
@@ -149,6 +164,14 @@ export default function SessionDetailPage() {
           </span>
         </div>
         <div className="cc-actions">
+          <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
+            <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
+          </button>
+          {schedule && !busy && (
+            <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
+              Exécuter maintenant
+            </button>
+          )}
           {busy && (
             <button type="button" className="cc-btn" title="Arrête ce que l'agent est en train de faire ; la session reste ouverte" onClick={() => interruptSession({ variables: { id } })}>
               Interrompre
@@ -182,6 +205,7 @@ export default function SessionDetailPage() {
         </label>
       </div>
       <Transcript events={events} loading={!eventsLoaded} technical={technical} />
+      {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />

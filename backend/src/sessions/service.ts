@@ -5,6 +5,7 @@ import { pubSub } from '../pubsub.js';
 import { notificationService } from '../notifications/service.js';
 import { requestService } from '../requests/service.js';
 import { sessionRepository } from './repository.js';
+import { scheduledRuns } from './scheduledRuns.js';
 import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import type { CreateSessionInput, Session, SessionFilter } from './types.js';
@@ -133,7 +134,8 @@ export const sessionService = {
       const error = result.error ?? (status === 'failed' ? `Code de sortie ${result.exitCode}` : null);
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
-      if (status === 'completed' || status === 'failed') {
+      // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.
+      if ((status === 'completed' || status === 'failed') && !scheduledRuns.has(id)) {
         void notificationService.notify({
           type: `session.${status}`,
           title: status === 'completed' ? `Session « ${session.name} » terminée` : `Session « ${session.name} » en erreur`,
@@ -147,6 +149,36 @@ export const sessionService = {
     finishing.set(id, finished.catch((err) => console.error('[sessions] fin de session', err)).finally(() => finishing.delete(id)));
 
     return started;
+  },
+
+  /**
+   * Attend que la session ait fini son tour (agent en attente d'instructions) ou ne tourne plus,
+   * au plus `timeoutMs`. Renvoie l'état courant de la session dans tous les cas.
+   */
+  async waitForIdle(id: string, timeoutMs: number): Promise<Session> {
+    const settled = (s: Session) => s.status !== 'running' || s.activity === 'idle';
+    const current = await sessionRepository.findById(id);
+    if (!current) throw new NotFoundError('Session introuvable');
+    if (settled(current)) return current;
+    const updates = pubSub.subscribe('sessionUpdated');
+    let timerHandle: NodeJS.Timeout | undefined;
+    const timer = new Promise<null>((resolve) => {
+      timerHandle = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      // Relit l'état après l'abonnement : la mise à jour a pu survenir entre les deux.
+      const fresh = await sessionRepository.findById(id);
+      if (fresh && settled(fresh)) return fresh;
+      while (true) {
+        const next = await Promise.race([updates.next(), timer]);
+        if (next === null || next.done) break;
+        if (next.value.id === id && settled(next.value)) return next.value;
+      }
+    } finally {
+      clearTimeout(timerHandle);
+      await updates.return?.(undefined);
+    }
+    return (await sessionRepository.findById(id)) ?? current;
   },
 
   /**

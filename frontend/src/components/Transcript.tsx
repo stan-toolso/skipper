@@ -457,6 +457,27 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         );
         break;
       }
+      case 'schedule': {
+        const action = String(p.action ?? '');
+        const text =
+          action === 'run'
+            ? `Exécution planifiée${p.manual ? ' (lancée à la main)' : ''}`
+            : action === 'done'
+              ? `Exécution planifiée : ${String(p.outcome ?? 'terminée')}`
+              : action === 'skipped'
+                ? `Exécution planifiée ignorée : ${String(p.reason ?? '')}`
+                : action === 'set'
+                  ? `Planification enregistrée (${String(p.cron ?? '')}, ${String(p.timezone ?? '')})`
+                  : action === 'disabled'
+                    ? 'Planification désactivée'
+                    : 'Planification retirée';
+        nodes.push(
+          <div key={e.id} className={`cc-note${action === 'skipped' ? ' warn' : ''}`}>
+            ⏰ {text}
+          </div>,
+        );
+        break;
+      }
       case 'system':
         if (technical) {
           nodes.push(
