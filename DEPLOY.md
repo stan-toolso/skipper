@@ -1,7 +1,7 @@
 # Mise en production — skipper.toolso.io
 
-Skipper tourne sur **le même serveur que Curso** (EC2 `13.36.242.35`, Ubuntu 24.04 arm64,
-2 vCPU / 1,8 Go + 2 Go de swap), mais sous un **utilisateur Linux dédié `skipper`**. Il n'y a
+Skipper tourne sur **le même serveur que Curso** (EC2 `13.36.242.35`, `t4g.medium`, Ubuntu 24.04
+arm64, 2 vCPU / 3,7 Go + 2 Go de swap), mais sous un **utilisateur Linux dédié `skipper`**. Il n'y a
 pas de CD : la CI GitHub Actions (`.github/workflows/ci.yml`) vérifie typecheck, build et tests
 à chaque push et pull request, mais le déploiement reste manuel (tirer `main`, builder, redémarrer).
 
@@ -134,8 +134,23 @@ sudo usermod -aG docker skipper        # puis se reconnecter
 cd ~/skipper && docker build -t skipper-runner:latest deploy/runner
 ```
 
-Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env` ;
-sur cette instance de 1,8 Go, viser 512m à 768m par conteneur et peu de projets isolés en parallèle.
+Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env`
+(768m en production), et par projet dans son formulaire (« Mémoire », « CPU »), appliqués à la
+création du conteneur. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
+Claude Code prend 100 à 200 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo), `tsc`, `vite build`.
+Au-delà de la limite, le noyau tue des processus du conteneur : commandes interrompues et sessions
+en erreur « Claude Code process exited with code 137 ». Réglages en place depuis le 30/09/2026 :
+Skipper 2g (plusieurs agents buildent en parallèle dans des worktrees), SUF 1500m (navigateur),
+Curso 768m (défaut). Pour vérifier et ajuster sans couper les sessions :
+
+```bash
+docker stats --no-stream                                  # mémoire utilisée / limite par conteneur
+sudo journalctl -k -b | grep "Killed process"              # processus tués faute de mémoire
+docker update --memory 2g --memory-swap 4g skipper-<slug>  # limite relevée à chaud, sans redémarrage
+```
+
+`docker update` ne vaut que pour le conteneur en cours : reporter la même valeur dans le formulaire du
+projet, sinon elle est perdue à la prochaine recréation.
 Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
 projet applique la nouvelle image.
 
@@ -152,10 +167,20 @@ cd ~/skipper && git pull --ff-only
 npm ci --no-audit --no-fund                    # seulement si package-lock.json a changé
 npm run build                                  # backend (dist/ + schema + migrations SQL) et frontend
 cp -rf frontend/dist/. /var/www/skipper/
-pm2 restart skipper --update-env
+pm2 restart skipper --update-env               # seulement si le backend a changé (voir ci-dessous)
 ```
 
 Les migrations SQL sont appliquées automatiquement au démarrage du backend.
+
+**Redémarrer le backend arrête toutes les sessions en cours** : les processus Claude Code sont des
+enfants du backend (statut « Arrêtée », parfois « Flux terminé sans message de résultat » ; un message
+relance la conversation). Avant `pm2 restart`, vérifier qu'aucun agent ne travaille ou n'attend de
+réponse (barre latérale, tableau de bord), y compris l'agent qui déploie depuis Skipper. Si seul
+`frontend/` a changé (`git diff --stat HEAD@{1} HEAD`), le `cp` suffit : pas de redémarrage.
+
+`npm run build` et `npm run typecheck` valident le schéma GraphQL du backend et toutes les requêtes du
+front contre ce schéma (`frontend/scripts/check-graphql.mjs`) : tsc ne voit pas l'intérieur des gabarits
+`gql`, et une erreur de fusion y donnait une page blanche en production (30/09/2026).
 
 ## Fichiers joints aux instructions
 
@@ -177,8 +202,8 @@ prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, Playwright/Chromium pour
 l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
 (≈ 1 Go, l'ARM64 télécharge son propre Chromium), puis « Recréer » le conteneur sur la page de
-chaque projet concerné. Le serveur n'a que 1,8 Go de RAM : une session avec navigateur prend 300 à
-500 Mo de plus, donc une seule à la fois et une limite mémoire du conteneur à 1,5 Go.
+chaque projet concerné. Une session avec navigateur prend 300 à 500 Mo de plus : prévoir au moins
+1,5 Go pour le conteneur du projet.
 
 ## Vérifications
 
@@ -192,10 +217,10 @@ curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 
 ## Bon à savoir
 
-- **Mémoire** : le serveur n'a que 1,8 Go de RAM, partagés avec l'API et le job Curso. Chaque
-  session Claude lance un processus Claude Code (quelques centaines de Mo) : limiter le nombre de
-  sessions simultanées, et surveiller `free -h` / `pm2 list`. Un swap de 2 Go (`/swapfile`)
-  amortit les pics.
+- **Mémoire** : 3,7 Go de RAM pour tout le serveur, partagés avec l'API et le job Curso (≈ 400 Mo),
+  le backend Skipper (≈ 200 Mo) et les conteneurs des projets. Les limites des conteneurs peuvent
+  dépasser à elles toutes la mémoire du serveur (elles ne sont pas réservées) : surveiller `free -h` et
+  `docker stats`. Un swap de 2 Go (`/swapfile`) amortit les pics.
 - **Ne jamais lire ni copier le `.env` du serveur** dans une conversation ou un dépôt.
 - **Retirer l'accès** : `sudo deluser skipper` ne suffit pas, penser au rôle RDS, à la clé de
   déploiement GitHub et au fichier `.htpasswd-skipper`.

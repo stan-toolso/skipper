@@ -658,7 +658,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 | --------------------- | ---------------------------------------------- |
 | `npm run dev`         | backend + frontend en mode développement       |
 | `npm run build`       | build des deux packages                        |
-| `npm run typecheck`   | vérification TypeScript des deux packages      |
+| `npm run typecheck`   | vérification TypeScript des deux packages, du schéma GraphQL et des requêtes du front |
 | `npm test`            | tests Vitest des deux packages (voir « Tests ») |
 | `npm run db:up`       | démarre PostgreSQL (Docker)                    |
 | `npm run db:down`     | arrête PostgreSQL                              |
