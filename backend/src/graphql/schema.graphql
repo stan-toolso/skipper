@@ -1017,7 +1017,6 @@ type Mutation {
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
   deleteSession(id: ID!): Boolean!
-  "Envoie une instruction : transmise à l'agent si la session est en cours, sinon relance la session avec cette instruction."
   "Envoie une instruction (texte et fichiers joints ; l'un des deux au moins). Une session terminée est relancée."
   sendSessionMessage(id: ID!, text: String!, attachments: [AttachmentInput!]): Session!
   "Fin propre : l'agent termine son tour, puis la session se termine."
