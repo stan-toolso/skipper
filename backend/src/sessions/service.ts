@@ -120,8 +120,12 @@ export const sessionService = {
   async create(input: CreateSessionInput & { autoStart?: boolean }, actor: Actor = { type: 'human' }): Promise<Session> {
     serverSettings.assertNotInMaintenance();
     const provider = getProvider(input.provider);
-    provider.validateConfig?.(input.config ?? {});
     const project = await projectService.get(input.projectId); // lève NotFoundError si le projet n'existe pas
+    // Sans mode d'autorisation précisé (sessions de tâches, sessions sans formulaire), celui du projet s'applique.
+    if (!input.config?.permissionMode && provider.describe().configFields.some((f) => f.key === 'permissionMode')) {
+      input = { ...input, config: { ...input.config, permissionMode: project.defaultPermissionMode } };
+    }
+    provider.validateConfig?.(input.config ?? {});
     if (input.worktreeId && input.newWorktree) throw new AppError('Choisissez un worktree existant ou un nouveau worktree, pas les deux');
     if (input.worktreeId) await worktreeService.resolveCwd(project, input.worktreeId); // vérifie l'appartenance et l'existence
 

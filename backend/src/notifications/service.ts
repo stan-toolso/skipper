@@ -1,11 +1,11 @@
 import { NotFoundError } from '../errors.js';
 import { pubSub } from '../pubsub.js';
 import { notificationRepository } from './repository.js';
-import type { Notification, NotifyInput } from './types.js';
+import type { Notification, NotificationScope, NotifyInput } from './types.js';
 
 export const notificationService = {
-  list: (opts?: { unreadOnly?: boolean; limit?: number; projectIds?: string[] }) => notificationRepository.list(opts),
-  countUnread: (projectIds?: string[]) => notificationRepository.countUnread(projectIds),
+  list: (opts?: { unreadOnly?: boolean; limit?: number } & NotificationScope) => notificationRepository.list(opts),
+  countUnread: (scope?: NotificationScope) => notificationRepository.countUnread(scope),
 
   async get(id: string): Promise<Notification> {
     const n = await notificationRepository.findById(id);
@@ -31,7 +31,7 @@ export const notificationService = {
     return n;
   },
 
-  markAllRead: (projectIds?: string[]) => notificationRepository.markAllRead(projectIds),
+  markAllRead: (scope?: NotificationScope) => notificationRepository.markAllRead(scope),
 
   /**
    * Une demande réglée (répondue, annulée, expirée) n'a plus à attirer l'attention : sa notification

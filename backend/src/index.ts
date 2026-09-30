@@ -19,6 +19,7 @@ import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { loginService } from './settings/login.js';
 import { settingsService } from './settings/service.js';
+import { rateLimitService } from './settings/rateLimits.js';
 import { serverSettings } from './settings/server.js';
 import { terminalService } from './terminals/service.js';
 import { terminalUpgradeHandler } from './terminals/ws.js';
@@ -33,6 +34,7 @@ async function main() {
   if (applied.length) console.log(`[db] migrations appliquées : ${applied.join(', ')}`);
 
   await settingsService.load();
+  await rateLimitService.load();
   await serverSettings.load();
   console.log(`[settings] authentification Claude : ${settingsService.claude.authMode}`);
 

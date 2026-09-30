@@ -160,6 +160,13 @@ export const permissionModeLabels: Record<string, string> = {
   bypassPermissions: 'Tout est autorisé',
 };
 
+/** Avertissement pour le mode « tout autoriser » : les appels aux connexions soumises à approbation passent sans demande. */
+export function bypassConnectionsWarning(connections: string[]): string | null {
+  if (!connections.length) return null;
+  const names = connections.map((c) => `« ${c} »`).join(', ');
+  return `En mode « tout autoriser », les appels aux connexions ${names} ne vous seront pas soumis, alors qu'elles exigent votre approbation.`;
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
