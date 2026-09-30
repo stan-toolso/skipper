@@ -75,6 +75,7 @@ export default function SessionsPage() {
               <tr key={s.id}>
                 <td>
                   <Link to={`/sessions/${s.id}`}>{s.name}</Link>
+                  {s.schedule?.enabled && <i className="bi bi-alarm ms-2 text-secondary" title={`Planifiée : ${s.schedule.cron}${s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : ''}`} />}
                 </td>
                 <td>
                   <Link to={`/projects/${s.project.id}`}>{s.project.name}</Link>

@@ -30,6 +30,7 @@ import { githubService } from '../settings/github.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
+import { scheduleService } from '../schedules/service.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreePath, worktreeService } from '../worktrees/service.js';
 import type { Worktree } from '../worktrees/types.js';
@@ -40,6 +41,7 @@ import type { TerminalRecord } from '../terminals/types.js';
 import type { Session, SessionStatus } from '../sessions/types.js';
 import { permissionRuleService } from '../permissions/service.js';
 import { formatRule, type PermissionRule } from '../permissions/types.js';
+import type { SessionScheduleInput } from '../schedules/types.js';
 import { userService } from '../users/service.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
 
@@ -216,6 +218,7 @@ export const resolvers = {
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
+    schedule: (session: Session) => scheduleService.get(session.id),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
   },
@@ -285,6 +288,10 @@ export const resolvers = {
       const session = await sessionService.get(args.id);
       if (session) await requireProject(ctx, session.projectId);
       return session;
+    },
+    scheduleNextRuns: (_: unknown, args: { cron: string; timezone?: string | null; count?: number | null }, ctx: Ctx) => {
+      requireUser(ctx);
+      return scheduleService.preview(args.cron, args.timezone, args.count ?? 5);
     },
     projects: (_: unknown, __: unknown, ctx: Ctx) => projectService.listForUser(requireUser(ctx).id),
     project: async (_: unknown, args: { id: string }, ctx: Ctx) => {
@@ -558,6 +565,19 @@ export const resolvers = {
     updateSessionConfig: async (_: unknown, args: { id: string; config: Record<string, unknown> }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return sessionService.updateConfig(args.id, args.config ?? {});
+    },
+    setSessionSchedule: async (_: unknown, args: { id: string; input: SessionScheduleInput }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      await scheduleService.set(args.id, args.input);
+      return sessionService.get(args.id);
+    },
+    clearSessionSchedule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return scheduleService.remove(args.id);
+    },
+    runSessionScheduleNow: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return scheduleService.runNow(args.id);
     },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');

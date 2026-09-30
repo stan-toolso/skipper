@@ -15,6 +15,19 @@ export interface ConfigField {
   advanced?: boolean | null;
 }
 
+/** Planification d'une session : l'instruction est envoyée à chaque échéance de l'expression cron. */
+export interface SessionSchedule {
+  cron: string;
+  timezone: string;
+  prompt: string;
+  enabled: boolean;
+  endAfterRun: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastResult: string | null;
+  updatedAt: string;
+}
+
 export interface Provider {
   type: string;
   label: string;
@@ -102,6 +115,8 @@ export interface Session {
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
+  /** Planification (null si la session n'est pas planifiée). */
+  schedule: SessionSchedule | null;
 }
 
 export interface ContextFolder {
@@ -404,6 +419,17 @@ export const SESSION_FIELDS = gql`
       branch
       path
     }
+    schedule {
+      cron
+      timezone
+      prompt
+      enabled
+      endAfterRun
+      nextRunAt
+      lastRunAt
+      lastResult
+      updatedAt
+    }
   }
 `;
 
@@ -640,6 +666,39 @@ export const UPDATE_SESSION_CONFIG = gql`
 export const DELETE_SESSION = gql`
   mutation DeleteSession($id: ID!) {
     deleteSession(id: $id)
+  }
+`;
+
+export const SET_SESSION_SCHEDULE = gql`
+  ${SESSION_FIELDS}
+  mutation SetSessionSchedule($id: ID!, $input: SessionScheduleInput!) {
+    setSessionSchedule(id: $id, input: $input) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const CLEAR_SESSION_SCHEDULE = gql`
+  ${SESSION_FIELDS}
+  mutation ClearSessionSchedule($id: ID!) {
+    clearSessionSchedule(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const RUN_SESSION_SCHEDULE_NOW = gql`
+  ${SESSION_FIELDS}
+  mutation RunSessionScheduleNow($id: ID!) {
+    runSessionScheduleNow(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const SCHEDULE_NEXT_RUNS = gql`
+  query ScheduleNextRuns($cron: String!, $timezone: String, $count: Int) {
+    scheduleNextRuns(cron: $cron, timezone: $timezone, count: $count)
   }
 `;
 

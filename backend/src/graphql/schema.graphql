@@ -1070,3 +1070,51 @@ type Subscription {
   requestUpdated: Request!
   notificationCreated: Notification!
 }
+
+# ---- Planification des sessions --------------------------------------------------------------------
+
+"Planification d'une session : à chaque échéance de l'expression cron, l'instruction est envoyée à la session (relancée si elle est terminée)."
+type SessionSchedule {
+  "Cinq champs : minute heure jour mois jour-de-semaine, ou alias (@hourly, @daily, @weekly, @monthly)."
+  cron: String!
+  "Fuseau IANA dans lequel l'expression est interprétée (ex. Europe/Paris)."
+  timezone: String!
+  "Instruction envoyée à la session à chaque exécution."
+  prompt: String!
+  enabled: Boolean!
+  "Terminer la session à la fin de chaque exécution (défaut) ; sinon elle reste ouverte aux instructions."
+  endAfterRun: Boolean!
+  nextRunAt: DateTime
+  lastRunAt: DateTime
+  "Compte rendu de la dernière exécution : terminée (durée, coût), ignorée (raison) ou en erreur."
+  lastResult: String
+  updatedAt: DateTime!
+}
+
+input SessionScheduleInput {
+  cron: String!
+  timezone: String
+  prompt: String!
+  "Défaut : true."
+  enabled: Boolean
+  "Défaut : true."
+  endAfterRun: Boolean
+}
+
+extend type Session {
+  "Planification de la session (null si elle n'est pas planifiée)."
+  schedule: SessionSchedule
+}
+
+extend type Query {
+  "Prochaines échéances d'une expression cron (aperçu) ; erreur si l'expression ou le fuseau est invalide."
+  scheduleNextRuns(cron: String!, timezone: String, count: Int = 5): [DateTime!]!
+}
+
+extend type Mutation {
+  "Crée ou remplace la planification de la session."
+  setSessionSchedule(id: ID!, input: SessionScheduleInput!): Session!
+  clearSessionSchedule(id: ID!): Session!
+  "Exécute la planification maintenant, sans attendre l'échéance."
+  runSessionScheduleNow(id: ID!): Session!
+}

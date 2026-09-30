@@ -14,6 +14,7 @@ import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
+import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { loginService } from './settings/login.js';
 import { settingsService } from './settings/service.js';
@@ -37,6 +38,8 @@ async function main() {
   if (staleDirs) console.log(`[connections] ${staleDirs} dossier(s) de session orphelin(s) nettoyé(s)`);
   const closedTerminals = await terminalService.recoverAfterRestart();
   if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
+  const missedRuns = await scheduleService.start();
+  if (missedRuns) console.log(`[schedules] ${missedRuns} échéance(s) manquée(s) pendant l'arrêt, non rattrapée(s)`);
   const purged = await authSession.purgeExpired();
   if (purged) console.log(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
   console.log(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
@@ -87,6 +90,7 @@ async function main() {
     console.log(`[http] ${signal} reçu, arrêt en cours...`);
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
+    scheduleService.stop();
     loginService.shutdown();
     await terminalService.shutdown();
     await sessionService.shutdown();
