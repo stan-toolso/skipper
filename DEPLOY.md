@@ -2,7 +2,8 @@
 
 Skipper tourne sur **le même serveur que Curso** (EC2 `13.36.242.35`, Ubuntu 24.04 arm64,
 2 vCPU / 1,8 Go + 2 Go de swap), mais sous un **utilisateur Linux dédié `skipper`**. Il n'y a
-pas de CI/CD : le déploiement est manuel (tirer `main`, builder, redémarrer).
+pas de CD : la CI GitHub Actions (`.github/workflows/ci.yml`) vérifie typecheck, build et tests
+à chaque push et pull request, mais le déploiement reste manuel (tirer `main`, builder, redémarrer).
 
 ## Accès
 
