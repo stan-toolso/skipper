@@ -5,7 +5,7 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
-import GoogleAccountCard from '../components/GoogleAccountCard';
+import GoogleAccountsCard from '../components/GoogleAccountsCard';
 import StatusBadge from '../components/StatusBadge';
 import { useDialogs } from '../components/Dialogs';
 
@@ -496,7 +496,7 @@ export default function ProjectDetailPage() {
       <MembersCard projectId={project.id} canManage={isAdmin} />
       <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
-      <GoogleAccountCard projectId={project.id} canManage={isAdmin} />
+      <GoogleAccountsCard projectId={project.id} canManage={isAdmin} />
       <WorktreesCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>

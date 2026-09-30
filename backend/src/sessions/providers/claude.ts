@@ -166,9 +166,9 @@ export class ClaudeProvider implements SessionProvider {
     const abortController = new AbortController();
     // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
     const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
-    // Compte Google du projet (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
-    const googleAccount = await googleAccountService.find(ctx.project.id);
-    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches, des connexions et du compte Google.
+    // Comptes Google du projet (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
+    const googleAccounts = await googleAccountService.list(ctx.project.id);
+    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches, des connexions et des comptes Google.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
       await contextService.promptSummary(ctx.project.id),
@@ -212,7 +212,7 @@ export class ClaudeProvider implements SessionProvider {
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
         worktrees: createWorktreesMcpServer(ctx.project, ctx.session.id),
         sessions: createSessionsMcpServer(ctx.project, ctx.session.id),
-        ...(googleAccount ? { google: createGoogleMcpServer({ project: ctx.project, account: googleAccount, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
+        ...(googleAccounts.length ? { google: createGoogleMcpServer({ project: ctx.project, accounts: googleAccounts, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
         // Le serveur hérite de l'environnement du CLI (dans le conteneur). La configuration MCP passe sur la ligne
         // de commande du CLI, visible de tout utilisateur du serveur (ps) : l'environnement du backend n'y figure jamais.
         ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, ...(browserServer.env ? { env: browserServer.env } : {}) } } : {}),
@@ -233,7 +233,7 @@ export class ClaudeProvider implements SessionProvider {
       // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
-      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccount ? googleReadTools(googleAccount) : [])],
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
       // Script de relais qui exécute le CLI dans le conteneur du projet.
@@ -246,7 +246,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccount: googleAccount?.email ?? null, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccounts: googleAccounts.map((a) => a.email), model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();

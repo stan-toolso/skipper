@@ -41,8 +41,8 @@ Trois notions :
 - **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
   agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
   MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
-- **Compte Google** : un compte Google relié à un projet (OAuth) pour donner aux agents accès à sa
-  messagerie Gmail et/ou à son Drive, en lecture ou en écriture. Voir « Compte Google » plus bas.
+- **Compte Google** : un ou plusieurs comptes Google reliés à un projet (OAuth) pour donner aux agents
+  accès à leur messagerie Gmail et/ou à leur Drive, en lecture ou en écriture. Voir « Comptes Google » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -143,7 +143,7 @@ backend/
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
     google/
-      service.ts               # compte Google d'un projet : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
+      service.ts               # comptes Google d'un projet : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
       gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
@@ -269,26 +269,32 @@ d'agent SSH ni de tunnels dans le conteneur) : seuls les outils restent utilisab
 direct (`connections/runtime.ts`) est conservé mais jamais activé. La gestion des connexions est réservée
 aux administrateurs du projet ; les autres membres les voient sans les modifier.
 
-## Compte Google
+## Comptes Google
 
-Carte « Compte Google » de la fiche d'un projet (administrateurs du projet). On choisit le niveau d'accès
+Carte « Comptes Google » de la fiche d'un projet (administrateurs du projet). On choisit le niveau d'accès
 voulu pour la **messagerie** (aucun, lecture, lecture et envoi) et pour le **Drive** (aucun, lecture,
-lecture et écriture), puis « Connecter un compte Google » ouvre l'écran de consentement Google
+lecture et écriture), puis « Connecter le compte Google » ouvre l'écran de consentement Google
 (`GET /auth/google/connect?projectId=…&gmail=…&drive=…`). Le retour passe par le callback de la
 connexion des utilisateurs (`/auth/google/callback`, cookie d'état distinguant les deux flux) : c'est le
 même client OAuth (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) et aucun URI supplémentaire à déclarer ;
-il faut seulement **activer les API Gmail et Google Drive** dans le projet Google Cloud. Un seul compte par
-projet ; le relier de nouveau (autre compte ou autres accès) remplace le précédent et révoque son jeton.
+il faut seulement **activer les API Gmail et Google Drive** dans le projet Google Cloud. Un projet peut
+avoir **plusieurs comptes**, chacun avec ses propres accès (« Ajouter un compte Google ») ; un même compte
+Google n'y figure qu'une fois : le relier de nouveau met à jour ses accès. « Changer les accès ou de
+compte » passe `&accountId=…` : si un autre compte Google est choisi, il remplace celui-ci, détaché et
+révoqué.
 
 **Jetons.** Le flux demande un accès hors ligne (`access_type=offline`, `prompt=consent`) : Skipper reçoit
 un jeton de rafraîchissement, chiffré en base (`project_google_accounts`, AES-256-GCM comme les autres
 secrets) et jamais renvoyé à l'interface ; les jetons d'accès sont renouvelés en mémoire. Les accès
 enregistrés sont ceux réellement accordés sur l'écran Google (on peut y décocher une portée).
 « Vérifier » renouvelle le jeton et interroge le profil, Gmail et Drive ; « Déconnecter » révoque le jeton
-côté Google et supprime l'enregistrement.
+côté Google (sauf si le même compte Google reste relié à un autre projet, l'autorisation étant partagée)
+et supprime l'enregistrement.
 
-**Accès des agents.** Chaque session Claude du projet reçoit le serveur MCP `google`, dont les outils
-dépendent des accès : `account` ; `gmail_search` (syntaxe de recherche Gmail), `gmail_read`, `gmail_send`
+**Accès des agents.** Chaque session Claude du projet reçoit un seul serveur MCP `google`, pour tous les
+comptes ; ses outils dépendent des accès (un outil existe dès qu'un compte a l'accès voulu) et prennent un
+paramètre `account` (adresse du compte), facultatif quand un seul compte convient. Outils : `account`
+(liste des comptes et de leurs accès) ; `gmail_search` (syntaxe de recherche Gmail), `gmail_read`, `gmail_send`
 (envoi ou réponse dans le fil, accès « envoi ») ; `drive_search` (Drive partagés compris), `drive_read`
 (Docs et Slides en texte, Sheets en CSV, fichiers texte), `drive_download` (dans le dossier de travail,
 export des documents Google en docx / xlsx / pptx / pdf…), `drive_upload` (depuis le dossier de travail,
