@@ -19,6 +19,7 @@ import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
 import { workspaceExists, workspaceGitInfo, workspacePath } from '../projects/workspace.js';
 import { notificationService } from '../notifications/service.js';
+import { rateLimitView } from '../settings/rateLimits.js';
 import type { Notification } from '../notifications/types.js';
 import { pubSub } from '../pubsub.js';
 import { requestService } from '../requests/service.js';
@@ -107,6 +108,7 @@ const appSettings = () => ({
   github: githubService.status(),
   models: settingsService.models(),
   usage: () => usageService.summary(),
+  rateLimits: () => rateLimitView(),
   server: async () => {
     const maintenance = serverSettings.maintenance;
     const active = await sessionService.activeSummary();
@@ -124,6 +126,9 @@ const appSettings = () => ({
 export const resolvers = {
   JSON: JSONResolver,
   DateTime: DateTimeResolver,
+  DashboardUsage: {
+    rateLimits: () => rateLimitView(),
+  },
 
   ProjectMember: {
     user: (m: ProjectMember) => userService.get(m.userId),
@@ -347,9 +352,9 @@ export const resolvers = {
       return connectionService.get(args.id);
     },
     notifications: async (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }, ctx: Ctx) =>
-      notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx) }),
-    unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread(await accessibleProjectIds(ctx)),
-    dashboard: async (_: unknown, __: unknown, ctx: Ctx) => dashboardService.build(requireUser(ctx).id, await accessibleProjectIds(ctx)),
+      notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin }),
+    unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin }),
+    dashboard: async (_: unknown, __: unknown, ctx: Ctx) => dashboardService.build(requireUser(ctx).id, await accessibleProjectIds(ctx), new Date(), requireUser(ctx).isAdmin),
     tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return taskService.list({
@@ -633,11 +638,12 @@ export const resolvers = {
 
     markNotificationRead: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       const n = await notificationService.get(args.id);
+      if (n.adminsOnly) requireAdmin(ctx);
       if (n.projectId) await requireProject(ctx, n.projectId);
       else requireUser(ctx);
       return notificationService.markRead(args.id);
     },
-    markAllNotificationsRead: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.markAllRead(await accessibleProjectIds(ctx)),
+    markAllNotificationsRead: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.markAllRead({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin }),
     createTask: async (_: unknown, { input }: { input: GqlTaskInput & { projectId: string; title: string } }, ctx: Ctx) => {
       await requireProject(ctx, input.projectId, 'member');
       return taskService.create(input.projectId, { ...toTaskInput(input), title: input.title }, HUMAN);
@@ -785,7 +791,7 @@ export const resolvers = {
     notificationCreated: {
       subscribe: (_: unknown, __: unknown, ctx: Ctx) => {
         requireUser(ctx);
-        return filterAsync(pubSub.subscribe('notificationCreated'), (n: Notification) => canAccessProject(ctx, n.projectId));
+        return filterAsync(pubSub.subscribe('notificationCreated'), async (n: Notification) => (!n.adminsOnly || Boolean(ctx.user?.isAdmin)) && canAccessProject(ctx, n.projectId));
       },
       resolve: (payload: unknown) => payload,
     },

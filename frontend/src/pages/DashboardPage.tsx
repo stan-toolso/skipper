@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
+import RateLimitGauges, { busiestWindow } from '../components/RateLimitGauges';
 import { DASHBOARD, type Dashboard, type DashboardProject, type DashboardUsage, type HumanRequest, type Session, type Task } from '../graphql/operations';
 import { formatCost, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -157,8 +158,11 @@ function UsageTile({ usage }: { usage: DashboardUsage }) {
   const cap = usage.monthlyBudgetUsd;
   const ratio = cap ? Math.min(100, (usage.globalMonthUsd / cap) * 100) : 0;
   const delta = usage.previous7DaysUsd > 0 ? ((usage.last7DaysUsd - usage.previous7DaysUsd) / usage.previous7DaysUsd) * 100 : null;
+  const limits = usage.rateLimits;
+  const busiest = limits ? busiestWindow(limits) : null;
+  const limitAlert = Boolean(limits && (limits.status === 'rejected' || (busiest?.utilization ?? 0) >= 0.75));
   return (
-    <div className={`dash-tile${ratio >= 80 ? ' alert' : ''}`}>
+    <div className={`dash-tile${ratio >= 80 || limitAlert ? ' alert' : ''}`}>
       <div className="dash-tile-label"><i className="bi bi-cash-coin" /> Consommation du mois</div>
       <div className="dash-tile-value">
         {formatCost(usage.monthUsd)}
@@ -175,6 +179,17 @@ function UsageTile({ usage }: { usage: DashboardUsage }) {
           <span className={delta > 0 ? 'up' : 'down'}> ({delta > 0 ? '+' : ''}{Math.round(delta)} % vs 7 jours précédents)</span>
         )}
       </div>
+      {limits && busiest && (
+        <div className="dash-tile-sub" title="Limites d'utilisation de l'abonnement Claude : fenêtre la plus chargée">
+          {limits.status === 'rejected' ? (
+            <span className="up">Limite atteinte ({limits.rateLimitLabel ?? busiest.label}) : tours refusés</span>
+          ) : (
+            <span className={(busiest.utilization ?? 0) >= 0.75 ? 'up' : undefined}>
+              Limite Claude : {busiest.label} à {Math.round((busiest.utilization ?? 0) * 100)} %
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -200,6 +215,10 @@ function UsageCard({ usage }: { usage: DashboardUsage }) {
             </div>
           )}
           <DailyChart days={usage.byDay} />
+          <div className="mt-3">
+            <div className="text-secondary small mb-1">Limites d'utilisation de l'abonnement Claude</div>
+            <RateLimitGauges limits={usage.rateLimits} />
+          </div>
           {usage.topSessions.length > 0 && (
             <Table size="sm" className="mt-3 mb-0">
               <thead>
