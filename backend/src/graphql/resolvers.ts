@@ -218,6 +218,7 @@ export const resolvers = {
     terminals: (project: Project) => terminalService.listByProject(project.id),
     worktrees: (project: Project) => worktreeService.listByProject(project.id),
     connections: (project: Project) => connectionService.listByProject(project.id),
+    approvalConnections: async (project: Project) => (await connectionService.listByProject(project.id)).filter((c) => c.requireApproval).map((c) => c.name),
     googleAccounts: (project: Project) => googleAccountService.list(project.id),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,

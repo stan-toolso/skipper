@@ -1,5 +1,5 @@
 import { pool } from '../db/pool.js';
-import type { CreateProjectInput, Project, UpdateProjectInput } from './types.js';
+import type { CreateProjectInput, Project, ProjectPermissionMode, UpdateProjectInput } from './types.js';
 
 interface ProjectRow {
   id: string;
@@ -10,6 +10,7 @@ interface ProjectRow {
   git_url: string | null;
   git_branch: string | null;
   runner_config: Record<string, unknown>;
+  default_permission_mode: ProjectPermissionMode;
   created_at: Date;
   updated_at: Date;
 }
@@ -24,6 +25,7 @@ function toProject(row: ProjectRow): Project {
     gitUrl: row.git_url,
     gitBranch: row.git_branch,
     runnerConfig: row.runner_config ?? {},
+    defaultPermissionMode: row.default_permission_mode ?? 'default',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -36,14 +38,15 @@ const updateColumns: Record<keyof UpdateProjectInput, string> = {
   gitUrl: 'git_url',
   gitBranch: 'git_branch',
   runnerConfig: 'runner_config',
+  defaultPermissionMode: 'default_permission_mode',
 };
 
 export const projectRepository = {
   async create(input: CreateProjectInput & { slug: string }): Promise<Project> {
     const { rows } = await pool.query<ProjectRow>(
-      `INSERT INTO projects (name, slug, description, system_prompt, git_url, git_branch, runner_config)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [input.name, input.slug, input.description ?? null, input.systemPrompt ?? '', input.gitUrl || null, input.gitBranch || null, JSON.stringify(input.runnerConfig ?? {})],
+      `INSERT INTO projects (name, slug, description, system_prompt, git_url, git_branch, runner_config, default_permission_mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [input.name, input.slug, input.description ?? null, input.systemPrompt ?? '', input.gitUrl || null, input.gitBranch || null, JSON.stringify(input.runnerConfig ?? {}), input.defaultPermissionMode || 'default'],
     );
     return toProject(rows[0]);
   },
@@ -83,8 +86,8 @@ export const projectRepository = {
         sets.push(`${column} = $${params.length}::jsonb`);
         continue;
       }
-      // Les champs optionnels vides sont stockés en NULL ; le prompt système reste une chaîne.
-      params.push(key === 'systemPrompt' ? value ?? '' : value || null);
+      // Les champs optionnels vides sont stockés en NULL ; le prompt système reste une chaîne, le mode d'autorisation a une valeur par défaut.
+      params.push(key === 'systemPrompt' ? value ?? '' : key === 'defaultPermissionMode' ? value || 'default' : value || null);
       sets.push(`${column} = $${params.length}`);
     }
     const { rows } = await pool.query<ProjectRow>(`UPDATE projects SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, params);
