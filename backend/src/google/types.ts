@@ -2,8 +2,9 @@
 export type GoogleAccess = 'none' | 'read' | 'write';
 export const GOOGLE_ACCESSES: GoogleAccess[] = ['none', 'read', 'write'];
 
-/** Compte Google relié à un projet (un seul par projet). */
+/** Compte Google relié à un projet (plusieurs possibles, un même compte Google une seule fois par projet). */
 export interface GoogleAccount {
+  id: string;
   projectId: string;
   email: string;
   name: string | null;

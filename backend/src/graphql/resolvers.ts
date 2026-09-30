@@ -210,7 +210,7 @@ export const resolvers = {
     terminals: (project: Project) => terminalService.listByProject(project.id),
     worktrees: (project: Project) => worktreeService.listByProject(project.id),
     connections: (project: Project) => connectionService.listByProject(project.id),
-    googleAccount: (project: Project) => googleAccountService.find(project.id),
+    googleAccounts: (project: Project) => googleAccountService.list(project.id),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
@@ -689,15 +689,16 @@ export const resolvers = {
       await guardConnection(ctx, args.id, 'admin');
       return connectionService.forgetHostKey(args.id);
     },
-    checkGoogleAccount: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
-      await requireProject(ctx, args.projectId, 'admin');
-      const { account, result } = await googleAccountService.check(args.projectId);
+    checkGoogleAccount: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, (await googleAccountService.get(args.id)).projectId, 'admin');
+      const { account, result } = await googleAccountService.check(args.id);
       return { account, ...result };
     },
-    disconnectGoogleAccount: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
-      await requireProject(ctx, args.projectId, 'admin');
-      await googleAccountService.disconnect(args.projectId);
-      return projectService.get(args.projectId);
+    disconnectGoogleAccount: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const { projectId } = await googleAccountService.get(args.id);
+      await requireProject(ctx, projectId, 'admin');
+      await googleAccountService.disconnect(args.id);
+      return projectService.get(projectId);
     },
     closeTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTerminal(ctx, args.id, 'member');
