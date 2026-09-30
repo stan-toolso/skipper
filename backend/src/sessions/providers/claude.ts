@@ -17,6 +17,7 @@ import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
+import { liveBrowserService } from '../../browser/live.js';
 import { createGoogleMcpServer } from '../../google/mcp.js';
 import { googleAccountService, googleReadTools } from '../../google/service.js';
 import { permissionRuleService, suggestedMode } from '../../permissions/service.js';
@@ -154,6 +155,8 @@ export class ClaudeProvider implements SessionProvider {
     let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
+    // Script de relais qui exécute le CLI dans le conteneur du projet (avant l'accès direct et le navigateur : rien à nettoyer s'il échoue).
+    const claudeExecutable = await runner.claudeExecutable(ctx.project);
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
     let direct: DirectAccess | null = null;
     try {
@@ -192,6 +195,8 @@ export class ClaudeProvider implements SessionProvider {
     if (browserEnabled) {
       try {
         browserServer = await runner.browserMcpCommand(ctx.project, ctx.cwd, { sessionId: ctx.session.id, secrets: await connectionService.browserSecrets(ctx.project.id) });
+        // Vue en direct du navigateur dans l'interface (le backend s'y attache par CDP quand quelqu'un regarde).
+        liveBrowserService.register(ctx.session.id, ctx.project, browserServer.cdp);
       } catch (err) {
         await direct?.dispose().catch(() => undefined);
         throw err;
@@ -199,7 +204,8 @@ export class ClaudeProvider implements SessionProvider {
     }
     const disposeAll = async () => {
       await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
-      await browserServer?.dispose().catch((e) => console.error('[browser] nettoyage des secrets du navigateur', e));
+      if (browserServer) liveBrowserService.unregister(ctx.session.id);
+      await browserServer?.dispose().catch((e) => console.error('[browser] arrêt du navigateur de la session', e));
     };
     // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
     const browserReadTools = ['mcp__playwright__browser_snapshot', 'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_console_messages', 'mcp__playwright__browser_network_requests', 'mcp__playwright__browser_wait_for'];
@@ -236,8 +242,7 @@ export class ClaudeProvider implements SessionProvider {
       allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
-      // Script de relais qui exécute le CLI dans le conteneur du projet.
-      pathToClaudeCodeExecutable: await runner.claudeExecutable(ctx.project),
+      pathToClaudeCodeExecutable: claudeExecutable,
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
@@ -478,6 +483,10 @@ export class ClaudeProvider implements SessionProvider {
     // Compteur de tokens de réflexion : des dizaines de messages par seconde, sans contenu pour le transcript.
     // Les journaliser ralentit la lecture du flux (une écriture en base chacun) et gonfle l'historique.
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'thinking_tokens') return;
+    // Premier outil du navigateur utilisé par l'agent : la vue en direct est proposée dans la sidebar.
+    if (message.type === 'assistant' && message.message.content.some((b) => b.type === 'tool_use' && b.name.startsWith('mcp__playwright__'))) {
+      liveBrowserService.markUsed(ctx.session.id);
+    }
     const payload = message.type === 'user' ? withoutBinaryData(message) : message;
     await ctx.emit(`claude.${message.type}`, payload as unknown as Record<string, unknown>);
   }

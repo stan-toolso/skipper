@@ -10,7 +10,7 @@ import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { attachmentsRoot } from '../sessions/attachments.js';
 import { worktreesRoot } from '../worktrees/service.js';
-import { PLAYWRIGHT_MCP_ARGS, sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
+import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { renderSecretsFile } from '../connections/website.js';
 
@@ -105,6 +105,8 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     if (current.state === 'absent') {
       const args = [
         'run', '-d', '--name', name, '--restart', 'unless-stopped', '--memory', s.memory, '--cpus', s.cpus,
+        // Processus init (tini) : récolte les processus orphelins, dont ceux de Chromium, lancé par `docker exec -d`.
+        '--init',
         '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
         // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de
         // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; les montages
@@ -160,21 +162,86 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   }
 
   /**
-   * Playwright MCP installé dans l'image (`playwright-mcp`), captures d'écran dans le dossier de travail.
-   * Les secrets sont écrits dans le /tmp du conteneur (hors des volumes, donc hors du dépôt) et supprimés en fin de session.
-   * C'est le CLI qui lance ce serveur, et le CLI tourne déjà dans le conteneur (où `docker` n'existe pas) :
-   * la commande s'exécute donc directement, sans `docker exec`.
+   * Navigateur de la session : Skipper lance lui-même Chromium dans le conteneur (profil jetable dans le
+   * /tmp du conteneur, hors des volumes), puis Playwright MCP s'y attache par CDP. Le backend peut ainsi
+   * observer la même page que l'agent (vue en direct). Les secrets sont écrits dans le même dossier.
+   * C'est le CLI qui lance Playwright MCP, et le CLI tourne déjà dans le conteneur (où `docker` n'existe
+   * pas) : la commande s'exécute donc directement, sans `docker exec`.
    */
   async browserMcpCommand(project: Project, cwd: string, options: BrowserMcpOptions): Promise<BrowserMcpServer> {
     await this.ensureReady(project);
     const container = this.containerName(project);
-    const args = [...PLAYWRIGHT_MCP_ARGS, '--output-dir', `${cwd}/.playwright-mcp`];
-    let dir: string | null = null;
+    const dir = `/tmp/${sessionTag(options.sessionId)}-browser`;
+    const dispose = async () => {
+      await docker(['exec', container, 'sh', '-c', STOP_CHROMIUM, 'sh', dir], { allowFail: true });
+    };
+    // Reste d'une session précédente (serveur arrêté brutalement) : on repart d'un dossier propre.
+    await dispose();
+    // `docker exec -d` : Chromium survit à la commande qui l'a lancé (un `&` dans un `docker exec` ne suffit pas).
+    await docker(['exec', '-d', container, 'sh', '-c', START_CHROMIUM, 'sh', dir]);
+    let cdp: BrowserMcpServer['cdp'];
+    try {
+      const { stdout } = await docker(['exec', container, 'sh', '-c', WAIT_CHROMIUM, 'sh', dir]);
+      const [port, browserPath] = stdout.trim().split('\n');
+      if (!/^\d+$/.test(port) || !browserPath?.startsWith('/devtools/browser/')) throw new AppError(`Réponse inattendue de Chromium : ${stdout.trim()}`);
+      cdp = { port: Number(port), browserPath };
+    } catch (err) {
+      await dispose();
+      throw new AppError(`Le navigateur headless n'a pas démarré : ${(err as Error).message}`);
+    }
+    const args = ['--cdp-endpoint', `http://127.0.0.1:${cdp.port}`, '--output-dir', `${cwd}/.playwright-mcp`];
     if (Object.keys(options.secrets).length) {
-      dir = `/tmp/${sessionTag(options.sessionId)}-browser`;
-      await dockerWithInput(['exec', '-i', container, 'sh', '-c', 'umask 077 && rm -rf "$1" && mkdir -p "$1" && cat > "$1/secrets.env"', 'sh', dir], renderSecretsFile(options.secrets));
+      await dockerWithInput(['exec', '-i', container, 'sh', '-c', 'umask 077 && cat > "$1/secrets.env"', 'sh', dir], renderSecretsFile(options.secrets));
       args.push('--secrets', `${dir}/secrets.env`);
     }
-    return { command: 'playwright-mcp', args, dispose: async () => (dir ? docker(['exec', container, 'rm', '-rf', dir], { allowFail: true }).then(() => undefined) : undefined) };
+    return { command: 'playwright-mcp', args, cdp, dispose };
+  }
+
+  cdpTunnelCommand(project: Project, port: number): SpawnSpec {
+    return { command: 'docker', args: ['exec', '-i', this.containerName(project), 'node', '-e', CDP_RELAY, String(port)] };
   }
 }
+
+/**
+ * Lancement de Chromium ($1 = dossier de la session). Binaire « headless shell » installé par Playwright
+ * (dernière version présente dans l'image). Port CDP choisi par Chromium (`=0`, plusieurs sessions par
+ * conteneur), qu'il écrit avec le chemin du point d'accès dans `DevToolsActivePort`. Options reprises de
+ * celles de Playwright ; `--disable-dev-shm-usage` : le /dev/shm d'un conteneur ne fait que 64 Mo.
+ */
+const START_CHROMIUM = `set -e
+mkdir -p "$1/profile"
+bin=$(ls -d /opt/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell 2>/dev/null | sort -V | tail -n 1)
+if [ -z "$bin" ]; then echo "Chromium introuvable dans l'image (/opt/ms-playwright) : reconstruire skipper-runner" > "$1/chromium.log"; exit 1; fi
+echo $$ > "$1/chromium.pid"
+exec "$bin" --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-background-networking \
+  --disable-component-update --disable-sync --disable-features=Translate,MediaRouter --mute-audio --hide-scrollbars \
+  --password-store=basic --use-mock-keychain --window-size=1280,800 \
+  --remote-debugging-port=0 --user-data-dir="$1/profile" about:blank > "$1/chromium.log" 2>&1`;
+
+/** Attente du port CDP (10 s au plus) : affiche le port puis le chemin du point d'accès du navigateur. */
+const WAIT_CHROMIUM = `i=0
+while [ $i -lt 100 ]; do
+  # Deux lignes (port, chemin), sans saut de ligne final : on attend que la seconde soit écrite.
+  if [ -n "$(sed -n 2p "$1/profile/DevToolsActivePort" 2>/dev/null)" ]; then cat "$1/profile/DevToolsActivePort"; exit 0; fi
+  sleep 0.1; i=$((i + 1))
+done
+grep -v -i -E 'fontconfig|dbus|^[[:space:]]' "$1/chromium.log" 2>/dev/null | tail -n 3 >&2
+echo "délai de 10 s dépassé" >&2
+exit 1`;
+
+/**
+ * Arrêt de Chromium puis suppression du dossier de la session (profil, secrets). On attend la fin du
+ * processus (5 s, puis SIGKILL) : sinon Chromium réécrit son profil pendant la suppression. Un zombie
+ * (état Z, pas encore récolté) compte comme arrêté.
+ */
+const STOP_CHROMIUM = `pid=$(cat "$1/chromium.pid" 2>/dev/null || true)
+alive() { [ -n "$pid" ] && [ -n "$(ps -o stat= -p "$pid" 2>/dev/null | grep -v '^Z')" ]; }
+if alive; then
+  kill "$pid" 2>/dev/null || true
+  i=0; while alive && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  if alive; then kill -9 "$pid" 2>/dev/null || true; sleep 0.2; fi
+fi
+rm -rf "$1"`;
+
+/** Relais TCP ↔ stdio vers 127.0.0.1:<port> (argument), exécuté par Node dans le conteneur. */
+const CDP_RELAY = `const s=require('net').connect(Number(process.argv[1]),'127.0.0.1');process.stdin.pipe(s);s.pipe(process.stdout);s.on('close',()=>process.exit(0));s.on('error',(e)=>{console.error(e.message);process.exit(1)});process.stdin.on('end',()=>s.end())`;

@@ -559,6 +559,8 @@ type Session {
   requests(status: RequestStatus): [Request!]!
   "Nombre de demandes en attente d'une réponse humaine."
   pendingRequestCount: Int!
+  "Le navigateur headless de la session est ouvert et l'agent s'en est servi : vue en direct sur le WebSocket /browsers/<id>."
+  browserActive: Boolean!
 }
 
 enum RequestStatus {

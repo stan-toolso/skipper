@@ -207,6 +207,12 @@ l'option « navigateur headless ») : `docker build -t skipper-runner deploy/run
 chaque projet concerné. Une session avec navigateur prend 300 à 500 Mo de plus : prévoir au moins
 1,5 Go pour le conteneur du projet.
 
+La vue en direct du navigateur passe par le WebSocket `/browsers/<session>` : reporter le bloc
+`location /browsers/` de `deploy/nginx-skipper.conf` dans `/etc/nginx/sites-available/skipper`, puis
+`sudo nginx -t && sudo systemctl reload nginx`. Les conteneurs sont désormais créés avec `--init`
+(récolte des processus de Chromium arrêtés) : « Recréer » le conteneur des projets qui utilisent le
+navigateur pour en bénéficier.
+
 ## Vérifications
 
 ```bash

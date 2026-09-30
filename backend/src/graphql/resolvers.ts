@@ -1,5 +1,6 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { accessibleProjectIds, canAccessProject, filterAsync, requireAdmin, requireProject, requireUser, roleFor, type AuthContext } from '../auth/access.js';
+import { liveBrowserService } from '../browser/live.js';
 import { connectionService } from '../connections/service.js';
 import { fingerprint } from '../connections/ssh.js';
 import type { Connection, ConnectionInput, PostgresSettings, WebsiteSettings } from '../connections/types.js';
@@ -236,6 +237,7 @@ export const resolvers = {
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
+    browserActive: (session: Session) => liveBrowserService.isActive(session.id),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>

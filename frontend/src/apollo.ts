@@ -29,6 +29,11 @@ export function terminalSocketUrl(id: string): string {
   return `${apiBaseUrl.replace(/^http/, 'ws')}/terminals/${id}`;
 }
 
+/** Vue en direct du navigateur headless d'une session (WebSocket, lecture seule). */
+export function browserSocketUrl(sessionId: string): string {
+  return `${apiBaseUrl.replace(/^http/, 'ws')}/browsers/${sessionId}`;
+}
+
 /** Page de connexion Google ; `next` = chemin de l'application à rouvrir ensuite. */
 export function googleLoginUrl(next: string): string {
   return `${apiBaseUrl}/auth/google?next=${encodeURIComponent(next)}`;

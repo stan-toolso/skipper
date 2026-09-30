@@ -21,7 +21,9 @@ import { loginService } from './settings/login.js';
 import { settingsService } from './settings/service.js';
 import { serverSettings } from './settings/server.js';
 import { terminalService } from './terminals/service.js';
-import { attachTerminalWebSockets } from './terminals/ws.js';
+import { terminalUpgradeHandler } from './terminals/ws.js';
+import { browserUpgradeHandler } from './browser/ws.js';
+import { attachWebSockets } from './websockets.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const typeDefs = readFileSync(path.join(here, 'graphql/schema.graphql'), 'utf8');
@@ -85,7 +87,7 @@ async function main() {
         res.end();
       });
   });
-  attachTerminalWebSockets(server);
+  attachWebSockets(server, [terminalUpgradeHandler(), browserUpgradeHandler()]);
   server.listen(config.port, () => {
     console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
     // Reprise automatique des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur).

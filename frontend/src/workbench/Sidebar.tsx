@@ -24,7 +24,7 @@ import InstallButton from '../components/InstallButton';
 import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
 
-type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'> & { worktree?: { id: string } | null };
+type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount' | 'browserActive'> & { worktree?: { id: string } | null };
 type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'> & { worktree?: { id: string } | null };
 interface SidebarWorktree {
   id: string;
@@ -224,6 +224,7 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
 
 function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean; indent: number }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { closeTab } = useTabs();
   const { confirm, showError } = useDialogs();
   const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
@@ -249,12 +250,22 @@ function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean;
       },
     },
   ];
+  const browserPath = `/sessions/${s.id}/browser`;
   return (
-    <RowWithMenu to={`/sessions/${s.id}`} active={active} indent={indent} title={dot.title} items={items}>
-      <span className={`wb-dot ${dot.cls}`} />
-      <span className="wb-row-label">{s.name}</span>
-      {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
-    </RowWithMenu>
+    <>
+      <RowWithMenu to={`/sessions/${s.id}`} active={active} indent={indent} title={dot.title} items={items}>
+        <span className={`wb-dot ${dot.cls}`} />
+        <span className="wb-row-label">{s.name}</span>
+        {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
+      </RowWithMenu>
+      {/* Navigateur headless ouvert par l'agent : vue en direct de la page courante. */}
+      {s.browserActive && (
+        <Link to={browserPath} className={`wb-row wb-session-row wb-browser-row${location.pathname === browserPath ? ' active' : ''}`} style={{ paddingLeft: indent + 16 }} title="Voir en direct la page ouverte par l'agent">
+          <i className="bi bi-globe2 wb-browser-icon" />
+          <span className="wb-row-label">Navigateur</span>
+        </Link>
+      )}
+    </>
   );
 }
 
