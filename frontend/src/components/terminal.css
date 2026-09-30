@@ -180,6 +180,7 @@
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .cc-input {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   margin: 0 12px 12px;
   border: 1px solid var(--cc-border);
@@ -188,6 +189,26 @@
   background: #1a1a1a;
 }
 .cc-input:focus-within { border-color: var(--cc-dim); }
+.cc-input .cc-input-row { display: flex; gap: 8px; }
+/* Bouton trombone : ouvre le sélecteur de fichiers ; les fichiers peuvent aussi être collés ou déposés. */
+.cc-attach { flex: 0 0 auto; align-self: flex-end; color: var(--cc-dim); font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; margin: 0; }
+.cc-attach:hover { color: var(--cc-fg); }
+/* Fichiers joints en attente d'envoi (zone de saisie, modale de lancement). */
+.cc-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-family: var(--bs-font-sans-serif); font-size: 12.5px; }
+.cc-input .cc-attachments { margin: 0; }
+.cc-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; padding: 2px 6px 2px 4px; border: 1px solid var(--cc-border); border-radius: 4px; background: var(--cc-bg-user); color: var(--cc-fg); text-decoration: none; }
+.cc-chip:hover { border-color: var(--cc-dim); color: var(--cc-fg); }
+.cc-chip img { width: 22px; height: 22px; object-fit: cover; border-radius: 2px; }
+.cc-chip .cc-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-chip .cc-chip-size { color: var(--cc-dimmer); flex: 0 0 auto; }
+.cc-chip button { background: none; border: 0; color: var(--cc-dim); padding: 0; line-height: 1; cursor: pointer; }
+.cc-chip button:hover { color: var(--cc-red); }
+.cc-attach-btn { background: none; border: 1px dashed var(--cc-border); border-radius: 4px; color: var(--cc-dim); padding: 2px 8px; cursor: pointer; }
+.cc-attach-btn:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
+.cc-attachments-error { color: var(--cc-red); }
+/* Fichiers joints d'une instruction dans le transcript. */
+.cc-user-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cc-user-image img { max-width: 240px; max-height: 160px; border-radius: 4px; border: 1px solid var(--cc-border); display: block; }
 .cc-input .cc-caret { color: var(--cc-dim); }
 .cc-input textarea {
   flex: 1;

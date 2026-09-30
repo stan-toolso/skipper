@@ -16,10 +16,13 @@ Trois notions :
   s'exécute directement sur le serveur avec l'utilisateur de Skipper.
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
-  on lance sessions et terminaux sans toucher au dossier principal.
+  on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
+  défaut d'y lancer aussitôt une session d'agent.
 - **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
-  workspace (ou dans l'un de ses worktrees). On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
-  terminée est relancée (reprise de la conversation) par un simple message.
+  workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
+  terminée est relancée (reprise de la conversation) par un simple message. Un agent peut lui-même
+  lancer d'autres sessions (outils MCP `sessions` et `worktrees`) ; elles gardent la trace de la
+  session qui les a lancées.
 - **Demande** : intervention humaine attendue par un agent (autorisation d'outil, question, saisie).
   La session reste en cours jusqu'à la réponse.
 - **Contexte** : bibliothèque d'instructions propre à chaque projet, rangée en dossiers, stockée en
@@ -99,6 +102,7 @@ backend/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
     worktrees/
       service.ts               # worktrees git : création (branche existante ou nouvelle), suppression, cwd
+      mcp.ts                   # serveur MCP `worktrees` (list, create, delete)
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     notifications/
@@ -132,8 +136,9 @@ backend/
     sessions/
       types.ts                 # modèle Session / SessionEvent
       repository.ts            # accès SQL
-      service.ts               # orchestration : création, démarrage, arrêt, suivi des processus
+      service.ts               # orchestration : création (avec worktree neuf au besoin), démarrage, arrêt, suivi des processus
       scheduledRuns.ts         # sessions dont l'exécution en cours vient de leur planification
+      mcp.ts                   # serveur MCP `sessions` (list, get, create, wait, send, end) : sessions lancées par un agent
       providers/
         provider.ts            # interface SessionProvider (à implémenter pour un nouvel agent)
         registry.ts            # enregistrement des providers disponibles
@@ -282,7 +287,8 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et
   conserve la branche sauf demande contraire. Sessions et terminaux portent un `worktreeId` optionnel
   qui fixe leur dossier de travail.
-- **Session** : `projectId`, `worktreeId`, `name`, `provider`, `status` (`pending`, `running`, `completed`, `failed`,
+- **Session** : `projectId`, `worktreeId`, `parentSessionId` (session d'agent qui l'a lancée, null
+  pour une session humaine), `name`, `provider`, `status` (`pending`, `running`, `completed`, `failed`,
   `stopped`, `interrupted`), `activity` pour une session en cours (`busy` : l'agent travaille, `idle` :
   il attend des instructions), `prompt` (première instruction), `config` (JSON propre au provider),
   `externalId` (ex. `session_id` Claude), `exitCode`, `error`, horodatages. Le provider Claude utilise
@@ -338,7 +344,9 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   (`human` ou `agent` avec sa session), `dueDate`. Les sessions Claude reçoivent la liste des tâches
   ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
-  cours ; l'agent la passe en `done` quand il a fini.
+  cours ; l'agent la passe en `done` quand il a fini. Les serveurs MCP `worktrees` et `sessions`
+  (voir « Lancer des sessions et des worktrees ») lui permettent de déléguer du travail à d'autres
+  sessions, dans des worktrees séparés.
 
 - **Runner** (`backend/src/runners/`) : un seul, Docker, pour tous les projets (`projects.runner_config`
   = `{ image, memory, cpus, browser }`). Le runner fournit l'exécutable Claude Code donné au SDK, la
@@ -412,8 +420,9 @@ service : démarrage, demandes d'autorisation, audit des connexions, erreurs bru
 sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
 seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
-pour envoyer et échap pour interrompre. La barre d'état propose deux listes déroulantes pour changer
-le modèle et les autorisations de la session, y compris pendant qu'elle tourne.
+pour envoyer, échap pour interrompre, flèche haut et flèche bas pour reprendre une instruction déjà
+envoyée. La barre d'état propose deux listes déroulantes pour changer le modèle et les autorisations
+de la session, y compris pendant qu'elle tourne.
 
 Aucune alerte native du navigateur (`window.alert`, `confirm`, `prompt`) : les confirmations, saisies
 courtes et messages d'erreur passent par les modales de `frontend/src/components/Dialogs.tsx`
@@ -458,6 +467,53 @@ principal (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe d�
 bouton permet de préférer le dossier principal ou un worktree existant ; un projet sans dépôt git
 travaille dans son dossier principal. Le worktree apparaît dans la sidebar avec sa session, et la
 tâche affiche sa branche. Il reste après la tâche : fusion ou suppression depuis le panneau git.
+
+## Lancer des sessions et des worktrees
+
+**Depuis l'interface.** « Nouvelle session » (sidebar, pages Projets, Sessions, projet, accueil) ouvre une
+modale (`frontend/src/components/SessionLauncher.tsx`, fournie à toute l'application par
+`SessionLauncherProvider` dans le layout) : projet, branche de travail (dossier principal, worktree
+existant ou « Nouveau worktree… » avec branche et point de départ), consigne, nom, options de l'agent.
+« Nouveau worktree » (menu « + » d'un projet git, fiche du projet) ouvre la même modale en mode
+worktree : branche à créer, puis, par défaut, une session d'agent lancée dans ce worktree avec les
+mêmes options ; décocher l'interrupteur crée seulement le worktree. Côté API,
+`CreateSessionInput.newWorktree { branch, name, baseRef }` crée le worktree puis la session dans une
+même mutation (le worktree est retiré si la session ne peut pas être créée).
+
+**Fichiers joints.** La consigne (modale de lancement) comme toute instruction envoyée ensuite (zone de
+saisie de la session) peut être accompagnée de fichiers : bouton trombone, collage d'une image depuis le
+presse-papiers (capture d'écran) ou dépôt dans la zone de texte. Limites : 10 fichiers, 10 Mo par fichier,
+12 Mo par instruction, envoyés en base64 dans la mutation GraphQL (`AttachmentInput`). Le backend
+(`backend/src/sessions/attachments.ts`) les enregistre dans `WORKSPACES_ROOT/<slug>.attachments/<session>/<id>/<nom>`
+(dossier monté au même chemin dans le conteneur du runner docker) et complète l'instruction avec la liste
+des fichiers et leur chemin, lisibles par l'agent avec `Read` ; les images (png, jpeg, gif, webp jusqu'à
+5 Mo) et les PDF (jusqu'à 10 Mo) sont en plus transmis au modèle comme blocs `image` / `document`. Les
+métadonnées sont conservées (`Session.promptAttachments` pour la consigne, payload `attachments` de
+l'événement `instruction` ensuite) et le transcript les affiche (vignettes, liens) via la route
+`GET /api/attachments/<session>/<id>` (cookie de session, accès au projet requis). Supprimer la session
+supprime ses fichiers. Une instruction sans texte mais avec des fichiers reçoit le texte « Voir les
+fichiers joints. ».
+
+**Depuis un agent.** Chaque session Claude reçoit deux serveurs MCP supplémentaires, décrits dans son
+prompt système :
+
+- `worktrees` : `list` (branche du dossier principal, worktrees avec commit et sessions en cours),
+  `create(branch, name?, base_ref?)`, `delete(name, delete_branch?)`. Lister et créer sont toujours
+  autorisés ; supprimer passe par la demande d'autorisation habituelle.
+- `sessions` : `list`, `get(id)` (état et dernière réponse de l'agent), `create(prompt, name?,
+  worktree? | new_branch?, base_ref?, permission_mode?, model?)` (même provider et même configuration
+  que la session appelante par défaut), `wait(id, timeout_seconds?)` (attend la fin du tour, 120 s par
+  défaut, 600 s au plus, à rappeler si l'agent travaille encore), `send(id, text)`, `end(id)`. Un agent
+  ne peut envoyer une instruction ou terminer que les sessions qu'il a lancées. `create` et `send`
+  consomment du budget : ils passent par la demande d'autorisation (mode « me demander »), ou sont
+  pré-autorisables avec `mcp__sessions` dans les outils autorisés de la session ; les autres outils
+  sont libres.
+
+Garde-fous (`backend/src/sessions/service.ts`) : une session lancée par un agent reste dans le projet de
+l'agent, l'imbrication est limitée à deux niveaux (humain → agent → agent → stop), et au plus trois
+sessions lancées par une même session tournent en même temps. Une session lancée par un agent déclenche
+une notification `session.created` ; sa page indique « lancée par » avec un lien vers la session parente
+(`Session.parentSession`, `Session.childSessions`).
 
 ## Sessions planifiées
 
@@ -559,8 +615,8 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
-- `createSession(input)`, `startSession(id)`, `stopSession(id)`, `deleteSession(id)`
-- `sendSessionMessage(id, text)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)`
+- `createSession(input)` (`input.worktreeId` ou `input.newWorktree { branch, name, baseRef }`), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
+- `sendSessionMessage(id, text, attachments)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`

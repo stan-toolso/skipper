@@ -1,16 +1,18 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { CreateSessionInput, Session, SessionActivity, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { Attachment, CreateSessionInput, Session, SessionActivity, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
   project_id: string;
   worktree_id: string | null;
+  parent_session_id: string | null;
   name: string;
   provider: string;
   status: SessionStatus;
   activity: SessionActivity | null;
   prompt: string | null;
+  prompt_attachments: Attachment[] | null;
   config: Record<string, unknown>;
   external_id: string | null;
   exit_code: number | null;
@@ -35,11 +37,13 @@ function toSession(row: SessionRow): Session {
     id: row.id,
     projectId: row.project_id,
     worktreeId: row.worktree_id,
+    parentSessionId: row.parent_session_id,
     name: row.name,
     provider: row.provider,
     status: row.status,
     activity: row.activity,
     prompt: row.prompt,
+    promptAttachments: row.prompt_attachments ?? [],
     config: row.config ?? {},
     externalId: row.external_id,
     exitCode: row.exit_code,
@@ -64,6 +68,7 @@ function toEvent(row: EventRow): SessionEvent {
 
 export interface SessionPatch {
   status?: SessionStatus;
+  promptAttachments?: Attachment[];
   config?: Record<string, unknown>;
   activity?: SessionActivity | null;
   externalId?: string | null;
@@ -75,6 +80,7 @@ export interface SessionPatch {
 
 const patchColumns: Record<keyof SessionPatch, string> = {
   status: 'status',
+  promptAttachments: 'prompt_attachments',
   config: 'config',
   activity: 'activity',
   externalId: 'external_id',
@@ -87,10 +93,10 @@ const patchColumns: Record<keyof SessionPatch, string> = {
 export const sessionRepository = {
   async create(input: CreateSessionInput): Promise<Session> {
     const { rows } = await pool.query<SessionRow>(
-      `INSERT INTO sessions (project_id, worktree_id, name, provider, prompt, config)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO sessions (project_id, worktree_id, parent_session_id, name, provider, prompt, config)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [input.projectId, input.worktreeId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {})],
+      [input.projectId, input.worktreeId ?? null, input.parentSessionId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {})],
     );
     return toSession(rows[0]);
   },
@@ -114,6 +120,10 @@ export const sessionRepository = {
     if (filter.worktreeId) {
       params.push(filter.worktreeId);
       where.push(`worktree_id = $${params.length}`);
+    }
+    if (filter.parentSessionId) {
+      params.push(filter.parentSessionId);
+      where.push(`parent_session_id = $${params.length}`);
     }
     if (filter.status) {
       params.push(filter.status);
@@ -142,7 +152,8 @@ export const sessionRepository = {
     const params: unknown[] = [id];
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
-        params.push(key === 'config' ? toJson(patch[key]) : patch[key]);
+        // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL) ; toJson retire les \u0000.
+        params.push(key === 'promptAttachments' || key === 'config' ? toJson(patch[key]) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }
@@ -176,6 +187,22 @@ export const sessionRepository = {
       [sessionId, type, toJson(payload)],
     );
     return toEvent(rows[0]);
+  },
+
+  /** Métadonnées d'un fichier joint à une instruction envoyée en cours de session (événement `instruction`). */
+  async findAttachmentInEvents(sessionId: string, attachmentId: string): Promise<Omit<Attachment, 'path'> | null> {
+    const { rows } = await pool.query<EventRow>(
+      `SELECT * FROM session_events WHERE session_id = $1 AND type = 'instruction' AND payload->'attachments' @> $2::jsonb ORDER BY id DESC LIMIT 1`,
+      [sessionId, JSON.stringify([{ id: attachmentId }])],
+    );
+    const attachments = (rows[0]?.payload.attachments as Array<Omit<Attachment, 'path'>> | undefined) ?? [];
+    return attachments.find((a) => a.id === attachmentId) ?? null;
+  },
+
+  /** Dernier événement d'un des types donnés (ex. le dernier résultat d'un tour). */
+  async findLastEvent(sessionId: string, types: string[]): Promise<SessionEvent | null> {
+    const { rows } = await pool.query<EventRow>(`SELECT * FROM session_events WHERE session_id = $1 AND type = ANY($2::text[]) ORDER BY id DESC LIMIT 1`, [sessionId, types]);
+    return rows[0] ? toEvent(rows[0]) : null;
   },
 
   async listEvents(sessionId: string, opts: { after?: string; limit?: number } = {}): Promise<SessionEvent[]> {

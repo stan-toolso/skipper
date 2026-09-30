@@ -23,6 +23,7 @@ import { pubSub } from '../pubsub.js';
 import { requestService } from '../requests/service.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
+import { publicAttachment } from '../sessions/attachments.js';
 import { sessionService } from '../sessions/service.js';
 import { serverAuthStatus, serverLogout } from '../settings/cli.js';
 import { loginService, type ClaudeLoginKind } from '../settings/login.js';
@@ -38,7 +39,7 @@ import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
 import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
-import type { Session, SessionStatus } from '../sessions/types.js';
+import type { AttachmentInput, CreateSessionInput, Session, SessionStatus } from '../sessions/types.js';
 import { permissionRuleService } from '../permissions/service.js';
 import { formatRule, type PermissionRule } from '../permissions/types.js';
 import type { SessionScheduleInput } from '../schedules/types.js';
@@ -213,11 +214,14 @@ export const resolvers = {
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
     worktree: (session: Session) => (session.worktreeId ? worktreeService.get(session.worktreeId).catch(() => null) : null),
+    parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
+    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
+    promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
@@ -532,7 +536,7 @@ export const resolvers = {
     },
     createSession: async (
       _: unknown,
-      { input }: { input: { projectId: string; worktreeId?: string | null; name: string; provider: string; prompt?: string | null; config?: Record<string, unknown> | null; autoStart?: boolean | null } },
+      { input }: { input: CreateSessionInput & { autoStart?: boolean | null } },
       ctx: Ctx,
     ) => {
       await requireProject(ctx, input.projectId, 'member');
@@ -550,9 +554,9 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return sessionService.delete(args.id);
     },
-    sendSessionMessage: async (_: unknown, args: { id: string; text: string }, ctx: Ctx) => {
+    sendSessionMessage: async (_: unknown, args: { id: string; text: string; attachments?: AttachmentInput[] | null }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
-      return sessionService.sendMessage(args.id, args.text);
+      return sessionService.sendMessage(args.id, args.text, args.attachments);
     },
     endSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');

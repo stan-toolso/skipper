@@ -1,4 +1,5 @@
 import { gql } from '@apollo/client';
+import type { AttachmentRef } from '../lib/attachments';
 
 export type SessionStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'INTERRUPTED';
 export type RequestStatus = 'PENDING' | 'ANSWERED' | 'CANCELLED' | 'EXPIRED';
@@ -103,6 +104,7 @@ export interface Session {
   status: SessionStatus;
   activity: SessionActivity | null;
   prompt: string | null;
+  promptAttachments: AttachmentRef[];
   config: Record<string, unknown>;
   externalId: string | null;
   exitCode: number | null;
@@ -115,6 +117,8 @@ export interface Session {
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
+  /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
+  parentSession: { id: string; name: string } | null;
   /** Planification (null si la session n'est pas planifiée). */
   schedule: SessionSchedule | null;
 }
@@ -397,6 +401,12 @@ export const SESSION_FIELDS = gql`
     status
     activity
     prompt
+    promptAttachments {
+      id
+      name
+      mediaType
+      size
+    }
     config
     externalId
     exitCode
@@ -419,6 +429,9 @@ export const SESSION_FIELDS = gql`
       branch
       path
     }
+    parentSession {
+      id
+      name
     schedule {
       cron
       timezone
@@ -629,8 +642,8 @@ export const STOP_SESSION = gql`
 
 export const SEND_SESSION_MESSAGE = gql`
   ${SESSION_FIELDS}
-  mutation SendSessionMessage($id: ID!, $text: String!) {
-    sendSessionMessage(id: $id, text: $text) {
+  mutation SendSessionMessage($id: ID!, $text: String!, $attachments: [AttachmentInput!]) {
+    sendSessionMessage(id: $id, text: $text, attachments: $attachments) {
       ...SessionFields
     }
   }

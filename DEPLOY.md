@@ -156,6 +156,15 @@ pm2 restart skipper --update-env
 
 Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 
+## Fichiers joints aux instructions
+
+Les fichiers joints par les utilisateurs sont écrits dans `/home/skipper/skipper-workspaces/<slug>.attachments/`
+(à sauvegarder avec les workspaces si l'on tient aux pièces jointes ; supprimés avec la session). Le
+transcript les charge par `GET /api/attachments/<session>/<id>` : le site nginx doit proxifier `/api/`
+vers le backend (bloc présent dans `deploy/nginx-skipper.conf`, à reporter dans
+`/etc/nginx/sites-available/skipper` puis `sudo nginx -t && sudo systemctl reload nginx`). Les conteneurs
+docker créés avant cette version n'ont pas le dossier monté : « Recréer » sur la page du projet.
+
 ## Application installable
 
 Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx

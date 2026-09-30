@@ -5,7 +5,6 @@ import { useAuth } from '../auth/AuthContext';
 import {
   CLOSE_TERMINAL,
   CREATE_TERMINAL,
-  CREATE_WORKTREE,
   DELETE_SESSION,
   DELETE_TERMINAL,
   DELETE_WORKTREE,
@@ -22,6 +21,7 @@ import { useTabs } from './TabsContext';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
+import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
 
 type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'> & { worktree?: { id: string } | null };
@@ -62,23 +62,29 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
       navigate(`/terminals/${res.createTerminal.id}`);
     },
   });
-  const { confirm, prompt, showError } = useDialogs();
-  const [createWorktree, { loading: creatingWt }] = useMutation(CREATE_WORKTREE, { refetchQueries: ['Sidebar'], onCompleted: onClose });
+  const { openNewSession, openNewWorktree } = useSessionLauncher();
+  const { confirm, showError } = useDialogs();
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [onClose]);
   const [deleteWorktree] = useMutation(DELETE_WORKTREE, { refetchQueries: ['Sidebar', 'ProjectWorktrees'] });
-  const wtParam = worktreeId ? `&worktreeId=${worktreeId}` : '';
   return (
     <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
       <Link to={worktreeId ? `/worktrees/${worktreeId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-folder2-open wb-icon" /> Fichiers
       </Link>
-      <Link to={`/sessions/new?projectId=${projectId}${wtParam}`} className="wb-pop-item" onClick={onClose}>
+      <button
+        type="button"
+        className="wb-pop-item"
+        onClick={() => {
+          onClose();
+          openNewSession({ projectId, worktreeId: worktreeId ?? null });
+        }}
+      >
         <i className="bi bi-chat-dots wb-icon" /> Nouvelle session d'agent
-      </Link>
+      </button>
       <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId, worktreeId: worktreeId ?? null } })}>
         <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal'}
       </button>
@@ -86,13 +92,12 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
         <button
           type="button"
           className="wb-pop-item"
-          disabled={creatingWt}
-          onClick={async () => {
-            const branch = await prompt({ title: 'Nouveau worktree', message: "Nom de la branche (créée si elle n'existe pas)", placeholder: 'feature/ma-branche', confirmLabel: 'Créer' });
-            if (branch) createWorktree({ variables: { projectId, branch } }).catch(showError);
+          onClick={() => {
+            onClose();
+            openNewWorktree({ projectId });
           }}
         >
-          <i className="bi bi-diagram-2 wb-icon" /> {creatingWt ? 'Création…' : 'Nouveau worktree'}
+          <i className="bi bi-diagram-2 wb-icon" /> Nouveau worktree
         </button>
       )}
       {worktreeId && (

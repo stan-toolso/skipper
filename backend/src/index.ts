@@ -8,6 +8,7 @@ import { sweepStaleSessionDirs } from './connections/runtime.js';
 import { createAuthContext } from './auth/access.js';
 import { googleAuth } from './auth/google.js';
 import { handleAuthRoute } from './auth/routes.js';
+import { handleAttachmentRoute } from './sessions/attachmentRoute.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
 import { AppError } from './errors.js';
 import { config } from './config.js';
@@ -72,11 +73,12 @@ async function main() {
 
   const server = createServer((req, res) => {
     handleAuthRoute(req, res)
+      .then((handled) => handled || handleAttachmentRoute(req, res))
       .then((handled) => {
         if (!handled) return yoga(req, res);
       })
       .catch((err) => {
-        console.error('[auth]', err);
+        console.error('[http]', err);
         if (!res.headersSent) res.writeHead(500);
         res.end();
       });

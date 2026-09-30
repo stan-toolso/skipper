@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -9,9 +9,11 @@ import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
+import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
 import Transcript from '../components/Transcript';
+import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
 import {
   DELETE_SESSION,
@@ -51,6 +53,8 @@ export default function SessionDetailPage() {
   const [scheduling, setScheduling] = useState(false);
 
   const [text, setText] = useState('');
+  const [encoding, setEncoding] = useState(false);
+  const attachments = usePendingAttachments();
   const [technical, setTechnical] = useState<boolean>(() => {
     try {
       return localStorage.getItem(TECH_KEY) === '1';
@@ -69,6 +73,28 @@ export default function SessionDetailPage() {
     });
   };
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Instructions déjà envoyées, dans l'ordre, sans doublons consécutifs : parcourues avec flèche haut / bas, comme dans Claude Code.
+  const history = useMemo(() => {
+    const list: string[] = [];
+    for (const e of events) {
+      if (e.type !== 'instruction') continue;
+      const t = String((e.payload as { text?: unknown }).text ?? '').trim();
+      if (t && list[list.length - 1] !== t) list.push(t);
+    }
+    return list;
+  }, [events]);
+  const historyPos = useRef<number | null>(null); // null : on édite le brouillon ; sinon index dans history
+  const draftRef = useRef('');
+  const recall = (value: string) => {
+    setText(value);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      el.setSelectionRange(value.length, value.length);
+    });
+  };
   const session = data?.session;
   useTabTitle(session?.name);
   useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.branch}` : session.project.name } : null);
@@ -90,11 +116,23 @@ export default function SessionDetailPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [busy, pending.length, id, interruptSession]);
 
-  const submit = () => {
+  const canSend = Boolean(text.trim() || attachments.items.length) && !sending && !encoding;
+  const submit = async () => {
+    if (!canSend) return;
     const value = text.trim();
-    if (!value || sending) return;
-    setText('');
-    sendMessage({ variables: { id, text: value } });
+    const items = attachments.items;
+    setEncoding(true);
+    try {
+      const files = items.length ? await toAttachmentInputs(items) : null;
+      setText('');
+      attachments.reset();
+      if (inputRef.current) inputRef.current.style.height = 'auto';
+      await sendMessage({ variables: { id, text: value, attachments: files } });
+    } catch {
+      /* l'erreur est affichée par sendError */
+    } finally {
+      setEncoding(false);
+    }
   };
 
   if (loading && !data) return <Spinner animation="border" size="sm" />;
@@ -142,6 +180,15 @@ export default function SessionDetailPage() {
               <>
                 {' '}
                 · <i className="bi bi-diagram-2" /> {session.worktree.branch}
+              </>
+            )}
+            {session.parentSession && (
+              <>
+                {' '}
+                · lancée par{' '}
+                <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title="Session d'agent qui a lancé celle-ci">
+                  <i className="bi bi-robot" /> {session.parentSession.name}
+                </Link>
               </>
             )}
             {schedule && (
@@ -261,32 +308,67 @@ export default function SessionDetailPage() {
         </span>
       </div>
 
-      <div className="cc-input" onClick={() => inputRef.current?.focus()}>
-        <span className="cc-caret">&gt;</span>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={text}
-          placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
-          disabled={sending}
-          onChange={(e) => {
-            setText(e.target.value);
-            e.target.style.height = 'auto';
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-        <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={sending || !text.trim()} onClick={submit}>
-          <i className="bi bi-send" />
-        </button>
+      <div className="cc-input" onClick={() => inputRef.current?.focus()} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
+        <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={sending || encoding} showButton={false} error={attachments.error} />
+        <div className="cc-input-row">
+          <span className="cc-caret">&gt;</span>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={text}
+            placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
+            disabled={sending || encoding}
+            onChange={(e) => {
+              historyPos.current = null;
+              setText(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+            }}
+            onPaste={attachments.onPaste}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                historyPos.current = null;
+                void submit();
+                return;
+              }
+              // Flèche haut sur la première ligne : instruction précédente ; flèche bas sur la dernière : suivante, puis retour au brouillon.
+              const el = e.currentTarget;
+              if (e.key === 'ArrowUp' && history.length && !el.value.slice(0, el.selectionStart).includes('\n')) {
+                const next = historyPos.current === null ? history.length - 1 : historyPos.current - 1;
+                if (next < 0) return;
+                e.preventDefault();
+                if (historyPos.current === null) draftRef.current = text;
+                historyPos.current = next;
+                recall(history[next]);
+              } else if (e.key === 'ArrowDown' && historyPos.current !== null && !el.value.slice(el.selectionEnd).includes('\n')) {
+                e.preventDefault();
+                const next = historyPos.current + 1;
+                historyPos.current = next < history.length ? next : null;
+                recall(next < history.length ? history[next] : draftRef.current);
+              }
+            }}
+          />
+          <label className="cc-attach" title="Joindre des fichiers (ou collez une image, ou déposez des fichiers ici)">
+            <i className="bi bi-paperclip" />
+            <input
+              type="file"
+              multiple
+              hidden
+              disabled={sending || encoding}
+              onChange={(e) => {
+                attachments.add(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={!canSend} onClick={() => void submit()}>
+            <i className="bi bi-send" />
+          </button>
+        </div>
       </div>
       <div className="cc-hint">
-        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>
+        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne · flèche haut pour reprendre une instruction précédente · collez ou déposez des fichiers pour les joindre</span>
         <span title="Dossier de travail de la session">{technical ? (session.worktree?.path ?? session.project.workspacePath) : ''}</span>
       </div>
     </div>

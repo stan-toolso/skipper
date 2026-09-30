@@ -1,7 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionEvent } from '../graphql/operations';
+import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
 import { describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
 import Markdown from './Markdown';
+
+/** Fichiers joints à une instruction : vignettes pour les images, liens de téléchargement sinon. */
+function InstructionAttachments({ sessionId, attachments }: { sessionId: string; attachments: AttachmentRef[] }) {
+  return (
+    <div className="cc-user-files">
+      {attachments.map((a) => {
+        const url = attachmentUrl(sessionId, a.id);
+        const title = `${a.name} · ${a.mediaType} · ${formatSize(a.size)}`;
+        return isImageType(a.mediaType) ? (
+          <a key={a.id} href={url} target="_blank" rel="noreferrer" className="cc-user-image" title={title}>
+            <img src={url} alt={a.name} crossOrigin="use-credentials" loading="lazy" />
+          </a>
+        ) : (
+          <a key={a.id} href={url} target="_blank" rel="noreferrer" className="cc-chip" title={title}>
+            <i className="bi bi-file-earmark" />
+            <span className="cc-chip-name">{a.name}</span>
+            <span className="cc-chip-size">{formatSize(a.size)}</span>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
 
 interface ContentBlock {
   type: string;
@@ -372,13 +396,16 @@ export default function Transcript({ events, autoScroll = true, technical = fals
     // Messages internes d'un sous-agent : Claude Code n'en montre que le décompte, sur l'appel qui l'a lancé.
     if (p.parent_tool_use_id && (e.type === 'claude.assistant' || e.type === 'claude.user')) continue;
     switch (e.type) {
-      case 'instruction':
+      case 'instruction': {
+        const attachments = Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [];
         nodes.push(
           <div key={e.id} className="cc-user">
             <span className="cc-user-text">{String(p.text ?? '')}</span>
+            {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
           </div>,
         );
         break;
+      }
       case 'claude.assistant': {
         const content = ((p.message as { content?: ContentBlock[] } | undefined)?.content ?? []) as ContentBlock[];
         content.forEach((block, i) => {

@@ -1,6 +1,6 @@
 import type { Project } from '../../projects/types.js';
 import type { CreateRequestInput } from '../../requests/types.js';
-import type { Session, SessionActivity } from '../types.js';
+import type { Attachment, Session, SessionActivity } from '../types.js';
 
 /** Description d'un champ de configuration, exposée au front pour générer le formulaire. */
 export interface ConfigOption {
@@ -39,6 +39,8 @@ export interface RunContext {
   cwd: string;
   /** Première instruction à traiter : le prompt de la session, ou le message qui a relancé une session terminée. */
   initialMessage: string | null;
+  /** Fichiers joints à la première instruction (chemins sur disque ; images et PDF peuvent aussi être transmis au modèle). */
+  initialAttachments: Attachment[];
   /** Signale si l'agent travaille ou attend des instructions. */
   setActivity(activity: SessionActivity): Promise<void>;
   /** Journalise un événement (persisté et diffusé en temps réel). */
@@ -68,7 +70,7 @@ export interface RunningHandle {
   /** Arrêt immédiat (abandon du travail en cours). */
   stop(): Promise<void>;
   /** Envoie une instruction à l'agent en cours d'exécution (providers interactifs). */
-  sendMessage?(text: string): Promise<void>;
+  sendMessage?(text: string, attachments?: Attachment[]): Promise<void>;
   /** Fin propre : plus d'instructions, l'agent termine son tour puis la session se termine. */
   end?(): Promise<void>;
   /** Interrompt le tour en cours sans terminer la session. */
