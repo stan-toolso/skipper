@@ -47,6 +47,8 @@ export interface RunContext {
   emit(type: string, payload?: Record<string, unknown>): Promise<void>;
   /** Enregistre l'identifiant de la session côté provider (ex. session_id Claude). */
   setExternalId(externalId: string): Promise<void>;
+  /** Enregistre la taille du contexte de l'agent (tokens d'entrée du dernier appel au modèle), null si inconnue. */
+  setContextTokens?(tokens: number | null): Promise<void>;
   /**
    * Soumet une demande à l'humain (autorisation, question...) et attend sa réponse.
    * Rejette avec RequestCancelledError si la demande est annulée ou `signal` déclenché.

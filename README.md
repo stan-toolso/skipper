@@ -166,6 +166,7 @@ backend/
       repository.ts            # accès SQL
       service.ts               # orchestration : création (avec worktree neuf au besoin), démarrage, arrêt, suivi des processus
       scheduledRuns.ts         # sessions dont l'exécution en cours vient de leur planification
+      cleanup.ts               # nettoyage automatique : purge du transcript, compaction ou remise à zéro de la conversation
       mcp.ts                   # serveur MCP `sessions` (list, get, create, wait, send, end) : sessions lancées par un agent
       providers/
         provider.ts            # interface SessionProvider (à implémenter pour un nouvel agent)
@@ -573,6 +574,27 @@ compris (une heure locale inexistante est sautée).
 Modèle : `SessionSchedule` (`session_schedules`, une ligne par session au plus : `cron`, `timezone`,
 `prompt`, `enabled`, `endAfterRun`, `nextRunAt`, `lastRunAt`, `lastResult`), exposée par
 `Session.schedule` ; mutations `setSessionSchedule`, `clearSessionSchedule`, `runSessionScheduleNow`.
+
+## Réglages et nettoyage d'une session
+
+Bouton « Réglages » sur la page d'une session (`frontend/src/components/SessionSettingsModal.tsx`) : renommer
+la session et configurer un **nettoyage automatique** de son historique, indispensable pour une session
+planifiée qui tourne tous les jours. Deux réglages indépendants (`Session.cleanup`, colonne `sessions.cleanup`) :
+
+- **Purge du transcript** : les événements de plus de N jours sont supprimés (`retentionDays`). La consommation
+  enregistrée (`usage_ledger`) n'est pas touchée. Appliquée avant chaque exécution planifiée et par un balayage
+  toutes les heures (`cleanupService.sweep`, lancé par l'ordonnanceur).
+- **Conversation de l'agent** : quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter**
+  (`contextAction: compact` : la commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la
+  fin du tour), soit **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain
+  lancement ne reprend plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution
+  planifiée ; une session en cours de travail est laissée tranquille (le nettoyage est reporté).
+
+La taille du contexte (`Session.contextTokens`) est relevée par le provider Claude sur les messages assistant
+(tokens d'entrée, cache compris, du dernier appel au modèle) et sur les frontières de compaction
+(`compact_boundary`, `post_tokens`). « Nettoyer maintenant » applique les réglages sans attendre
+(`applySessionCleanup`) ; `updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les
+événements `cleanup` (purge, compaction, remise à zéro, report) apparaissent dans le transcript.
 
 ## Explorateur de fichiers et éditeur
 

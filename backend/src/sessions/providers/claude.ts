@@ -265,13 +265,26 @@ export class ClaudeProvider implements SessionProvider {
     const done: Promise<RunResult> = (async () => {
       let lastResult: SDKResultMessage | undefined;
       let previousModelTotals: Record<string, number> = {};
+      // Taille du contexte : tokens d'entrée (dont cache) du dernier appel au modèle, relevée sur les messages assistant.
+      let contextTokens: number | null = null;
       try {
         for await (const message of stream) {
           await this.handleMessage(ctx, message);
+          if (message.type === 'assistant' && !message.parent_tool_use_id) {
+            const u = (message.message as { usage?: { input_tokens?: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null } }).usage;
+            if (u && typeof u.input_tokens === 'number') contextTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+          }
+          if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+            // Conversation compactée : la taille annoncée après compaction remplace la mesure précédente.
+            const meta = (message as { compact_metadata?: { post_tokens?: number } }).compact_metadata;
+            contextTokens = typeof meta?.post_tokens === 'number' ? meta.post_tokens : null;
+            await ctx.setContextTokens?.(contextTokens);
+          }
           if (message.type === 'result') {
             // Fin d'un tour : l'agent attend la prochaine instruction.
             lastResult = message;
             previousModelTotals = await this.recordUsage(ctx, message, previousModelTotals, model ?? 'default');
+            await ctx.setContextTokens?.(contextTokens);
             await ctx.setActivity('idle');
           }
         }

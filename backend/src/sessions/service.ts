@@ -203,6 +203,9 @@ export const sessionService = {
         setExternalId: async (externalId) => {
           await publishSession(await sessionRepository.update(id, { externalId }));
         },
+        setContextTokens: async (contextTokens) => {
+          await publishSession(await sessionRepository.update(id, { contextTokens }));
+        },
         setActivity: async (activity) => {
           await publishSession(await sessionRepository.update(id, { activity }));
         },
@@ -276,6 +279,14 @@ export const sessionService = {
     if (!handle) return this.start(id, trimmed, attachments);
     await handle.sendMessage!(trimmed, attachments);
     return publishSession(await sessionRepository.findById(id));
+  },
+
+  /** Renomme la session. */
+  async rename(id: string, name: string): Promise<Session> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new AppError('Le nom est vide');
+    if (trimmed.length > 120) throw new AppError('Le nom dépasse 120 caractères');
+    return publishSession(await sessionRepository.update(id, { name: trimmed }));
   },
 
   /** Fin propre : l'agent termine son tour en cours, puis la session se termine. */

@@ -19,6 +19,15 @@ export interface AttachmentInput {
   data: string;
 }
 
+/** Nettoyage automatique de l'historique d'une session. */
+export interface SessionCleanup {
+  /** Les événements du transcript plus vieux que N jours sont supprimés (null : jamais). */
+  retentionDays?: number | null;
+  /** Quand le contexte de l'agent dépasse contextMaxTokens : compacter la conversation ou repartir d'une conversation neuve. */
+  contextAction?: 'compact' | 'reset' | null;
+  contextMaxTokens?: number | null;
+}
+
 export interface Session {
   id: string;
   projectId: string;
@@ -36,6 +45,9 @@ export interface Session {
   externalId: string | null;
   exitCode: number | null;
   error: string | null;
+  cleanup: SessionCleanup;
+  /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
+  contextTokens: number | null;
   /** Coût estimé cumulé (USD, tarif API), d'après le SDK. */
   costUsd: number;
   createdAt: Date;

@@ -1,6 +1,6 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { Attachment, CreateSessionInput, Session, SessionActivity, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { Attachment, CreateSessionInput, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
@@ -17,6 +17,8 @@ interface SessionRow {
   external_id: string | null;
   exit_code: number | null;
   error: string | null;
+  cleanup: SessionCleanup | null;
+  context_tokens: number | null;
   cost_usd: string | number | null;
   created_at: Date;
   updated_at: Date;
@@ -48,6 +50,8 @@ function toSession(row: SessionRow): Session {
     externalId: row.external_id,
     exitCode: row.exit_code,
     error: row.error,
+    cleanup: row.cleanup ?? {},
+    contextTokens: row.context_tokens,
     costUsd: Number(row.cost_usd ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -68,6 +72,9 @@ function toEvent(row: EventRow): SessionEvent {
 
 export interface SessionPatch {
   status?: SessionStatus;
+  name?: string;
+  cleanup?: SessionCleanup;
+  contextTokens?: number | null;
   promptAttachments?: Attachment[];
   config?: Record<string, unknown>;
   activity?: SessionActivity | null;
@@ -80,6 +87,9 @@ export interface SessionPatch {
 
 const patchColumns: Record<keyof SessionPatch, string> = {
   status: 'status',
+  name: 'name',
+  cleanup: 'cleanup',
+  contextTokens: 'context_tokens',
   promptAttachments: 'prompt_attachments',
   config: 'config',
   activity: 'activity',
@@ -153,7 +163,7 @@ export const sessionRepository = {
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
         // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL) ; toJson retire les \u0000.
-        params.push(key === 'promptAttachments' || key === 'config' ? toJson(patch[key]) : patch[key]);
+        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' ? toJson(patch[key]) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }
@@ -197,6 +207,18 @@ export const sessionRepository = {
     );
     const attachments = (rows[0]?.payload.attachments as Array<Omit<Attachment, 'path'>> | undefined) ?? [];
     return attachments.find((a) => a.id === attachmentId) ?? null;
+  },
+
+  /** Supprime les événements plus vieux que `before` ; renvoie le nombre supprimé. */
+  async deleteEventsBefore(sessionId: string, before: Date): Promise<number> {
+    const { rowCount } = await pool.query('DELETE FROM session_events WHERE session_id = $1 AND created_at < $2', [sessionId, before]);
+    return rowCount ?? 0;
+  },
+
+  /** Sessions dont le nettoyage prévoit une durée de rétention du transcript. */
+  async listWithRetention(): Promise<Session[]> {
+    const { rows } = await pool.query<SessionRow>(`SELECT * FROM sessions WHERE (cleanup->>'retentionDays') IS NOT NULL`);
+    return rows.map(toSession);
   },
 
   /** Dernier événement d'un des types donnés (ex. le dernier résultat d'un tour). */

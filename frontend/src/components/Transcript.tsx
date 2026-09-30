@@ -448,8 +448,43 @@ export default function Transcript({ events, autoScroll = true, technical = fals
           </div>,
         );
         break;
+      case 'cleanup': {
+        const action = String(p.action ?? '');
+        const k = (v: unknown) => (typeof v === 'number' ? `${Math.round(v / 1000)} k tokens` : '?');
+        const text =
+          action === 'purged'
+            ? `Transcript purgé : ${String(p.deleted)} événement(s) de plus de ${String(p.retentionDays)} jours supprimé(s)`
+            : action === 'compacting'
+              ? `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)}) : compaction de la conversation`
+              : action === 'compacted'
+                ? `Conversation compactée : ${k(p.before)} → ${k(p.after)}`
+                : action === 'reset'
+                  ? `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)}) : la conversation repart de zéro au prochain lancement`
+                  : action === 'skipped'
+                    ? `Nettoyage de la conversation reporté : ${String(p.reason ?? '')}`
+                    : action === 'failed'
+                      ? `Nettoyage en erreur : ${String(p.error ?? '')}`
+                      : action === 'nothing'
+                        ? 'Nettoyage : rien à faire'
+                        : 'Réglages de nettoyage enregistrés';
+        if (action === 'set' && !technical) break;
+        nodes.push(
+          <div key={e.id} className={`cc-note${action === 'failed' ? ' error' : ''}`}>
+            🧹 {text}
+          </div>,
+        );
+        break;
+      }
       case 'claude.system':
-        if (technical && p.subtype === 'init') {
+        if (p.subtype === 'compact_boundary') {
+          const meta = (p.compact_metadata ?? {}) as { trigger?: string; pre_tokens?: number; post_tokens?: number };
+          nodes.push(
+            <div key={e.id} className="cc-note">
+              🧹 Conversation compactée${meta.trigger === 'auto' ? ' automatiquement' : ''}
+              {typeof meta.pre_tokens === 'number' ? ` · ${Math.round(meta.pre_tokens / 1000)} k tokens${typeof meta.post_tokens === 'number' ? ` → ${Math.round(meta.post_tokens / 1000)} k` : ''}` : ''}
+            </div>,
+          );
+        } else if (technical && p.subtype === 'init') {
           nodes.push(
             <div key={e.id} className="cc-note">
               ✻ Claude Code {String(p.claude_code_version ?? '')} · {String(p.model ?? '')} · {String(p.cwd ?? '')}

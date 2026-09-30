@@ -17,6 +17,13 @@ export interface ConfigField {
 }
 
 /** Planification d'une session : l'instruction est envoyée à chaque échéance de l'expression cron. */
+/** Nettoyage automatique de l'historique d'une session. */
+export interface SessionCleanup {
+  retentionDays: number | null;
+  contextAction: 'compact' | 'reset' | null;
+  contextMaxTokens: number | null;
+}
+
 export interface SessionSchedule {
   cron: string;
   timezone: string;
@@ -110,6 +117,9 @@ export interface Session {
   exitCode: number | null;
   error: string | null;
   costUsd: number;
+  cleanup: SessionCleanup;
+  /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
+  contextTokens: number | null;
   pendingRequestCount: number;
   createdAt: string;
   updatedAt: string;
@@ -412,6 +422,12 @@ export const SESSION_FIELDS = gql`
     exitCode
     error
     costUsd
+    cleanup {
+      retentionDays
+      contextAction
+      contextMaxTokens
+    }
+    contextTokens
     pendingRequestCount
     createdAt
     updatedAt
@@ -705,6 +721,24 @@ export const RUN_SESSION_SCHEDULE_NOW = gql`
   ${SESSION_FIELDS}
   mutation RunSessionScheduleNow($id: ID!) {
     runSessionScheduleNow(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const UPDATE_SESSION = gql`
+  ${SESSION_FIELDS}
+  mutation UpdateSession($id: ID!, $input: UpdateSessionInput!) {
+    updateSession(id: $id, input: $input) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const APPLY_SESSION_CLEANUP = gql`
+  ${SESSION_FIELDS}
+  mutation ApplySessionCleanup($id: ID!) {
+    applySessionCleanup(id: $id) {
       ...SessionFields
     }
   }

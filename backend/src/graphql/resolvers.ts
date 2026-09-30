@@ -32,6 +32,8 @@ import { settingsService, type ClaudeSettingsPatch } from '../settings/service.j
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { scheduleService } from '../schedules/service.js';
+import { cleanupService } from '../sessions/cleanup.js';
+import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreePath, worktreeService } from '../worktrees/service.js';
 import type { Worktree } from '../worktrees/types.js';
@@ -582,6 +584,16 @@ export const resolvers = {
     runSessionScheduleNow: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return scheduleService.runNow(args.id);
+    },
+    updateSession: async (_: unknown, args: { id: string; input: { name?: string | null; cleanup?: SessionCleanup | null } }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      if (args.input.name !== undefined && args.input.name !== null) await sessionService.rename(args.id, args.input.name);
+      if (args.input.cleanup) await cleanupService.set(args.id, args.input.cleanup);
+      return sessionService.get(args.id);
+    },
+    applySessionCleanup: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.applyNow(args.id);
     },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');
