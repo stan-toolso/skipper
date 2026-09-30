@@ -55,26 +55,31 @@ export interface Runner {
   /** Exécution d'un script shell dans `cwd` (provider shell). */
   shellCommand(project: Project, cwd: string, shell: string, script: string): Promise<SpawnSpec>;
   /**
-   * Serveur MCP Playwright (navigateur headless) lancé dans l'environnement du projet, en stdio.
-   * Les secrets, s'il y en a, sont écrits dans un fichier (option `--secrets`) que `dispose` supprime.
+   * Navigateur headless de la session : un Chromium lancé dans l'environnement du projet, avec son port
+   * CDP, et la commande du serveur MCP Playwright (stdio) qui s'y attache. Les secrets, s'il y en a, sont
+   * écrits dans un fichier (option `--secrets`). `dispose` arrête Chromium et supprime profil et secrets.
    */
   browserMcpCommand(project: Project, cwd: string, options: BrowserMcpOptions): Promise<BrowserMcpServer>;
+  /**
+   * Flux d'octets vers le port CDP d'un Chromium de l'environnement (relais TCP ↔ stdio) : Chromium
+   * n'écoute que sur la boucle locale du conteneur, le backend passe donc par un `docker exec -i`.
+   */
+  cdpTunnelCommand(project: Project, port: number): SpawnSpec;
 }
 
 export interface BrowserMcpOptions {
-  /** Identifie le fichier de secrets de la session. */
+  /** Identifie le dossier du navigateur de la session (profil, secrets). */
   sessionId: string;
   /** Secrets des sites web du projet (nom de variable → valeur) : l'agent tape le nom, le navigateur saisit la valeur. */
   secrets: Record<string, string>;
 }
 
 export interface BrowserMcpServer extends SpawnSpec {
-  /** Supprime le fichier de secrets ; à appeler en fin de session. */
+  /** Point d'accès CDP du Chromium de la session, dans l'environnement du projet. */
+  cdp: { port: number; browserPath: string };
+  /** Arrête Chromium et supprime son dossier (profil, secrets) ; à appeler en fin de session. */
   dispose(): Promise<void>;
 }
-
-/** Options communes du serveur MCP Playwright : sans fenêtre, profil jetable, une seule origine de sortie. */
-export const PLAYWRIGHT_MCP_ARGS = ['--headless', '--isolated', '--browser', 'chromium', '--no-sandbox'];
 
 /** Nom court d'une session dans les chemins temporaires (cohérent avec connections/runtime.ts). */
 export const sessionTag = (sessionId: string) => `skipper-session-${sessionId.slice(0, 8)}`;

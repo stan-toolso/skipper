@@ -203,6 +203,31 @@
 .term-body .xterm { height: 100%; }
 .term-body .xterm .xterm-viewport { scrollbar-width: thin; }
 
+/* Vue en direct du navigateur headless d'une session */
+.browser-header-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-state { flex: 0 0 auto; color: var(--cc-dim); display: inline-flex; align-items: center; gap: 6px; }
+.browser-state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cc-dimmer); }
+.browser-state.live .browser-state-dot { background: #5cb85c; box-shadow: 0 0 0 3px rgba(92, 184, 92, 0.2); }
+.browser-state.connecting .browser-state-dot { background: var(--cc-yellow, #e3b341); }
+.browser-state.error .browser-state-dot { background: var(--cc-red, #e5534b); }
+.browser-urlbar {
+  display: flex; align-items: center; gap: 8px; margin: 8px 14px 0; padding: 4px 10px;
+  border: 1px solid var(--cc-border); border-radius: 6px; background: #1c1c1c;
+  font-family: var(--bs-font-monospace); font-size: 12px; color: var(--cc-dim);
+}
+.browser-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-fg); user-select: all; }
+.browser-tabs { flex: 0 0 auto; }
+.browser-viewport { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 10px 14px 14px; }
+.browser-viewport img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 0 0 1px var(--cc-border); background: #fff; }
+.browser-viewport img.stale { opacity: 0.55; filter: grayscale(0.6); }
+.browser-empty { color: var(--cc-dim); font-size: 13px; text-align: center; max-width: 420px; }
+.browser-overlay {
+  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); max-width: calc(100% - 40px);
+  padding: 6px 12px; border-radius: 6px; background: rgba(20, 20, 20, 0.9); color: var(--cc-fg); font-size: 12px;
+}
+.wb-browser-row .wb-row-label { color: var(--cc-dim); }
+.wb-browser-icon { color: #5cb85c; font-size: 11px; width: 14px; }
+
 /* Cloche de notifications, à droite de la barre d'onglets */
 .wb-tabbar-right { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 8px; border-left: 1px solid var(--cc-border); }
 

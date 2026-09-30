@@ -11,6 +11,7 @@ const icons: Record<TabKind, string> = {
   'project-form': 'bi-pencil',
   context: 'bi-journal-text',
   session: 'bi-chat-dots-fill',
+  browser: 'bi-globe2',
   terminal: 'bi-terminal',
   tasks: 'bi-check2-square',
   settings: 'bi-gear',

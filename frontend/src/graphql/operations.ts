@@ -121,6 +121,8 @@ export interface Session {
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
   pendingRequestCount: number;
+  /** Navigateur headless ouvert et utilisé par l'agent : vue en direct disponible. */
+  browserActive: boolean;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -922,6 +924,7 @@ export const SIDEBAR = gql`
         status
         activity
         pendingRequestCount
+        browserActive
         worktree {
           id
         }
@@ -945,12 +948,29 @@ export const SIDEBAR = gql`
           status
           activity
           pendingRequestCount
+          browserActive
         }
         terminals {
           id
           name
           status
         }
+      }
+    }
+  }
+`;
+
+/** En-tête de la vue en direct du navigateur d'une session. */
+export const SESSION_BROWSER = gql`
+  query SessionBrowser($id: ID!) {
+    session(id: $id) {
+      id
+      name
+      status
+      browserActive
+      project {
+        id
+        name
       }
     }
   }

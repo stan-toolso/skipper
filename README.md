@@ -396,15 +396,30 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   page du projet (démarrer, arrêter, recréer).
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
-  `runner_config.browser`) : un serveur MCP Playwright (`@playwright/mcp`, Chromium sans fenêtre)
-  est déclaré à chaque session sous le nom `playwright`. C'est le CLI qui le lance, et le CLI tourne
-  dans le conteneur : la commande est donc directement `playwright-mcp` (image `skipper-runner` :
-  Playwright et Chromium sont dans `/opt/ms-playwright`), sans `docker exec`. Sa configuration passe
+  `runner_config.browser`) : au début de chaque session, Skipper lance un Chromium sans fenêtre dans
+  le conteneur (`docker exec -d`, profil jetable dans `/tmp/skipper-session-<id>-browser/`, port CDP
+  choisi par Chromium et lu dans `DevToolsActivePort`), puis déclare un serveur MCP Playwright
+  (`@playwright/mcp`) sous le nom `playwright`, attaché à ce Chromium par `--cdp-endpoint`. C'est le
+  CLI qui lance ce serveur, et le CLI tourne dans le conteneur : la commande est donc directement
+  `playwright-mcp` (image `skipper-runner` : Playwright et Chromium sont dans `/opt/ms-playwright`),
+  sans `docker exec`. En fin de session, Chromium est arrêté et son dossier supprimé. Sa configuration passe
   sur la ligne de commande du CLI et ne contient aucune variable d'environnement du backend. Les
   outils d'observation (instantané de la page,
   capture d'écran, console, réseau, attente) sont autorisés d'office ; navigation, clics et saisies
   passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
   `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.
+
+- **Vue en direct du navigateur** (`backend/src/browser/`) : dès que l'agent a utilisé un outil
+  `mcp__playwright__*`, une entrée « Navigateur » apparaît sous la session dans la sidebar
+  (`Session.browserActive`) ; elle ouvre `/sessions/<id>/browser`, qui affiche en direct l'onglet
+  que pilote l'agent (URL, titre, nombre d'onglets), en lecture seule. Le navigateur n'écoute que sur
+  la boucle locale du conteneur : le backend s'y relie par un tunnel `docker exec -i … node` (relais
+  TCP ↔ stdio) et utilise le screencast CDP (`Page.startScreencast`) : Chromium n'envoie une image
+  JPEG (≈ 10 Ko) que lorsque la page change. Les images passent par le WebSocket `/browsers/<session>`
+  (cookie de session, membre du projet). La connexion CDP n'existe que tant que quelqu'un regarde
+  (fermée 10 s après le départ du dernier spectateur) ; la vue suit l'onglet le plus récent. Ce que
+  l'agent saisit dans un champ texte ordinaire est visible dans la vue, y compris la valeur d'un
+  secret de site web (un champ mot de passe reste masqué).
 
 **Arrêt et redémarrage du backend.** À la réception de SIGINT / SIGTERM, le backend note d'abord,
 de façon synchrone, qu'il s'arrête : pm2 envoie le signal à tout l'arbre de processus, les agents

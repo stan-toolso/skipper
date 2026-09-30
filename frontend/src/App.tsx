@@ -10,6 +10,7 @@ import ContextPage from './pages/ContextPage';
 import LoginPage from './pages/LoginPage';
 import SessionsPage from './pages/SessionsPage';
 import SessionDetailPage from './pages/SessionDetailPage';
+import BrowserPage from './pages/BrowserPage';
 import RequestsPage from './pages/RequestsPage';
 import TerminalPage from './pages/TerminalPage';
 import DashboardPage from './pages/DashboardPage';
@@ -51,6 +52,7 @@ function Gate() {
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
+        <Route path="/sessions/:id/browser" element={<BrowserPage />} />
         <Route path="/requests" element={<RequestsPage />} />
         <Route path="/terminals/:id" element={<TerminalPage />} />
         {user.isAdmin && <Route path="/settings" element={<SettingsPage />} />}
