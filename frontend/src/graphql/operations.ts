@@ -432,6 +432,7 @@ export const SESSION_FIELDS = gql`
     parentSession {
       id
       name
+    }
     schedule {
       cron
       timezone

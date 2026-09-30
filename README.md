@@ -73,6 +73,32 @@ npm run dev                 # backend (http://localhost:4000/graphql) + frontend
 Les migrations SQL (`backend/src/db/migrations/*.sql`) sont appliquées automatiquement au démarrage
 du backend, ou à la main avec `npm run db:migrate`.
 
+### Tests
+
+```bash
+npm test                    # tests du backend puis du frontend (Vitest)
+TEST_DATABASE_URL=postgres://skipper:skipper@localhost:5432/skipper npm test   # avec le test des migrations
+npm run test:watch -w backend   # relance à chaque modification
+```
+
+Les tests sont à côté du code (`src/**/*.test.ts`), exclus du build du backend mais vérifiés par
+`npm run typecheck` (`backend/tsconfig.test.json`). Ils couvrent en priorité les services critiques :
+contrôle d'accès par rôle (`auth/access.ts`), confinement de l'explorateur de fichiers
+(`files/service.ts` : normalisation, chemins et liens symboliques sortants, `FILE_CONFLICT`),
+chiffrement des secrets (`settings/crypto.ts`), et, côté frontend, les formulations de
+`lib/humanize.ts`. Les dépendances qui touchent la base (services des utilisateurs, projets,
+worktrees) sont simulées avec `vi.mock`.
+
+Le test des migrations (`db/migrate.test.ts`) a besoin d'un PostgreSQL où le rôle peut créer des
+bases, par exemple celui de `npm run db:up` : il crée une base `skipper_test_*`, y applique toutes
+les migrations deux fois (le second passage ne doit rien faire), vérifie qu'une migration en échec
+est annulée, puis supprime la base. Sans `TEST_DATABASE_URL` il est ignoré en local et échoue en CI.
+Ne jamais y mettre l'URL de la base de production.
+
+**CI** : `.github/workflows/ci.yml` lance `npm ci`, `npm run typecheck`, `npm run build` et
+`npm test` à chaque push et pull request, avec un service PostgreSQL 16 pour le test des migrations.
+Le déploiement reste manuel (`DEPLOY.md`).
+
 Le provider Claude s'appuie sur le [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk)
 (`@anthropic-ai/claude-agent-sdk`), qui embarque son propre binaire Claude Code : chaque message du
 flux `query()` est journalisé comme événement `claude.<type>`. L'authentification est celle de
@@ -634,7 +660,8 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 | --------------------- | ---------------------------------------------- |
 | `npm run dev`         | backend + frontend en mode développement       |
 | `npm run build`       | build des deux packages                        |
-| `npm run typecheck`   | vérification TypeScript des deux packages      |
+| `npm run typecheck`   | vérification TypeScript des deux packages, du schéma GraphQL et des requêtes du front |
+| `npm test`            | tests Vitest des deux packages (voir « Tests ») |
 | `npm run db:up`       | démarre PostgreSQL (Docker)                    |
 | `npm run db:down`     | arrête PostgreSQL                              |
 | `npm run db:migrate`  | applique les migrations                        |

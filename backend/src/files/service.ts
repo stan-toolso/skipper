@@ -65,10 +65,11 @@ export async function resolveRoot(ref: WorkspaceRef): Promise<string> {
 
 /** Normalise un chemin relatif fourni par le client ("a/b/../c" -> "a/c") ; "" = racine. */
 function normalizeRelative(rel: string): string {
-  const cleaned = path.posix.normalize(rel.replace(/\\/g, '/').replace(/^\/+/, ''));
+  // Barres finales retirées avant les contrôles : "./" et "a/../" désignent aussi la racine.
+  const cleaned = path.posix.normalize(rel.replace(/\\/g, '/').replace(/^\/+/, '')).replace(/\/+$/, '');
   if (cleaned === '.' || cleaned === '') return '';
   if (cleaned.startsWith('../') || cleaned === '..') throw new AppError('Chemin hors du dossier du projet');
-  return cleaned.replace(/\/+$/, '');
+  return cleaned;
 }
 
 /**

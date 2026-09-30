@@ -369,10 +369,11 @@ export default function SessionDetailPage() {
           </button>
         </div>
       </div>
-      <div className="cc-hint">
-        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne · flèche haut pour reprendre une instruction précédente · collez ou déposez des fichiers pour les joindre</span>
-        <span title="Dossier de travail de la session">{technical ? (session.worktree?.path ?? session.project.workspacePath) : ''}</span>
-      </div>
+      {technical && (
+        <div className="cc-hint justify-content-end">
+          <span title="Dossier de travail de la session">{session.worktree?.path ?? session.project.workspacePath}</span>
+        </div>
+      )}
     </div>
   );
 }
