@@ -7,8 +7,10 @@ import { canAutoFocus } from '../lib/device';
 import { useGitTarget } from '../workbench/GitTargetContext';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
+import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import Transcript from '../components/Transcript';
+import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
 import {
   DELETE_SESSION,
@@ -38,6 +40,8 @@ export default function SessionDetailPage() {
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
 
   const [text, setText] = useState('');
+  const [encoding, setEncoding] = useState(false);
+  const attachments = usePendingAttachments();
   const [technical, setTechnical] = useState<boolean>(() => {
     try {
       return localStorage.getItem(TECH_KEY) === '1';
@@ -77,11 +81,23 @@ export default function SessionDetailPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [busy, pending.length, id, interruptSession]);
 
-  const submit = () => {
+  const canSend = Boolean(text.trim() || attachments.items.length) && !sending && !encoding;
+  const submit = async () => {
+    if (!canSend) return;
     const value = text.trim();
-    if (!value || sending) return;
-    setText('');
-    sendMessage({ variables: { id, text: value } });
+    const items = attachments.items;
+    setEncoding(true);
+    try {
+      const files = items.length ? await toAttachmentInputs(items) : null;
+      setText('');
+      attachments.reset();
+      if (inputRef.current) inputRef.current.style.height = 'auto';
+      await sendMessage({ variables: { id, text: value, attachments: files } });
+    } catch {
+      /* l'erreur est affichée par sendError */
+    } finally {
+      setEncoding(false);
+    }
   };
 
   if (loading && !data) return <Spinner animation="border" size="sm" />;
@@ -184,32 +200,49 @@ export default function SessionDetailPage() {
         </span>
       </div>
 
-      <div className="cc-input" onClick={() => inputRef.current?.focus()}>
-        <span className="cc-caret">&gt;</span>
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={text}
-          placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
-          disabled={sending}
-          onChange={(e) => {
-            setText(e.target.value);
-            e.target.style.height = 'auto';
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-        <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={sending || !text.trim()} onClick={submit}>
-          <i className="bi bi-send" />
-        </button>
+      <div className="cc-input" onClick={() => inputRef.current?.focus()} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
+        <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={sending || encoding} showButton={false} error={attachments.error} />
+        <div className="cc-input-row">
+          <span className="cc-caret">&gt;</span>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={text}
+            placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
+            disabled={sending || encoding}
+            onChange={(e) => {
+              setText(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+            }}
+            onPaste={attachments.onPaste}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          <label className="cc-attach" title="Joindre des fichiers (ou collez une image, ou déposez des fichiers ici)">
+            <i className="bi bi-paperclip" />
+            <input
+              type="file"
+              multiple
+              hidden
+              disabled={sending || encoding}
+              onChange={(e) => {
+                attachments.add(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={!canSend} onClick={() => void submit()}>
+            <i className="bi bi-send" />
+          </button>
+        </div>
       </div>
       <div className="cc-hint">
-        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</span>
+        <span>Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne · collez ou déposez des fichiers pour les joindre</span>
         <span title="Dossier de travail de la session">{technical ? (session.worktree?.path ?? session.project.workspacePath) : ''}</span>
       </div>
     </div>

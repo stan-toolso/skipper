@@ -8,6 +8,7 @@ import { contextPluginDir } from '../context/skills.js';
 import { AppError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
+import { attachmentsRoot } from '../sessions/attachments.js';
 import { worktreesRoot } from '../worktrees/service.js';
 import type { Runner, RunnerConfig, RunnerStatus, SpawnSpec } from './types.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
@@ -81,7 +82,9 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const workspace = workspacePath(project);
     const worktrees = worktreesRoot(project);
     const plugin = contextPluginDir(project);
-    await Promise.all([mkdir(worktrees, { recursive: true }), mkdir(plugin, { recursive: true })]);
+    const attachments = attachmentsRoot(project);
+    // Les dossiers montés doivent exister avant `docker run`, sinon Docker les crée appartenant à root.
+    await Promise.all([mkdir(worktrees, { recursive: true }), mkdir(plugin, { recursive: true }), mkdir(attachments, { recursive: true })]);
     const home = os.homedir();
     const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
     const gid = typeof process.getgid === 'function' ? process.getgid() : 1000;
@@ -92,8 +95,8 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
         '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
         // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
         '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
-        // Le code, les worktrees et les skills du projet, au même chemin que sur l'hôte.
-        '-v', `${workspace}:${workspace}`, '-v', `${worktrees}:${worktrees}`, '-v', `${plugin}:${plugin}`,
+        // Le code, les worktrees, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
+        '-v', `${workspace}:${workspace}`, '-v', `${worktrees}:${worktrees}`, '-v', `${plugin}:${plugin}`, '-v', `${attachments}:${attachments}`,
       ];
       // Configuration et identifiants Claude Code de l'utilisateur système (dossier ~/.claude et fichier
       // ~/.claude.json), s'ils existent : le CLI du conteneur retrouve ainsi le compte du serveur.

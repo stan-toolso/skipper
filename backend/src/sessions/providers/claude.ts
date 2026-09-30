@@ -27,6 +27,8 @@ import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { settingsService } from '../../settings/service.js';
 import { usageService } from '../../settings/usage.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
+import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.js';
+import type { Attachment } from '../types.js';
 import type { ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 
 interface ClaudeConfig {
@@ -49,9 +51,9 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
   private waiter: (() => void) | null = null;
   private closed = false;
 
-  push(text: string): void {
+  push(content: SDKUserMessage['message']['content']): void {
     if (this.closed) throw new AppError("La session n'accepte plus d'instructions");
-    this.buffer.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+    this.buffer.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
     this.waiter?.();
   }
 
@@ -211,8 +213,7 @@ export class ClaudeProvider implements SessionProvider {
     });
 
     const queue = new MessageQueue();
-    await ctx.emit('instruction', { text: ctx.initialMessage });
-    queue.push(ctx.initialMessage);
+    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments));
     await ctx.setActivity('busy');
 
     let stream: ReturnType<typeof query>;
@@ -261,10 +262,9 @@ export class ClaudeProvider implements SessionProvider {
         stream.close();
         await done;
       },
-      async sendMessage(text) {
+      sendMessage: async (text, attachments = []) => {
         await settingsService.assertBudgetAvailable();
-        await ctx.emit('instruction', { text });
-        queue.push(text);
+        queue.push(await this.instruction(ctx, text, attachments));
         await ctx.setActivity('busy');
       },
       async end() {
@@ -367,10 +367,38 @@ export class ClaudeProvider implements SessionProvider {
     return modelTotals;
   }
 
+  /**
+   * Journalise l'instruction (événement `instruction`, avec les pièces jointes sans leur contenu) et construit le
+   * message utilisateur : le texte, complété par la liste des fichiers joints et leur chemin, puis les images et
+   * PDF en blocs de contenu pour que le modèle les voie directement.
+   */
+  private async instruction(ctx: RunContext, text: string, attachments: Attachment[]): Promise<SDKUserMessage['message']['content']> {
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
+    if (!attachments.length) return text;
+    const note = attachmentsNote(attachments);
+    return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
+  }
+
   private async handleMessage(ctx: RunContext, message: SDKMessage): Promise<void> {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
     }
-    await ctx.emit(`claude.${message.type}`, message as unknown as Record<string, unknown>);
+    const payload = message.type === 'user' ? withoutBinaryData(message) : message;
+    await ctx.emit(`claude.${message.type}`, payload as unknown as Record<string, unknown>);
   }
+}
+
+/**
+ * Copie d'un message utilisateur renvoyé par le SDK sans les données base64 des blocs image et document
+ * (pièces jointes rejouées) : le fichier est déjà sur disque, inutile d'en garder une copie dans chaque événement.
+ */
+function withoutBinaryData(message: SDKMessage): SDKMessage {
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return message;
+  const stripped = content.map((block: { type?: string; source?: { type?: string; data?: string } }) =>
+    (block.type === 'image' || block.type === 'document') && block.source?.type === 'base64' && typeof block.source.data === 'string'
+      ? { ...block, source: { ...block.source, data: `[${block.source.data.length} caractères base64 omis]` } }
+      : block,
+  );
+  return { ...message, message: { ...(message as { message: object }).message, content: stripped } } as SDKMessage;
 }

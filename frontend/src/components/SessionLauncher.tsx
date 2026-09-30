@@ -4,6 +4,8 @@ import { Alert, Button, Collapse, Form, Modal } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { CREATE_SESSION, CREATE_WORKTREE, PROJECTS, PROJECT_WORKTREES, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worktree } from '../graphql/operations';
 import { canAutoFocus } from '../lib/device';
+import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
+import AttachmentChips from './AttachmentChips';
 
 /** Ouverture de la modale : « Nouvelle session » (worktree existant ou nouveau au choix) ou « Nouveau worktree » (avec une session par défaut). */
 export type LaunchMode = 'session' | 'worktree';
@@ -104,6 +106,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const [autoStart, setAutoStart] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const attachments = usePendingAttachments();
 
   const project = projects.find((p) => p.id === projectId);
   const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[]; git: { branch: string } | null } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
@@ -139,7 +142,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const creatingNewWorktree = worktreeChoice === NEW_WORKTREE;
   const sessionWanted = mode === 'session' || withSession;
   const busy = creatingSession || creatingWorktree;
-  const canSubmit = Boolean(project) && !busy && (!creatingNewWorktree || branch.trim()) && (!sessionWanted || (provider && prompt.trim()));
+  const canSubmit = Boolean(project) && !busy && (!creatingNewWorktree || branch.trim()) && (!sessionWanted || (provider && (prompt.trim() || attachments.items.length)));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,9 +160,10 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
             projectId: project.id,
             worktreeId: creatingNewWorktree || !worktreeChoice ? null : worktreeChoice,
             newWorktree: creatingNewWorktree ? { branch: branch.trim(), baseRef: baseRef.trim() || null } : null,
-            name: name.trim() || prompt.trim().split('\n')[0].slice(0, 60) || 'Session',
+            name: name.trim() || prompt.trim().split('\n')[0].slice(0, 60) || attachments.items[0]?.name.slice(0, 60) || 'Session',
             provider: provider!.type,
             prompt: prompt || null,
+            attachments: attachments.items.length ? await toAttachmentInputs(attachments.items) : null,
             config: buildConfig(provider!.configFields, values),
             autoStart,
           },
@@ -253,8 +257,12 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                       onChange={(e) => setPrompt(e.target.value)}
                       autoFocus={mode === 'session' && canAutoFocus()}
                       placeholder="Décrivez la tâche comme à un collègue. Ex. : « Ajoute une page de contact au site, avec un formulaire qui envoie un e-mail. »"
+                      onPaste={attachments.onPaste}
+                      onDrop={attachments.onDrop}
+                      onDragOver={attachments.onDragOver}
                     />
-                    <Form.Text>Vous pourrez préciser, corriger ou relancer l'agent à tout moment pendant la session.</Form.Text>
+                    <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={busy} error={attachments.error} />
+                    <Form.Text>Vous pourrez préciser, corriger ou relancer l'agent à tout moment pendant la session. Images, PDF et autres fichiers joints sont lisibles par l'agent.</Form.Text>
                   </Form.Group>
 
                   <Form.Group className="mb-3">

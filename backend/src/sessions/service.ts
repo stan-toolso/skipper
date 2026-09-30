@@ -5,10 +5,14 @@ import { worktreeService } from '../worktrees/service.js';
 import { pubSub } from '../pubsub.js';
 import { notificationService } from '../notifications/service.js';
 import { requestService } from '../requests/service.js';
+import { removeSessionAttachments, storeAttachments } from './attachments.js';
 import { sessionRepository } from './repository.js';
 import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
-import type { CreateSessionInput, Session, SessionFilter } from './types.js';
+import type { Attachment, AttachmentInput, CreateSessionInput, Session, SessionFilter } from './types.js';
+
+/** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
+const ATTACHMENTS_ONLY_TEXT = 'Voir les fichiers joints.';
 
 /** Processus en cours, indexés par id de session (mémoire du serveur). */
 const running = new Map<string, RunningHandle>();
@@ -75,10 +79,24 @@ export const sessionService = {
     }
     let session: Session;
     try {
-      session = await sessionRepository.create({ ...input, worktreeId, parentSessionId });
+      const prompt = input.prompt?.trim() || (input.attachments?.length ? ATTACHMENTS_ONLY_TEXT : input.prompt);
+      session = await sessionRepository.create({ ...input, prompt, worktreeId, parentSessionId });
     } catch (err) {
       if (createdWorktreeId) await worktreeService.delete(createdWorktreeId, true).catch(() => undefined);
       throw err;
+    }
+    if (input.attachments?.length) {
+      // Les fichiers joints à la première instruction sont enregistrés sous l'identifiant de la session : ils
+      // restent disponibles jusqu'au démarrage (session créée sans démarrage automatique) et pour le transcript.
+      try {
+        const attachments = await storeAttachments(project, session.id, input.attachments);
+        session = (await sessionRepository.update(session.id, { promptAttachments: attachments })) ?? session;
+      } catch (err) {
+        await removeSessionAttachments(project, session.id).catch(() => undefined);
+        await sessionRepository.delete(session.id).catch(() => undefined);
+        if (createdWorktreeId) await worktreeService.delete(createdWorktreeId, true).catch(() => undefined);
+        throw err;
+      }
     }
     pubSub.publish('sessionUpdated', session);
     if (parentSessionId) {
@@ -126,10 +144,10 @@ export const sessionService = {
   },
 
   /**
-   * Démarre (ou relance) la session. `initialMessage` remplace le prompt de la session
+   * Démarre (ou relance) la session. `initialMessage` (et ses `attachments`) remplace le prompt de la session
    * comme première instruction, typiquement pour reprendre une session terminée avec une nouvelle consigne.
    */
-  async start(id: string, initialMessage?: string): Promise<Session> {
+  async start(id: string, initialMessage?: string, attachments: Attachment[] = []): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (session.status === 'running') throw new AppError('La session est déjà en cours');
@@ -154,6 +172,7 @@ export const sessionService = {
         project,
         cwd,
         initialMessage: initialMessage ?? session.prompt,
+        initialAttachments: initialMessage === undefined ? session.promptAttachments : attachments,
         emit,
         setExternalId: async (externalId) => {
           await publishSession(await sessionRepository.update(id, { externalId }));
@@ -214,13 +233,16 @@ export const sessionService = {
    * Envoie une instruction à la session. Si elle est en cours, l'instruction est transmise à
    * l'agent ; si elle est terminée, la session est relancée avec cette instruction (reprise).
    */
-  async sendMessage(id: string, text: string): Promise<Session> {
-    const trimmed = text.trim();
+  async sendMessage(id: string, text: string, files?: AttachmentInput[] | null): Promise<Session> {
+    const trimmed = text.trim() || (files?.length ? ATTACHMENTS_ONLY_TEXT : '');
     if (!trimmed) throw new AppError('Le message est vide');
+    const session = await sessionRepository.findById(id);
+    if (!session) throw new NotFoundError('Session introuvable');
     const handle = running.get(id);
-    if (!handle) return this.start(id, trimmed);
-    if (!handle.sendMessage) throw new AppError("Ce type de session n'accepte pas d'instructions en cours d'exécution");
-    await handle.sendMessage(trimmed);
+    if (handle && !handle.sendMessage) throw new AppError("Ce type de session n'accepte pas d'instructions en cours d'exécution");
+    const attachments = files?.length ? await storeAttachments(await projectService.get(session.projectId), id, files) : [];
+    if (!handle) return this.start(id, trimmed, attachments);
+    await handle.sendMessage!(trimmed, attachments);
     return publishSession(await sessionRepository.findById(id));
   },
 
@@ -254,6 +276,11 @@ export const sessionService = {
 
   async delete(id: string): Promise<boolean> {
     if (running.has(id)) await this.stop(id);
+    const session = await sessionRepository.findById(id);
+    if (session) {
+      const project = await projectService.get(session.projectId).catch(() => null);
+      if (project) await removeSessionAttachments(project, id).catch((err) => console.warn('[sessions] pièces jointes non supprimées', err));
+    }
     return sessionRepository.delete(id);
   },
 

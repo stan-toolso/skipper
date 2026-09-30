@@ -360,6 +360,20 @@ mêmes options ; décocher l'interrupteur crée seulement le worktree. Côté AP
 `CreateSessionInput.newWorktree { branch, name, baseRef }` crée le worktree puis la session dans une
 même mutation (le worktree est retiré si la session ne peut pas être créée).
 
+**Fichiers joints.** La consigne (modale de lancement) comme toute instruction envoyée ensuite (zone de
+saisie de la session) peut être accompagnée de fichiers : bouton trombone, collage d'une image depuis le
+presse-papiers (capture d'écran) ou dépôt dans la zone de texte. Limites : 10 fichiers, 10 Mo par fichier,
+12 Mo par instruction, envoyés en base64 dans la mutation GraphQL (`AttachmentInput`). Le backend
+(`backend/src/sessions/attachments.ts`) les enregistre dans `WORKSPACES_ROOT/<slug>.attachments/<session>/<id>/<nom>`
+(dossier monté au même chemin dans le conteneur du runner docker) et complète l'instruction avec la liste
+des fichiers et leur chemin, lisibles par l'agent avec `Read` ; les images (png, jpeg, gif, webp jusqu'à
+5 Mo) et les PDF (jusqu'à 10 Mo) sont en plus transmis au modèle comme blocs `image` / `document`. Les
+métadonnées sont conservées (`Session.promptAttachments` pour la consigne, payload `attachments` de
+l'événement `instruction` ensuite) et le transcript les affiche (vignettes, liens) via la route
+`GET /api/attachments/<session>/<id>` (cookie de session, accès au projet requis). Supprimer la session
+supprime ses fichiers. Une instruction sans texte mais avec des fichiers reçoit le texte « Voir les
+fichiers joints. ».
+
 **Depuis un agent.** Chaque session Claude reçoit deux serveurs MCP supplémentaires, décrits dans son
 prompt système :
 
@@ -450,7 +464,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
 - `createSession(input)` (`input.worktreeId` ou `input.newWorktree { branch, name, baseRef }`), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
-- `sendSessionMessage(id, text)`, `interruptSession(id)`, `endSession(id)`
+- `sendSessionMessage(id, text, attachments)`, `interruptSession(id)`, `endSession(id)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`

@@ -459,6 +459,8 @@ type Session {
   activity: SessionActivity
   "Première instruction de la session."
   prompt: String
+  "Fichiers joints à la première instruction."
+  promptAttachments: [Attachment!]!
   config: JSON!
   externalId: String
   exitCode: Int
@@ -496,6 +498,14 @@ type Request {
   response: JSON
   createdAt: DateTime!
   answeredAt: DateTime
+}
+
+"Fichier joint à une instruction ; téléchargeable sur GET /api/attachments/<session>/<id> (cookie de session)."
+type Attachment {
+  id: ID!
+  name: String!
+  mediaType: String!
+  size: Int!
 }
 
 type SessionEvent {
@@ -765,6 +775,13 @@ input NewWorktreeInput {
   baseRef: String
 }
 
+"Fichier joint à une instruction : contenu encodé en base64 (10 Mo par fichier, 12 Mo par instruction, 10 fichiers au plus)."
+input AttachmentInput {
+  name: String!
+  mediaType: String!
+  data: String!
+}
+
 input CreateSessionInput {
   projectId: ID!
   worktreeId: ID
@@ -773,6 +790,8 @@ input CreateSessionInput {
   name: String!
   provider: String!
   prompt: String
+  "Fichiers joints à la première instruction."
+  attachments: [AttachmentInput!]
   config: JSON
   "Démarre la session immédiatement après création (défaut : true)."
   autoStart: Boolean
@@ -835,7 +854,8 @@ type Mutation {
   stopSession(id: ID!): Session!
   deleteSession(id: ID!): Boolean!
   "Envoie une instruction : transmise à l'agent si la session est en cours, sinon relance la session avec cette instruction."
-  sendSessionMessage(id: ID!, text: String!): Session!
+  "Envoie une instruction (texte et fichiers joints ; l'un des deux au moins). Une session terminée est relancée."
+  sendSessionMessage(id: ID!, text: String!, attachments: [AttachmentInput!]): Session!
   "Fin propre : l'agent termine son tour, puis la session se termine."
   endSession(id: ID!): Session!
   "Interrompt le tour en cours ; la session reste ouverte aux instructions."

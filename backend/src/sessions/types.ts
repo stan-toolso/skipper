@@ -2,6 +2,23 @@ export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'st
 /** Pour une session en cours : l'agent travaille ('busy') ou attend des instructions ('idle'). */
 export type SessionActivity = 'busy' | 'idle';
 
+/** Fichier joint à une instruction, enregistré sur le disque du serveur. */
+export interface Attachment {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  /** Chemin absolu du fichier (le même dans un conteneur runner). */
+  path: string;
+}
+
+/** Fichier envoyé par l'interface : contenu encodé en base64. */
+export interface AttachmentInput {
+  name: string;
+  mediaType: string;
+  data: string;
+}
+
 export interface Session {
   id: string;
   projectId: string;
@@ -13,6 +30,8 @@ export interface Session {
   status: SessionStatus;
   activity: SessionActivity | null;
   prompt: string | null;
+  /** Fichiers joints à la première instruction. */
+  promptAttachments: Attachment[];
   config: Record<string, unknown>;
   externalId: string | null;
   exitCode: number | null;
@@ -47,6 +66,8 @@ export interface CreateSessionInput {
   name: string;
   provider: string;
   prompt?: string | null;
+  /** Fichiers joints à la première instruction (enregistrés à la création). */
+  attachments?: AttachmentInput[] | null;
   config?: Record<string, unknown> | null;
 }
 
