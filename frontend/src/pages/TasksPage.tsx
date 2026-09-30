@@ -6,6 +6,7 @@ import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASK_L
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useDialogs } from '../components/Dialogs';
 import { canAutoFocus } from '../lib/device';
 
 
@@ -109,6 +110,7 @@ interface LaunchTarget {
 function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProject: boolean; onEdit: () => void; target?: LaunchTarget }) {
   const navigate = useNavigate();
   const [updateTask] = useMutation(UPDATE_TASK, { refetchQueries: ['Tasks'] });
+  const { confirm } = useDialogs();
   const [deleteTask] = useMutation(DELETE_TASK, { refetchQueries: ['Tasks'] });
   const [startTaskSession, { loading: starting, error: startError }] = useMutation<{ startTaskSession: { id: string } }>(START_TASK_SESSION, {
     refetchQueries: ['Tasks', 'Sidebar'],
@@ -222,8 +224,8 @@ function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProje
             variant="link"
             className="text-secondary p-0 px-1"
             title="Supprimer"
-            onClick={() => {
-              if (window.confirm(`Supprimer la tâche « ${task.title} » ?`)) deleteTask({ variables: { id: task.id } });
+            onClick={async () => {
+              if (await confirm({ title: 'Supprimer la tâche', message: `Supprimer la tâche « ${task.title} » ?`, confirmLabel: 'Supprimer', danger: true })) deleteTask({ variables: { id: task.id } });
             }}
           >
             <i className="bi bi-trash" />

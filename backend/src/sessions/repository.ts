@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { toJson } from '../db/json.js';
 import type { Attachment, CreateSessionInput, Session, SessionActivity, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
@@ -16,6 +17,7 @@ interface SessionRow {
   external_id: string | null;
   exit_code: number | null;
   error: string | null;
+  cost_usd: string | number | null;
   created_at: Date;
   updated_at: Date;
   started_at: Date | null;
@@ -46,6 +48,7 @@ function toSession(row: SessionRow): Session {
     externalId: row.external_id,
     exitCode: row.exit_code,
     error: row.error,
+    costUsd: Number(row.cost_usd ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
@@ -66,6 +69,7 @@ function toEvent(row: EventRow): SessionEvent {
 export interface SessionPatch {
   status?: SessionStatus;
   promptAttachments?: Attachment[];
+  config?: Record<string, unknown>;
   activity?: SessionActivity | null;
   externalId?: string | null;
   exitCode?: number | null;
@@ -77,6 +81,7 @@ export interface SessionPatch {
 const patchColumns: Record<keyof SessionPatch, string> = {
   status: 'status',
   promptAttachments: 'prompt_attachments',
+  config: 'config',
   activity: 'activity',
   externalId: 'external_id',
   exitCode: 'exit_code',
@@ -147,8 +152,8 @@ export const sessionRepository = {
     const params: unknown[] = [id];
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
-        // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL).
-        params.push(key === 'promptAttachments' ? JSON.stringify(patch[key]) : patch[key]);
+        // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL) ; toJson retire les \u0000.
+        params.push(key === 'promptAttachments' || key === 'config' ? toJson(patch[key]) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }
@@ -179,7 +184,7 @@ export const sessionRepository = {
     const { rows } = await pool.query<EventRow>(
       `INSERT INTO session_events (session_id, type, payload)
        VALUES ($1, $2, $3) RETURNING *`,
-      [sessionId, type, JSON.stringify(payload)],
+      [sessionId, type, toJson(payload)],
     );
     return toEvent(rows[0]);
   },

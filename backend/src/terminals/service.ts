@@ -2,7 +2,7 @@ import * as pty from 'node-pty';
 import type { WebSocket } from 'ws';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
-import { runnerFor } from '../runners/index.js';
+import { runner } from '../runners/index.js';
 import { agentGitEnv } from '../git/agentEnv.js';
 import { worktreeService } from '../worktrees/service.js';
 import { terminalRepository } from './repository.js';
@@ -44,7 +44,7 @@ export const terminalService = {
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
     const record = await terminalRepository.create(projectId, label, worktreeId ?? null);
 
-    const spec = await runnerFor(project).terminalCommand(project, cwd);
+    const spec = await runner.terminalCommand(project, cwd);
     const proc = pty.spawn(spec.command, spec.args, {
       name: 'xterm-256color',
       cols: 120,

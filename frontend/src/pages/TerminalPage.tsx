@@ -6,6 +6,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
+import { useDialogs } from '../components/Dialogs';
 import { terminalSocketUrl } from '../apollo';
 import { CLOSE_TERMINAL, DELETE_TERMINAL, TERMINAL, type Terminal } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -36,6 +37,7 @@ export default function TerminalPage() {
   const navigate = useNavigate();
   const { data, loading, error, refetch } = useQuery<{ terminal: Terminal | null }>(TERMINAL, { variables: { id } });
   const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'], onCompleted: () => refetch() });
+  const { confirm } = useDialogs();
   const [deleteTerminal] = useMutation(DELETE_TERMINAL, { refetchQueries: ['Sidebar'], onCompleted: () => navigate(`/projects/${data?.terminal?.project.id ?? ''}`) });
   const containerRef = useRef<HTMLDivElement>(null);
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
@@ -131,8 +133,8 @@ export default function TerminalPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={() => {
-              if (window.confirm('Supprimer ce terminal ?')) deleteTerminal({ variables: { id } });
+            onClick={async () => {
+              if (await confirm({ title: 'Supprimer le terminal', message: "Supprimer ce terminal ? Le shell sera fermé s'il est encore ouvert.", confirmLabel: 'Supprimer', danger: true })) deleteTerminal({ variables: { id } });
             }}
           >
             Supprimer

@@ -81,25 +81,37 @@
 .cc-assistant .cc-dot { color: var(--cc-fg); flex: 0 0 auto; }
 .cc-assistant .cc-body { flex: 1; min-width: 0; }
 
-/* Appel d'outil : ⏺ Nom(résumé) puis ⎿ résultat */
-.cc-tool { margin: 8px 0; }
+/* Appel d'outil, comme Claude Code : ⏺ Outil(arguments) puis ⎿ résultat (résumé, diff, début de sortie) */
+.cc-tool { margin: 10px 0; }
 .cc-tool .cc-call { display: flex; gap: 8px; }
+.cc-tool .cc-call.foldable { cursor: pointer; }
 .cc-tool .cc-dot { flex: 0 0 auto; }
 .cc-tool .cc-dot.pending { color: var(--cc-dim); }
 .cc-tool .cc-dot.ok { color: var(--cc-green); }
 .cc-tool .cc-dot.error { color: var(--cc-red); }
 .cc-tool .cc-name { font-weight: 600; }
-.cc-tool .cc-args { color: var(--cc-dim); }
-.cc-tool .cc-result {
-  margin-left: 22px;
-  color: var(--cc-dim);
-  cursor: pointer;
-}
-.cc-tool .cc-result::before { content: '⎿  '; color: var(--cc-dimmer); }
-.cc-tool .cc-result.error { color: var(--cc-red); }
-.cc-tool .cc-result .cc-more { color: var(--cc-dimmer); font-style: italic; }
+.cc-result { display: flex; gap: 8px; margin-left: 18px; color: var(--cc-dim); }
+.cc-tool .cc-result { cursor: pointer; }
+.cc-result .cc-elbow { flex: 0 0 auto; color: var(--cc-dimmer); }
+.cc-result .cc-result-body { flex: 1; min-width: 0; }
+.cc-result.error { color: var(--cc-red); }
+.cc-more { color: var(--cc-dimmer); }
+.cc-todo.completed { color: var(--cc-dimmer); text-decoration: line-through; }
+.cc-todo.in_progress { color: var(--cc-fg); font-weight: 600; }
 
-.cc-thinking { margin: 6px 0 6px 22px; color: var(--cc-dimmer); font-style: italic; }
+/* Diff d'une modification : numéro de ligne, signe, fond vert (ajout) ou rouge (suppression) */
+.cc-diff { margin-top: 2px; color: var(--cc-fg); }
+.cc-diff-line { display: flex; }
+.cc-diff-line.add { background: rgba(92, 184, 92, 0.16); }
+.cc-diff-line.del { background: rgba(229, 83, 75, 0.16); }
+.cc-diff-num { flex: 0 0 auto; text-align: right; color: var(--cc-dimmer); user-select: none; }
+.cc-diff-sign { flex: 0 0 auto; width: 3ch; text-align: center; user-select: none; }
+.cc-diff-line.add .cc-diff-sign { color: var(--cc-green); }
+.cc-diff-line.del .cc-diff-sign { color: var(--cc-red); }
+.cc-diff-text { flex: 1; min-width: 0; }
+
+.cc-thinking { margin: 10px 0; color: var(--cc-dimmer); font-style: italic; cursor: pointer; }
+.cc-thinking .cc-thinking-text { margin-left: 18px; }
 .cc-note { margin: 4px 0; color: var(--cc-dimmer); }
 .cc-note.error { color: var(--cc-red); }
 .cc-note.warn { color: var(--cc-yellow); }
@@ -150,6 +162,21 @@
   gap: 12px;
 }
 .cc-status .cc-spinner { color: var(--cc-accent); display: inline-block; animation: cc-blink 1s ease-in-out infinite; }
+/* Réglages modifiables en cours de session (modèle, autorisations) : listes déroulantes discrètes dans la barre d'état */
+.cc-status .cc-settings { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cc-select {
+  font: inherit;
+  color: var(--cc-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  max-width: 260px;
+  cursor: pointer;
+}
+.cc-select:hover, .cc-select:focus { border-color: var(--cc-border); color: var(--cc-fg); outline: none; }
+.cc-select:disabled { opacity: 0.5; cursor: default; }
+.cc-select option { background: #1a1a1a; color: var(--cc-fg); }
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .cc-input {
   display: flex;
@@ -199,8 +226,6 @@
 .cc-prompt .cc-prompt-body { font-family: var(--bs-font-monospace); font-size: 12.5px; }
 .cc-assistant .cc-body { font-family: var(--bs-font-sans-serif); font-size: 13.5px; }
 .cc-user { font-family: var(--bs-font-sans-serif); font-size: 13.5px; }
-.cc-tool .cc-call { font-family: var(--bs-font-sans-serif); font-size: 13px; }
-.cc-tool .cc-raw { color: var(--cc-dimmer); font-family: var(--bs-font-monospace); font-size: 11.5px; margin-left: 6px; }
 .cc-toggle { display: flex; justify-content: flex-end; gap: 6px; padding: 4px 16px 0; font-family: var(--bs-font-sans-serif); font-size: 12px; color: var(--cc-dimmer); }
 .cc-toggle label { cursor: pointer; }
 
@@ -223,7 +248,7 @@
   .cc-input { margin: 0 8px 8px; }
   .cc-hint { display: none; }
   .cc-prompt { margin: 10px 8px; padding: 8px 10px; }
-  .cc-tool .cc-result { margin-left: 12px; }
+  .cc-result { margin-left: 8px; }
 }
 
 /* Markdown des agents (réponses, questions, motifs) : compact, dans la teinte du transcript */
@@ -263,3 +288,7 @@
 .cc-md img { max-width: 100%; }
 .cc-md input[type='checkbox'] { margin-right: 6px; }
 .cc-prompt .cc-prompt-body.cc-md { white-space: normal; }
+
+/* Lien discret dans l'en-tête (planification) */
+.cc-link { background: none; border: none; padding: 0; color: var(--cc-dim); cursor: pointer; font: inherit; }
+.cc-link:hover { color: var(--cc-fg); text-decoration: underline; }

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Card, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool } from '../lib/humanize';
+import { describeTool, suggestedRules } from '../lib/humanize';
 import Markdown from './Markdown';
 
 interface Question {
@@ -17,7 +17,8 @@ interface Question {
 function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; onAnswer: (r: Record<string, unknown>) => void; busy: boolean }) {
   const [message, setMessage] = useState('');
   const p = request.payload as { toolName?: string; input?: Record<string, unknown>; suggestions?: unknown[] };
-  const canAlways = Array.isArray(p.suggestions) && p.suggestions.length > 0;
+  const rules = suggestedRules(p.suggestions);
+  const canAlways = rules.length > 0;
   const desc = describeTool(p.toolName ?? 'outil', p.input ?? {});
   const content = typeof p.input?.content === 'string' ? p.input.content : undefined;
   return (
@@ -34,9 +35,14 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
           Autoriser
         </Button>
         {canAlways && (
-          <Button size="sm" variant="outline-success" disabled={busy} onClick={() => onAnswer({ decision: 'allow', always: true })}>
-            Toujours autoriser pour cette session
-          </Button>
+          <>
+            <Button size="sm" variant="outline-success" disabled={busy} title={rules.join(', ')} onClick={() => onAnswer({ decision: 'allow', scope: 'session' })}>
+              Toujours pour cette session
+            </Button>
+            <Button size="sm" variant="outline-success" disabled={busy} title={`${rules.join(', ')} — mémorisé pour toutes les sessions du projet`} onClick={() => onAnswer({ decision: 'allow', scope: 'project' })}>
+              Toujours dans ce projet
+            </Button>
+          </>
         )}
         <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => onAnswer({ decision: 'deny', message: message || undefined })}>
           Refuser

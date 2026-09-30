@@ -17,8 +17,12 @@ import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
 import { AppError } from '../../errors.js';
+import { createGoogleMcpServer } from '../../google/mcp.js';
+import { googleAccountService, googleReadTools } from '../../google/service.js';
+import { permissionRuleService, suggestedMode } from '../../permissions/service.js';
+import { formatRule } from '../../permissions/types.js';
 import { RequestCancelledError } from '../../requests/service.js';
-import { runnerFor } from '../../runners/index.js';
+import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
@@ -146,7 +150,8 @@ export class ClaudeProvider implements SessionProvider {
     // Réglages généraux : authentification, modèle par défaut, budgets, plafond mensuel.
     const general = settingsService.claude;
     await settingsService.assertBudgetAvailable();
-    const model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
+    // Modèle courant : modifiable en cours de session (updateConfig), d'où la variable.
+    let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
     const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
@@ -159,19 +164,45 @@ export class ClaudeProvider implements SessionProvider {
     Object.assign(env, direct?.env ?? {});
 
     const abortController = new AbortController();
-    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches et des connexions.
+    // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
+    const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
+    // Compte Google du projet (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
+    const googleAccount = await googleAccountService.find(ctx.project.id);
+    // Prompt système : celui du projet, puis la description de la bibliothèque de contexte, des tâches, des connexions et du compte Google.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
       await contextService.promptSummary(ctx.project.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       await connectionService.promptSummary(ctx.project),
       sessionsPromptSummary(ctx.project),
+      await googleAccountService.promptSummary(ctx.project),
+      browserEnabled
+        ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du projet (connexions de type « site web »), tape le nom de variable d'un secret tel quel dans le champ du formulaire : le navigateur le remplace par la valeur."
+        : '',
     ]
       .filter(Boolean)
       .join('\n\n');
     // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
     const pluginDir = await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
+    // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
+    const projectRules = await permissionRuleService.allowedToolsFor(ctx.project.id);
+    // Les secrets des sites web (connexions « site web » en mode outils) sont fournis au navigateur, jamais à l'agent.
+    let browserServer: Awaited<ReturnType<typeof runner.browserMcpCommand>> | null = null;
+    if (browserEnabled) {
+      try {
+        browserServer = await runner.browserMcpCommand(ctx.project, ctx.cwd, { sessionId: ctx.session.id, secrets: await connectionService.browserSecrets(ctx.project.id) });
+      } catch (err) {
+        await direct?.dispose().catch(() => undefined);
+        throw err;
+      }
+    }
+    const disposeAll = async () => {
+      await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
+      await browserServer?.dispose().catch((e) => console.error('[browser] nettoyage des secrets du navigateur', e));
+    };
+    // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
+    const browserReadTools = ['mcp__playwright__browser_snapshot', 'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_console_messages', 'mcp__playwright__browser_network_requests', 'mcp__playwright__browser_wait_for'];
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
@@ -181,14 +212,20 @@ export class ClaudeProvider implements SessionProvider {
         connections: createConnectionsMcpServer({ project: ctx.project, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }),
         worktrees: createWorktreesMcpServer(ctx.project, ctx.session.id),
         sessions: createSessionsMcpServer(ctx.project, ctx.session.id),
+        ...(googleAccount ? { google: createGoogleMcpServer({ project: ctx.project, account: googleAccount, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
+        // Le serveur hérite de l'environnement du CLI (dans le conteneur). La configuration MCP passe sur la ligne
+        // de commande du CLI, visible de tout utilisateur du serveur (ps) : l'environnement du backend n'y figure jamais.
+        ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, ...(browserServer.env ? { env: browserServer.env } : {}) } } : {}),
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
       fallbackModel: general.fallbackModel ?? undefined,
       env,
       permissionMode: cfg.permissionMode || 'default',
-      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé.
-      allowDangerouslySkipPermissions: cfg.permissionMode === 'bypassPermissions',
+      // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé. Toujours vrai ici, car il rend
+      // ce mode *disponible* sans l'activer (drapeau --allow-dangerously-skip-permissions du CLI) : c'est la
+      // condition pour pouvoir y passer en cours de session (setPermissionMode), choix explicite de l'humain.
+      allowDangerouslySkipPermissions: true,
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
@@ -196,11 +233,11 @@ export class ClaudeProvider implements SessionProvider {
       // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
-      allowedTools: [...allowedTools, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end'],
+      allowedTools: [...allowedTools, ...projectRules, 'mcp__context', 'mcp__tasks', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', ...(browserServer ? browserReadTools : []), ...(googleAccount ? googleReadTools(googleAccount) : [])],
       // Reprise de la conversation Claude si la session a déjà tourné.
       resume: ctx.session.externalId ?? undefined,
-      // Runner local : binaire configuré ou celui du SDK ; runner docker : relais vers le conteneur du projet.
-      pathToClaudeCodeExecutable: await runnerFor(ctx.project).claudeExecutable(ctx.project),
+      // Script de relais qui exécute le CLI dans le conteneur du projet.
+      pathToClaudeCodeExecutable: await runner.claudeExecutable(ctx.project),
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
@@ -209,7 +246,7 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
+      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, browserSecrets: browserServer?.args.includes('--secrets') ?? false, googleAccount: googleAccount?.email ?? null, model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, directConnections: direct?.summary ?? [] },
     });
 
     const queue = new MessageQueue();
@@ -220,7 +257,7 @@ export class ClaudeProvider implements SessionProvider {
     try {
       stream = query({ prompt: queue, options });
     } catch (err) {
-      await direct?.dispose().catch(() => undefined);
+      await disposeAll();
       throw err;
     }
     let stopped = false;
@@ -242,7 +279,7 @@ export class ClaudeProvider implements SessionProvider {
         if (stopped || err instanceof AbortError) return { exitCode: null };
         return { exitCode: 1, error: (err as Error).message };
       } finally {
-        await direct?.dispose().catch((e) => console.error('[connections] nettoyage de l\'accès direct', e));
+        await disposeAll();
       }
       if (stopped) return { exitCode: null };
       if (!lastResult) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };
@@ -272,6 +309,25 @@ export class ClaudeProvider implements SessionProvider {
       },
       async interrupt() {
         await stream.interrupt();
+      },
+      // Changements à chaud pris en charge par le SDK : mode d'autorisation et modèle (les autres clés
+      // valent pour le prochain lancement).
+      async updateConfig(patch) {
+        const applied: string[] = [];
+        if ('permissionMode' in patch) {
+          const mode = (patch.permissionMode || 'default') as PermissionMode;
+          if (!permissionModes.includes(mode)) throw new AppError(`permissionMode invalide : ${String(mode)}`);
+          await stream.setPermissionMode(mode);
+          applied.push('permissionMode');
+        }
+        if ('model' in patch) {
+          const next = patch.model ? String(patch.model) : settingsService.claude.defaultModel ?? undefined;
+          settingsService.assertModelAllowed(next);
+          await stream.setModel(next);
+          model = next;
+          applied.push('model');
+        }
+        return applied;
       },
     };
   }
@@ -315,10 +371,24 @@ export class ClaudeProvider implements SessionProvider {
         )) as Partial<PermissionResponse>;
 
         if (response.decision === 'allow') {
+          const remember = response.scope === 'project' || response.scope === 'session' || response.always === true;
+          if (response.scope === 'project') {
+            // Mémorisé pour le projet : les prochaines sessions reçoivent la règle dans allowedTools ;
+            // la session courante l'applique tout de suite via updatedPermissions.
+            const added = await permissionRuleService.addFromSuggestions(ctx.project.id, options.suggestions ?? [], ctx.session.id);
+            if (added.length) await ctx.emit('system', { message: `Autorisation mémorisée pour le projet : ${added.map(formatRule).join(', ')}` });
+          }
+          // Pour les modifications de fichiers, le SDK suggère un changement de mode (acceptEdits) plutôt qu'une
+          // règle : updatedPermissions l'applique à la session en cours ; on l'enregistre aussi dans la configuration
+          // de la session (affichage, prochain lancement).
+          const mode = remember ? suggestedMode(options.suggestions ?? []) : null;
+          if (mode && permissionModes.includes(mode as PermissionMode) && mode !== ctx.session.config.permissionMode) {
+            await ctx.recordConfig({ permissionMode: mode });
+          }
           return {
             behavior: 'allow',
             updatedInput: input,
-            updatedPermissions: response.always ? options.suggestions : undefined,
+            updatedPermissions: remember ? options.suggestions : undefined,
             toolUseID: options.toolUseID,
           };
         }
@@ -383,6 +453,9 @@ export class ClaudeProvider implements SessionProvider {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
     }
+    // Compteur de tokens de réflexion : des dizaines de messages par seconde, sans contenu pour le transcript.
+    // Les journaliser ralentit la lecture du flux (une écriture en base chacun) et gonfle l'historique.
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'thinking_tokens') return;
     const payload = message.type === 'user' ? withoutBinaryData(message) : message;
     await ctx.emit(`claude.${message.type}`, payload as unknown as Record<string, unknown>);
   }

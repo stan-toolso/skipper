@@ -22,6 +22,7 @@ import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
 import { useSessionLauncher } from '../components/SessionLauncher';
+import { useDialogs } from '../components/Dialogs';
 
 type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount'> & { worktree?: { id: string } | null };
 type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'> & { worktree?: { id: string } | null };
@@ -62,6 +63,7 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
     },
   });
   const { openNewSession, openNewWorktree } = useSessionLauncher();
+  const { confirm, showError } = useDialogs();
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('click', close);
@@ -104,11 +106,17 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
           <button
             type="button"
             className="wb-pop-item danger"
-            onClick={() => {
-              if (!window.confirm('Supprimer ce worktree (son dossier) ? Les fichiers non validés seront perdus.')) return;
-              const deleteBranch = window.confirm('Supprimer aussi la branche locale ? (Annuler = la garder)');
+            onClick={async () => {
+              const res = await confirm({
+                title: 'Supprimer le worktree',
+                message: 'Supprimer ce worktree ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.',
+                confirmLabel: 'Supprimer',
+                danger: true,
+                checkbox: { label: 'Supprimer aussi la branche locale' },
+              });
+              if (!res) return;
               onClose();
-              deleteWorktree({ variables: { id: worktreeId, deleteBranch } }).catch((err) => window.alert(err.message));
+              deleteWorktree({ variables: { id: worktreeId, deleteBranch: res.checked } }).catch(showError);
             }}
           >
             <i className="bi bi-trash wb-icon" /> Supprimer le worktree
@@ -217,26 +225,27 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
 function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean; indent: number }) {
   const navigate = useNavigate();
   const { closeTab } = useTabs();
+  const { confirm, showError } = useDialogs();
   const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
   const [deleteSession] = useMutation(DELETE_SESSION, { refetchQueries: ['Sidebar', 'Sessions'] });
   const dot = statusDot(s.status, s.activity);
   const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
-    ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch((e: Error) => window.alert(e.message)) }] : []),
+    ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch(showError) }] : []),
     {
       label: 'Supprimer',
       icon: 'bi-trash',
       danger: true,
       separatorBefore: true,
-      onClick: () => {
-        if (!window.confirm(`Supprimer la session « ${s.name} » et son historique ?`)) return;
+      onClick: async () => {
+        if (!(await confirm({ title: 'Supprimer la session', message: `Supprimer la session « ${s.name} » et son historique ?`, confirmLabel: 'Supprimer', danger: true }))) return;
         deleteSession({ variables: { id: s.id } })
           .then(() => {
             closeTab(`/sessions/${s.id}`);
             if (active) navigate('/sessions');
           })
-          .catch((e: Error) => window.alert(e.message));
+          .catch(showError);
       },
     },
   ];
@@ -252,24 +261,25 @@ function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean;
 function TerminalRow({ t, active, indent }: { t: SidebarTerminal; active: boolean; indent: number }) {
   const navigate = useNavigate();
   const { closeTab } = useTabs();
+  const { confirm, showError } = useDialogs();
   const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'] });
   const [deleteTerminal] = useMutation(DELETE_TERMINAL, { refetchQueries: ['Sidebar'] });
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
-    ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch((e: Error) => window.alert(e.message)) }] : []),
+    ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
     {
       label: 'Supprimer',
       icon: 'bi-trash',
       danger: true,
       separatorBefore: true,
-      onClick: () => {
-        if (!window.confirm(`Supprimer le terminal « ${t.name} » ?`)) return;
+      onClick: async () => {
+        if (!(await confirm({ title: 'Supprimer le terminal', message: `Supprimer le terminal « ${t.name} » ?`, confirmLabel: 'Supprimer', danger: true }))) return;
         deleteTerminal({ variables: { id: t.id } })
           .then(() => {
             closeTab(`/terminals/${t.id}`);
             if (active) navigate('/');
           })
-          .catch((e: Error) => window.alert(e.message));
+          .catch(showError);
       },
     },
   ];
@@ -351,7 +361,7 @@ export default function Sidebar() {
   return (
     <aside className="wb-sidebar">
       <div className="wb-brand">
-        <Link to="/" title="Accueil">
+        <Link to="/" title="Tableau de bord">
           <Logo size={18} />
           Skipper
         </Link>
@@ -359,7 +369,7 @@ export default function Sidebar() {
 
       <nav className="wb-menu">
         <NavLink to="/" end className="wb-menu-item">
-          <i className="bi bi-house wb-icon" /> Accueil
+          <i className="bi bi-speedometer2 wb-icon" /> Tableau de bord
         </NavLink>
         <NavLink to="/projects" end className="wb-menu-item">
           <i className="bi bi-folder2 wb-icon" /> Projets

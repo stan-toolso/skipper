@@ -11,9 +11,9 @@ Trois notions :
   ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
-- **Environnement d'exécution (runner)** : par projet, `local` (les agents, terminaux et commandes
-  tournent sur le serveur avec l'utilisateur de Skipper) ou `docker` (un conteneur dédié au projet,
-  avec limites de mémoire et de CPU, qui ne voit que le code de ce projet).
+- **Environnement d'exécution** : chaque projet a son conteneur Docker (limites de mémoire et de CPU,
+  ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
+  s'exécute directement sur le serveur avec l'utilisateur de Skipper.
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
@@ -33,10 +33,14 @@ Trois notions :
   le CLI `claude`.
 - **Notification** : cloche en haut à droite de l'interface. Signale une demande d'un agent, une
   tâche créée ou terminée par un agent, une session terminée ou en erreur, une instruction ajoutée au
-  contexte par un agent. Notifications natives du navigateur activables en option.
-- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL) que les agents
-  peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
-  MCP et ne les voit jamais. Voir « Connexions » plus bas.
+  contexte par un agent. La notification d'une demande est marquée lue d'elle-même dès que la demande
+  est réglée (répondue, annulée avec la session, expirée au redémarrage) : la cloche ne réclame que ce
+  qui attend encore. Notifications natives du navigateur activables en option.
+- **Connexion** : accès d'un projet à un système externe (serveur SSH, base PostgreSQL, site web) que les
+  agents peuvent utiliser. Les identifiants sont chiffrés en base ; par défaut l'agent passe par des outils
+  MCP (ou, pour un site web, par le navigateur headless) et ne les voit jamais. Voir « Connexions » plus bas.
+- **Compte Google** : un compte Google relié à un projet (OAuth) pour donner aux agents accès à sa
+  messagerie Gmail et/ou à son Drive, en lecture ou en écriture. Voir « Compte Google » plus bas.
 - **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
@@ -71,7 +75,8 @@ Le provider Claude s'appuie sur le [Claude Agent SDK](https://code.claude.com/do
 (`@anthropic-ai/claude-agent-sdk`), qui embarque son propre binaire Claude Code : chaque message du
 flux `query()` est journalisé comme événement `claude.<type>`. L'authentification est celle de
 Claude Code sur la machine qui héberge le backend (connexion `claude` ou `ANTHROPIC_API_KEY`).
-`CLAUDE_BIN` permet, si besoin, d'imposer un binaire Claude Code spécifique.
+`CLAUDE_BIN` permet, si besoin, d'imposer le binaire utilisé pour les commandes d'authentification du
+compte ; les sessions utilisent toujours le CLI de l'image Docker du projet.
 
 ## Structure
 
@@ -102,14 +107,23 @@ backend/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     notifications/
       service.ts               # notifications (cloche) émises par les autres services
+    schedules/
+      cron.ts                  # expressions cron à cinq champs, fuseaux IANA, prochaine échéance
+      service.ts               # planification des sessions : ordonnanceur, exécution, compte rendu et notification
     tasks/
       service.ts               # tâches : création, mise à jour, résumé pour le prompt des agents
       mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim)
       launch.ts                # confier une tâche à un nouvel agent
+    google/
+      service.ts               # compte Google d'un projet : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
+      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
+      mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     connections/
-      service.ts               # connexions SSH / PostgreSQL d'un projet : CRUD, secrets chiffrés, test, prompt
+      service.ts               # connexions SSH / PostgreSQL / sites web d'un projet : CRUD, secrets chiffrés, test, prompt
       ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
       postgres.ts              # requêtes pg (lecture seule, tunnel), rendu des résultats, schéma
+      website.ts               # sites web : champs libres, noms de variables, fichier --secrets du navigateur, test HTTP
       mcp.ts                   # serveur MCP `connections` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema)
       runtime.ts               # mode « shell » : ssh-agent, enveloppes ssh/scp, pg_service.conf, tunnels par session
     context/
@@ -123,6 +137,7 @@ backend/
       types.ts                 # modèle Session / SessionEvent
       repository.ts            # accès SQL
       service.ts               # orchestration : création (avec worktree neuf au besoin), démarrage, arrêt, suivi des processus
+      scheduledRuns.ts         # sessions dont l'exécution en cours vient de leur planification
       mcp.ts                   # serveur MCP `sessions` (list, get, create, wait, send, end) : sessions lancées par un agent
       providers/
         provider.ts            # interface SessionProvider (à implémenter pour un nouvel agent)
@@ -135,7 +150,7 @@ frontend/
     apollo.ts                  # client GraphQL
     graphql/operations.ts      # queries / mutations + types TS
     pages/                     # projets, sessions, demandes en attente
-    components/                # layout, badge de statut, journal, carte de demande
+    components/                # layout, badge de statut, journal, carte de demande, dialogues (Dialogs.tsx)
 ```
 
 ## Utilisateurs et droits
@@ -167,9 +182,10 @@ frontend/
   projets existants.
 ## Connexions
 
-Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Deux types
-pour l'instant : **serveur SSH** et **base PostgreSQL** (éventuellement atteinte à travers une connexion
-SSH du projet, en tunnel). Chaque connexion a un nom court (`prod`, `rds-prod`) que les agents emploient.
+Page « Connexions » d'un projet (bouton sur la fiche du projet, ou menu « + » de la sidebar). Trois types :
+**serveur SSH**, **base PostgreSQL** (éventuellement atteinte à travers une connexion SSH du projet, en
+tunnel) et **site web**. Chaque connexion a un nom court (`prod`, `rds-prod`, `admin-site`) que les agents
+emploient.
 
 **Identifiants.** Les champs publics (hôte, port, utilisateur, base) sont en clair ; la clé privée ou le
 mot de passe sont chiffrés (AES-256-GCM, même clé que les jetons des Paramètres) et jamais renvoyés à
@@ -180,17 +196,33 @@ la première connexion réussie (test depuis l'interface) et vérifiée ensuite 
 Pour une base, on recommande un rôle dédié aux agents ; l'option « lecture seule » force en plus des
 transactions `READ ONLY`.
 
+**Sites web.** Une adresse (de préférence la page de connexion) et autant de champs qu'on veut, chacun
+avec une clé (`username`, `password`, `otp_secret`, `org_code`…), un libellé, et le choix **public** ou
+**secret**. Un champ public est communiqué tel quel à l'agent ; un champ secret est chiffré, jamais
+réaffiché, et désigné par un nom de variable dérivé de la connexion et de la clé (`admin-site` +
+`password` → `ADMIN_SITE_PASSWORD`). Le test depuis l'interface vérifie seulement que l'adresse répond en
+HTTP : les formulaires de connexion sont tous différents, c'est l'agent qui se connecte avec le navigateur.
+
 **Accès des agents**, au choix par connexion :
 
 - **Outils** (par défaut) : serveur MCP `connections`, exposé aux sessions Claude comme `context` et
   `tasks`. Outils `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `sql_query`, `sql_schema`. Le backend
   déchiffre, exécute, tronque les sorties, et journalise chaque usage comme événement `connection` de la
-  session (visible dans le transcript). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
+  session (visible dans le transcript avec les détails techniques). Une liste blanche de préfixes de commandes peut limiter `ssh_run`.
+- **Navigateur** (sites web, mode « outils ») : les champs secrets sont écrits, pour la durée de la
+  session, dans un fichier dotenv passé au serveur MCP Playwright (`--secrets`). Quand l'agent tape le nom
+  d'une variable dans un champ de formulaire (`browser_type`, `browser_fill_form`), Playwright saisit la
+  valeur à sa place et la masque dans ses réponses et journaux (`SECRET_ADMIN_SITE_PASSWORD`). Le prompt
+  système décrit chaque site, ses champs publics et les variables de ses secrets. La demande d'autorisation
+  montre le nom de la variable, pas la valeur. Le navigateur headless doit être activé sur le projet. Le
+  fichier vit dans `/tmp/skipper-session-<id>-browser/` (hôte ou conteneur) et disparaît en fin de session.
 - **Shell de la session** : `ssh <nom>`, `scp`, `sftp` et `psql service=<nom>` fonctionnent dans le Bash
   de l'agent. Pour la durée de la session, le backend lance un `ssh-agent` dédié (la clé est utilisable,
   pas lisible), place des enveloppes `ssh`/`scp`/`sftp` en tête du `PATH` qui imposent un fichier de
   configuration et un `known_hosts` propres à la session, ouvre les tunnels nécessaires, et écrit
-  `PGSERVICEFILE` / `PGPASSFILE`. Le mot de passe d'une base est donc lisible par l'agent dans ce mode.
+  `PGSERVICEFILE` / `PGPASSFILE`. Les champs d'un site web deviennent des variables d'environnement
+  (`ADMIN_SITE_USERNAME`, `ADMIN_SITE_PASSWORD`). Le mot de passe d'une base ou d'un site est donc lisible
+  par l'agent dans ce mode.
   Tout est détruit à la fin de la session (`/tmp/skipper-session-<id>`), et les restes d'un arrêt
   brutal sont balayés au démarrage suivant. Ce mode nécessite `ssh`, `ssh-agent`, `ssh-add` et, pour les
   bases, `psql` sur la machine du backend.
@@ -202,12 +234,40 @@ humaine (comme les autres permissions) ; on peut la désactiver par connexion (�
 faite ; en mode « ne jamais demander », les outils des connexions avec approbation sont refusés. L'accès
 shell suit le mode d'autorisation de la session (permission Bash).
 
-**Runner et isolation.** Avec le runner local, les sessions tournent sur la machine du backend, sous le
-même utilisateur système : un agent à qui l'on a tout autorisé peut lire ce que le backend lit. Le mode
-« outils » et les demandes d'approbation réduisent la surface ; le runner Docker isole réellement la
-session, mais l'accès « shell » n'y est pas disponible (pas d'agent SSH ni de tunnels dans le conteneur) :
-seuls les outils restent utilisables. La gestion des connexions est réservée aux administrateurs du
-projet ; les autres membres les voient sans les modifier.
+**Isolation.** Les sessions tournent dans le conteneur du projet, jamais sur la machine du backend : un
+agent ne peut pas lire ce que le backend lit. En contrepartie l'accès « shell » n'est pas disponible (pas
+d'agent SSH ni de tunnels dans le conteneur) : seuls les outils restent utilisables ; le code de l'accès
+direct (`connections/runtime.ts`) est conservé mais jamais activé. La gestion des connexions est réservée
+aux administrateurs du projet ; les autres membres les voient sans les modifier.
+
+## Compte Google
+
+Carte « Compte Google » de la fiche d'un projet (administrateurs du projet). On choisit le niveau d'accès
+voulu pour la **messagerie** (aucun, lecture, lecture et envoi) et pour le **Drive** (aucun, lecture,
+lecture et écriture), puis « Connecter un compte Google » ouvre l'écran de consentement Google
+(`GET /auth/google/connect?projectId=…&gmail=…&drive=…`). Le retour passe par le callback de la
+connexion des utilisateurs (`/auth/google/callback`, cookie d'état distinguant les deux flux) : c'est le
+même client OAuth (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) et aucun URI supplémentaire à déclarer ;
+il faut seulement **activer les API Gmail et Google Drive** dans le projet Google Cloud. Un seul compte par
+projet ; le relier de nouveau (autre compte ou autres accès) remplace le précédent et révoque son jeton.
+
+**Jetons.** Le flux demande un accès hors ligne (`access_type=offline`, `prompt=consent`) : Skipper reçoit
+un jeton de rafraîchissement, chiffré en base (`project_google_accounts`, AES-256-GCM comme les autres
+secrets) et jamais renvoyé à l'interface ; les jetons d'accès sont renouvelés en mémoire. Les accès
+enregistrés sont ceux réellement accordés sur l'écran Google (on peut y décocher une portée).
+« Vérifier » renouvelle le jeton et interroge le profil, Gmail et Drive ; « Déconnecter » révoque le jeton
+côté Google et supprime l'enregistrement.
+
+**Accès des agents.** Chaque session Claude du projet reçoit le serveur MCP `google`, dont les outils
+dépendent des accès : `account` ; `gmail_search` (syntaxe de recherche Gmail), `gmail_read`, `gmail_send`
+(envoi ou réponse dans le fil, accès « envoi ») ; `drive_search` (Drive partagés compris), `drive_read`
+(Docs et Slides en texte, Sheets en CSV, fichiers texte), `drive_download` (dans le dossier de travail,
+export des documents Google en docx / xlsx / pptx / pdf…), `drive_upload` (depuis le dossier de travail,
+conversion en Doc / Sheet / Slides possible) et `drive_write` (Google Doc depuis du Markdown, Sheet
+depuis du CSV, ou remplacement du contenu d'un fichier) pour l'accès « écriture ». Les lectures sont
+autorisées d'office ; les écritures passent par les demandes d'autorisation (« toujours » possible), comme
+le navigateur headless. Chaque appel est journalisé comme événement `connection` (kind `gmail` / `drive`)
+de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne les voit jamais.
 
 ## Modèle
 
@@ -215,9 +275,13 @@ projet ; les autres membres les voient sans les modifier.
   `gitUrl`, `gitBranch`. Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
-- **Connection** : `projectId`, `name`, `kind` (ssh, postgres), `settings` (hôte, port, utilisateur, base, ssl,
-  tunnel), `secrets` (chiffrés), `publicKey`, `hostKey`, `exposure` (mcp, direct, both), `readOnly`,
-  `requireApproval`, `commandAllowlist`, dernier test.
+- **Connection** : `projectId`, `name`, `kind` (ssh, postgres, website), `settings` (hôte, port, utilisateur,
+  base, ssl, tunnel ; pour un site : `url` et `fields` = clé, libellé, secret, valeur publique), `secrets`
+  (chiffrés, indexés par clé de champ pour un site), `publicKey`, `hostKey`, `exposure` (mcp, direct, both),
+  `readOnly`, `requireApproval`, `commandAllowlist`, dernier test.
+- **GoogleAccount** : `projectId` (un par projet), `email`, `name`, `avatarUrl`, `googleSub`, `gmailAccess`
+  et `driveAccess` (none, read, write), `scopes` accordées, `refreshToken` (chiffré), qui l'a relié, dernière
+  vérification.
 - **Worktree** : `projectId`, `name` (dossier), `branch`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
   créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
   extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et
@@ -230,12 +294,27 @@ projet ; les autres membres les voient sans les modifier.
   `externalId` (ex. `session_id` Claude), `exitCode`, `error`, horodatages. Le provider Claude utilise
   le mode « streaming input » du SDK : la session reste ouverte entre les tours, `sendSessionMessage`
   envoie une instruction, `interruptSession` interrompt le tour en cours (échap dans l'interface),
-  `endSession` termine proprement, `stopSession` tue le processus.
+  `endSession` termine proprement, `stopSession` tue le processus. `updateSessionConfig` modifie la
+  configuration (fusion clé par clé) : une session Claude en cours change immédiatement de modèle
+  (`setModel`) ou de mode d'autorisation (`setPermissionMode`) ; les autres clés valent pour le prochain
+  lancement. Pour que « tout autoriser » reste accessible en cours de session, le CLI est toujours
+  lancé avec `--allow-dangerously-skip-permissions` (rend ce mode disponible sans l'activer). Chaque
+  changement est journalisé comme événement `config`.
+- **PermissionRule** : autorisation d'outil mémorisée pour un projet (`toolName`, `ruleContent`
+  optionnel, ex. `Bash(git status:*)`). Créée en répondant « ne plus demander dans ce projet » à une
+  demande d'autorisation (les règles suggérées par le SDK sont enregistrées) ou à la main sur la page
+  du projet ; chaque session Claude du projet les reçoit dans `allowedTools`, donc ne redemande pas.
+  Retirer une règle ne concerne que les prochaines sessions. Pour les modifications de fichiers
+  (`Edit`, `Write`, `NotebookEdit`), le SDK ne suggère pas de règle mais le mode `acceptEdits` :
+  « ne plus demander pour cette session » passe la session dans ce mode (appliqué par le SDK et
+  enregistré dans sa configuration, événement `config`) ; « dans ce projet » mémorise en plus les
+  règles `Edit`, `Write`, `MultiEdit`, `NotebookEdit`.
 - **Request** : `sessionId`, `type` (`permission`, `question`, `input`, ... extensible), `status`
   (`pending`, `answered`, `cancelled`, `expired`), `title`, `message`, `payload`, `response`. Un
   provider appelle `ctx.ask(...)` et reçoit la réponse humaine sous forme de JSON libre. Le provider
   Claude convertit les demandes de permission du SDK (`canUseTool`) en demandes `permission`
-  (réponse `{ decision: "allow" | "deny", always?, message? }`) et l'outil `AskUserQuestion` en
+  (réponse `{ decision: "allow" | "deny", scope?: "session" | "project", message? }` : `scope` applique
+  les règles suggérées à la session ou les mémorise pour le projet) et l'outil `AskUserQuestion` en
   demandes `question` (réponse `{ answers: { "<question>": "<réponse>" } }`). Arrêter une session
   annule ses demandes en attente ; au redémarrage du serveur elles passent à `expired`.
 - **SessionEvent** : journal ordonné d'une session (`stdout`, `stderr`, `system`, `status`,
@@ -269,13 +348,16 @@ projet ; les autres membres les voient sans les modifier.
   (voir « Lancer des sessions et des worktrees ») lui permettent de déléguer du travail à d'autres
   sessions, dans des worktrees séparés.
 
-- **Runner** (`backend/src/runners/`) : `local` ou `docker` par projet (`projects.runner`,
-  `projects.runner_config` = `{ image, memory, cpus }`). Le runner fournit l'exécutable Claude Code
-  donné au SDK, la commande du terminal web et celle du provider shell. En mode docker, un conteneur
-  `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
+- **Runner** (`backend/src/runners/`) : un seul, Docker, pour tous les projets (`projects.runner_config`
+  = `{ image, memory, cpus, browser }`). Le runner fournit l'exécutable Claude Code donné au SDK, la
+  commande du terminal web et celle du provider shell ; aucun de ces processus ne tourne sur l'hôte.
+  Un conteneur `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
   worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
-  de l'utilisateur de Skipper, donc aucune traduction de chemin. Le SDK reste dans le backend : il
+  de l'utilisateur de Skipper, donc aucune traduction de chemin. Le dossier personnel est un tmpfs
+  inscriptible (512 Mo) dans lequel `~/.claude`, `~/.claude.json` et `~/.gitconfig` de l'hôte sont
+  montés : Chromium (rapports de plantage, profil) et npm (cache) exigent un dossier personnel
+  inscriptible. Le SDK reste dans le backend : il
   reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
   du CLI dans le conteneur, stdio relayés ; demandes d'autorisation, outils MCP (contexte, tâches)
   et skills fonctionnent donc sans changement. L'authentification Claude (jeton OAuth ou clé API des
@@ -283,6 +365,17 @@ projet ; les autres membres les voient sans les modifier.
   le dossier `~/.claude` de l'hôte est monté s'il existe (mode « compte du serveur »). Le terminal
   web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
   page du projet (démarrer, arrêter, recréer).
+
+- **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
+  `runner_config.browser`) : un serveur MCP Playwright (`@playwright/mcp`, Chromium sans fenêtre)
+  est déclaré à chaque session sous le nom `playwright`. C'est le CLI qui le lance, et le CLI tourne
+  dans le conteneur : la commande est donc directement `playwright-mcp` (image `skipper-runner` :
+  Playwright et Chromium sont dans `/opt/ms-playwright`), sans `docker exec`. Sa configuration passe
+  sur la ligne de commande du CLI et ne contient aucune variable d'environnement du backend. Les
+  outils d'observation (instantané de la page,
+  capture d'écran, console, réseau, attente) sont autorisés d'office ; navigation, clics et saisies
+  passent par les demandes d'autorisation, avec « toujours » possible. Les captures vont dans
+  `.playwright-mcp/` du dossier de travail. Compter 300 à 500 Mo de mémoire par session.
 
 Au redémarrage du backend, les sessions encore `running` en base passent à `interrupted`, les
 demandes en attente à `expired` et les terminaux à `closed`.
@@ -296,6 +389,17 @@ Sessions, Demandes) et un explorateur des projets dépliables avec leurs session
 demandes en attente) ; à droite un panneau à onglets où chaque page ouverte (session, projet,
 contexte, listes) est un onglet fermable. Les onglets ouverts sont mémorisés dans le navigateur.
 
+**Tableau de bord** (page d'accueil, `frontend/src/pages/DashboardPage.tsx`) : ce qui attend
+l'utilisateur sur l'ensemble de ses projets. Quatre tuiles (demandes en attente, agents au travail
+et en attente d'instructions, tâches ouvertes avec les retards, consommation du mois avec le
+plafond), puis la liste « À traiter » (demandes, sessions qui attendent des instructions, sessions
+en erreur depuis 24 h), les agents au travail, les tâches à surveiller (urgentes, hautes, en retard
+ou à échéance proche), la consommation (par jour sur 30 jours, sessions les plus coûteuses du
+mois), l'activité récente et une ligne par projet. Tout vient de la query `dashboard`
+(`backend/src/dashboard/service.ts`), agrégée en SQL et restreinte aux projets de l'utilisateur ;
+la page se rafraîchit toutes les dix secondes. Sur mobile, le tableau des projets devient une
+liste de cartes. Sans projet, la page redevient le parcours d'accueil en trois étapes.
+
 Sur les pages d'un projet ou d'un worktree (projet, session, terminal, fichiers, tâches, contexte),
 un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
 avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,
@@ -305,11 +409,26 @@ commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queri
 `gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
 
 Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de session
-(`frontend/src/components/Transcript.tsx`) reprend ses conventions : instructions préfixées par `>`,
-réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
+(`frontend/src/components/Transcript.tsx`) reproduit son affichage : instructions préfixées par `>`,
+réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Update(fichier)`,
+`Search(pattern: "x")`, `serveur - outil (MCP)(...)`) suivis de leur résultat `⎿` repliable : résumé
+pour les lectures et recherches, diff numéroté pour les modifications, début de la sortie pour les
+commandes. Les chemins sont relatifs au dossier de travail ; les messages internes des sous-agents
+sont résumés sur l'appel qui les lance ; les autorisations accordées ne laissent pas de trace (un
+refus apparaît comme l'erreur de l'outil). « Afficher les détails techniques » ajoute les lignes de
+service : démarrage, demandes d'autorisation, audit des connexions, erreurs brutes. Les événements
+sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
+seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer, échap pour interrompre, flèche haut et flèche bas pour reprendre une instruction déjà
-envoyée.
+envoyée. La barre d'état propose deux listes déroulantes pour changer le modèle et les autorisations
+de la session, y compris pendant qu'elle tourne.
+
+Aucune alerte native du navigateur (`window.alert`, `confirm`, `prompt`) : les confirmations, saisies
+courtes et messages d'erreur passent par les modales de `frontend/src/components/Dialogs.tsx`
+(`useDialogs()` → `confirm`, `prompt`, `alert`, `showError`, toutes asynchrones, fournies par
+`DialogProvider` dans `App.tsx`). Une confirmation peut porter une case à cocher (« Supprimer aussi la
+branche locale »).
 
 ## Mobile
 
@@ -396,6 +515,37 @@ sessions lancées par une même session tournent en même temps. Une session lan
 une notification `session.created` ; sa page indique « lancée par » avec un lien vers la session parente
 (`Session.parentSession`, `Session.childSessions`).
 
+## Sessions planifiées
+
+Une session peut être **planifiée** : bouton « Planifier » sur sa page (`frontend/src/components/ScheduleModal.tsx`).
+On choisit une fréquence simple (toutes les heures, tous les jours, du lundi au vendredi, toutes les
+semaines, tous les mois, à une heure donnée) ou une expression cron à cinq champs (alias `@hourly`,
+`@daily`, `@weekly`, `@monthly`), le fuseau horaire (celui du navigateur par défaut), et l'instruction
+envoyée à chaque exécution. La modale montre les prochaines échéances (`scheduleNextRuns`).
+
+À chaque échéance, l'ordonnanceur (`backend/src/schedules/service.ts`, vérification toutes les
+trente secondes) envoie l'instruction à la session comme le ferait `sendSessionMessage` : une session
+terminée est relancée en reprenant sa conversation, une session ouverte reçoit l'instruction. Par
+défaut, la session est **terminée à la fin de chaque exécution** (option « Terminer la session à la
+fin de chaque exécution ») pour ne pas garder un processus ouvert entre deux échéances. La fin d'une
+exécution produit une notification `schedule.run` avec la durée et le coût (ou `schedule.failed`), et
+les événements `schedule` jalonnent le transcript. « Exécuter maintenant » lance l'exécution sans
+attendre l'échéance ; le compte rendu de la dernière exécution est visible dans la modale.
+
+Garde-fous : une échéance est **ignorée** (notification `schedule.skipped`, raison dans le compte
+rendu) si l'agent travaille encore, si le plafond mensuel de budget est atteint, ou si
+`SKIPPER_MAX_RUNNING_SESSIONS` sessions (4 par défaut) tournent déjà. Une planification désactivée
+ne se lance pas. Les échéances manquées pendant un arrêt du serveur ne sont pas rattrapées : au
+démarrage, seule une échéance de moins de dix minutes est encore exécutée, les autres sont recalculées
+depuis maintenant. La réservation d'une échéance est atomique en base (`session_schedules.next_run_at`
+avancé sous condition), donc une seule instance du backend l'exécute. L'analyseur cron
+(`backend/src/schedules/cron.ts`) n'a pas de dépendance et gère les fuseaux IANA, changements d'heure
+compris (une heure locale inexistante est sautée).
+
+Modèle : `SessionSchedule` (`session_schedules`, une ligne par session au plus : `cron`, `timezone`,
+`prompt`, `enabled`, `endAfterRun`, `nextRunAt`, `lastRunAt`, `lastResult`), exposée par
+`Session.schedule` ; mutations `setSessionSchedule`, `clearSessionSchedule`, `runSessionScheduleNow`.
+
 ## Explorateur de fichiers et éditeur
 
 Chaque projet (et chaque worktree) a une entrée « Fichiers » dans la sidebar : un onglet
@@ -458,6 +608,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 `UNAUTHENTICATED` (pas connecté) ou `FORBIDDEN` (rôle insuffisant).
 
 - `me` (utilisateur connecté, null sinon) ; `users` (administrateurs de l'application)
+- `Project.permissionRules` ; `addProjectPermissionRule(projectId, toolName, ruleContent)`, `deleteProjectPermissionRule(id)` (membres)
 - `Project.members`, `Project.myRole` ; `inviteProjectMember(projectId, email, role)`, `updateProjectMemberRole(projectId, userId, role)`, `removeProjectMember(projectId, userId)` (administrateurs du projet)
 - `settings` (réglages Claude, statut d'authentification, modèles connus, consommation ; administrateurs de l'application) ; `updateClaudeSettings`, `setClaudeApiKey`, `clearClaudeOauthToken`, `verifyClaudeAuth(mode)`
 - Connexion OAuth : `startClaudeLogin` (URL à ouvrir), `completeClaudeLogin(id, code)`, `cancelClaudeLogin`, `claudeLogin(id)`
@@ -465,7 +616,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
 - `createSession(input)` (`input.worktreeId` ou `input.newWorktree { branch, name, baseRef }`), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
-- `sendSessionMessage(id, text, attachments)`, `interruptSession(id)`, `endSession(id)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
+- `sendSessionMessage(id, text, attachments)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`

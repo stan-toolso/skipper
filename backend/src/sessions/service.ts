@@ -7,6 +7,7 @@ import { notificationService } from '../notifications/service.js';
 import { requestService } from '../requests/service.js';
 import { removeSessionAttachments, storeAttachments } from './attachments.js';
 import { sessionRepository } from './repository.js';
+import { scheduledRuns } from './scheduledRuns.js';
 import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, Session, SessionFilter } from './types.js';
@@ -39,6 +40,29 @@ async function publishSession(session: Session | null): Promise<Session> {
   if (!session) throw new NotFoundError('Session introuvable');
   pubSub.publish('sessionUpdated', session);
   return session;
+}
+
+/**
+ * Enregistre des changements de configuration d'une session (fusion clé par clé, null retire la clé), publie la
+ * session et journalise un événement `config`. `applied` : clés prises en compte à chaud ; les autres vaudront au
+ * prochain lancement. Les valeurs déjà en place sont ignorées ; renvoie null si la session n'existe plus.
+ */
+async function persistConfig(id: string, changes: Record<string, unknown>, applied: string[]): Promise<Session | null> {
+  const session = await sessionRepository.findById(id);
+  if (!session) return null;
+  const config: Record<string, unknown> = { ...session.config };
+  const effective: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === null ? session.config[key] === undefined : session.config[key] === value) continue;
+    effective[key] = value;
+    if (value === null) delete config[key];
+    else config[key] = value;
+  }
+  if (!Object.keys(effective).length) return session;
+  const updated = await publishSession(await sessionRepository.update(id, { config }));
+  const event = await sessionRepository.addEvent(id, 'config', { changes: effective, applied });
+  pubSub.publish('sessionEvent', id, event);
+  return updated;
 }
 
 export const sessionService = {
@@ -180,18 +204,23 @@ export const sessionService = {
         setActivity: async (activity) => {
           await publishSession(await sessionRepository.update(id, { activity }));
         },
+        recordConfig: async (changes) => {
+          await persistConfig(id, changes, Object.keys(changes));
+        },
         ask: async (input, signal) => {
           await emit('request', { type: input.type, title: input.title, payload: input.payload ?? {} });
-          void notificationService.notify({
-            type: 'request.created',
-            title: input.type === 'question' ? `Question de l'agent « ${session.name} »` : `« ${session.name} » attend votre autorisation`,
-            message: input.title,
-            link: `/sessions/${id}`,
-            projectId: session.projectId,
-            sessionId: id,
-            payload: { requestType: input.type },
+          // La notification porte l'identifiant de la demande : elle sera marquée lue quand la demande sera réglée.
+          const response = await requestService.ask(id, input, signal, (request) => {
+            void notificationService.notify({
+              type: 'request.created',
+              title: input.type === 'question' ? `Question de l'agent « ${session.name} »` : `« ${session.name} » attend votre autorisation`,
+              message: input.title,
+              link: `/sessions/${id}`,
+              projectId: session.projectId,
+              sessionId: id,
+              payload: { requestType: input.type, requestId: request.id },
+            });
           });
-          const response = await requestService.ask(id, input, signal);
           await emit('request.answered', { type: input.type, title: input.title, response });
           return response;
         },
@@ -213,7 +242,8 @@ export const sessionService = {
       const error = result.error ?? (status === 'failed' ? `Code de sortie ${result.exitCode}` : null);
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
-      if (status === 'completed' || status === 'failed') {
+      // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.
+      if ((status === 'completed' || status === 'failed') && !scheduledRuns.has(id)) {
         void notificationService.notify({
           type: `session.${status}`,
           title: status === 'completed' ? `Session « ${session.name} » terminée` : `Session « ${session.name} » en erreur`,
@@ -265,6 +295,31 @@ export const sessionService = {
     return publishSession(await sessionRepository.findById(id));
   },
 
+  /**
+   * Modifie la configuration de la session (fusion clé par clé ; une valeur null ou une chaîne vide retire la clé).
+   * La configuration est validée dans son ensemble par le provider, appliquée à chaud si la session est en cours
+   * (ce que le provider sait changer : modèle, autorisations...), puis enregistrée pour les prochains lancements.
+   */
+  async updateConfig(id: string, patch: Record<string, unknown>): Promise<Session> {
+    const session = await sessionRepository.findById(id);
+    if (!session) throw new NotFoundError('Session introuvable');
+    const changes: Record<string, unknown> = {};
+    const config: Record<string, unknown> = { ...session.config };
+    for (const [key, value] of Object.entries(patch)) {
+      const cleared = value === null || value === undefined || value === '';
+      if (cleared ? session.config[key] === undefined : session.config[key] === value) continue;
+      changes[key] = cleared ? null : value;
+      if (cleared) delete config[key];
+      else config[key] = value;
+    }
+    if (!Object.keys(changes).length) return session;
+    getProvider(session.provider).validateConfig?.(config);
+    const handle = running.get(id);
+    // Appliquer d'abord à la session en cours : si le provider refuse, rien n'est enregistré.
+    const applied = handle?.updateConfig ? await handle.updateConfig(changes) : [];
+    return (await persistConfig(id, changes, applied)) ?? session;
+  },
+
   async stop(id: string): Promise<Session> {
     const handle = running.get(id);
     if (!handle) throw new AppError("La session n'est pas en cours d'exécution");
@@ -276,6 +331,8 @@ export const sessionService = {
 
   async delete(id: string): Promise<boolean> {
     if (running.has(id)) await this.stop(id);
+    // La mise à jour finale du statut (tâche de fond) doit être terminée avant de supprimer la ligne.
+    await finishing.get(id);
     const session = await sessionRepository.findById(id);
     if (session) {
       const project = await projectService.get(session.projectId).catch(() => null);

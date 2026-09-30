@@ -135,6 +135,23 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
   }
 }
 
+/** Titre lisible d'une demande : pour une autorisation, l'action demandée ("Autorisation de lire le fichier x"). */
+export function requestTitle(r: { type: string; title: string; payload: Record<string, unknown> }): string {
+  const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
+  if (r.type === 'permission' && p.toolName) return `Autorisation de ${describeTool(p.toolName, p.input ?? {}).action}`;
+  return r.title;
+}
+
+/** "à l'instant", "il y a 5 min", "il y a 3 h", "il y a 2 j", puis la date. */
+export function timeAgo(iso: string): string {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "à l'instant";
+  if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `il y a ${Math.floor(s / 3600)} h`;
+  if (s < 86400 * 30) return `il y a ${Math.floor(s / 86400)} j`;
+  return new Date(iso).toLocaleDateString();
+}
+
 export const permissionModeLabels: Record<string, string> = {
   default: 'Vous demande avant chaque action sensible',
   acceptEdits: 'Modifie les fichiers librement',
@@ -185,3 +202,21 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
   MEMBER: { label: 'Membre', hint: 'Lance des sessions et des terminaux, gère tâches et contexte.' },
   VIEWER: { label: 'Lecteur', hint: 'Consulte sessions, tâches et contexte sans rien modifier.' },
 };
+
+/**
+ * Ce que « ne plus demander » appliquerait, d'après les suggestions du SDK (PermissionUpdate) : des règles
+ * « allow » (addRules, au format Read ou Bash(git status:*)) ou, pour les modifications de fichiers, le mode
+ * acceptEdits (setMode), décrit par les outils qu'il libère.
+ */
+export function suggestedRules(suggestions: unknown[] | undefined | null): string[] {
+  const out: string[] = [];
+  for (const s of (suggestions ?? []) as Array<{ type?: string; behavior?: string; mode?: string; rules?: Array<{ toolName?: string; ruleContent?: string | null }> }>) {
+    if (s?.type === 'setMode' && s.mode) {
+      out.push(s.mode === 'acceptEdits' ? 'Modifications de fichiers (Edit, Write, NotebookEdit)' : `mode « ${permissionModeLabels[s.mode] ?? s.mode} »`);
+      continue;
+    }
+    if (s?.type !== 'addRules' || (s.behavior ?? 'allow') !== 'allow') continue;
+    for (const r of s.rules ?? []) if (r.toolName) out.push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
+  }
+  return out;
+}

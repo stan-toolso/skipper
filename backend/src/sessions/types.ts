@@ -36,6 +36,8 @@ export interface Session {
   externalId: string | null;
   exitCode: number | null;
   error: string | null;
+  /** Coût estimé cumulé (USD, tarif API), d'après le SDK. */
+  costUsd: number;
   createdAt: Date;
   updatedAt: Date;
   startedAt: Date | null;

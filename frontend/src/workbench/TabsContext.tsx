@@ -28,7 +28,7 @@ const STORAGE_KEY = 'skipper.workbench.tabs';
 
 /** Titre et type par défaut d'un onglet à partir de son chemin (les pages affinent le titre). */
 export function describeRoute(pathname: string): { title: string; kind: TabKind } {
-  if (pathname === '/') return { title: 'Accueil', kind: 'other' };
+  if (pathname === '/') return { title: 'Tableau de bord', kind: 'other' };
   if (pathname === '/projects') return { title: 'Projets', kind: 'projects' };
   if (pathname === '/projects/new') return { title: 'Nouveau projet', kind: 'project-form' };
   if (/^\/projects\/[^/]+\/edit$/.test(pathname)) return { title: 'Modifier le projet', kind: 'project-form' };

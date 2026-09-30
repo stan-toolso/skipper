@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { toJson } from '../db/json.js';
 import type { CreateRequestInput, HumanRequest, RequestStatus } from './types.js';
 
 interface RequestRow {
@@ -34,7 +35,7 @@ export const requestRepository = {
     const { rows } = await pool.query<RequestRow>(
       `INSERT INTO requests (session_id, type, title, message, payload)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [sessionId, input.type, input.title, input.message ?? null, JSON.stringify(input.payload ?? {})],
+      [sessionId, input.type, input.title, input.message ?? null, toJson(input.payload ?? {})],
     );
     return toRequest(rows[0]);
   },
@@ -80,7 +81,7 @@ export const requestRepository = {
     const { rows } = await pool.query<RequestRow>(
       `UPDATE requests SET status = $2, response = $3, answered_at = now()
        WHERE id = $1 AND status = 'pending' RETURNING *`,
-      [id, status, response === null ? null : JSON.stringify(response)],
+      [id, status, response === null ? null : toJson(response)],
     );
     return rows[0] ? toRequest(rows[0]) : null;
   },

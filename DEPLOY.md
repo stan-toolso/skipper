@@ -44,12 +44,22 @@ Le port 4000 est celui de l'API Curso : Skipper est sur 4100. Le `.env` fixe aus
 Les utilisateurs se connectent avec Google. La configuration existe dans la console Google Cloud,
 projet **Skipper** (`skipper-510112`, organisation toolso.io, compte de facturation Toolso) :
 
-- **Google Auth Platform → Audience** : « Interne », donc seuls les comptes toolso.io peuvent se
-  connecter, sans validation Google. Passer en « Externe » (avec liste d'utilisateurs test puis
-  vérification) pour inviter des comptes hors organisation.
+- **Google Auth Platform → Audience** : « Externe », statut « En production », depuis le 2026-09-29
+  (auparavant « Interne », ce qui bloquait le rattachement de comptes gmail.com à un projet, erreur
+  `org_internal`). L'application n'est pas validée par Google : l'écran de consentement affiche un
+  avertissement « Google n'a pas validé cette application », à passer par « Paramètres avancés » puis
+  « Accéder à Skipper » ; les jetons n'expirent pas et la limite est de 100 utilisateurs ayant accordé
+  des portées sensibles (compteur sur la page Audience). Ne pas revenir en « Test » : dans ce mode les
+  jetons de rafraîchissement expirent au bout de 7 jours. La connexion à Skipper reste réservée aux
+  adresses invitées sur un projet, quelle que soit l'audience Google.
+- **Google Auth Platform → Branding** : page d'accueil `https://skipper.toolso.io` et politique de
+  confidentialité `https://skipper.toolso.io/privacy.html` (`frontend/public/privacy.html`, servie sans
+  authentification et exclue du repli du service worker), exigées pour le statut « En production ».
 - **Google Auth Platform → Clients** : client « Skipper web » (application Web) avec les URI de
   redirection `https://skipper.toolso.io/auth/google/callback` et
-  `http://localhost:4000/auth/google/callback` (développement).
+  `http://localhost:4000/auth/google/callback` (développement). Le même client et le même callback
+  servent à relier un compte Google à un projet (Gmail, Drive) : pour cela, activer les API **Gmail
+  API** et **Google Drive API** dans « API et services » du projet Google Cloud (fait le 2026-09-29).
 - Le secret du client n'est visible qu'à sa création : il est dans le `.env` du poste de
   développement (jamais versionné). Le reporter dans `~/skipper/.env` sur le serveur
   (`GOOGLE_CLIENT_ID=...`, `GOOGLE_CLIENT_SECRET=...`), puis `pm2 restart skipper --update-env`.
@@ -110,11 +120,11 @@ Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<r
 l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
 dossier ou création de worktree.
 
-## Environnements isolés (runner docker)
+## Conteneurs des projets (Docker obligatoire)
 
-Un projet en mode « Conteneur Docker » a besoin de Docker sur le serveur et de l'image de base.
-**Non installé à ce jour** (et le disque de l'instance est presque plein : à agrandir ou nettoyer
-avant, l'image pèse ~600 Mo plus les caches des projets). Mise en place :
+Tout projet tourne dans son conteneur Docker : sessions, terminaux et commandes n'ont aucun mode
+d'exécution directe sur le serveur. Docker et l'image de base sont donc indispensables (installés
+depuis le 29/09/2026 ; l'image pèse ~1 Go plus les caches des projets). Mise en place :
 
 ```bash
 # Sur le serveur, en tant que skipper (sudoer)
@@ -160,6 +170,14 @@ docker créés avant cette version n'ont pas le dossier monté : « Recréer » 
 Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx
 (bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
 prochaine ouverture. L'installation exige HTTPS : c'est le cas.
+
+## Image du runner Docker
+
+Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, Playwright/Chromium pour
+l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
+(≈ 1 Go, l'ARM64 télécharge son propre Chromium), puis « Recréer » le conteneur sur la page de
+chaque projet concerné. Le serveur n'a que 1,8 Go de RAM : une session avec navigateur prend 300 à
+500 Mo de plus, donc une seule à la fois et une limite mémoire du conteneur à 1,5 Go.
 
 ## Vérifications
 

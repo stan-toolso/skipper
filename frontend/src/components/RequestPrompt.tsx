@@ -1,7 +1,7 @@
 import { useMutation } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool } from '../lib/humanize';
+import { describeTool, suggestedRules } from '../lib/humanize';
 import { canAutoFocus } from '../lib/device';
 import Markdown from './Markdown';
 
@@ -21,14 +21,21 @@ interface Question {
 function OptionList({ options, onPick, disabled }: { options: Option[]; onPick: (o: Option) => void; disabled: boolean }) {
   const [cursor, setCursor] = useState(0);
   useEffect(() => {
-    // Raccourcis clavier façon Claude Code : chiffres, flèches, Entrée.
+    // Raccourcis clavier façon Claude Code : chiffres, flèches, Entrée. Ils valent aussi quand le focus est dans la
+    // zone de saisie principale (textarea) tant qu'elle est vide : sinon un « 1 » suivi d'Entrée partirait comme
+    // instruction à l'agent. Les champs texte du prompt lui-même (input) gardent leurs touches.
     const handler = (ev: KeyboardEvent) => {
-      if (disabled || (ev.target as HTMLElement)?.tagName === 'TEXTAREA' || (ev.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (disabled || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      const target = ev.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT') return;
+      if (target?.tagName === 'TEXTAREA' && (target as HTMLTextAreaElement).value !== '') return;
       const n = Number(ev.key);
       if (n >= 1 && n <= options.length) onPick(options[n - 1]);
       else if (ev.key === 'ArrowDown') setCursor((c) => Math.min(c + 1, options.length - 1));
       else if (ev.key === 'ArrowUp') setCursor((c) => Math.max(c - 1, 0));
-      else if (ev.key === 'Enter') onPick(options[cursor]);
+      else if (ev.key === 'Enter' && !ev.shiftKey) onPick(options[cursor]);
+      else return;
+      ev.preventDefault();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -52,7 +59,9 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
   const p = request.payload as { toolName?: string; input?: Record<string, unknown>; suggestions?: unknown[] };
   const [denying, setDenying] = useState(false);
   const [message, setMessage] = useState('');
-  const canAlways = Array.isArray(p.suggestions) && p.suggestions.length > 0;
+  const rules = suggestedRules(p.suggestions);
+  const canAlways = rules.length > 0;
+  const ruleHint = rules.join(', ');
   const input = p.input ?? {};
   const desc = describeTool(p.toolName ?? 'outil', input);
   const detail = desc.detail ?? (typeof input.content === 'string' ? undefined : JSON.stringify(input, null, 2));
@@ -60,7 +69,12 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
 
   const options: Option[] = [
     { label: 'Oui, autoriser', value: () => ({ decision: 'allow' }) },
-    ...(canAlways ? [{ label: 'Oui, et ne plus demander pour cette session', value: () => ({ decision: 'allow', always: true }) } as Option] : []),
+    ...(canAlways
+      ? [
+          { label: 'Oui, et ne plus demander pour cette session', description: ruleHint, value: () => ({ decision: 'allow', scope: 'session' }) } as Option,
+          { label: 'Oui, et ne plus demander dans ce projet', description: `${ruleHint} (mémorisé pour toutes les sessions du projet)`, value: () => ({ decision: 'allow', scope: 'project' }) } as Option,
+        ]
+      : []),
     { label: "Non, et expliquer ce qu'il faut faire à la place", value: () => 'deny-with-message' as const },
   ];
 

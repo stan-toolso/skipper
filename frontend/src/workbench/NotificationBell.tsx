@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MARK_ALL_NOTIFICATIONS_READ, MARK_NOTIFICATION_READ, NOTIFICATIONS, type AppNotification } from '../graphql/operations';
+import { timeAgo } from '../lib/humanize';
 
 const icons: Record<string, string> = {
   'request.created': 'bi-hand-index-thumb',
@@ -10,15 +11,10 @@ const icons: Record<string, string> = {
   'session.completed': 'bi-check-circle',
   'session.failed': 'bi-x-octagon',
   'context.created': 'bi-journal-plus',
+  'schedule.run': 'bi-alarm',
+  'schedule.skipped': 'bi-alarm',
+  'schedule.failed': 'bi-alarm',
 };
-
-function timeAgo(iso: string): string {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "à l'instant";
-  if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
-  if (s < 86400) return `il y a ${Math.floor(s / 3600)} h`;
-  return new Date(iso).toLocaleDateString();
-}
 
 const BROWSER_KEY = 'skipper.notifications.browser';
 

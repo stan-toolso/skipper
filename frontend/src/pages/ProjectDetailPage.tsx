@@ -5,12 +5,15 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
+import GoogleAccountCard from '../components/GoogleAccountCard';
 import StatusBadge from '../components/StatusBadge';
+import { useDialogs } from '../components/Dialogs';
 
-/** Environnement d'exécution du projet : local, ou conteneur Docker avec son état et ses commandes. */
+/** Conteneur Docker du projet : son état et ses commandes. */
 function RunnerCard({ project }: { project: Project }) {
   const [start, { loading: starting, error: startError }] = useMutation(START_PROJECT_RUNNER, { refetchQueries: ['Project'] });
   const [stop, { loading: stopping, error: stopError }] = useMutation(STOP_PROJECT_RUNNER, { refetchQueries: ['Project'] });
+  const { confirm } = useDialogs();
   const [reset, { loading: resetting, error: resetError }] = useMutation(RESET_PROJECT_RUNNER, { refetchQueries: ['Project'] });
   const s = project.runnerStatus;
   const error = startError ?? stopError ?? resetError;
@@ -20,58 +23,50 @@ function RunnerCard({ project }: { project: Project }) {
     <Card className="mt-3">
       <Card.Header>Environnement d'exécution</Card.Header>
       <Card.Body className="small">
-        {project.runner === 'local' ? (
-          <p className="mb-0 text-secondary">
-            Sur le serveur, avec l'utilisateur de Skipper. Pour isoler ce projet dans un conteneur, choisissez « Conteneur Docker » via « Modifier ».
-          </p>
-        ) : (
-          <>
-            <dl className="row mb-2">
-              <dt className="col-3">Conteneur</dt>
-              <dd className="col-9">
-                <code>{s.containerName}</code>{' '}
-                <span className={s.ready ? 'text-success' : s.state === 'unavailable' ? 'text-danger' : 'text-warning'}>· {stateLabels[s.state] ?? s.state}</span>
-                {s.startedAt && <span className="text-secondary"> depuis le {new Date(s.startedAt).toLocaleString()}</span>}
-              </dd>
-              <dt className="col-3">Image</dt>
-              <dd className="col-9">
-                <code>{s.image}</code>
-              </dd>
-              <dt className="col-3">Limites</dt>
-              <dd className="col-9">
-                mémoire {s.memory} · CPU {s.cpus}
-              </dd>
-            </dl>
-            {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
-            <div className="d-flex gap-2">
-              {!s.ready && s.state !== 'unavailable' && (
-                <Button size="sm" disabled={busy} onClick={() => start({ variables: { id: project.id } })}>
-                  {starting ? 'Démarrage…' : 'Démarrer'}
-                </Button>
-              )}
-              {s.ready && (
-                <Button size="sm" variant="outline-warning" disabled={busy} onClick={() => stop({ variables: { id: project.id } })}>
-                  {stopping ? 'Arrêt…' : 'Arrêter'}
-                </Button>
-              )}
-              {s.state !== 'absent' && s.state !== 'unavailable' && (
-                <Button
-                  size="sm"
-                  variant="outline-secondary"
-                  disabled={busy}
-                  title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
-                  onClick={() => {
-                    if (window.confirm('Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.')) reset({ variables: { id: project.id } });
-                  }}
-                >
-                  {resetting ? 'Suppression…' : 'Recréer'}
-                </Button>
-              )}
-            </div>
-            <div className="text-secondary mt-2">Le conteneur démarre automatiquement à la première session ou au premier terminal.</div>
-            {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
-          </>
-        )}
+        <dl className="row mb-2">
+          <dt className="col-3">Conteneur</dt>
+          <dd className="col-9">
+            <code>{s.containerName}</code>{' '}
+            <span className={s.ready ? 'text-success' : s.state === 'unavailable' ? 'text-danger' : 'text-warning'}>· {stateLabels[s.state] ?? s.state}</span>
+            {s.startedAt && <span className="text-secondary"> depuis le {new Date(s.startedAt).toLocaleString()}</span>}
+          </dd>
+          <dt className="col-3">Image</dt>
+          <dd className="col-9">
+            <code>{s.image}</code>
+          </dd>
+          <dt className="col-3">Limites</dt>
+          <dd className="col-9">
+            mémoire {s.memory} · CPU {s.cpus}
+          </dd>
+        </dl>
+        {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
+        <div className="d-flex gap-2">
+          {!s.ready && s.state !== 'unavailable' && (
+            <Button size="sm" disabled={busy} onClick={() => start({ variables: { id: project.id } })}>
+              {starting ? 'Démarrage…' : 'Démarrer'}
+            </Button>
+          )}
+          {s.ready && (
+            <Button size="sm" variant="outline-warning" disabled={busy} onClick={() => stop({ variables: { id: project.id } })}>
+              {stopping ? 'Arrêt…' : 'Arrêter'}
+            </Button>
+          )}
+          {s.state !== 'absent' && s.state !== 'unavailable' && (
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              disabled={busy}
+              title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
+              onClick={async () => {
+                if (await confirm({ title: 'Recréer le conteneur', message: 'Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.', confirmLabel: 'Recréer', danger: true })) reset({ variables: { id: project.id } });
+              }}
+            >
+              {resetting ? 'Suppression…' : 'Recréer'}
+            </Button>
+          )}
+        </div>
+        <div className="text-secondary mt-2">Le conteneur démarre automatiquement à la première session ou au premier terminal.</div>
+        {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
       </Card.Body>
     </Card>
   );
@@ -99,6 +94,92 @@ import {
 } from '../graphql/operations';
 import { projectRoleLabels } from '../lib/humanize';
 import { useAuth } from '../auth/AuthContext';
+import { ADD_PROJECT_PERMISSION_RULE, DELETE_PROJECT_PERMISSION_RULE, PROJECT_PERMISSION_RULES, type PermissionRule } from '../graphql/operations';
+
+/** Autorisations d'outils mémorisées pour le projet (réponse « ne plus demander dans ce projet »), avec ajout et retrait. */
+function PermissionRulesCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const { data } = useQuery<{ project: { permissionRules: PermissionRule[] } | null }>(PROJECT_PERMISSION_RULES, { variables: { id: projectId }, pollInterval: 10000 });
+  const refetch = { refetchQueries: ['ProjectPermissionRules'] };
+  const [addRule, { loading: adding, error: addError }] = useMutation(ADD_PROJECT_PERMISSION_RULE, refetch);
+  const [deleteRule, { error: deleteError }] = useMutation(DELETE_PROJECT_PERMISSION_RULE, refetch);
+  const [toolName, setToolName] = useState('');
+  const [ruleContent, setRuleContent] = useState('');
+  const rules = data?.project?.permissionRules ?? [];
+  const error = addError ?? deleteError;
+  return (
+    <Card className="mt-3">
+      <Card.Header>Autorisations mémorisées</Card.Header>
+      <Card.Body className="small">
+        <p className="text-secondary">
+          Quand un agent demande une autorisation, « ne plus demander dans ce projet » enregistre la règle ici : toutes les sessions du projet l'appliquent sans redemander. Retirer une règle ne
+          concerne que les prochaines sessions.
+        </p>
+        <Table size="sm" className="mb-3 align-middle">
+          <tbody>
+            {rules.length === 0 && (
+              <tr>
+                <td className="text-secondary">Aucune autorisation mémorisée.</td>
+              </tr>
+            )}
+            {rules.map((r) => (
+              <tr key={r.id}>
+                <td>
+                  <code>{r.rule}</code>
+                  <div className="text-secondary">
+                    {new Date(r.createdAt).toLocaleDateString()}
+                    {r.createdBySession && (
+                      <>
+                        {' '}
+                        · session <Link to={`/sessions/${r.createdBySession.id}`}>{r.createdBySession.name}</Link>
+                      </>
+                    )}
+                  </div>
+                </td>
+                {canManage && (
+                  <td className="text-end" style={{ width: 90 }}>
+                    <Button size="sm" variant="outline-danger" onClick={() => deleteRule({ variables: { id: r.id } })}>
+                      Retirer
+                    </Button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+        {canManage && (
+          <Form
+            className="d-flex gap-2 align-items-end flex-wrap"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!toolName.trim()) return;
+              addRule({ variables: { projectId, toolName: toolName.trim(), ruleContent: ruleContent.trim() || null } }).then(() => {
+                setToolName('');
+                setRuleContent('');
+              });
+            }}
+          >
+            <Form.Group>
+              <Form.Label className="mb-1">Outil</Form.Label>
+              <Form.Control size="sm" value={toolName} onChange={(e) => setToolName(e.target.value)} placeholder="ex. Bash, Read, WebFetch" style={{ width: 180 }} />
+            </Form.Group>
+            <Form.Group>
+              <Form.Label className="mb-1">Motif (optionnel)</Form.Label>
+              <Form.Control size="sm" value={ruleContent} onChange={(e) => setRuleContent(e.target.value)} placeholder="ex. git status:* ou npm test:*" style={{ width: 260 }} />
+            </Form.Group>
+            <Button type="submit" size="sm" variant="outline-primary" disabled={adding || !toolName.trim()}>
+              {adding ? 'Ajout…' : 'Ajouter'}
+            </Button>
+          </Form>
+        )}
+        {error && (
+          <Alert variant="danger" className="mt-2 mb-0">
+            {error.message}
+          </Alert>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
 
 const ROLES: ProjectRole[] = ['ADMIN', 'MEMBER', 'VIEWER'];
 
@@ -109,6 +190,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
   const refetch = { refetchQueries: ['ProjectMembers'] };
   const [invite, { loading: inviting, error: inviteError }] = useMutation(INVITE_PROJECT_MEMBER, refetch);
   const [setRole, { error: roleError }] = useMutation(UPDATE_PROJECT_MEMBER_ROLE, refetch);
+  const { confirm } = useDialogs();
   const [remove, { error: removeError }] = useMutation(REMOVE_PROJECT_MEMBER, refetch);
   const [email, setEmail] = useState('');
   const [role, setRoleInput] = useState<ProjectRole>('MEMBER');
@@ -150,8 +232,8 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
                     <Button
                       size="sm"
                       variant="outline-danger"
-                      onClick={() => {
-                        if (window.confirm(`Retirer ${m.user.name} du projet ?`)) remove({ variables: { projectId, userId: m.user.id } });
+                      onClick={async () => {
+                        if (await confirm({ title: 'Retirer le membre', message: `Retirer ${m.user.name} du projet ? Cette personne n'y aura plus accès.`, confirmLabel: 'Retirer', danger: true })) remove({ variables: { projectId, userId: m.user.id } });
                       }}
                     >
                       Retirer
@@ -204,6 +286,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
 /** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
   const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
+  const { confirm } = useDialogs();
   const [deleteWorktree, { error }] = useMutation(DELETE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
   const { openNewSession, openNewWorktree } = useSessionLauncher();
   const project = data?.project;
@@ -241,9 +324,15 @@ function WorktreesCard({ projectId }: { projectId: string }) {
                   <Button
                     size="sm"
                     variant="outline-danger"
-                    onClick={() => {
-                      const deleteBranch = window.confirm(`Supprimer le worktree « ${w.branch} » ?\n\nOK : supprimer le dossier et la branche locale.\nAnnuler : ne rien faire.`);
-                      if (deleteBranch) deleteWorktree({ variables: { id: w.id, deleteBranch: window.confirm('Supprimer aussi la branche locale ? (Annuler = garder la branche)') } });
+                    onClick={async () => {
+                      const res = await confirm({
+                        title: 'Supprimer le worktree',
+                        message: `Supprimer le worktree « ${w.branch} » ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.`,
+                        confirmLabel: 'Supprimer',
+                        danger: true,
+                        checkbox: { label: 'Supprimer aussi la branche locale' },
+                      });
+                      if (res) deleteWorktree({ variables: { id: w.id, deleteBranch: res.checked } });
                     }}
                   >
                     Supprimer
@@ -277,6 +366,7 @@ export default function ProjectDetailPage() {
   useTabTitle(data?.project?.name);
   useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
+  const { confirm } = useDialogs();
   const [deleteProject, { error: deleteError }] = useMutation(DELETE_PROJECT, {
     refetchQueries: [{ query: PROJECTS }],
     onCompleted: () => navigate('/projects'),
@@ -323,8 +413,8 @@ export default function ProjectDetailPage() {
               <Button
                 size="sm"
                 variant="outline-danger"
-                onClick={() => {
-                  if (window.confirm(`Supprimer le projet « ${project.name} » et ses sessions ? Le dossier sur disque sera conservé.`)) {
+                onClick={async () => {
+                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, worktrees, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
                     deleteProject({ variables: { id } });
                   }
                 }}
@@ -404,7 +494,9 @@ export default function ProjectDetailPage() {
       </Row>
 
       <MembersCard projectId={project.id} canManage={isAdmin} />
+      <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
+      <GoogleAccountCard projectId={project.id} canManage={isAdmin} />
       <WorktreesCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>

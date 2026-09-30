@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
 import DiffView from '../components/DiffView';
+import { useDialogs } from '../components/Dialogs';
 import {
   GIT_BRANCHES,
   GIT_CHECKOUT,
@@ -146,6 +147,7 @@ export default function GitPanel() {
   const opts = { onCompleted: () => void refetchAll(), onError: (e: Error) => setActionError(e.message) };
   const [stage, { loading: staging }] = useMutation(GIT_STAGE, opts);
   const [unstage, { loading: unstaging }] = useMutation(GIT_UNSTAGE, opts);
+  const { confirm } = useDialogs();
   const [discard] = useMutation(GIT_DISCARD, opts);
   const [commit, { loading: committing }] = useMutation(GIT_COMMIT, { ...opts, onCompleted: () => { setMessage(''); void refetchAll(); } });
   const [fetch, { loading: fetching }] = useMutation(GIT_FETCH, opts);
@@ -248,8 +250,13 @@ export default function GitPanel() {
               staged={false}
               onOpen={() => setDiffReq({ kind: 'file', path: c.path, staged: false })}
               onStage={() => stage({ variables: { ...vars, paths: [c.path] } })}
-              onDiscard={() => {
-                if (window.confirm(c.untracked ? `Supprimer le fichier non suivi ${c.path} ?` : `Abandonner les modifications de ${c.path} ?`)) discard({ variables: { ...vars, paths: [c.path] } });
+              onDiscard={async () => {
+                const ok = await confirm(
+                  c.untracked
+                    ? { title: 'Supprimer le fichier', message: <>Supprimer le fichier non suivi <code>{c.path}</code> ?</>, confirmLabel: 'Supprimer', danger: true }
+                    : { title: 'Abandonner les modifications', message: <>Abandonner les modifications de <code>{c.path}</code> ? Elles seront perdues.</>, confirmLabel: 'Abandonner', danger: true },
+                );
+                if (ok) discard({ variables: { ...vars, paths: [c.path] } });
               }}
             />
           ))}

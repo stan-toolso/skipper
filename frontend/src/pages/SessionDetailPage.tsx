@@ -4,11 +4,14 @@ import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
+import { useSessionEvents } from '../lib/sessionEvents';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useDialogs } from '../components/Dialogs';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
+import ScheduleModal from '../components/ScheduleModal';
 import Transcript from '../components/Transcript';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
@@ -16,15 +19,19 @@ import {
   DELETE_SESSION,
   END_SESSION,
   INTERRUPT_SESSION,
+  PROVIDERS,
+  RUN_SESSION_SCHEDULE_NOW,
   SEND_SESSION_MESSAGE,
   SESSION,
   STOP_SESSION,
+  UPDATE_SESSION_CONFIG,
+  type ConfigField,
   type HumanRequest,
+  type Provider,
   type Session,
-  type SessionEvent,
 } from '../graphql/operations';
 
-type SessionWithEvents = Session & { events: SessionEvent[]; requests: HumanRequest[] };
+type SessionWithRequests = Session & { requests: HumanRequest[] };
 
 const TECH_KEY = 'skipper.session.technical';
 
@@ -32,12 +39,18 @@ const TECH_KEY = 'skipper.session.technical';
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error } = useQuery<{ session: SessionWithEvents | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
   const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
+  const { confirm } = useDialogs();
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
+  const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
+  const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
+  const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
+  const [scheduling, setScheduling] = useState(false);
 
   const [text, setText] = useState('');
   const [encoding, setEncoding] = useState(false);
@@ -63,13 +76,13 @@ export default function SessionDetailPage() {
   // Instructions déjà envoyées, dans l'ordre, sans doublons consécutifs : parcourues avec flèche haut / bas, comme dans Claude Code.
   const history = useMemo(() => {
     const list: string[] = [];
-    for (const e of data?.session?.events ?? []) {
+    for (const e of events) {
       if (e.type !== 'instruction') continue;
       const t = String((e.payload as { text?: unknown }).text ?? '').trim();
       if (t && list[list.length - 1] !== t) list.push(t);
     }
     return list;
-  }, [data?.session?.events]);
+  }, [events]);
   const historyPos = useRef<number | null>(null); // null : on édite le brouillon ; sinon index dans history
   const draftRef = useRef('');
   const recall = (value: string) => {
@@ -126,9 +139,26 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? interruptError ?? endError ?? stopError;
+  const actionError = sendError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError;
+  const schedule = session.schedule;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
+  // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
+  const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
+  const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
+  const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
+  const changeSetting = async (field: ConfigField, value: string) => {
+    if (field.key === 'permissionMode' && value === 'bypassPermissions') {
+      const ok = await confirm({
+        title: 'Tout autoriser',
+        message: "L'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?",
+        confirmLabel: 'Tout autoriser',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    updateConfig({ variables: { id, config: { [field.key]: value || null } } });
+  };
 
   const statusLine = pending.length
     ? `⏸ L'agent attend votre réponse ci-dessus`
@@ -161,17 +191,34 @@ export default function SessionDetailPage() {
                 </Link>
               </>
             )}
+            {schedule && (
+              <>
+                {' '}
+                ·{' '}
+                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={() => setScheduling(true)}>
+                  <i className="bi bi-alarm" />{' '}
+                  {schedule.enabled ? (schedule.nextRunAt ? `prochaine exécution le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'planification désactivée'}
+                </button>
+              </>
+            )}
             {technical && (
               <>
                 {' '}
                 · <code>{session.provider}</code>
-                {model && <> · {model}</>}
                 {session.exitCode !== null && <> · exit {session.exitCode}</>}
               </>
             )}
           </span>
         </div>
         <div className="cc-actions">
+          <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
+            <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
+          </button>
+          {schedule && !busy && (
+            <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
+              Exécuter maintenant
+            </button>
+          )}
           {busy && (
             <button type="button" className="cc-btn" title="Arrête ce que l'agent est en train de faire ; la session reste ouverte" onClick={() => interruptSession({ variables: { id } })}>
               Interrompre
@@ -190,8 +237,8 @@ export default function SessionDetailPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={() => {
-              if (window.confirm('Supprimer cette session ?')) deleteSession({ variables: { id } });
+            onClick={async () => {
+              if (await confirm({ title: 'Supprimer la session', message: 'Supprimer cette session et tout son historique ?', confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id } });
             }}
           >
             Supprimer
@@ -204,7 +251,8 @@ export default function SessionDetailPage() {
           <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
         </label>
       </div>
-      <Transcript events={session.events} technical={technical} />
+      <Transcript events={events} loading={!eventsLoaded} technical={technical} />
+      {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />
@@ -218,7 +266,45 @@ export default function SessionDetailPage() {
         <span>
           {session.error && <span className="cc-red">{session.error} · </span>}
           {actionError && <span className="cc-red">{actionError.message} · </span>}
-          <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
+          <span className="cc-settings">
+            {modelField ? (
+              <select
+                className="cc-select"
+                title="Modèle de cette session (modifiable à tout moment)"
+                aria-label="Modèle"
+                value={model ?? ''}
+                disabled={updatingConfig}
+                onChange={(e) => changeSetting(modelField, e.target.value)}
+              >
+                {model && !(modelField.options ?? []).some((o) => o.value === model) && <option value={model}>{model}</option>}
+                {(modelField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              model && <span title="Modèle de cette session">{model}</span>
+            )}
+            {permissionField ? (
+              <select
+                className="cc-select"
+                title="Autorisations de cette session (modifiables à tout moment)"
+                aria-label="Autorisations"
+                value={permissionMode}
+                disabled={updatingConfig}
+                onChange={(e) => changeSetting(permissionField, e.target.value)}
+              >
+                {(permissionField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value} title={o.description ?? undefined}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
+            )}
+          </span>
         </span>
       </div>
 
