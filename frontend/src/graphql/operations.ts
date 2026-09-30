@@ -548,18 +548,27 @@ export const SESSIONS = gql`
 export const SESSION = gql`
   ${SESSION_FIELDS}
   ${REQUEST_FIELDS}
-  query Session($id: ID!, $after: ID) {
+  query Session($id: ID!) {
     session(id: $id) {
       ...SessionFields
-      events(after: $after) {
+      requests(status: PENDING) {
+        ...RequestFields
+      }
+    }
+  }
+`;
+
+/** Une page d'événements d'une session, dans l'ordre, après l'événement `after` (voir useSessionEvents). */
+export const SESSION_EVENTS = gql`
+  query SessionEvents($id: ID!, $after: ID, $limit: Int) {
+    session(id: $id) {
+      id
+      events(after: $after, limit: $limit) {
         id
         sessionId
         type
         payload
         createdAt
-      }
-      requests(status: PENDING) {
-        ...RequestFields
       }
     }
   }

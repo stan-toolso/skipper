@@ -433,6 +433,9 @@ export class ClaudeProvider implements SessionProvider {
     if ('session_id' in message && typeof message.session_id === 'string' && message.session_id !== ctx.session.externalId) {
       await ctx.setExternalId(message.session_id);
     }
+    // Compteur de tokens de réflexion : des dizaines de messages par seconde, sans contenu pour le transcript.
+    // Les journaliser ralentit la lecture du flux (une écriture en base chacun) et gonfle l'historique.
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'thinking_tokens') return;
     await ctx.emit(`claude.${message.type}`, message as unknown as Record<string, unknown>);
   }
 }
