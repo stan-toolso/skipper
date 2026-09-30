@@ -14,6 +14,8 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   sessionId: string | null;
+  /** Branche git de la tâche (worktree dédié), conservée après suppression du worktree. */
+  branch: string | null;
   createdByType: Actor['type'];
   createdBySessionId: string | null;
   dueDate: string | null;
@@ -37,6 +39,7 @@ export interface UpdateTaskInput {
   priority?: TaskPriority | null;
   status?: TaskStatus | null;
   sessionId?: string | null;
+  branch?: string | null;
   dueDate?: string | null;
 }
 

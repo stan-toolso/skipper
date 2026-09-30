@@ -212,6 +212,10 @@ type Task {
   createdBySession: Session
   "Échéance AAAA-MM-JJ."
   dueDate: String
+  "Branche git de la tâche (worktree dédié task/<slug>), conservée après suppression du worktree."
+  branch: String
+  "Pull request GitHub de la branche de la tâche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
+  pullRequest: PullRequest
   createdAt: DateTime!
   updatedAt: DateTime!
   completedAt: DateTime
@@ -492,6 +496,121 @@ type RunnerStatus {
 type WorkspaceGit {
   branch: String!
   commit: String!
+}
+
+enum PullRequestState {
+  OPEN
+  CLOSED
+  MERGED
+}
+
+"Filtre de la liste des pull requests."
+enum PullRequestFilter {
+  OPEN
+  CLOSED
+  MERGED
+  ALL
+}
+
+enum PullRequestMergeMethod {
+  MERGE
+  SQUASH
+  REBASE
+}
+
+"Check (GitHub Actions, statut externe) du dernier commit d'une pull request."
+type PullRequestCheck {
+  name: String!
+  "SUCCESS, FAILURE, PENDING, NEUTRAL, SKIPPED"
+  state: String!
+  url: String
+}
+
+"Dernière revue d'un relecteur."
+type PullRequestReview {
+  author: String!
+  "APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING"
+  state: String!
+}
+
+"Pull request GitHub du dépôt d'un projet (lue avec le jeton de la connexion GitHub)."
+type PullRequest {
+  number: Int!
+  title: String!
+  body: String!
+  url: String!
+  state: PullRequestState!
+  isDraft: Boolean!
+  author: String
+  authorAvatarUrl: String
+  headRefName: String!
+  baseRefName: String!
+  "Branche d'un fork : pas de nettoyage possible."
+  isCrossRepository: Boolean!
+  "MERGEABLE, CONFLICTING ou UNKNOWN (calcul en cours chez GitHub)."
+  mergeable: String!
+  "CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, HAS_HOOKS, DRAFT, UNKNOWN"
+  mergeStateStatus: String!
+  "APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ou null (pas de revue exigée)."
+  reviewDecision: String
+  "État agrégé des checks du dernier commit : SUCCESS, FAILURE, PENDING, ERROR, EXPECTED, ou null (aucun check)."
+  checksState: String
+  checks: [PullRequestCheck!]!
+  reviews: [PullRequestReview!]!
+  additions: Int!
+  deletions: Int!
+  changedFiles: Int!
+  commitCount: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  mergedAt: DateTime
+  closedAt: DateTime
+  "Worktree du projet sur la branche de la PR, s'il existe."
+  worktree: Worktree
+  "Tâches du projet traitées sur la branche de la PR."
+  tasks: [Task!]!
+}
+
+"Proposition de pull request pour la branche courante d'un workspace."
+type PullRequestDraft {
+  branch: String!
+  base: String!
+  "Titre proposé : tâche liée à la branche, sinon commit unique, sinon nom de la branche."
+  title: String!
+  "Description proposée : tâche et liste des commits."
+  body: String!
+  commits: [GitCommitRef!]!
+  "La branche n'a pas de branche distante : la création la poussera."
+  needsPush: Boolean!
+  "Pull request déjà ouverte pour cette branche."
+  existing: PullRequest
+}
+
+type GitCommitRef {
+  hash: String!
+  subject: String!
+}
+
+"Résultat d'une fusion et du nettoyage demandé."
+type MergePullRequestResult {
+  pullRequest: PullRequest!
+  "Commit de fusion."
+  sha: String
+  deletedWorktreeIds: [ID!]!
+  completedTaskIds: [ID!]!
+  "Étapes de nettoyage non réalisées, avec leur raison."
+  warnings: [String!]!
+}
+
+input MergePullRequestCleanup {
+  "Supprime la branche sur GitHub."
+  deleteRemoteBranch: Boolean = true
+  "Supprime le(s) worktree(s) de la branche et la branche locale."
+  deleteWorktree: Boolean = true
+  "Arrête les sessions encore ouvertes dans ces worktrees (sinon ils sont conservés). Leur historique est gardé."
+  stopSessions: Boolean = false
+  "Passe à « terminée » les tâches ouvertes traitées sur cette branche."
+  completeTasks: Boolean = true
 }
 
 "Niveau d'accès des agents à un service Google : NONE, READ (lire, chercher) ou WRITE (aussi envoyer / déposer)."
@@ -896,6 +1015,11 @@ type Query {
   gitCommitDiff(projectId: ID!, worktreeId: ID, hash: String!): GitDiff!
   gitBranches(projectId: ID!, worktreeId: ID): [GitBranch!]!
   gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
+  "Pull requests GitHub du dépôt du projet, les plus récemment mises à jour d'abord."
+  githubPullRequests(projectId: ID!, state: PullRequestFilter = OPEN, limit: Int): [PullRequest!]!
+  githubPullRequest(projectId: ID!, number: Int!): PullRequest!
+  "Titre, description et base proposés pour une pull request de la branche courante du workspace."
+  githubPullRequestDraft(projectId: ID!, worktreeId: ID): PullRequestDraft!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tableau de bord de l'utilisateur connecté."
@@ -1078,6 +1202,10 @@ type Mutation {
   gitPush(projectId: ID!, worktreeId: ID): GitStatus!
   "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
   gitCheckout(projectId: ID!, worktreeId: ID, branch: String!, create: Boolean = false): GitStatus!
+  "Pousse la branche courante du workspace puis ouvre une pull request GitHub (base par défaut : branche du projet, sinon celle du dépôt)."
+  createPullRequest(projectId: ID!, worktreeId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
+  "Fusionne une pull request puis nettoie (branche distante, worktree, branche locale, tâches) et met à jour le dossier principal."
+  mergePullRequest(projectId: ID!, number: Int!, method: PullRequestMergeMethod = MERGE, cleanup: MergePullRequestCleanup): MergePullRequestResult!
 
   "Ouvre un shell dans le workspace du projet (ou dans un worktree)."
   createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!

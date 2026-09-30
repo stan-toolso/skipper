@@ -213,6 +213,9 @@ export interface Task {
   project: { id: string; name: string };
   session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worktree: { id: string; branch: string } | null } | null;
   createdBySession: { id: string; name: string } | null;
+  /** Présents seulement dans la query TASKS. */
+  branch?: string | null;
+  pullRequest?: PullRequestSummary | null;
 }
 
 export interface AppNotification {
@@ -1105,6 +1108,19 @@ export const TASKS = gql`
   query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority) {
     tasks(projectId: $projectId, status: $status, priority: $priority) {
       ...TaskFields
+      branch
+      pullRequest {
+        number
+        title
+        url
+        state
+        isDraft
+        mergeable
+        reviewDecision
+        checksState
+        headRefName
+        baseRefName
+      }
     }
   }
 `;
@@ -1833,6 +1849,166 @@ export const GIT_FETCH = gitMutation('GitFetch', '', 'gitFetch(projectId: $proje
 export const GIT_PULL = gitMutation('GitPull', '', 'gitPull(projectId: $projectId, worktreeId: $worktreeId)');
 export const GIT_PUSH = gitMutation('GitPush', '', 'gitPush(projectId: $projectId, worktreeId: $worktreeId)');
 export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $create: Boolean', 'gitCheckout(projectId: $projectId, worktreeId: $worktreeId, branch: $branch, create: $create)');
+
+// ---- Pull requests GitHub -----------------------------------------------------------------------
+
+export type PullRequestState = 'OPEN' | 'CLOSED' | 'MERGED';
+export type PullRequestMergeMethod = 'MERGE' | 'SQUASH' | 'REBASE';
+
+/** Champs d'une PR affichés sur une carte de tâche. */
+export interface PullRequestSummary {
+  number: number;
+  title: string;
+  url: string;
+  state: PullRequestState;
+  isDraft: boolean;
+  mergeable: string;
+  reviewDecision: string | null;
+  checksState: string | null;
+  headRefName: string;
+  baseRefName: string;
+}
+
+export interface PullRequest extends PullRequestSummary {
+  body: string;
+  author: string | null;
+  authorAvatarUrl: string | null;
+  isCrossRepository: boolean;
+  mergeStateStatus: string;
+  checks: { name: string; state: string; url: string | null }[];
+  reviews: { author: string; state: string }[];
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  commitCount: number;
+  createdAt: string;
+  updatedAt: string;
+  mergedAt: string | null;
+  worktree: { id: string; name: string; sessions: { id: string; name: string; status: SessionStatus }[] } | null;
+  tasks: { id: string; title: string; status: TaskStatus }[];
+}
+
+export interface PullRequestDraft {
+  branch: string;
+  base: string;
+  title: string;
+  body: string;
+  commits: { hash: string; subject: string }[];
+  needsPush: boolean;
+  existing: PullRequest | null;
+}
+
+export const PULL_REQUEST_FIELDS = gql`
+  fragment PullRequestFields on PullRequest {
+    number
+    title
+    body
+    url
+    state
+    isDraft
+    author
+    authorAvatarUrl
+    headRefName
+    baseRefName
+    isCrossRepository
+    mergeable
+    mergeStateStatus
+    reviewDecision
+    checksState
+    checks {
+      name
+      state
+      url
+    }
+    reviews {
+      author
+      state
+    }
+    additions
+    deletions
+    changedFiles
+    commitCount
+    createdAt
+    updatedAt
+    mergedAt
+    worktree {
+      id
+      name
+      sessions {
+        id
+        name
+        status
+      }
+    }
+    tasks {
+      id
+      title
+      status
+    }
+  }
+`;
+
+export const GITHUB_PULL_REQUESTS = gql`
+  ${PULL_REQUEST_FIELDS}
+  query GithubPullRequests($projectId: ID!, $state: PullRequestFilter, $limit: Int) {
+    githubPullRequests(projectId: $projectId, state: $state, limit: $limit) {
+      ...PullRequestFields
+    }
+  }
+`;
+
+export const GITHUB_PULL_REQUEST = gql`
+  ${PULL_REQUEST_FIELDS}
+  query GithubPullRequest($projectId: ID!, $number: Int!) {
+    githubPullRequest(projectId: $projectId, number: $number) {
+      ...PullRequestFields
+    }
+  }
+`;
+
+export const GITHUB_PULL_REQUEST_DRAFT = gql`
+  ${PULL_REQUEST_FIELDS}
+  query GithubPullRequestDraft($projectId: ID!, $worktreeId: ID) {
+    githubPullRequestDraft(projectId: $projectId, worktreeId: $worktreeId) {
+      branch
+      base
+      title
+      body
+      commits {
+        hash
+        subject
+      }
+      needsPush
+      existing {
+        ...PullRequestFields
+      }
+    }
+  }
+`;
+
+export const CREATE_PULL_REQUEST = gql`
+  ${PULL_REQUEST_FIELDS}
+  mutation CreatePullRequest($projectId: ID!, $worktreeId: ID, $title: String!, $body: String, $base: String, $draft: Boolean) {
+    createPullRequest(projectId: $projectId, worktreeId: $worktreeId, title: $title, body: $body, base: $base, draft: $draft) {
+      ...PullRequestFields
+    }
+  }
+`;
+
+export const MERGE_PULL_REQUEST = gql`
+  ${PULL_REQUEST_FIELDS}
+  mutation MergePullRequest($projectId: ID!, $number: Int!, $method: PullRequestMergeMethod, $cleanup: MergePullRequestCleanup) {
+    mergePullRequest(projectId: $projectId, number: $number, method: $method, cleanup: $cleanup) {
+      sha
+      deletedWorktreeIds
+      completedTaskIds
+      warnings
+      pullRequest {
+        ...PullRequestFields
+      }
+    }
+  }
+`;
 
 // ---- Connexions ---------------------------------------------------------------------------------
 

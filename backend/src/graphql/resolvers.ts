@@ -9,6 +9,7 @@ import { contextService, HUMAN } from '../context/service.js';
 import { dashboardService } from '../dashboard/service.js';
 import { NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
+import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
 import { googleAccountService } from '../google/service.js';
 import type { GoogleAccount } from '../google/types.js';
@@ -157,6 +158,12 @@ export const resolvers = {
     project: (t: Task) => projectService.get(t.projectId),
     session: (t: Task) => (t.sessionId ? sessionService.get(t.sessionId) : null),
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
+    pullRequest: (t: Task) => (t.branch ? pullRequestService.forBranch(t.projectId, t.branch) : null),
+  },
+
+  PullRequest: {
+    worktree: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worktreeService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
+    tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
   },
 
   Connection: {
@@ -264,6 +271,18 @@ export const resolvers = {
     gitLog: async (_: unknown, args: WorkspaceRef & { limit?: number | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return gitService.log(args, args.limit ?? undefined);
+    },
+    githubPullRequests: async (_: unknown, args: { projectId: string; state?: PullRequestFilter | null; limit?: number | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return pullRequestService.list(args.projectId, args.state ?? 'OPEN', args.limit ?? 50);
+    },
+    githubPullRequest: async (_: unknown, args: { projectId: string; number: number }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return pullRequestService.get(args.projectId, args.number);
+    },
+    githubPullRequestDraft: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return pullRequestService.draft(args);
     },
     workspaceEntries: async (_: unknown, args: WorkspaceRef & { path?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
@@ -413,6 +432,14 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       await gitService.checkout(args, args.branch, args.create ?? false);
       return gitService.status(args);
+    },
+    createPullRequest: async (_: unknown, args: WorkspaceRef & { title: string; body?: string | null; base?: string | null; draft?: boolean | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return pullRequestService.create(args, args);
+    },
+    mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return pullRequestService.merge(args.projectId, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
