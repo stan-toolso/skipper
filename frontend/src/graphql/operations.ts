@@ -1331,8 +1331,31 @@ export interface ServerState {
   autoResumeInterrupted: boolean;
 }
 
+/** Fenêtre de limite d'utilisation de l'abonnement Claude. */
+export interface ClaudeRateLimitWindow {
+  type: string;
+  label: string;
+  utilization: number | null;
+  resetsAt: string | null;
+  observedAt: string;
+}
+
+/** Dernier état connu des limites d'utilisation de l'abonnement Claude. */
+export interface ClaudeRateLimits {
+  updatedAt: string;
+  status: 'allowed' | 'allowed_warning' | 'rejected' | string;
+  rateLimitType: string | null;
+  rateLimitLabel: string | null;
+  resetsAt: string | null;
+  overageStatus: string | null;
+  overageDisabledReason: string | null;
+  isUsingOverage: boolean;
+  windows: ClaudeRateLimitWindow[];
+}
+
 export interface AppSettings {
   claude: ClaudeSettings;
+  rateLimits: ClaudeRateLimits | null;
   server: ServerState;
   claudeAuth: ClaudeAuthStatus;
   github: GithubAuthStatus;
@@ -1351,6 +1374,23 @@ export interface ClaudeLogin {
 
 export const APP_SETTINGS_FIELDS = gql`
   fragment AppSettingsFields on AppSettings {
+    rateLimits {
+      updatedAt
+      status
+      rateLimitType
+      rateLimitLabel
+      resetsAt
+      overageStatus
+      overageDisabledReason
+      isUsingOverage
+      windows {
+        type
+        label
+        utilization
+        resetsAt
+        observedAt
+      }
+    }
     server {
       maintenance
       maintenanceSince
@@ -2306,6 +2346,7 @@ export interface DashboardUsage {
   previous7DaysUsd: number;
   byDay: { day: string; usd: number }[];
   topSessions: { sessionId: string | null; sessionName: string | null; projectName: string | null; usd: number }[];
+  rateLimits: ClaudeRateLimits | null;
 }
 
 export interface DashboardProject {
@@ -2367,6 +2408,23 @@ export const DASHBOARD = gql`
           sessionName
           projectName
           usd
+        }
+        rateLimits {
+          updatedAt
+          status
+          rateLimitType
+          rateLimitLabel
+          resetsAt
+          overageStatus
+          overageDisabledReason
+          isUsingOverage
+          windows {
+            type
+            label
+            utilization
+            resetsAt
+            observedAt
+          }
         }
       }
       projects {

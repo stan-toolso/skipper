@@ -1,6 +1,6 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { Notification, NotifyInput } from './types.js';
+import type { Notification, NotificationScope, NotifyInput } from './types.js';
 
 interface Row {
   id: string;
@@ -11,6 +11,7 @@ interface Row {
   project_id: string | null;
   session_id: string | null;
   payload: Record<string, unknown>;
+  admins_only: boolean;
   read_at: Date | null;
   created_at: Date;
 }
@@ -24,6 +25,7 @@ const toNotification = (r: Row): Notification => ({
   projectId: r.project_id,
   sessionId: r.session_id,
   payload: r.payload ?? {},
+  adminsOnly: Boolean(r.admins_only),
   readAt: r.read_at,
   createdAt: r.created_at,
 });
@@ -31,9 +33,9 @@ const toNotification = (r: Row): Notification => ({
 export const notificationRepository = {
   async create(input: NotifyInput): Promise<Notification> {
     const { rows } = await pool.query<Row>(
-      `INSERT INTO notifications (type, title, message, link, project_id, session_id, payload)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [input.type, input.title, input.message ?? null, input.link ?? null, input.projectId ?? null, input.sessionId ?? null, toJson(input.payload ?? {})],
+      `INSERT INTO notifications (type, title, message, link, project_id, session_id, payload, admins_only)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [input.type, input.title, input.message ?? null, input.link ?? null, input.projectId ?? null, input.sessionId ?? null, toJson(input.payload ?? {}), input.adminsOnly ?? false],
     );
     return toNotification(rows[0]);
   },
@@ -41,16 +43,20 @@ export const notificationRepository = {
     const { rows } = await pool.query<Row>('SELECT * FROM notifications WHERE id = $1', [id]);
     return rows[0] ? toNotification(rows[0]) : null;
   },
-  async list(opts: { unreadOnly?: boolean; limit?: number; projectIds?: string[] } = {}): Promise<Notification[]> {
-    const where = [...(opts.unreadOnly ? ['read_at IS NULL'] : []), ...(opts.projectIds ? ['(project_id IS NULL OR project_id = ANY($2::uuid[]))'] : [])];
+  async list(opts: { unreadOnly?: boolean; limit?: number } & NotificationScope = {}): Promise<Notification[]> {
+    const where = [
+      ...(opts.unreadOnly ? ['read_at IS NULL'] : []),
+      ...(opts.projectIds ? ['(project_id IS NULL OR project_id = ANY($2::uuid[]))'] : []),
+      ...(opts.admin ? [] : ['NOT admins_only']),
+    ];
     const params: unknown[] = [Math.min(opts.limit ?? 50, 200)];
     if (opts.projectIds) params.push(opts.projectIds);
     const { rows } = await pool.query<Row>(`SELECT * FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $1`, params);
     return rows.map(toNotification);
   },
-  async countUnread(projectIds?: string[]): Promise<number> {
+  async countUnread({ projectIds, admin }: NotificationScope = {}): Promise<number> {
     const { rows } = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM notifications WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''}`,
+      `SELECT count(*)::text AS n FROM notifications WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''} ${admin ? '' : 'AND NOT admins_only'}`,
       projectIds ? [projectIds] : [],
     );
     return Number(rows[0].n);
@@ -78,9 +84,9 @@ export const notificationRepository = {
     );
     return rowCount ?? 0;
   },
-  async markAllRead(projectIds?: string[]): Promise<number> {
+  async markAllRead({ projectIds, admin }: NotificationScope = {}): Promise<number> {
     const { rowCount } = await pool.query(
-      `UPDATE notifications SET read_at = now() WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''}`,
+      `UPDATE notifications SET read_at = now() WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''} ${admin ? '' : 'AND NOT admins_only'}`,
       projectIds ? [projectIds] : [],
     );
     return rowCount ?? 0;

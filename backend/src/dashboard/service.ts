@@ -223,7 +223,7 @@ async function recentSessions(projectIds: string[]): Promise<Session[]> {
 }
 
 export const dashboardService = {
-  async build(userId: string, projectIds: string[], now = new Date()): Promise<Dashboard> {
+  async build(userId: string, projectIds: string[], now = new Date(), isAdmin = false): Promise<Dashboard> {
     const monthStart = currentMonthStart(now);
     const [projects, stats, extra, usageData, pending, running, recent, tasks, unread] = await Promise.all([
       projectService.listForUser(userId),
@@ -234,7 +234,7 @@ export const dashboardService = {
       projectIds.length ? sessionService.list({ projectIds, status: 'running', limit: 50 }) : Promise.resolve([]),
       recentSessions(projectIds),
       attentionTasks(projectIds),
-      notificationService.countUnread(projectIds),
+      notificationService.countUnread({ projectIds, admin: isAdmin }),
     ]);
 
     const perProject: DashboardProject[] = projects.map((project) => {
