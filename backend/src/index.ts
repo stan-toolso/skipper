@@ -19,6 +19,7 @@ import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { loginService } from './settings/login.js';
 import { settingsService } from './settings/service.js';
+import { serverSettings } from './settings/server.js';
 import { terminalService } from './terminals/service.js';
 import { attachTerminalWebSockets } from './terminals/ws.js';
 
@@ -30,6 +31,7 @@ async function main() {
   if (applied.length) console.log(`[db] migrations appliquées : ${applied.join(', ')}`);
 
   await settingsService.load();
+  await serverSettings.load();
   console.log(`[settings] authentification Claude : ${settingsService.claude.authMode}`);
 
   const recovered = await sessionService.recoverAfterRestart();
@@ -86,16 +88,27 @@ async function main() {
   attachTerminalWebSockets(server);
   server.listen(config.port, () => {
     console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
+    // Reprise automatique des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur).
+    sessionService
+      .resumeInterruptedAfterRestart()
+      .then((ids) => ids.length && console.log(`[sessions] ${ids.length} session(s) interrompue(s) relancée(s)`))
+      .catch((err) => console.error('[sessions] reprise automatique', err));
   });
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    // Avant tout await : pm2 envoie le signal à tout l'arbre de processus, les agents meurent en même
+    // temps que nous et leur fin doit être vue comme une interruption, pas comme une erreur.
+    sessionService.beginShutdown();
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`[http] ${signal} reçu, arrêt en cours...`);
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
     scheduleService.stop();
     loginService.shutdown();
-    await terminalService.shutdown();
-    await sessionService.shutdown();
+    const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
+    if (interrupted) console.log(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);
     await pool.end();
     process.exit(0);
   };

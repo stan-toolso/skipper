@@ -6,6 +6,7 @@ import { pubSub } from '../pubsub.js';
 import { cleanupService } from '../sessions/cleanup.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { scheduledRuns } from '../sessions/scheduledRuns.js';
+import { serverSettings } from '../settings/server.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
 import { settingsService } from '../settings/service.js';
@@ -148,6 +149,7 @@ export const scheduleService = {
 
     if (session.status === 'running' && session.activity !== 'idle') return skip("l'agent travaillait encore");
     if (scheduledRuns.has(id)) return skip("l'exécution précédente n'est pas terminée");
+    if (session.status !== 'running' && serverSettings.maintenance) return skip('le serveur est en maintenance');
     if (session.status !== 'running') {
       try {
         await settingsService.assertBudgetAvailable();

@@ -55,6 +55,11 @@ export interface RunContext {
    */
   ask(input: CreateRequestInput, signal?: AbortSignal): Promise<Record<string, unknown>>;
   /**
+   * true dès que le serveur a commencé à s'arrêter. pm2 envoie son signal à tout l'arbre de
+   * processus : l'agent peut mourir avant que `stop()` ne soit appelé, sa fin n'est alors pas une erreur.
+   */
+  isServerStopping(): boolean;
+  /**
    * Enregistre un changement de configuration que le provider a déjà appliqué lui-même (ex. mode
    * d'autorisation accordé par l'humain en réponse à une demande), pour l'afficher et le conserver au prochain lancement.
    */
@@ -64,6 +69,11 @@ export interface RunContext {
 export interface RunResult {
   exitCode: number | null;
   error?: string;
+  /**
+   * true si le flux a été fermé par le serveur (`stop()` ou arrêt du serveur), par opposition à
+   * un agent qui s'est terminé de lui-même ; `error` est alors absent.
+   */
+  closedByServer?: boolean;
 }
 
 /** Poignée sur une exécution en cours, permettant de l'attendre ou de l'arrêter. */

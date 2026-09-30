@@ -172,11 +172,13 @@ pm2 restart skipper --update-env               # seulement si le backend a chang
 
 Les migrations SQL sont appliquées automatiquement au démarrage du backend.
 
-**Redémarrer le backend arrête toutes les sessions en cours** : les processus Claude Code sont des
-enfants du backend (statut « Arrêtée », parfois « Flux terminé sans message de résultat » ; un message
-relance la conversation). Avant `pm2 restart`, vérifier qu'aucun agent ne travaille ou n'attend de
-réponse (barre latérale, tableau de bord), y compris l'agent qui déploie depuis Skipper. Si seul
-`frontend/` a changé (`git diff --stat HEAD@{1} HEAD`), le `cp` suffit : pas de redémarrage.
+**Redémarrer le backend interrompt toutes les sessions en cours** : les processus Claude Code sont des
+enfants du backend. Elles passent à « Interrompue » (pas en erreur) et un message relance la
+conversation. Avant `pm2 restart`, activer **Paramètres → Serveur → mode maintenance** : aucune
+nouvelle session ne démarre, et la page indique combien d'agents travaillent encore. Redémarrer quand
+ce nombre est à zéro si possible, en pensant à l'agent qui déploie depuis Skipper. Le redémarrage
+lève la maintenance. Si seul `frontend/` a changé (`git diff --stat HEAD@{1} HEAD`), le `cp`
+suffit : pas de redémarrage.
 
 `npm run build` et `npm run typecheck` valident le schéma GraphQL du backend et toutes les requêtes du
 front contre ce schéma (`frontend/scripts/check-graphql.mjs`) : tsc ne voit pas l'intérieur des gabarits

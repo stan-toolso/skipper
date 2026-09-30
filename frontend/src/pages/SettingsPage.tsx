@@ -8,9 +8,11 @@ import {
   COMPLETE_CLAUDE_LOGIN,
   LOGOUT_SERVER_CLAUDE,
   SET_CLAUDE_API_KEY,
+  SET_MAINTENANCE_MODE,
   SETTINGS,
   START_CLAUDE_LOGIN,
   UPDATE_CLAUDE_SETTINGS,
+  UPDATE_SERVER_SETTINGS,
   VERIFY_CLAUDE_AUTH,
   type AppSettings,
   type ClaudeAuthMode,
@@ -489,9 +491,85 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
   );
 }
 
-type SettingsSection = 'claude' | 'github';
+/** Serveur : mode maintenance avant un redémarrage, et reprise automatique des sessions interrompues. */
+function ServerSection({ settings }: { settings: AppSettings }) {
+  const { server } = settings;
+  const [message, setMessage] = useState(server.maintenanceMessage ?? '');
+  const [setMaintenance, { loading: switching, error: maintenanceError }] = useMutation(SET_MAINTENANCE_MODE);
+  const [updateServer, { loading: saving, error: serverError }] = useMutation(UPDATE_SERVER_SETTINGS);
+  useEffect(() => setMessage(server.maintenanceMessage ?? ''), [server.maintenanceMessage]);
+  const idle = server.activeSessions - server.busySessions;
 
-/** Configuration générale, par service : Claude (authentification, modèles, budgets) et GitHub (connexion, dépôts). */
+  return (
+    <>
+      <Card className="mb-4">
+        <Card.Header>
+          Mode maintenance
+          {server.maintenance ? <Badge bg="warning" text="dark" className="ms-2">actif</Badge> : <Badge bg="secondary" className="ms-2">inactif</Badge>}
+        </Card.Header>
+        <Card.Body>
+          <p className="text-secondary small">
+            Avant de redémarrer le backend, activez la maintenance : aucune session ne démarre plus (création, relance par un message,
+            tâche confiée à un agent), les sessions en cours continuent. Quand plus aucun agent ne travaille, redémarrez : les sessions
+            encore ouvertes passent à « interrompue » et reprennent au prochain message. Le redémarrage lève la maintenance.
+          </p>
+          <div className="mb-3">
+            <strong>{server.activeSessions}</strong> session{server.activeSessions > 1 ? 's' : ''} active{server.activeSessions > 1 ? 's' : ''} sur ce serveur
+            {server.activeSessions > 0 && (
+              <span className="text-secondary">
+                {' '}: {server.busySessions} au travail, {idle} en attente d’instructions
+              </span>
+            )}
+            {server.maintenance && server.busySessions === 0 && <Badge bg="success" className="ms-2">redémarrage possible</Badge>}
+          </div>
+          {server.maintenance && server.maintenanceSince && <div className="small text-secondary mb-2">Active depuis le {fmtDate(server.maintenanceSince)}.</div>}
+          <Form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void setMaintenance({ variables: { enabled: !server.maintenance, message: message.trim() || null } }).catch(() => undefined);
+            }}
+          >
+            <InputGroup>
+              <Form.Control
+                placeholder="Message affiché aux utilisateurs (optionnel), ex. mise à jour vers 18 h"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                disabled={server.maintenance}
+              />
+              <Button type="submit" variant={server.maintenance ? 'outline-secondary' : 'warning'} disabled={switching}>
+                {server.maintenance ? 'Lever la maintenance' : 'Activer la maintenance'}
+              </Button>
+            </InputGroup>
+          </Form>
+          <ErrorLine error={maintenanceError} />
+        </Card.Body>
+      </Card>
+      <Card className="mb-4">
+        <Card.Header>Sessions interrompues par un redémarrage</Card.Header>
+        <Card.Body>
+          <Form.Check
+            type="switch"
+            id="auto-resume-interrupted"
+            label="Relancer automatiquement au démarrage les sessions coupées en plein travail"
+            checked={server.autoResumeInterrupted}
+            disabled={saving}
+            onChange={(e) => void updateServer({ variables: { autoResumeInterrupted: e.target.checked } }).catch(() => undefined)}
+          />
+          <Form.Text className="text-secondary">
+            Seules les sessions dont l’agent travaillait au moment de l’arrêt sont relancées, trois au plus et si l’arrêt date de moins
+            d’une heure. L’agent reçoit une instruction lui expliquant la coupure. Chaque session relancée occupe plusieurs centaines de Mo
+            de mémoire. Les sessions qui attendaient des instructions restent interrompues : un message suffit à les reprendre.
+          </Form.Text>
+          <ErrorLine error={serverError} />
+        </Card.Body>
+      </Card>
+    </>
+  );
+}
+
+type SettingsSection = 'claude' | 'github' | 'server';
+
+/** Configuration générale, par service : Claude (authentification, modèles, budgets), GitHub (connexion, dépôts) et serveur (maintenance). */
 export default function SettingsPage() {
   useTabTitle('Paramètres');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -516,6 +594,12 @@ export default function SettingsPage() {
             {data.settings.github.connected ? <Badge bg="success" className="ms-2">connecté</Badge> : <Badge bg="secondary" className="ms-2">non connecté</Badge>}
           </Nav.Link>
         </Nav.Item>
+        <Nav.Item>
+          <Nav.Link eventKey="server">
+            <i className="bi bi-hdd-rack me-1" /> Serveur
+            {data.settings.server.maintenance && <Badge bg="warning" text="dark" className="ms-2">maintenance</Badge>}
+          </Nav.Link>
+        </Nav.Item>
       </Nav>
       <div style={{ maxWidth: 1100 }}>
         {section === 'claude' && (
@@ -526,6 +610,7 @@ export default function SettingsPage() {
           </>
         )}
         {section === 'github' && <GithubSection />}
+        {section === 'server' && <ServerSection settings={data.settings} />}
       </div>
     </>
   );

@@ -251,6 +251,8 @@ export class ClaudeProvider implements SessionProvider {
 
     const queue = new MessageQueue();
     queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments));
+    // Un tour est en cours entre l'envoi d'une instruction et le message `result` qui le clôt.
+    let turnInProgress = true;
     await ctx.setActivity('busy');
 
     let stream: ReturnType<typeof query>;
@@ -261,6 +263,9 @@ export class ClaudeProvider implements SessionProvider {
       throw err;
     }
     let stopped = false;
+    // Flux fermé par le serveur : `stop()` appelé, ou arrêt du serveur en cours (le CLI a pu recevoir
+    // le signal de pm2 avant que `stop()` ne soit appelé, son flux se termine alors tout seul).
+    const closedByServer = () => stopped || ctx.isServerStopping();
 
     const done: Promise<RunResult> = (async () => {
       let lastResult: SDKResultMessage | undefined;
@@ -283,19 +288,22 @@ export class ClaudeProvider implements SessionProvider {
           if (message.type === 'result') {
             // Fin d'un tour : l'agent attend la prochaine instruction.
             lastResult = message;
+            turnInProgress = false;
             previousModelTotals = await this.recordUsage(ctx, message, previousModelTotals, model ?? 'default');
             await ctx.setContextTokens?.(contextTokens);
             await ctx.setActivity('idle');
           }
         }
       } catch (err) {
-        if (stopped || err instanceof AbortError) return { exitCode: null };
+        if (closedByServer() || err instanceof AbortError) return { exitCode: null, closedByServer: true };
         return { exitCode: 1, error: (err as Error).message };
       } finally {
         await disposeAll();
       }
-      if (stopped) return { exitCode: null };
-      if (!lastResult) return { exitCode: 1, error: 'Flux terminé sans message de résultat' };
+      if (closedByServer()) return { exitCode: null, closedByServer: true };
+      // Le flux s'est terminé de lui-même au milieu d'un tour : le processus Claude Code s'est arrêté
+      // (plantage, mémoire épuisée...), ce qui n'a rien à voir avec une fermeture par le serveur.
+      if (!lastResult || turnInProgress) return { exitCode: 1, error: "Le processus Claude Code s'est arrêté au milieu d'un tour (flux terminé sans message de résultat)" };
       if (lastResult.is_error) {
         const detail = lastResult.subtype === 'success' ? lastResult.result : lastResult.errors.join('\n');
         return { exitCode: 1, error: `${lastResult.subtype}${detail ? ` : ${detail}` : ''}` };
@@ -315,6 +323,7 @@ export class ClaudeProvider implements SessionProvider {
       sendMessage: async (text, attachments = []) => {
         await settingsService.assertBudgetAvailable();
         queue.push(await this.instruction(ctx, text, attachments));
+        turnInProgress = true;
         await ctx.setActivity('busy');
       },
       async end() {
