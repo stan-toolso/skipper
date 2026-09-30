@@ -8,7 +8,7 @@ import { useSessionEvents } from '../lib/sessionEvents';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 
-import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
+import { bypassConnectionsWarning, permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
@@ -149,11 +149,12 @@ export default function SessionDetailPage() {
   const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
   const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
   const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
+  const bypassWarning = (force = false) => (force || permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(session.project.approvalConnections ?? []) : null);
   const changeSetting = async (field: ConfigField, value: string) => {
     if (field.key === 'permissionMode' && value === 'bypassPermissions') {
       const ok = await confirm({
         title: 'Tout autoriser',
-        message: "L'agent agira sans aucune confirmation, y compris pour les commandes. Continuer ?",
+        message: `L'agent agira sans aucune confirmation, y compris pour les commandes.${bypassWarning(true) ? ` ${bypassWarning(true)}` : ''} Continuer ?`,
         confirmLabel: 'Tout autoriser',
         danger: true,
       });
@@ -274,6 +275,11 @@ export default function SessionDetailPage() {
         <span>
           {session.error && <span className="cc-red">{session.error} · </span>}
           {actionError && <span className="cc-red">{actionError.message} · </span>}
+          {bypassWarning() && (
+            <span className="cc-yellow" title={bypassWarning() ?? undefined}>
+              ⚠ connexions non soumises ·{' '}
+            </span>
+          )}
           <span className="cc-settings">
             {modelField ? (
               <select

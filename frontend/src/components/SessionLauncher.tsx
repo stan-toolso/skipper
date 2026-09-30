@@ -4,6 +4,7 @@ import { Alert, Button, Collapse, Form, Modal } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { CREATE_SESSION, CREATE_WORKTREE, PROJECTS, PROJECT_WORKTREES, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worktree } from '../graphql/operations';
 import { canAutoFocus } from '../lib/device';
+import { bypassConnectionsWarning } from '../lib/humanize';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import AttachmentChips from './AttachmentChips';
 
@@ -25,6 +26,25 @@ export function useSessionLauncher(): LauncherState {
   const ctx = useContext(LauncherContext);
   if (!ctx) throw new Error('useSessionLauncher doit être utilisé dans un SessionLauncherProvider');
   return ctx;
+}
+
+/** Dernier mode d'autorisation choisi dans ce formulaire, par projet (prioritaire sur le réglage du projet). */
+const permissionModeKey = (projectId: string) => `skipper.launcher.permissionMode.${projectId}`;
+
+function lastPermissionMode(projectId: string): string | null {
+  try {
+    return localStorage.getItem(permissionModeKey(projectId));
+  } catch {
+    return null;
+  }
+}
+
+function rememberPermissionMode(projectId: string, mode: string): void {
+  try {
+    localStorage.setItem(permissionModeKey(projectId), mode);
+  } catch {
+    /* stockage indisponible (navigation privée) : rien à mémoriser */
+  }
 }
 
 /** Valeur spéciale du sélecteur de branche : créer un worktree. */
@@ -110,7 +130,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const attachments = usePendingAttachments();
 
   const project = projects.find((p) => p.id === projectId);
-  const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[]; git: { branch: string } | null } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
+  const { data: worktreesData } = useQuery<{ project: { id: string; worktrees: Worktree[]; git: { branch: string } | null; defaultPermissionMode: string; approvalConnections: string[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
   const worktrees = worktreesData?.project?.worktrees ?? [];
   const mainBranch = worktreesData?.project?.git?.branch;
   const provider = providers.find((p) => p.type === providerType);
@@ -140,6 +160,16 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
     setValues(defaults);
   }, [provider]);
 
+  // Mode d'autorisation : le dernier choisi dans ce formulaire pour le projet, sinon celui du projet.
+  const projectDefaultMode = worktreesData?.project?.id === projectId ? worktreesData?.project?.defaultPermissionMode : undefined;
+  useEffect(() => {
+    const field = provider?.configFields.find((f) => f.key === 'permissionMode');
+    if (!field || !projectId || !projectDefaultMode) return;
+    const saved = lastPermissionMode(projectId);
+    const mode = saved && (field.options ?? []).some((o) => o.value === saved) ? saved : projectDefaultMode;
+    setValues((prev) => ({ ...prev, permissionMode: mode }));
+  }, [provider, projectId, projectDefaultMode]);
+
   const creatingNewWorktree = worktreeChoice === NEW_WORKTREE;
   const sessionWanted = mode === 'session' || withSession;
   const busy = creatingSession || creatingWorktree;
@@ -157,6 +187,8 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
         onClose();
         return;
       }
+      const chosenMode = values.permissionMode;
+      if (chosenMode && provider!.configFields.some((f) => f.key === 'permissionMode')) rememberPermissionMode(project.id, chosenMode);
       const res = await createSession({
         variables: {
           input: {
@@ -182,6 +214,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const mainFields = (provider?.configFields ?? []).filter((f) => !f.advanced);
   const advancedFields = (provider?.configFields ?? []).filter((f) => f.advanced);
   const setValue = (key: string) => (v: string) => setValues((prev) => ({ ...prev, [key]: v }));
+  const bypassWarning = values.permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(worktreesData?.project?.approvalConnections ?? []) : null;
 
   const worktreeFields = (
     <div className="ps-3 border-start mb-3">
@@ -297,6 +330,12 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                   {mainFields.map((field) => (
                     <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
                   ))}
+                  {bypassWarning && (
+                    <Alert variant="warning" className="py-2 small">
+                      <i className="bi bi-exclamation-triangle me-1" />
+                      {bypassWarning}
+                    </Alert>
+                  )}
 
                   {hasInstruction && <Form.Check className="mb-3" type="switch" id="launch-autostart" label="Démarrer tout de suite" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />}
 
