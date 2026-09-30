@@ -6,6 +6,7 @@ import { CREATE_WORKSPACE_ENTRY, DELETE_WORKSPACE_ENTRY, RENAME_WORKSPACE_ENTRY,
 import { fileIcon, filesUrl, formatSize, useWorkspaceFromRoute, type WorkspaceRef } from '../lib/files';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useDialogs } from '../components/Dialogs';
 
 
 interface TreeActions {
@@ -116,6 +117,7 @@ export default function FilesPage() {
   const onError = (err: Error) => setActionError(err.message);
   const [createEntry] = useMutation(CREATE_WORKSPACE_ENTRY, { refetchQueries: ['WorkspaceEntries'], onError });
   const [renameEntry] = useMutation(RENAME_WORKSPACE_ENTRY, { refetchQueries: ['WorkspaceEntries'], onError });
+  const { confirm, prompt } = useDialogs();
   const [deleteEntry] = useMutation(DELETE_WORKSPACE_ENTRY, { refetchQueries: ['WorkspaceEntries'], onError });
 
   if (loading && !info) return <Spinner animation="border" size="sm" />;
@@ -124,23 +126,39 @@ export default function FilesPage() {
   const wsRef: WorkspaceRef = { projectId: info.projectId, worktreeId: info.worktreeId };
 
   const actions: TreeActions = {
-    createEntry: (dir, kind) => {
-      const name = window.prompt(kind === 'dir' ? 'Nom du nouveau dossier' : 'Nom du nouveau fichier');
-      if (!name?.trim()) return;
+    createEntry: async (dir, kind) => {
+      const name = await prompt({
+        title: kind === 'dir' ? 'Nouveau dossier' : 'Nouveau fichier',
+        message: dir ? <>Dans <code>{dir}</code></> : 'À la racine du dossier de travail',
+        placeholder: kind === 'dir' ? 'nom-du-dossier' : 'nom-du-fichier.ext',
+        confirmLabel: 'Créer',
+      });
+      if (!name) return;
       setActionError(null);
-      const p = dir ? `${dir}/${name.trim()}` : name.trim();
+      const p = dir ? `${dir}/${name}` : name;
       createEntry({ variables: { ...wsRef, path: p, kind } });
       if (dir && !expanded.has(dir)) toggle(dir);
     },
-    renameEntry: (entry) => {
-      const name = window.prompt('Nouveau nom', entry.name);
-      if (!name?.trim() || name.trim() === entry.name) return;
+    renameEntry: async (entry) => {
+      const name = await prompt({ title: 'Renommer', message: <code>{entry.path}</code>, defaultValue: entry.name, confirmLabel: 'Renommer' });
+      if (!name || name === entry.name) return;
       setActionError(null);
       const parent = entry.path.includes('/') ? entry.path.slice(0, entry.path.lastIndexOf('/')) : '';
-      renameEntry({ variables: { ...wsRef, path: entry.path, newPath: parent ? `${parent}/${name.trim()}` : name.trim() } });
+      renameEntry({ variables: { ...wsRef, path: entry.path, newPath: parent ? `${parent}/${name}` : name } });
     },
-    deleteEntry: (entry) => {
-      if (!window.confirm(`Supprimer ${entry.kind === 'dir' ? 'le dossier' : 'le fichier'} « ${entry.path} »${entry.kind === 'dir' ? ' et tout son contenu' : ''} ?`)) return;
+    deleteEntry: async (entry) => {
+      const ok = await confirm({
+        title: entry.kind === 'dir' ? 'Supprimer le dossier' : 'Supprimer le fichier',
+        message: (
+          <>
+            Supprimer {entry.kind === 'dir' ? 'le dossier' : 'le fichier'} <code>{entry.path}</code>
+            {entry.kind === 'dir' ? ' et tout son contenu' : ''} ?
+          </>
+        ),
+        confirmLabel: 'Supprimer',
+        danger: true,
+      });
+      if (!ok) return;
       setActionError(null);
       deleteEntry({ variables: { ...wsRef, path: entry.path } });
     },

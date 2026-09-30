@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useDialogs } from '../components/Dialogs';
 
 import { permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import RequestPrompt from '../components/RequestPrompt';
@@ -35,6 +36,7 @@ export default function SessionDetailPage() {
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
   const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
+  const { confirm } = useDialogs();
   const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
 
   const [text, setText] = useState('');
@@ -143,8 +145,8 @@ export default function SessionDetailPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={() => {
-              if (window.confirm('Supprimer cette session ?')) deleteSession({ variables: { id } });
+            onClick={async () => {
+              if (await confirm({ title: 'Supprimer la session', message: 'Supprimer cette session et tout son historique ?', confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id } });
             }}
           >
             Supprimer

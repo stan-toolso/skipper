@@ -139,7 +139,7 @@ frontend/
     apollo.ts                  # client GraphQL
     graphql/operations.ts      # queries / mutations + types TS
     pages/                     # projets, sessions, demandes en attente
-    components/                # layout, badge de statut, journal, carte de demande
+    components/                # layout, badge de statut, journal, carte de demande, dialogues (Dialogs.tsx)
 ```
 
 ## Utilisateurs et droits
@@ -390,6 +390,12 @@ Thème sombre inspiré de Claude Code (`frontend/src/theme.css`). La page de ses
 réponses `⏺`, appels d'outils avec leur résultat `⎿` repliable, prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer et échap pour interrompre.
+
+Aucune alerte native du navigateur (`window.alert`, `confirm`, `prompt`) : les confirmations, saisies
+courtes et messages d'erreur passent par les modales de `frontend/src/components/Dialogs.tsx`
+(`useDialogs()` → `confirm`, `prompt`, `alert`, `showError`, toutes asynchrones, fournies par
+`DialogProvider` dans `App.tsx`). Une confirmation peut porter une case à cocher (« Supprimer aussi la
+branche locale »).
 
 ## Mobile
 

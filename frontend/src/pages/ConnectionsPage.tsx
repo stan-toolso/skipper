@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Collapse, Form, InputGroup, Modal, Row, Spinner } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
+import { useDialogs } from '../components/Dialogs';
 import {
   CREATE_CONNECTION,
   DELETE_CONNECTION,
@@ -392,6 +393,7 @@ function ConnectionCard({ connection: c, sshConnections, projectId, canEdit, bro
   const [test, { loading: testing, data: testData, error: testError }] = useMutation<{ testConnection: { ok: boolean; error: string | null; detail: string | null } }>(TEST_CONNECTION, { refetchQueries: ['ProjectConnections'] });
   const [remove, { error: removeError }] = useMutation(DELETE_CONNECTION, { refetchQueries: ['ProjectConnections'] });
   const [regenerate, { loading: regenerating }] = useMutation(REGENERATE_CONNECTION_KEY, { refetchQueries: ['ProjectConnections'] });
+  const { confirm } = useDialogs();
   const [forgetHostKey] = useMutation(FORGET_CONNECTION_HOST_KEY, { refetchQueries: ['ProjectConnections'] });
   const kind = kindLabels[c.kind];
   const lastTest = testData?.testConnection;
@@ -467,7 +469,7 @@ function ConnectionCard({ connection: c, sshConnections, projectId, canEdit, bro
                   <>
                     <code>{c.hostFingerprint}</code> <span className="text-secondary">mémorisée le {fmtDate(c.hostKeySeenAt)}</span>{' '}
                     {canEdit && (
-                      <Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => window.confirm('Oublier la clé d\'hôte mémorisée ? Elle sera réapprise à la prochaine connexion.') && forgetHostKey({ variables: { id: c.id } })}>
+                      <Button variant="link" size="sm" className="p-0 align-baseline" onClick={async () => (await confirm({ title: "Oublier la clé d'hôte", message: "Oublier la clé d'hôte mémorisée ? Elle sera réapprise à la prochaine connexion.", confirmLabel: 'Oublier' })) && forgetHostKey({ variables: { id: c.id } })}>
                         oublier
                       </Button>
                     )}
@@ -525,11 +527,11 @@ function ConnectionCard({ connection: c, sshConnections, projectId, canEdit, bro
           Modifier
         </Button>
         {c.kind === 'ssh' && (
-          <Button size="sm" variant="outline-secondary" disabled={regenerating} onClick={() => window.confirm('Générer une nouvelle paire de clés ? L\'ancienne clé publique cessera de fonctionner : il faudra installer la nouvelle sur le serveur.') && regenerate({ variables: { id: c.id } })}>
+          <Button size="sm" variant="outline-secondary" disabled={regenerating} onClick={async () => (await confirm({ title: 'Régénérer la clé SSH', message: "Générer une nouvelle paire de clés ? L'ancienne clé publique cessera de fonctionner : il faudra installer la nouvelle sur le serveur.", confirmLabel: 'Régénérer', danger: true })) && regenerate({ variables: { id: c.id } })}>
             Régénérer la clé
           </Button>
         )}
-        <Button size="sm" variant="outline-danger" className="ms-auto" onClick={() => window.confirm(`Supprimer la connexion « ${c.name} » ?`) && remove({ variables: { id: c.id } })}>
+        <Button size="sm" variant="outline-danger" className="ms-auto" onClick={async () => (await confirm({ title: 'Supprimer la connexion', message: `Supprimer la connexion « ${c.name} » ? Les agents ne pourront plus l'utiliser.`, confirmLabel: 'Supprimer', danger: true })) && remove({ variables: { id: c.id } })}>
           Supprimer
         </Button>
       </Card.Footer>
