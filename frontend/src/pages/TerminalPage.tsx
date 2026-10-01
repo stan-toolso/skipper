@@ -1,14 +1,15 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
-import { useDialogs } from '../components/Dialogs';
+import { useCachedName } from '../components/PageLoading';
+import { useDeletions } from '../workbench/useDeletions';
 import { terminalSocketUrl } from '../apollo';
-import { CLOSE_TERMINAL, DELETE_TERMINAL, TERMINAL, type Terminal } from '../graphql/operations';
+import { CLOSE_TERMINAL, TERMINAL, TERMINAL_NAME, type Terminal } from '../graphql/operations';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -34,15 +35,14 @@ const theme = {
 /** Terminal web : xterm.js relié par WebSocket au shell lancé dans le workspace du projet. */
 export default function TerminalPage() {
   const { id = '' } = useParams();
-  const navigate = useNavigate();
   const { data, loading, error, refetch } = useQuery<{ terminal: Terminal | null }>(TERMINAL, { variables: { id } });
   const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'], onCompleted: () => refetch() });
-  const { confirm } = useDialogs();
-  const [deleteTerminal] = useMutation(DELETE_TERMINAL, { refetchQueries: ['Sidebar'], onCompleted: () => navigate(`/projects/${data?.terminal?.project.id ?? ''}`) });
+  const { deleteTerminal } = useDeletions();
+  const cachedName = useCachedName(TERMINAL_NAME, 'Terminal', id);
   const containerRef = useRef<HTMLDivElement>(null);
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const terminal = data?.terminal;
-  useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : null);
+  useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : cachedName);
   useGitTarget(terminal ? { projectId: terminal.project.id, worktreeId: terminal.worktree?.id ?? null, label: terminal.worktree ? `${terminal.project.name} · ${terminal.worktree.branch}` : terminal.project.name } : null);
 
   useEffect(() => {
@@ -100,7 +100,20 @@ export default function TerminalPage() {
     };
   }, [terminal?.id, terminal?.status]);
 
-  if (loading && !data) return <Spinner animation="border" size="sm" className="m-3" />;
+  if (loading && !data)
+    return (
+      <div className="term-page">
+        <div className="term-header">
+          <div>
+            <span className="term-title">&gt;_ {cachedName ?? 'Terminal'}</span>
+            <span className="term-meta">
+              {' '}
+              · <Spinner animation="border" size="sm" /> chargement…
+            </span>
+          </div>
+        </div>
+      </div>
+    );
   if (error) return <Alert variant="danger" className="m-3">Erreur : {error.message}</Alert>;
   if (!terminal) return <Alert variant="warning" className="m-3">Terminal introuvable.</Alert>;
 
@@ -133,9 +146,7 @@ export default function TerminalPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={async () => {
-              if (await confirm({ title: 'Supprimer le terminal', message: "Supprimer ce terminal ? Le shell sera fermé s'il est encore ouvert.", confirmLabel: 'Supprimer', danger: true })) deleteTerminal({ variables: { id } });
-            }}
+            onClick={() => void deleteTerminal({ id, name: terminal.name, worktreeId: terminal.worktree?.id ?? null })}
           >
             Supprimer
           </button>

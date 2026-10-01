@@ -1,12 +1,14 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useSessionEvents } from '../lib/sessionEvents';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
+import { useCachedName } from '../components/PageLoading';
+import { useDeletions } from '../workbench/useDeletions';
 
 import { bypassConnectionsWarning, permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
@@ -19,7 +21,6 @@ import { fileToolResultCount } from '../lib/sessionChanges';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
 import {
-  DELETE_SESSION,
   END_SESSION,
   INTERRUPT_SESSION,
   RESUME_SESSION,
@@ -28,6 +29,7 @@ import {
   SEND_SESSION_MESSAGE,
   SESSION,
   SESSION_CHANGES,
+  SESSION_NAME,
   STOP_SESSION,
   UPDATE_SESSION_CONFIG,
   type ConfigField,
@@ -46,7 +48,6 @@ type PageTab = 'conversation' | 'changes';
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
-  const navigate = useNavigate();
   const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
   const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
@@ -55,7 +56,7 @@ export default function SessionDetailPage() {
   const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
   const { confirm } = useDialogs();
-  const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => navigate('/sessions') });
+  const { deleteSession } = useDeletions();
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
@@ -125,7 +126,8 @@ export default function SessionDetailPage() {
     });
   };
   const session = data?.session;
-  useTabTitle(session?.name);
+  const cachedName = useCachedName(SESSION_NAME, 'Session', id);
+  useTabTitle(session?.name ?? cachedName);
   useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.branch}` : session.project.name } : null);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
@@ -179,7 +181,21 @@ export default function SessionDetailPage() {
     }
   };
 
-  if (loading && !data) return <Spinner animation="border" size="sm" />;
+  // Pendant le chargement : l'en-tête avec le nom déjà connu (sidebar), plutôt qu'une page vide.
+  if (loading && !data)
+    return (
+      <div className="cc">
+        <div className="cc-header">
+          <div>
+            <span className="cc-title">✻ {cachedName ?? 'Session'}</span>
+            <span className="cc-meta">
+              {' '}
+              · <Spinner animation="border" size="sm" /> chargement…
+            </span>
+          </div>
+        </div>
+      </div>
+    );
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
@@ -306,7 +322,7 @@ export default function SessionDetailPage() {
             type="button"
             className="cc-btn danger"
             onClick={async () => {
-              if (await confirm({ title: 'Supprimer la session', message: 'Supprimer cette session et tout son historique ?', confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id } });
+              await deleteSession({ id, name: session.name, worktreeId: session.worktree?.id ?? null });
             }}
           >
             Supprimer

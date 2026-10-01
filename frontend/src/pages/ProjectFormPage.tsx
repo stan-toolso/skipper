@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PageLoading from '../components/PageLoading';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Col, Collapse, Form, Row, Spinner } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -104,7 +105,7 @@ export default function ProjectFormPage() {
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
   };
 
-  if (loading) return <Spinner animation="border" size="sm" />;
+  if (loading) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (isEdit && !data?.project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const mutationError = createError ?? updateError;

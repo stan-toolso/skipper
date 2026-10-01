@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PageLoading from '../components/PageLoading';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -120,7 +121,7 @@ export default function FilesPage() {
   const { confirm, prompt } = useDialogs();
   const [deleteEntry] = useMutation(DELETE_WORKSPACE_ENTRY, { refetchQueries: ['WorkspaceEntries'], onError });
 
-  if (loading && !info) return <Spinner animation="border" size="sm" />;
+  if (loading && !info) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!info) return <Alert variant="warning">Projet ou worktree introuvable.</Alert>;
   const wsRef: WorkspaceRef = { projectId: info.projectId, worktreeId: info.worktreeId };

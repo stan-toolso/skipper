@@ -1,5 +1,6 @@
 import { useQuery } from '@apollo/client';
-import { Alert, Button, Spinner, Table } from 'react-bootstrap';
+import PageLoading from '../components/PageLoading';
+import { Alert, Button, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { PROJECTS, type Project } from '../graphql/operations';
 import { useSessionLauncher } from '../components/SessionLauncher';
@@ -18,7 +19,7 @@ export default function ProjectsPage() {
       </div>
 
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
-      {loading && !data && <Spinner animation="border" size="sm" />}
+      {loading && !data && <PageLoading />}
 
       {data && (
         <Table hover responsive size="sm" className="align-middle">

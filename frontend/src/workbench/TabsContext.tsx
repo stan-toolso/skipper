@@ -16,6 +16,8 @@ interface TabsState {
   tabs: Tab[];
   activeKey: string;
   closeTab: (key: string) => void;
+  /** Ferme d'un coup les onglets dont la clé (chemin) vérifie `match` ; si l'onglet actif en fait partie, passe au voisin. */
+  closeMatching: (match: (key: string) => boolean) => void;
   closeOthers: (key: string) => void;
   /** Ferme les onglets situés à droite de celui-ci. */
   closeRight: (key: string) => void;
@@ -92,19 +94,23 @@ export function TabsProvider({ children }: { children: ReactNode }) {
     }
   }, [tabs]);
 
-  const closeTab = useCallback(
-    (key: string) => {
+  const closeMatching = useCallback(
+    (match: (key: string) => boolean) => {
       const current = tabsRef.current;
-      const index = current.findIndex((t) => t.key === key);
-      const remaining = current.filter((t) => t.key !== key);
-      setTabs(remaining);
-      if (key === activeKey) {
-        const next = remaining[index] ?? remaining[index - 1];
+      const remaining = current.filter((t) => !match(t.key));
+      // Mis à jour tout de suite : deux fermetures enchaînées avant le rendu ne doivent pas se contredire.
+      tabsRef.current = remaining;
+      if (remaining.length !== current.length) setTabs(remaining);
+      if (match(activeKey)) {
+        const index = current.findIndex((t) => t.key === activeKey);
+        const next = current.slice(index + 1).find((t) => !match(t.key)) ?? current.slice(0, Math.max(index, 0)).reverse().find((t) => !match(t.key));
         navigate(next ? next.url : '/');
       }
     },
     [activeKey, navigate],
   );
+
+  const closeTab = useCallback((key: string) => closeMatching((k) => k === key), [closeMatching]);
 
   const closeOthers = useCallback(
     (key: string) => {
@@ -137,8 +143,8 @@ export function TabsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ tabs, activeKey, closeTab, closeOthers, closeRight, closeAll, setTitle }),
-    [tabs, activeKey, closeTab, closeOthers, closeRight, closeAll, setTitle],
+    () => ({ tabs, activeKey, closeTab, closeMatching, closeOthers, closeRight, closeAll, setTitle }),
+    [tabs, activeKey, closeTab, closeMatching, closeOthers, closeRight, closeAll, setTitle],
   );
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;
 }

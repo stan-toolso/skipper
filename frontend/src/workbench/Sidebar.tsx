@@ -2,12 +2,10 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { Spinner } from 'react-bootstrap';
 import {
   CLOSE_TERMINAL,
   CREATE_TERMINAL,
-  DELETE_SESSION,
-  DELETE_TERMINAL,
-  DELETE_WORKTREE,
   REQUESTS,
   SIDEBAR,
   STOP_SESSION,
@@ -17,7 +15,7 @@ import {
   type SessionStatus,
   type Terminal,
 } from '../graphql/operations';
-import { useTabs } from './TabsContext';
+import { useDeletions } from './useDeletions';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
@@ -54,7 +52,8 @@ function statusDot(status: SessionStatus, activity: SessionActivity | null): { c
 }
 
 /** Menu « + » d'un projet ou d'un worktree : session, terminal, et pour un projet git : worktree. */
-function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: string; worktreeId?: string; canWorktree: boolean; onClose: () => void }) {
+function AddMenu({ projectId, worktree, canWorktree, onClose }: { projectId: string; worktree?: { id: string; branch: string }; canWorktree: boolean; onClose: () => void }) {
+  const worktreeId = worktree?.id;
   const navigate = useNavigate();
   const [createTerminal, { loading }] = useMutation<{ createTerminal: { id: string } }>(CREATE_TERMINAL, {
     refetchQueries: ['Sidebar'],
@@ -64,13 +63,12 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
     },
   });
   const { openNewSession, openNewWorktree } = useSessionLauncher();
-  const { confirm, showError } = useDialogs();
+  const { deleteWorktree } = useDeletions();
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [onClose]);
-  const [deleteWorktree] = useMutation(DELETE_WORKTREE, { refetchQueries: ['Sidebar', 'ProjectWorktrees'] });
   return (
     <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
       <Link to={worktreeId ? `/worktrees/${worktreeId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
@@ -101,23 +99,15 @@ function AddMenu({ projectId, worktreeId, canWorktree, onClose }: { projectId: s
           <i className="bi bi-diagram-2 wb-icon" /> Nouveau worktree
         </button>
       )}
-      {worktreeId && (
+      {worktree && (
         <>
           <div className="wb-pop-sep" />
           <button
             type="button"
             className="wb-pop-item danger"
-            onClick={async () => {
-              const res = await confirm({
-                title: 'Supprimer le worktree',
-                message: 'Supprimer ce worktree ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.',
-                confirmLabel: 'Supprimer',
-                danger: true,
-                checkbox: { label: 'Supprimer aussi la branche locale' },
-              });
-              if (!res) return;
+            onClick={() => {
               onClose();
-              deleteWorktree({ variables: { id: worktreeId, deleteBranch: res.checked } }).catch(showError);
+              void deleteWorktree(worktree);
             }}
           >
             <i className="bi bi-trash wb-icon" /> Supprimer le worktree
@@ -223,13 +213,11 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
   );
 }
 
-function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean; indent: number }) {
-  const navigate = useNavigate();
+function SessionRow({ s, worktreeId, active, indent }: { s: SidebarSession; worktreeId: string | null; active: boolean; indent: number }) {
   const location = useLocation();
-  const { closeTab } = useTabs();
-  const { confirm, showError } = useDialogs();
+  const { showError } = useDialogs();
+  const { deleteSession } = useDeletions();
   const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
-  const [deleteSession] = useMutation(DELETE_SESSION, { refetchQueries: ['Sidebar', 'Sessions'] });
   const dot = statusDot(s.status, s.activity);
   const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
   const items: MenuItem[] = [
@@ -240,15 +228,7 @@ function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean;
       icon: 'bi-trash',
       danger: true,
       separatorBefore: true,
-      onClick: async () => {
-        if (!(await confirm({ title: 'Supprimer la session', message: `Supprimer la session « ${s.name} » et son historique ?`, confirmLabel: 'Supprimer', danger: true }))) return;
-        deleteSession({ variables: { id: s.id } })
-          .then(() => {
-            closeTab(`/sessions/${s.id}`);
-            if (active) navigate('/sessions');
-          })
-          .catch(showError);
-      },
+      onClick: () => void deleteSession({ id: s.id, name: s.name, worktreeId }),
     },
   ];
   const browserPath = `/sessions/${s.id}/browser`;
@@ -270,12 +250,10 @@ function SessionRow({ s, active, indent }: { s: SidebarSession; active: boolean;
   );
 }
 
-function TerminalRow({ t, active, indent }: { t: SidebarTerminal; active: boolean; indent: number }) {
-  const navigate = useNavigate();
-  const { closeTab } = useTabs();
-  const { confirm, showError } = useDialogs();
+function TerminalRow({ t, worktreeId, active, indent }: { t: SidebarTerminal; worktreeId: string | null; active: boolean; indent: number }) {
+  const { showError } = useDialogs();
+  const { deleteTerminal } = useDeletions();
   const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'] });
-  const [deleteTerminal] = useMutation(DELETE_TERMINAL, { refetchQueries: ['Sidebar'] });
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
     ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
@@ -284,15 +262,7 @@ function TerminalRow({ t, active, indent }: { t: SidebarTerminal; active: boolea
       icon: 'bi-trash',
       danger: true,
       separatorBefore: true,
-      onClick: async () => {
-        if (!(await confirm({ title: 'Supprimer le terminal', message: `Supprimer le terminal « ${t.name} » ?`, confirmLabel: 'Supprimer', danger: true }))) return;
-        deleteTerminal({ variables: { id: t.id } })
-          .then(() => {
-            closeTab(`/terminals/${t.id}`);
-            if (active) navigate('/');
-          })
-          .catch(showError);
-      },
+      onClick: () => void deleteTerminal({ id: t.id, name: t.name, worktreeId }),
     },
   ];
   return (
@@ -303,14 +273,14 @@ function TerminalRow({ t, active, indent }: { t: SidebarTerminal; active: boolea
   );
 }
 
-function SessionRows({ sessions, terminals, activeSessionId, activeTerminalId, indent }: { sessions: SidebarSession[]; terminals: SidebarTerminal[]; activeSessionId?: string; activeTerminalId?: string; indent: number }) {
+function SessionRows({ sessions, terminals, worktreeId = null, activeSessionId, activeTerminalId, indent }: { sessions: SidebarSession[]; terminals: SidebarTerminal[]; worktreeId?: string | null; activeSessionId?: string; activeTerminalId?: string; indent: number }) {
   return (
     <>
       {sessions.map((s) => (
-        <SessionRow key={s.id} s={s} active={s.id === activeSessionId} indent={indent} />
+        <SessionRow key={s.id} s={s} worktreeId={worktreeId} active={s.id === activeSessionId} indent={indent} />
       ))}
       {terminals.map((t) => (
-        <TerminalRow key={t.id} t={t} active={t.id === activeTerminalId} indent={indent} />
+        <TerminalRow key={t.id} t={t} worktreeId={worktreeId} active={t.id === activeTerminalId} indent={indent} />
       ))}
     </>
   );
@@ -410,6 +380,11 @@ export default function Sidebar() {
       </div>
 
       <div className="wb-explorer">
+        {!data && (
+          <div className="wb-row wb-empty">
+            <Spinner animation="border" size="sm" className="me-2" /> chargement des projets…
+          </div>
+        )}
         {(data?.projects ?? []).map((p) => {
           const open = !collapsed[p.id];
           const empty = p.sessions.length === 0 && p.terminals.length === 0 && p.worktrees.length === 0;
@@ -478,10 +453,10 @@ export default function Sidebar() {
                           >
                             <i className="bi bi-three-dots" />
                           </button>
-                          {menuFor === w.id && <AddMenu projectId={p.id} worktreeId={w.id} canWorktree={false} onClose={() => setMenuFor(null)} />}
+                          {menuFor === w.id && <AddMenu projectId={p.id} worktree={w} canWorktree={false} onClose={() => setMenuFor(null)} />}
                         </span>
                       </div>
-                      {wOpen && <SessionRows sessions={w.sessions} terminals={w.terminals} activeSessionId={activeSessionId} activeTerminalId={activeTerminalId} indent={48} />}
+                      {wOpen && <SessionRows sessions={w.sessions} terminals={w.terminals} worktreeId={w.id} activeSessionId={activeSessionId} activeTerminalId={activeTerminalId} indent={48} />}
                       {wOpen && w.sessions.length === 0 && w.terminals.length === 0 && (
                         <div className="wb-row wb-empty" style={{ paddingLeft: 48 }}>
                           rien dans ce worktree

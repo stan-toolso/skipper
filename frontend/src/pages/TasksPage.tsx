@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PageLoading from '../components/PageLoading';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, ButtonGroup, Card, Col, Dropdown, Form, Modal, Row, Spinner } from 'react-bootstrap';
+import { Alert, Badge, Button, ButtonGroup, Card, Col, Dropdown, Form, Modal, Row } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CREATE_TASK, DELETE_TASK, PROJECT, PROJECTS, START_TASK_SESSION, TASK_LAUNCH_TARGETS, TASKS, UPDATE_TASK, type Project, type Task, type TaskPriority, type TaskStatus } from '../graphql/operations';
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
@@ -310,7 +311,7 @@ export default function TasksPage() {
       </p>
 
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
-      {loading && !data && <Spinner animation="border" size="sm" />}
+      {loading && !data && <PageLoading />}
 
       <Row className="g-3">
         {cols.map((col) => {

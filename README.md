@@ -17,7 +17,8 @@ Trois notions :
 - **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
-  défaut d'y lancer aussitôt une session d'agent.
+  défaut d'y lancer aussitôt une session d'agent ; supprimer la dernière session ou le dernier terminal
+  d'un worktree propose (case à cocher) de supprimer aussi le worktree, qui resterait vide.
 - **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
   workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). La consigne de départ est
   facultative : sans consigne, la session est créée sans démarrer et la première instruction envoyée

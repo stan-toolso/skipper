@@ -1049,6 +1049,22 @@ export const DELETE_WORKTREE = gql`
   }
 `;
 
+/** Ce qui reste dans un worktree (sessions, terminaux) : sert à proposer sa suppression quand on en retire le dernier élément. */
+export const WORKTREE_CONTENTS = gql`
+  query WorktreeContents($id: ID!) {
+    worktree(id: $id) {
+      id
+      branch
+      sessions {
+        id
+      }
+      terminals {
+        id
+      }
+    }
+  }
+`;
+
 export const TERMINAL = gql`
   query Terminal($id: ID!) {
     terminal(id: $id) {
@@ -2702,5 +2718,24 @@ export const DISCARD_SESSION_FILE = gql`
     discardSessionFile(sessionId: $sessionId, path: $path, origPath: $origPath) {
       ...SessionChangesFields
     }
+  }
+`;
+
+/** Nom déjà en cache (chargé par la sidebar ou une liste) : affiché pendant le chargement d'une page. */
+export const SESSION_NAME = gql`
+  fragment CachedSessionName on Session {
+    name
+  }
+`;
+
+export const TERMINAL_NAME = gql`
+  fragment CachedTerminalName on Terminal {
+    name
+  }
+`;
+
+export const PROJECT_NAME = gql`
+  fragment CachedProjectName on Project {
+    name
   }
 `;
