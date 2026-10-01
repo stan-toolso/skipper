@@ -10,6 +10,133 @@ import GoogleAccountsCard from '../components/GoogleAccountsCard';
 import StatusBadge from '../components/StatusBadge';
 import { useDialogs } from '../components/Dialogs';
 import { useDeletions } from '../workbench/useDeletions';
+import { formatDuration as formatSeconds, formatMb, Gauge } from '../components/ServerHealthCard';
+
+/** Activité d'une session vue depuis son processus Claude. */
+function processActivity(p: ContainerProcess): { label: string; className: string } {
+  const s = p.session;
+  if (!s) return p.sessionId ? { label: 'session supprimée', className: 'text-danger' } : { label: 'hors session (terminal)', className: 'text-secondary' };
+  if (s.status !== 'RUNNING') return { label: 'session terminée : processus orphelin', className: 'text-danger' };
+  if (s.activity === 'BUSY') return { label: 'au travail', className: 'text-success' };
+  return { label: `inactive depuis ${timeAgo(s.updatedAt).replace(/^il y a /, '')}`, className: 'text-secondary' };
+}
+
+/** Mémoire, CPU et processus Claude du conteneur en marche, relevés toutes les 10 secondes. */
+function ContainerUsage({ projectId }: { projectId: string }) {
+  const { data, error } = useQuery<{ project: { id: string; containerStats: ContainerStats | null } | null }>(PROJECT_CONTAINER_STATS, {
+    variables: { id: projectId },
+    pollInterval: 10_000,
+    fetchPolicy: 'cache-and-network',
+  });
+  const c = data?.project?.containerStats;
+  if (error) return <Alert variant="warning" className="py-2">Mesure du conteneur impossible : {error.message}</Alert>;
+  if (!c) return null;
+  const sessionsMb = c.claudeProcesses.reduce((sum, p) => sum + p.rssMb + p.childrenRssMb, 0);
+  return (
+    <div className="mb-3">
+      {c.memoryHighSince && (
+        <Alert variant="danger" className="py-2">
+          <i className="bi bi-exclamation-triangle me-1" /> Mémoire au-delà de 90 % de la limite depuis {timeAgo(c.memoryHighSince).replace(/^il y a /, '')} : au-delà de la limite, le noyau
+          tue des processus (sessions en erreur, commandes interrompues). Terminez les sessions inutiles ou relevez la limite.
+        </Alert>
+      )}
+      {c.memoryLimitMb ? (
+        <Gauge label="Mémoire" used={c.memoryUsedMb} total={c.memoryLimitMb} detail={`${formatMb(c.memoryUsedMb)} / ${formatMb(c.memoryLimitMb)}${c.swapUsedMb ? ` · swap ${formatMb(c.swapUsedMb)}` : ''}`} />
+      ) : (
+        <div className="mb-2">Mémoire : {formatMb(c.memoryUsedMb)} (sans limite)</div>
+      )}
+      {c.cpuPercent !== null && (
+        <Gauge
+          label="CPU"
+          used={c.cpuPercent}
+          total={(c.cpuLimit ?? 1) * 100}
+          detail={`${c.cpuPercent} %${c.cpuLimit ? ` sur ${c.cpuLimit.toLocaleString('fr-FR')} cœur${c.cpuLimit > 1 ? 's' : ''}` : ''}`}
+        />
+      )}
+      {c.oomKills > 0 && (
+        <div className="text-warning mb-2" title="Compteur oom_kill du cgroup du conteneur, remis à zéro quand le conteneur est recréé">
+          <i className="bi bi-exclamation-octagon me-1" />
+          {c.oomKills} processus tué{c.oomKills > 1 ? 's' : ''} faute de mémoire depuis la création du conteneur
+        </div>
+      )}
+      {c.claudeProcesses.length > 0 && (
+        <>
+          <div className="text-secondary mb-1">
+            {c.claudeProcesses.length} processus Claude · {formatMb(sessionsMb)} avec les commandes qu'ils ont lancées
+          </div>
+          <Table size="sm" className="mb-0 align-middle">
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Activité</th>
+                <th className="text-end" title="Mémoire résidente du CLI Claude Code">Claude</th>
+                <th className="text-end" title="Mémoire des commandes lancées par l'agent (tsc, npm, vite…)">Commandes</th>
+                <th className="text-end">Depuis</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.claudeProcesses.map((p) => {
+                const activity = processActivity(p);
+                return (
+                  <tr key={p.pid}>
+                    <td>{p.session ? <Link to={`/sessions/${p.session.id}`}>{p.session.name}</Link> : <span className="text-secondary">pid {p.pid}</span>}</td>
+                    <td className={activity.className}>{activity.label}</td>
+                    <td className="text-end">{formatMb(p.rssMb)}</td>
+                    <td className="text-end">{p.childrenRssMb ? formatMb(p.childrenRssMb) : '—'}</td>
+                    <td className="text-end text-secondary">{formatSeconds(p.elapsedSeconds)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Limites mémoire et CPU du conteneur (runnerConfig), appliquées à chaud au conteneur existant. */
+function RunnerLimitsForm({ project, onDone }: { project: Project; onDone: () => void }) {
+  const [memory, setMemory] = useState(project.runnerConfig?.memory ?? '');
+  const [cpus, setCpus] = useState(project.runnerConfig?.cpus ?? '');
+  const [save, { loading, error }] = useMutation(UPDATE_PROJECT, { refetchQueries: ['Project', 'ProjectContainerStats'] });
+  return (
+    <Form
+      className="mb-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const runnerConfig: Record<string, unknown> = { ...project.runnerConfig, memory: memory.trim() || undefined, cpus: cpus.trim() || undefined };
+        try {
+          await save({ variables: { id: project.id, input: { runnerConfig: Object.fromEntries(Object.entries(runnerConfig).filter(([, v]) => v !== undefined)) } } });
+          onDone();
+        } catch {
+          // Erreur affichée sous le formulaire.
+        }
+      }}
+    >
+      <Row className="g-2 align-items-end">
+        <Col xs={4}>
+          <Form.Label className="small mb-1">Mémoire</Form.Label>
+          <Form.Control size="sm" value={memory} placeholder={project.runnerStatus.memory ?? '768m'} onChange={(e) => setMemory(e.target.value)} />
+        </Col>
+        <Col xs={3}>
+          <Form.Label className="small mb-1">CPU</Form.Label>
+          <Form.Control size="sm" value={cpus} placeholder={project.runnerStatus.cpus ?? '1'} onChange={(e) => setCpus(e.target.value)} />
+        </Col>
+        <Col xs="auto">
+          <Button size="sm" type="submit" disabled={loading}>
+            {loading ? 'Application…' : 'Appliquer'}
+          </Button>{' '}
+          <Button size="sm" variant="link" onClick={onDone}>
+            Annuler
+          </Button>
+        </Col>
+      </Row>
+      <Form.Text>Appliquées tout de suite au conteneur, sans couper les sessions. Compter ≈ 250 Mo par session Claude ouverte, plus ≈ 900 Mo pour un build Vite.</Form.Text>
+      {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
+    </Form>
+  );
+}
 
 /** Conteneur Docker du projet : son état et ses commandes. */
 function RunnerCard({ project }: { project: Project }) {
@@ -18,6 +145,8 @@ function RunnerCard({ project }: { project: Project }) {
   const { confirm } = useDialogs();
   const [reset, { loading: resetting, error: resetError }] = useMutation(RESET_PROJECT_RUNNER, { refetchQueries: ['Project'] });
   const s = project.runnerStatus;
+  const [editingLimits, setEditingLimits] = useState(false);
+  const isAdmin = project.myRole === 'ADMIN';
   const error = startError ?? stopError ?? resetError;
   const busy = starting || stopping || resetting;
   const stateLabels: Record<string, string> = { running: 'en marche', exited: 'arrêté', stopped: 'arrêté', created: 'créé', absent: 'pas encore créé', unavailable: 'indisponible', paused: 'en pause', restarting: 'redémarrage' };
@@ -30,7 +159,12 @@ function RunnerCard({ project }: { project: Project }) {
           <dd className="col-9">
             <code>{s.containerName}</code>{' '}
             <span className={s.ready ? 'text-success' : s.state === 'unavailable' ? 'text-danger' : 'text-warning'}>· {stateLabels[s.state] ?? s.state}</span>
-            {s.startedAt && <span className="text-secondary"> depuis le {new Date(s.startedAt).toLocaleString()}</span>}
+            {s.startedAt && (
+              <span className="text-secondary" title={`Démarré le ${new Date(s.startedAt).toLocaleString()}`}>
+                {' '}
+                depuis {formatSeconds((Date.now() - new Date(s.startedAt).getTime()) / 1000)}
+              </span>
+            )}
           </dd>
           <dt className="col-3">Image</dt>
           <dd className="col-9">
@@ -39,8 +173,15 @@ function RunnerCard({ project }: { project: Project }) {
           <dt className="col-3">Limites</dt>
           <dd className="col-9">
             mémoire {s.memory} · CPU {s.cpus}
+            {isAdmin && !editingLimits && (
+              <Button size="sm" variant="link" className="p-0 ms-2 align-baseline" onClick={() => setEditingLimits(true)}>
+                Modifier
+              </Button>
+            )}
           </dd>
         </dl>
+        {editingLimits && <RunnerLimitsForm project={project} onDone={() => setEditingLimits(false)} />}
+        {s.ready && <ContainerUsage projectId={project.id} />}
         {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
         <div className="d-flex gap-2">
           {!s.ready && s.state !== 'unavailable' && (
@@ -82,6 +223,10 @@ import {
   PROJECTS,
   PROJECT_MEMBERS,
   PROJECT_WORKTREES,
+  PROJECT_CONTAINER_STATS,
+  UPDATE_PROJECT,
+  type ContainerProcess,
+  type ContainerStats,
   REMOVE_PROJECT_MEMBER,
   RESET_PROJECT_RUNNER,
   START_PROJECT_RUNNER,

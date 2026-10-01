@@ -13,6 +13,7 @@ import { worktreesRoot } from '../worktrees/service.js';
 import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { renderSecretsFile } from '../connections/website.js';
+import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -64,7 +65,8 @@ export class DockerRunner implements Runner {
   private async writeRelay(project: Project): Promise<string> {
     const file = this.relayPath(project);
     await mkdir(path.dirname(file), { recursive: true });
-    const envFlags = PASSTHROUGH_ENV.map((v) => `-e ${v}`).join(' ');
+    // La variable de session relie le processus du CLI à sa session (mémoire par session sur la page du projet).
+    const envFlags = [...PASSTHROUGH_ENV, SESSION_ENV].map((v) => `-e ${v}`).join(' ');
     const script = `#!/bin/sh
 # Généré par Skipper : exécute le CLI Claude Code dans le conteneur du projet ${project.slug}.
 exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude "$@"
@@ -85,6 +87,24 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     } catch (err) {
       return { ...base, state: 'unavailable', error: (err as Error).message };
     }
+  }
+
+  async stats(project: Project, opts: { fresh?: boolean } = {}): Promise<ContainerStats | null> {
+    const name = this.containerName(project);
+    if (opts.fresh) invalidateContainerStats(name);
+    return readContainerStats(name);
+  }
+
+  async applyLimits(project: Project): Promise<boolean> {
+    const current = await this.status(project);
+    if (current.state === 'absent' || current.state === 'unavailable') return false;
+    const s = this.settings(project);
+    const memory = parseDockerSize(s.memory);
+    if (!memory) throw new AppError(`Limite mémoire illisible : ${s.memory}`);
+    // Même règle que `docker run --memory` sans --memory-swap : autant de swap que de mémoire.
+    await docker(['update', '--memory', String(memory), '--memory-swap', String(memory * 2), '--cpus', s.cpus, this.containerName(project)]);
+    invalidateContainerStats(this.containerName(project));
+    return true;
   }
 
   async ensureReady(project: Project): Promise<RunnerStatus> {

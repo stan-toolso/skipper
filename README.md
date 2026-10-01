@@ -421,6 +421,22 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
   page du projet (démarrer, arrêter, recréer).
 
+- **Mémoire et CPU des conteneurs** (`runners/stats.ts`, `runners/monitor.ts`) : `Project.containerStats`
+  lit le cgroup v2 du conteneur par un `docker exec` (`memory.current` moins `inactive_file`, comme
+  `docker stats` ; `memory.max`, swap, `cpu.max`, deux lectures de `cpu.stat` à 0,5 s d'écart,
+  compteur `oom_kill` de `memory.events`) et liste les processus `claude` avec leur mémoire. Chaque CLI
+  de session reçoit `SKIPPER_SESSION_ID` (transmis par le script de relais) : un processus est ainsi
+  relié à sa session, et les commandes qu'il lance (même variable héritée) sont comptées avec elle. Mesure
+  en cache 4 s. La carte « Environnement d'exécution » de la page projet l'affiche toutes les 10 s
+  (jauges, processus par session avec leur activité, processus orphelins) ; un administrateur y
+  modifie les limites, appliquées à chaud par `docker update` (swap = 2 × mémoire, comme `docker run`)
+  comme depuis le formulaire du projet. Toutes les 30 s, la surveillance mesure chaque conteneur : au-delà
+  de 90 % de la limite pendant plus d'une minute, notification `container.memory_high` au projet
+  (réarmée sous 80 %). À la fin d'une session en erreur, `containerMonitor.explainFailure` regarde le
+  code 137 (SIGKILL), la hausse de `oom_kill` depuis la dernière mesure et `State.OOMKilled` : l'erreur
+  du transcript et de la notification devient « le conteneur du projet a dépassé sa limite mémoire… »,
+  suivie du détail d'origine.
+
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : au début de chaque session, Skipper lance un Chromium sans fenêtre dans
   le conteneur (`docker exec -d`, profil jetable dans `/tmp/skipper-session-<id>-browser/`, port CDP

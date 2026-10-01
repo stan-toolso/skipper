@@ -96,6 +96,8 @@ type Project {
   "Noms des connexions dont les appels sont soumis à l'approbation d'un humain (non soumis en mode bypassPermissions)."
   approvalConnections: [String!]!
   runnerStatus: RunnerStatus!
+  "Mémoire, CPU et processus Claude du conteneur (mesurés à la demande) ; null s'il n'est pas en marche."
+  containerStats: ContainerStats
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
   workspaceExists: Boolean!
@@ -536,6 +538,38 @@ type RunnerStatus {
   cpus: String
   startedAt: DateTime
   error: String
+}
+
+"Mesure du conteneur d'un projet (cgroup v2, lu dans le conteneur)."
+type ContainerStats {
+  sampledAt: DateTime!
+  memoryUsedMb: Int!
+  "Limite mémoire du conteneur ; null si illimitée."
+  memoryLimitMb: Int
+  memoryPercent: Float
+  swapUsedMb: Int
+  "Utilisation CPU en pourcentage d'un cœur (200 = deux cœurs pleins)."
+  cpuPercent: Float
+  "Limite CPU en nombre de cœurs ; null si illimitée."
+  cpuLimit: Float
+  "Processus tués par le noyau faute de mémoire depuis la création du conteneur."
+  oomKills: Int!
+  "Depuis quand la mémoire dépasse 90 % de la limite (null : sous le seuil)."
+  memoryHighSince: DateTime
+  claudeProcesses: [ContainerProcess!]!
+}
+
+"Processus du CLI Claude Code dans le conteneur d'un projet."
+type ContainerProcess {
+  pid: Int!
+  rssMb: Int!
+  elapsedSeconds: Int!
+  "Session Skipper du processus ; null pour un CLI lancé à la main (terminal) ou une session supprimée."
+  session: Session
+  sessionId: ID
+  "Mémoire des autres processus de la session (commandes lancées par l'agent)."
+  childrenRssMb: Int!
+  cwd: String
 }
 
 type WorkspaceGit {

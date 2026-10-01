@@ -137,10 +137,11 @@ cd ~/skipper && docker build -t skipper-runner:latest deploy/runner
 
 Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env`
 (768m en production), et par projet dans son formulaire (« Mémoire », « CPU »), appliqués à la
-création du conteneur. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
-Claude Code prend 100 à 200 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo), `tsc`, `vite build`.
+création du conteneur et à chaud au conteneur existant. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
+Claude Code prend ≈ 250 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo), `tsc`, `vite build`.
 Au-delà de la limite, le noyau tue des processus du conteneur : commandes interrompues et sessions
-en erreur « Claude Code process exited with code 137 ». Réglages en place depuis le 30/09/2026 :
+en erreur ; Skipper l’explique alors dans le transcript (« le conteneur du projet a dépassé sa limite
+mémoire »). Réglages en place depuis le 30/09/2026 :
 Skipper 2g (plusieurs agents buildent en parallèle dans des worktrees), SUF 1500m (navigateur),
 Curso 768m (défaut). Pour vérifier et ajuster sans couper les sessions :
 
@@ -150,8 +151,24 @@ sudo journalctl -k -b | grep "Killed process"              # processus tués fau
 docker update --memory 2g --memory-swap 4g skipper-<slug>  # limite relevée à chaud, sans redémarrage
 ```
 
-`docker update` ne vaut que pour le conteneur en cours : reporter la même valeur dans le formulaire du
-projet, sinon elle est perdue à la prochaine recréation.
+Modifier les limites depuis la page du projet (carte « Environnement d'exécution », « Modifier ») ou
+son formulaire les enregistre **et** les applique à chaud (`docker update`, swap = 2 × mémoire). Un
+`docker update` lancé à la main ne vaut que pour le conteneur en cours : reporter la même valeur dans
+le projet, sinon elle est perdue à la prochaine recréation. La même carte montre la mémoire et le CPU
+du conteneur, les processus `claude` par session et le nombre de processus tués faute de mémoire ;
+une notification avertit quand un conteneur reste au-dessus de 90 % de sa limite plus d'une minute.
+
+**Dimensionner la limite d'un projet** : c'est le nombre de sessions ouvertes, plus que les builds,
+qui remplit le conteneur (constat du 01/10/2026 : 5 processus `claude` de 225 à 293 Mo, dont 3 de
+sessions inactives). Compter :
+
+- ≈ 250 Mo par session Claude ouverte (même inactive), plus 300 à 500 Mo avec le navigateur headless ;
+- ≈ 400 Mo pour un `npm ci`, 400 à 900 Mo pour un `tsc`, ≈ 900 Mo pour un `vite build` ;
+- une marge de 20 %.
+
+Exemples : 2 sessions sans build → 768m ; 4 sessions dont une qui builde → 2g ; projet avec
+navigateur et 3 sessions → 1500m à 2g. Terminer les sessions inutiles libère plus vite qu'un
+relèvement de limite (la somme des limites peut dépasser la RAM du serveur).
 Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
 projet applique la nouvelle image.
 

@@ -7,14 +7,15 @@ import type { Connection, ConnectionInput, PostgresSettings, WebsiteSettings } f
 import { variableName } from '../connections/website.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { dashboardService } from '../dashboard/service.js';
-import { NotFoundError } from '../errors.js';
+import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
 import { googleAccountService } from '../google/service.js';
 import type { GoogleAccount } from '../google/types.js';
 import { deleteProjectCascade, deleteWorktreeCascade } from '../projects/cleanup.js';
-import { runner } from '../runners/index.js';
+import { runner, type RunnerConfig } from '../runners/index.js';
+import { containerMonitor } from '../runners/monitor.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -230,6 +231,22 @@ export const resolvers = {
     workspacePath: (project: Project) => workspacePath(project),
     permissionRules: (project: Project) => permissionRuleService.list(project.id),
     runnerStatus: (project: Project) => runner.status(project),
+    containerStats: async (project: Project) => {
+      const stats = await runner.stats(project);
+      if (!stats) return null;
+      return {
+        ...stats,
+        memoryHighSince: containerMonitor.memoryHighSince(project.id),
+        claudeProcesses: stats.claudeProcesses.map((p) => ({
+          ...p,
+          // Une session d'un autre projet ne peut pas tourner dans ce conteneur ; on vérifie quand même.
+          session: async () => {
+            const session = p.sessionId ? await sessionRepository.findById(p.sessionId) : null;
+            return session?.projectId === project.id ? session : null;
+          },
+        })),
+      };
+    },
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     terminals: (project: Project) => terminalService.listByProject(project.id),
@@ -627,9 +644,21 @@ export const resolvers = {
     },
     updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {
       await requireProject(ctx, id, 'admin');
+      const before = await projectService.get(id);
       const project = await projectService.update(id, input);
       // Limite du projet changée : des places se libèrent peut-être pour la file d'attente.
       void sessionService.drainQueue();
+      // Limites mémoire / CPU modifiées : appliquées à chaud au conteneur existant, sans couper les sessions.
+      if (input.runnerConfig !== undefined) {
+        const limits = (p: Project) => `${(p.runnerConfig as RunnerConfig)?.memory ?? ''}|${(p.runnerConfig as RunnerConfig)?.cpus ?? ''}`;
+        if (limits(before) !== limits(project)) {
+          try {
+            await runner.applyLimits(project);
+          } catch (err) {
+            throw new AppError(`Limites enregistrées mais pas appliquées au conteneur en marche (${(err as Error).message}) : « Recréer » le conteneur pour les appliquer.`);
+          }
+        }
+      }
       return project;
     },
     prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {

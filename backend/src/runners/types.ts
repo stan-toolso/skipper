@@ -1,4 +1,5 @@
 import type { Project } from '../projects/types.js';
+import type { ContainerStats } from './stats.js';
 
 /** Un seul environnement d'exécution : le conteneur Docker du projet. Rien ne tourne sur le serveur. */
 export type RunnerKind = 'docker';
@@ -44,7 +45,12 @@ export interface SpawnSpec {
  */
 export interface Runner {
   readonly kind: RunnerKind;
+  containerName(project: Pick<Project, 'slug'>): string;
   status(project: Project): Promise<RunnerStatus>;
+  /** Mémoire, CPU et processus Claude du conteneur en marche ; null s'il est arrêté ou absent. `fresh` : sans le cache de quelques secondes. */
+  stats(project: Project, opts?: { fresh?: boolean }): Promise<ContainerStats | null>;
+  /** Applique à chaud au conteneur existant les limites mémoire et CPU du projet (sans effet s'il n'existe pas). */
+  applyLimits(project: Project): Promise<boolean>;
   /** Prépare l'environnement (démarre le conteneur si besoin). */
   ensureReady(project: Project): Promise<RunnerStatus>;
   stop(project: Project): Promise<RunnerStatus>;

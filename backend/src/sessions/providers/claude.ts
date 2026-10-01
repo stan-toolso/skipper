@@ -38,6 +38,7 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
+import { SESSION_ENV } from '../../runners/stats.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -157,7 +158,7 @@ export class ClaudeProvider implements SessionProvider {
     // Modèle courant : modifiable en cours de session (updateConfig), d'où la variable.
     let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     settingsService.assertModelAllowed(model);
-    const env = { ...settingsService.authEnv(), ...(await agentGitEnv()) };
+    const env = { ...settingsService.authEnv(), ...(await agentGitEnv()), [SESSION_ENV]: ctx.session.id };
     // Script de relais qui exécute le CLI dans le conteneur du projet (avant l'accès direct et le navigateur : rien à nettoyer s'il échoue).
     const claudeExecutable = await runner.claudeExecutable(ctx.project);
     // Connexions en accès direct (ssh, psql depuis le shell) : agent SSH, tunnels et fichiers éphémères.
