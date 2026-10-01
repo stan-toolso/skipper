@@ -14,6 +14,7 @@ let reloading = false;
 const sessionLink = onError(({ graphQLErrors }) => {
   if (!reloading && graphQLErrors?.some((e) => e.extensions?.code === 'UNAUTHENTICATED')) {
     reloading = true;
+    forgetCachedUser();
     window.location.reload();
   }
 });
@@ -21,8 +22,44 @@ const sessionLink = onError(({ graphQLErrors }) => {
 export const apolloClient = new ApolloClient({
   // Le cookie de session est envoyé avec chaque requête (l'API autorise l'origine du front en CORS).
   link: from([sessionLink, new HttpLink({ uri: graphqlUrl, credentials: 'include' })]),
-  cache: new InMemoryCache(),
+  cache: new InMemoryCache({
+    typePolicies: {
+      Query: {
+        fields: {
+          // Un worktree déjà chargé par la sidebar se lit directement dans le cache, sans aller-retour.
+          worktree: { read: (existing, { args, toReference }) => existing ?? toReference({ __typename: 'Worktree', id: args?.id }) },
+        },
+      },
+    },
+  }),
 });
+
+/**
+ * Dernier utilisateur connecté, gardé dans le navigateur : l'interface s'affiche aussitôt, sans attendre
+ * la réponse de `me` (qui confirme ou corrige ensuite). Oublié à la déconnexion et à l'expiration.
+ */
+const CACHED_USER_KEY = 'skipper.me';
+
+export function readCachedUser<T>(): T | null {
+  try {
+    return JSON.parse(localStorage.getItem(CACHED_USER_KEY) ?? 'null') as T | null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeCachedUser(user: unknown): void {
+  try {
+    if (user) localStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(CACHED_USER_KEY);
+  } catch {
+    /* stockage indisponible : l'écran de chargement s'affiche simplement à chaque ouverture */
+  }
+}
+
+export function forgetCachedUser(): void {
+  writeCachedUser(null);
+}
 
 /** URL WebSocket d'un terminal, dérivée de l'URL de l'API. */
 export function terminalSocketUrl(id: string): string {
@@ -46,5 +83,6 @@ export function googleConnectUrl(projectId: string, gmail: string, drive: string
 
 /** Ferme la session côté serveur (le cookie est effacé par la réponse). */
 export async function logoutRequest(): Promise<void> {
+  forgetCachedUser();
   await fetch(`${apiBaseUrl}/auth/logout`, { method: 'POST', credentials: 'include' });
 }

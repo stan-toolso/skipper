@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PageLoading, { ProjectPageLoading } from '../components/PageLoading';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, ButtonGroup, Col, Form, Nav, Row, Spinner, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, ButtonGroup, Col, Form, Nav, Row, Table } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -158,7 +159,7 @@ function InstructionEditor({ id, folders, onDeleted }: { id: string; folders: Co
     setViewVersion(null);
   }, [instruction?.id, instruction?.version]);
 
-  if (loading && !data) return <Spinner animation="border" size="sm" />;
+  if (loading && !data) return <PageLoading />;
   if (error) return <Alert variant="danger">{error.message}</Alert>;
   if (!instruction) return <Alert variant="warning">Instruction introuvable.</Alert>;
 
@@ -297,7 +298,7 @@ export default function ContextPage() {
     if (name) createInstruction({ variables: { input: { projectId: id, folderId, name, content: '' } } });
   };
 
-  if (loading && !data) return <Spinner animation="border" size="sm" />;
+  if (loading && !data) return <ProjectPageLoading id={id} />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const mutationError = folderError ?? instructionError;

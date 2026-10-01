@@ -77,6 +77,12 @@
 .cc-user::before { content: '> '; color: var(--cc-dim); }
 .cc-user .cc-user-text { color: var(--cc-fg); }
 
+/* Repères de temps : heure discrète à droite des messages, séparateur à chaque changement de jour */
+.cc-time { float: right; margin-left: 12px; color: var(--cc-dimmer); font-size: 11px; font-variant-numeric: tabular-nums; cursor: default; }
+.cc-assistant .cc-time { float: none; order: 2; flex: 0 0 auto; margin-left: 4px; }
+.cc-day { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; color: var(--cc-dimmer); font-size: 11px; }
+.cc-day::before, .cc-day::after { content: ''; flex: 1; border-top: 1px solid var(--cc-border); }
+
 /* Message assistant : ⏺ suivi du texte */
 .cc-assistant { margin: 10px 0; display: flex; gap: 8px; }
 .cc-assistant .cc-dot { color: var(--cc-fg); flex: 0 0 auto; }

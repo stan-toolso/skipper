@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PageLoading from '../components/PageLoading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Spinner } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -140,7 +141,7 @@ export default function FileEditorPage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [dirty]);
 
-  if ((wsLoading || loading) && !file) return <div className="p-3"><Spinner animation="border" size="sm" /></div>;
+  if ((wsLoading || loading) && !file) return <PageLoading className="p-3" />;
   if (wsError) return <Alert variant="danger" className="m-3">Erreur : {wsError.message}</Alert>;
   if (!info || !wsRef) return <Alert variant="warning" className="m-3">Projet ou worktree introuvable.</Alert>;
   if (error) {

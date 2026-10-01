@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
+import { ProjectPageLoading } from '../components/PageLoading';
 import { useState } from 'react';
-import { Alert, Badge, Button, Card, Col, Collapse, Form, InputGroup, Modal, Row, Spinner } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Collapse, Form, InputGroup, Modal, Row } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
 import { useDialogs } from '../components/Dialogs';
 import {
@@ -548,7 +549,7 @@ export default function ConnectionsPage() {
   const [justCreated, setJustCreated] = useState<Connection | null>(null);
   useTabTitle(data?.project ? `Connexions · ${data.project.name}` : 'Connexions');
 
-  if (loading && !data) return <Spinner animation="border" size="sm" />;
+  if (loading && !data) return <ProjectPageLoading id={id} />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   const project = data?.project;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;

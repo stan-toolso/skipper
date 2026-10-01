@@ -1,6 +1,7 @@
 import { useQuery } from '@apollo/client';
+import PageLoading from '../components/PageLoading';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Spinner } from 'react-bootstrap';
+import { Alert } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
 import { browserSocketUrl } from '../apollo';
 import { SESSION_BROWSER, type Session } from '../graphql/operations';
@@ -74,7 +75,7 @@ export default function BrowserPage() {
     };
   }, [id]);
 
-  if (loading && !data) return <Spinner animation="border" size="sm" className="m-3" />;
+  if (loading && !data) return <PageLoading className="m-3" />;
   if (error) return <Alert variant="danger" className="m-3">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning" className="m-3">Session introuvable.</Alert>;
 

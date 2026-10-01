@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { Alert, Button, ButtonGroup, Form, Spinner, Table } from 'react-bootstrap';
+import PageLoading from '../components/PageLoading';
+import { Alert, Button, ButtonGroup, Form, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import StatusBadge from '../components/StatusBadge';
-import { useDialogs } from '../components/Dialogs';
-import { DELETE_SESSION, PROJECTS, SESSIONS, STOP_SESSION, type Project, type Session, type SessionStatus } from '../graphql/operations';
+import { useDeletions } from '../workbench/useDeletions';
+import { PROJECTS, SESSIONS, STOP_SESSION, type Project, type Session, type SessionStatus } from '../graphql/operations';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
 const statuses: SessionStatus[] = ['PENDING', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'STOPPED', 'INTERRUPTED'];
@@ -14,13 +15,12 @@ export default function SessionsPage() {
   const [status, setStatus] = useState<SessionStatus | ''>('');
   const [projectId, setProjectId] = useState('');
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
-  const { data, loading, error, refetch } = useQuery<{ sessions: Session[] }>(SESSIONS, {
+  const { data, loading, error } = useQuery<{ sessions: Session[] }>(SESSIONS, {
     variables: { status: status || null, projectId: projectId || null },
     pollInterval: 3000,
   });
   const [stopSession] = useMutation(STOP_SESSION);
-  const { confirm } = useDialogs();
-  const [deleteSession] = useMutation(DELETE_SESSION, { onCompleted: () => refetch() });
+  const { deleteSession } = useDeletions();
 
   return (
     <>
@@ -50,7 +50,7 @@ export default function SessionsPage() {
       </div>
 
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
-      {loading && !data && <Spinner animation="border" size="sm" />}
+      {loading && !data && <PageLoading />}
 
       {data && (
         <Table hover responsive size="sm" className="align-middle">
@@ -99,9 +99,7 @@ export default function SessionsPage() {
                     )}
                     <Button
                       variant="outline-danger"
-                      onClick={async () => {
-                        if (await confirm({ title: 'Supprimer la session', message: `Supprimer la session « ${s.name} » et tout son historique ?`, confirmLabel: 'Supprimer', danger: true })) deleteSession({ variables: { id: s.id } });
-                      }}
+                      onClick={() => void deleteSession({ id: s.id, name: s.name, worktreeId: s.worktree?.id ?? null })}
                     >
                       Supprimer
                     </Button>

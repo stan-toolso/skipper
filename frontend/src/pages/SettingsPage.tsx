@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PageLoading from '../components/PageLoading';
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Form, InputGroup, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -672,7 +673,7 @@ export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const section = (searchParams.get('section') as SettingsSection | null) ?? 'claude';
   const { data, loading, error } = useQuery<{ settings: AppSettings }>(SETTINGS, { pollInterval: 15_000 });
-  if (loading && !data) return <Spinner animation="border" size="sm" />;
+  if (loading && !data) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!data) return null;
   return (

@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { Alert, Button, Card, Col, Form, Row, Spinner, Table } from 'react-bootstrap';
+import { ProjectPageLoading } from '../components/PageLoading';
+import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -8,6 +9,7 @@ import { useSessionLauncher } from '../components/SessionLauncher';
 import GoogleAccountsCard from '../components/GoogleAccountsCard';
 import StatusBadge from '../components/StatusBadge';
 import { useDialogs } from '../components/Dialogs';
+import { useDeletions } from '../workbench/useDeletions';
 
 /** Conteneur Docker du projet : son état et ses commandes. */
 function RunnerCard({ project }: { project: Project }) {
@@ -74,7 +76,6 @@ function RunnerCard({ project }: { project: Project }) {
 import { useState } from 'react';
 import {
   DELETE_PROJECT,
-  DELETE_WORKTREE,
   INVITE_PROJECT_MEMBER,
   PREPARE_PROJECT_WORKSPACE,
   PROJECT,
@@ -354,8 +355,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
 /** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
   const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
-  const { confirm } = useDialogs();
-  const [deleteWorktree, { error }] = useMutation(DELETE_WORKTREE, { refetchQueries: ['ProjectWorktrees', 'Sidebar'] });
+  const { deleteWorktree } = useDeletions();
   const { openNewSession, openNewWorktree } = useSessionLauncher();
   const project = data?.project;
   if (!project?.gitUrl) return null;
@@ -392,16 +392,7 @@ function WorktreesCard({ projectId }: { projectId: string }) {
                   <Button
                     size="sm"
                     variant="outline-danger"
-                    onClick={async () => {
-                      const res = await confirm({
-                        title: 'Supprimer le worktree',
-                        message: `Supprimer le worktree « ${w.branch} » ? Ses sessions (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus.`,
-                        confirmLabel: 'Supprimer',
-                        danger: true,
-                        checkbox: { label: 'Supprimer aussi la branche locale' },
-                      });
-                      if (res) deleteWorktree({ variables: { id: w.id, deleteBranch: res.checked } });
-                    }}
+                    onClick={() => void deleteWorktree(w)}
                   >
                     Supprimer
                   </Button>
@@ -414,11 +405,6 @@ function WorktreesCard({ projectId }: { projectId: string }) {
           <i className="bi bi-diagram-2 me-1" />
           Nouveau worktree
         </Button>
-        {error && (
-          <Alert variant="danger" className="mt-2 mb-0">
-            {error.message}
-          </Alert>
-        )}
       </Card.Body>
     </Card>
   );
@@ -440,7 +426,7 @@ export default function ProjectDetailPage() {
     onCompleted: () => navigate('/projects'),
   });
 
-  if (loading && !data) return <Spinner animation="border" size="sm" />;
+  if (loading && !data) return <ProjectPageLoading id={id} />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   const project = data?.project;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
