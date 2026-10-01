@@ -648,9 +648,9 @@ les événements `schedule` jalonnent le transcript. « Exécuter maintenant » 
 attendre l'échéance ; le compte rendu de la dernière exécution est visible dans la modale.
 
 Garde-fous : une échéance est **ignorée** (notification `schedule.skipped`, raison dans le compte
-rendu) si l'agent travaille encore, si le plafond mensuel de budget est atteint, ou si
-`SKIPPER_MAX_RUNNING_SESSIONS` sessions (4 par défaut) tournent déjà. Une planification désactivée
-ne se lance pas. Les échéances manquées pendant un arrêt du serveur ne sont pas rattrapées : au
+rendu) si l'agent travaille encore ou si le plafond mensuel de budget est atteint. Le nombre de sessions
+déjà en cours n'est pas limité : une échéance est lancée quel que soit ce nombre. Une planification
+désactivée ne se lance pas. Les échéances manquées pendant un arrêt du serveur ne sont pas rattrapées : au
 démarrage, seule une échéance de moins de dix minutes est encore exécutée, les autres sont recalculées
 depuis maintenant. La réservation d'une échéance est atomique en base (`session_schedules.next_run_at`
 avancé sous condition), donc une seule instance du backend l'exécute. L'analyseur cron

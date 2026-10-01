@@ -27,6 +27,4 @@ export const config = {
   /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
-  /** Nombre maximal de sessions en cours au-delà duquel l'ordonnanceur n'en relance pas (le serveur a peu de mémoire). */
-  maxRunningSessions: Number(process.env.SKIPPER_MAX_RUNNING_SESSIONS || 4),
 };

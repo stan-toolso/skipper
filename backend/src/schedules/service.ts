@@ -1,4 +1,3 @@
-import { config } from '../config.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
@@ -156,8 +155,6 @@ export const scheduleService = {
       } catch (err) {
         return skip((err as Error).message);
       }
-      const runningCount = (await sessionRepository.list({ status: 'running', limit: 200 })).length;
-      if (runningCount >= config.maxRunningSessions) return skip(`${runningCount} sessions tournent déjà (limite : ${config.maxRunningSessions})`);
     }
 
     // Nettoyage avant l'exécution : purge du transcript, puis compaction ou remise à zéro de la conversation si elle est trop grosse.
