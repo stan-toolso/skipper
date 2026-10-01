@@ -211,7 +211,9 @@ export default function SessionDetailPage() {
       ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
       : running
         ? "⏵ L'agent attend vos instructions"
-        : session.status === 'PENDING'
+        : session.status === 'QUEUED'
+          ? `⧗ En file d'attente${session.queuePosition ? ` (rang ${session.queuePosition})` : ''} — la limite de sessions simultanées est atteinte, l'agent démarrera dès qu'une place se libère`
+          : session.status === 'PENDING'
           ? "■ Pas encore démarrée — écrivez la première instruction pour lancer l'agent"
           : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
 
@@ -278,6 +280,11 @@ export default function SessionDetailPage() {
               onClick={() => void resumeSession({ variables: { id } }).catch(() => undefined)}
             >
               <i className="bi bi-play-fill" /> Reprendre
+            </button>
+          )}
+          {session.status === 'QUEUED' && (
+            <button type="button" className="cc-btn danger" title="La session ne démarrera pas ; un message la remettra en file si la limite est encore atteinte" onClick={() => stopSession({ variables: { id } })}>
+              Retirer de la file
             </button>
           )}
           {busy && (

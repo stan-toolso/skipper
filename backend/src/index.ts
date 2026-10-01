@@ -17,6 +17,7 @@ import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
 import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
+import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
 import { settingsService } from './settings/service.js';
 import { rateLimitService } from './settings/rateLimits.js';
@@ -92,9 +93,13 @@ async function main() {
   attachWebSockets(server, [terminalUpgradeHandler(), browserUpgradeHandler()]);
   server.listen(config.port, () => {
     console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
-    // Reprise automatique des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur).
+    // Sessions restées en file d'attente avant l'arrêt d'abord (elles attendaient), puis reprise automatique
+    // des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur), elles-mêmes soumises à la limite.
+    sessionService.startHousekeeping();
+    healthService.startMonitor();
     sessionService
-      .resumeInterruptedAfterRestart()
+      .drainQueue()
+      .then(() => sessionService.resumeInterruptedAfterRestart())
       .then((ids) => ids.length && console.log(`[sessions] ${ids.length} session(s) interrompue(s) relancée(s)`))
       .catch((err) => console.error('[sessions] reprise automatique', err));
   });
@@ -110,6 +115,7 @@ async function main() {
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
     scheduleService.stop();
+    healthService.stopMonitor();
     loginService.shutdown();
     const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
     if (interrupted) console.log(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);

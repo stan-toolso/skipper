@@ -11,6 +11,7 @@ const icons: Record<string, string> = {
   'session.completed': 'bi-check-circle',
   'session.failed': 'bi-x-octagon',
   'claude.rate_limit': 'bi-speedometer2',
+  'server.memory_low': 'bi-memory',
   'context.created': 'bi-journal-plus',
   'schedule.run': 'bi-alarm',
   'schedule.skipped': 'bi-alarm',

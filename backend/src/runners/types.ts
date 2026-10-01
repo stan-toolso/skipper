@@ -13,6 +13,8 @@ export interface RunnerConfig {
   cpus?: string;
   /** Navigateur headless (serveur MCP Playwright) mis à disposition des agents. */
   browser?: boolean;
+  /** Nombre maximal de sessions du projet en cours en même temps (absent ou 0 : seule la limite du serveur s'applique). */
+  maxSessions?: number;
 }
 
 export interface RunnerStatus {

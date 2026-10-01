@@ -36,6 +36,8 @@ export const terminalService = {
   },
   listByProject: (projectId: string) => terminalRepository.listByProject(projectId),
   isLive: (id: string) => live.has(id),
+  /** Terminaux ouverts sur ce serveur (processus vivants). */
+  liveCount: () => live.size,
 
   /** Ouvre un shell de connexion dans le workspace du projet. */
   async create(projectId: string, name?: string | null, worktreeId?: string | null): Promise<TerminalRecord> {

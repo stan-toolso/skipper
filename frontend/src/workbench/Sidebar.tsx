@@ -46,6 +46,7 @@ interface SidebarProject {
 
 function statusDot(status: SessionStatus, activity: SessionActivity | null): { cls: string; title: string } {
   if (status === 'RUNNING') return activity === 'BUSY' ? { cls: 'busy', title: "L'agent travaille" } : { cls: 'idle', title: "L'agent attend vos instructions" };
+  if (status === 'QUEUED') return { cls: 'pending', title: "En file d'attente : démarrera dès qu'une place se libère" };
   if (status === 'FAILED') return { cls: 'failed', title: 'Terminée avec une erreur' };
   if (status === 'COMPLETED') return { cls: 'done', title: 'Terminée' };
   if (status === 'STOPPED' || status === 'INTERRUPTED') return { cls: 'stopped', title: status === 'STOPPED' ? 'Arrêtée' : 'Interrompue par un redémarrage' };

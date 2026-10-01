@@ -16,7 +16,7 @@ const ANSWER_MAX_CHARS = 6000;
 /** État lisible d'une session pour un agent : « en cours (travaille) », « en cours (attend des instructions) », « terminée »... */
 function stateOf(s: Session): string {
   if (s.status === 'running') return s.activity === 'idle' ? 'en cours, tour terminé : attend des instructions' : 'en cours, travaille';
-  const labels: Record<Session['status'], string> = { pending: 'pas encore démarrée', running: 'en cours', completed: 'terminée', failed: 'en erreur', stopped: 'arrêtée', interrupted: 'interrompue par un redémarrage' };
+  const labels: Record<Session['status'], string> = { pending: 'pas encore démarrée', queued: "en file d'attente : démarrera dès qu'une place se libère (limite de sessions simultanées)", running: 'en cours', completed: 'terminée', failed: 'en erreur', stopped: 'arrêtée', interrupted: 'interrompue par un redémarrage' };
   return `${labels[s.status]}${s.error ? ` (${s.error})` : ''}`;
 }
 
@@ -138,7 +138,8 @@ export function createSessionsMcpServer(project: Project, sessionId: string): Mc
             await getInProject(id);
             const s = await sessionService.waitForIdle(id, (timeout_seconds ?? 120) * 1000);
             const stillBusy = s.status === 'running' && s.activity !== 'idle';
-            return `${await report(s)}${stillBusy ? "\n\nL'agent travaille encore : rappelle sessions.wait." : ''}`;
+            const hint = stillBusy ? "\n\nL'agent travaille encore : rappelle sessions.wait." : s.status === 'queued' ? "\n\nLa session attend une place pour démarrer : rappelle sessions.wait." : '';
+            return `${await report(s)}${hint}`;
           }),
       ),
       tool(
@@ -155,7 +156,7 @@ export function createSessionsMcpServer(project: Project, sessionId: string): Mc
       tool('end', "Termine proprement une session que tu as lancée : l'agent finit son tour en cours, puis la session se ferme (libère la mémoire).", { id: z.string() }, async ({ id }) =>
         run(async () => {
           const child = await getChild(id);
-          if (!sessionService.isRunning(child.id)) return `La session est déjà ${stateOf(child)}.`;
+          if (!sessionService.isRunning(child.id) && child.status !== 'queued') return `La session est déjà ${stateOf(child)}.`;
           const s = await sessionService.end(child.id);
           return `Fin demandée :\n${await line(s, sessionId)}`;
         }),

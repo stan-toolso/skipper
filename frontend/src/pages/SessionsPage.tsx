@@ -7,7 +7,7 @@ import { useDialogs } from '../components/Dialogs';
 import { DELETE_SESSION, PROJECTS, SESSIONS, STOP_SESSION, type Project, type Session, type SessionStatus } from '../graphql/operations';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
-const statuses: SessionStatus[] = ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'STOPPED', 'INTERRUPTED'];
+const statuses: SessionStatus[] = ['PENDING', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'STOPPED', 'INTERRUPTED'];
 
 export default function SessionsPage() {
   const { openNewSession } = useSessionLauncher();

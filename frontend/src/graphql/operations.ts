@@ -1,7 +1,7 @@
 import { gql } from '@apollo/client';
 import type { AttachmentRef } from '../lib/attachments';
 
-export type SessionStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'INTERRUPTED';
+export type SessionStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'INTERRUPTED';
 export type RequestStatus = 'PENDING' | 'ANSWERED' | 'CANCELLED' | 'EXPIRED';
 export type SessionActivity = 'BUSY' | 'IDLE';
 
@@ -97,7 +97,7 @@ export interface Project {
   systemPrompt: string;
   gitUrl: string | null;
   gitBranch: string | null;
-  runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean };
+  runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean; maxSessions?: number };
   /** Mode d'autorisation des nouvelles sessions : default, acceptEdits, bypassPermissions ou plan. */
   defaultPermissionMode: string;
   /** Connexions soumises à approbation (requête PROJECT seulement). */
@@ -130,6 +130,9 @@ export interface Session {
   pendingRequestCount: number;
   /** Navigateur headless ouvert et utilisé par l'agent : vue en direct disponible. */
   browserActive: boolean;
+  /** Mise en file d'attente (statut QUEUED), et rang dans la file (1 : la prochaine). */
+  queuedAt: string | null;
+  queuePosition: number | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -442,6 +445,8 @@ export const SESSION_FIELDS = gql`
     }
     contextTokens
     pendingRequestCount
+    queuedAt
+    queuePosition
     createdAt
     updatedAt
     startedAt
@@ -1341,7 +1346,102 @@ export interface ServerState {
   activeSessions: number;
   busySessions: number;
   autoResumeInterrupted: boolean;
+  /** 0 : illimité. */
+  maxConcurrentSessions: number;
+  queuedSessions: number;
+  /** 0 : jamais. */
+  idleSessionTimeoutMinutes: number;
+  /** 0 : jamais. */
+  memoryAlertThresholdMb: number;
 }
+
+/** Santé du serveur (query serverHealth). */
+export interface ServerHealth {
+  checkedAt: string;
+  hostname: string;
+  uptimeSeconds: number;
+  cpuCount: number;
+  loadAverage: number[];
+  memory: { totalMb: number; availableMb: number; swapTotalMb: number; swapFreeMb: number };
+  sessions: { running: number; busy: number; idle: number; queued: number; maxConcurrent: number };
+  terminals: number;
+  claudeProcesses: { pid: number; rssMb: number; elapsedSeconds: number }[];
+  docker: {
+    available: boolean;
+    version: string | null;
+    error: string | null;
+    containers: { name: string; project: { id: string; name: string } | null; state: string; status: string; memoryUsage: string | null; memoryPercent: number | null; cpuPercent: number | null }[];
+  };
+  disk: {
+    path: string;
+    totalMb: number | null;
+    freeMb: number | null;
+    workspaces: { name: string; project: { id: string; name: string } | null; sizeMb: number }[];
+    workspacesMeasuredAt: string | null;
+  };
+}
+
+export const SERVER_HEALTH = gql`
+  query ServerHealth {
+    serverHealth {
+      checkedAt
+      hostname
+      uptimeSeconds
+      cpuCount
+      loadAverage
+      memory {
+        totalMb
+        availableMb
+        swapTotalMb
+        swapFreeMb
+      }
+      sessions {
+        running
+        busy
+        idle
+        queued
+        maxConcurrent
+      }
+      terminals
+      claudeProcesses {
+        pid
+        rssMb
+        elapsedSeconds
+      }
+      docker {
+        available
+        version
+        error
+        containers {
+          name
+          project {
+            id
+            name
+          }
+          state
+          status
+          memoryUsage
+          memoryPercent
+          cpuPercent
+        }
+      }
+      disk {
+        path
+        totalMb
+        freeMb
+        workspaces {
+          name
+          project {
+            id
+            name
+          }
+          sizeMb
+        }
+        workspacesMeasuredAt
+      }
+    }
+  }
+`;
 
 /** Fenêtre de limite d'utilisation de l'abonnement Claude. */
 export interface ClaudeRateLimitWindow {
@@ -1410,6 +1510,10 @@ export const APP_SETTINGS_FIELDS = gql`
       activeSessions
       busySessions
       autoResumeInterrupted
+      maxConcurrentSessions
+      queuedSessions
+      idleSessionTimeoutMinutes
+      memoryAlertThresholdMb
     }
     claude {
       authMode
@@ -1612,8 +1716,13 @@ export const SET_MAINTENANCE_MODE = gql`
 
 export const UPDATE_SERVER_SETTINGS = gql`
   ${APP_SETTINGS_FIELDS}
-  mutation UpdateServerSettings($autoResumeInterrupted: Boolean!) {
-    updateServerSettings(autoResumeInterrupted: $autoResumeInterrupted) {
+  mutation UpdateServerSettings($autoResumeInterrupted: Boolean, $maxConcurrentSessions: Int, $idleSessionTimeoutMinutes: Int, $memoryAlertThresholdMb: Int) {
+    updateServerSettings(
+      autoResumeInterrupted: $autoResumeInterrupted
+      maxConcurrentSessions: $maxConcurrentSessions
+      idleSessionTimeoutMinutes: $idleSessionTimeoutMinutes
+      memoryAlertThresholdMb: $memoryAlertThresholdMb
+    ) {
       ...AppSettingsFields
     }
   }

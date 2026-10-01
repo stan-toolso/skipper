@@ -12,6 +12,7 @@ import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
 import { headCommitOf } from '../git/service.js';
+import type { Project } from '../projects/types.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
@@ -19,6 +20,15 @@ const ATTACHMENTS_ONLY_TEXT = 'Voir les fichiers joints.';
 
 /** Processus en cours, indexés par id de session (mémoire du serveur). */
 const running = new Map<string, RunningHandle>();
+/**
+ * Places occupées : sessions en cours ou en train de démarrer, avec leur projet. Tenu de façon synchrone
+ * (réservé avant le premier await du démarrage) pour que deux démarrages simultanés ne dépassent pas la limite.
+ */
+const slots = new Map<string, string>();
+/** Depuis quand chaque session en cours attend des instructions (ms), pour l'arrêt des sessions inactives. */
+const idleSince = new Map<string, number>();
+/** Sessions terminées par le serveur pour inactivité : leur fin n'est pas notifiée. */
+const endedForIdle = new Set<string>();
 /** Traitement de fin de session (mise à jour du statut) en cours, par id de session. */
 const finishing = new Map<string, Promise<void>>();
 /**
@@ -66,6 +76,40 @@ async function interruptForShutdown(id: string): Promise<void> {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Limite propre au projet (runner_config.maxSessions), 0 : aucune. */
+function projectLimit(project: Pick<Project, 'runnerConfig'>): number {
+  const n = Number((project.runnerConfig as { maxSessions?: unknown } | null)?.maxSessions ?? 0);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+const slotsOfProject = (projectId: string) => [...slots.values()].filter((p) => p === projectId).length;
+
+/** Raison pour laquelle une session du projet ne peut pas démarrer maintenant (limite atteinte), null s'il reste une place. */
+function slotBlocker(project: Pick<Project, 'id' | 'runnerConfig'>): string | null {
+  const max = serverSettings.current.maxConcurrentSessions;
+  if (max > 0 && slots.size >= max) return `${slots.size} session${slots.size > 1 ? 's' : ''} en cours sur le serveur (limite : ${max})`;
+  const projectMax = projectLimit(project);
+  const inProject = slotsOfProject(project.id);
+  if (projectMax > 0 && inProject >= projectMax) return `${inProject} session${inProject > 1 ? 's' : ''} en cours dans ce projet (limite : ${projectMax})`;
+  return null;
+}
+
+/** Durée lisible (minutes ou heures). */
+function formatWait(ms: number): string {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return "moins d'une minute";
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/** Vidage de la file d'attente en cours (un seul à la fois) ; `drainAgain` : une place s'est libérée entre-temps. */
+let draining: Promise<void> | null = null;
+let drainAgain = false;
+/** Minuterie de la file d'attente et de l'arrêt des sessions inactives. */
+let housekeeping: NodeJS.Timeout | null = null;
+/** Intervalle de la minuterie : filet de sécurité (la file est aussi vidée à chaque fin de session). */
+const HOUSEKEEPING_INTERVAL_MS = 60_000;
+
 /** Profondeur maximale d'imbrication des sessions lancées par des agents : une session humaine peut lancer des sessions, qui peuvent en lancer à leur tour, puis c'est fini. */
 const MAX_AGENT_DEPTH = 2;
 /** Nombre maximal de sessions en cours lancées par une même session d'agent (le serveur a peu de mémoire). */
@@ -111,6 +155,69 @@ async function persistConfig(id: string, changes: Record<string, unknown>, appli
   return updated;
 }
 
+/** Instruction refusée à une session en file d'attente. */
+const queuedError = () =>
+  new AppError(
+    "La session est en file d'attente (limite de sessions simultanées atteinte) : elle démarrera dès qu'une place se libère. Arrêtez-la pour la retirer de la file.",
+    'SESSIONS_LIMIT',
+  );
+
+/**
+ * Met la session en file d'attente avec son instruction de démarrage (consigne de la session si
+ * `initialMessage` est absent). Une session déjà en file garde son rang.
+ */
+async function enqueue(session: Session, blocker: string, initialMessage: string | undefined, attachments: Attachment[]): Promise<Session> {
+  const queued = await publishSession(
+    await sessionRepository.update(session.id, {
+      status: 'queued',
+      activity: null,
+      exitCode: null,
+      error: null,
+      queuedAt: session.queuedAt ?? new Date(),
+      queuedStart: { message: initialMessage ?? null, attachments: initialMessage === undefined ? [] : attachments },
+    }),
+  );
+  const position = await sessionRepository.queuePosition(session.id);
+  await emitEvent(session.id, 'system', {
+    message: `Session en file d'attente : ${blocker}. Elle démarrera dès qu'une place se libère${position ? ` (rang ${position})` : ''}.`,
+    notice: true,
+    reason: 'queued',
+  });
+  return queued;
+}
+
+/** Retire une session de la file d'attente (arrêt demandé avant son démarrage). */
+async function dequeue(id: string): Promise<Session> {
+  const session = await publishSession(await sessionRepository.update(id, { status: 'stopped', activity: null, queuedAt: null, queuedStart: null, endedAt: new Date() }));
+  await emitEvent(id, 'system', { message: "Session retirée de la file d'attente", notice: true, reason: 'queue_cancel' });
+  await emitEvent(id, 'status', { status: 'stopped' });
+  return session;
+}
+
+/** Un passage sur la file d'attente : démarre les sessions qui ont une place, dans l'ordre d'arrivée. */
+async function drainOnce(): Promise<void> {
+  if (stopping || serverSettings.maintenance) return;
+  const max = serverSettings.current.maxConcurrentSessions;
+  if (max > 0 && slots.size >= max) return;
+  for (const session of await sessionRepository.listQueued()) {
+    if (stopping || serverSettings.maintenance) return;
+    if (max > 0 && slots.size >= max) return;
+    const project = await projectService.get(session.projectId).catch(() => null);
+    if (!project || slotBlocker(project)) continue;
+    try {
+      await sessionService.start(session.id, session.queuedStart?.message ?? undefined, session.queuedStart?.attachments ?? [], { fromQueue: true });
+    } catch (err) {
+      const message = (err as Error).message;
+      console.error(`[sessions] démarrage de ${session.id} depuis la file d'attente`, err);
+      await emitEvent(session.id, 'status', { status: 'failed', error: message }).catch(() => undefined);
+      await sessionRepository
+        .update(session.id, { status: 'failed', activity: null, error: message, endedAt: new Date(), queuedAt: null, queuedStart: null })
+        .then((s) => s && pubSub.publish('sessionUpdated', s))
+        .catch(() => undefined);
+    }
+  }
+}
+
 export const sessionService = {
   list: (filter?: SessionFilter) => sessionRepository.list(filter),
   get: (id: string) => sessionRepository.findById(id),
@@ -139,7 +246,10 @@ export const sessionService = {
       if (!parent) throw new NotFoundError('Session parente introuvable');
       if (parent.projectId !== project.id) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
       if ((await depthOf(parent.id)) >= MAX_AGENT_DEPTH) throw new AppError(`Imbrication maximale atteinte : une session lancée par un agent lancé par un agent ne peut pas en lancer d'autres`);
-      const children = await sessionRepository.list({ parentSessionId: parent.id, status: 'running', limit: MAX_RUNNING_CHILDREN + 1 });
+      const children = [
+        ...(await sessionRepository.list({ parentSessionId: parent.id, status: 'running', limit: MAX_RUNNING_CHILDREN + 1 })),
+        ...(await sessionRepository.list({ parentSessionId: parent.id, status: 'queued', limit: MAX_RUNNING_CHILDREN + 1 })),
+      ];
       if (children.length >= MAX_RUNNING_CHILDREN) {
         throw new AppError(`Au plus ${MAX_RUNNING_CHILDREN} sessions lancées par cette session peuvent tourner en même temps : termine-en une (sessions.end) avant d'en lancer une autre`);
       }
@@ -194,7 +304,8 @@ export const sessionService = {
    * au plus `timeoutMs`. Renvoie l'état courant de la session dans tous les cas.
    */
   async waitForIdle(id: string, timeoutMs: number): Promise<Session> {
-    const settled = (s: Session) => s.status !== 'running' || s.activity === 'idle';
+    // Une session en file d'attente n'a pas encore commencé son tour.
+    const settled = (s: Session) => (s.status !== 'running' && s.status !== 'queued') || s.activity === 'idle';
     const current = await sessionRepository.findById(id);
     if (!current) throw new NotFoundError('Session introuvable');
     if (settled(current)) return current;
@@ -222,22 +333,44 @@ export const sessionService = {
   /**
    * Démarre (ou relance) la session. `initialMessage` (et ses `attachments`) remplace le prompt de la session
    * comme première instruction, typiquement pour reprendre une session terminée avec une nouvelle consigne.
+   * Si la limite de sessions simultanées (serveur ou projet) est atteinte, la session passe en file d'attente
+   * (statut « queued ») avec cette instruction et démarre dès qu'une place se libère. `fromQueue` : démarrage
+   * par la file d'attente elle-même (sans place, la session y reste à son rang).
    */
-  async start(id: string, initialMessage?: string, attachments: Attachment[] = []): Promise<Session> {
+  async start(id: string, initialMessage?: string, attachments: Attachment[] = [], opts: { fromQueue?: boolean } = {}): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (session.status === 'running') throw new AppError('La session est déjà en cours');
+    if (session.status === 'queued' && !opts.fromQueue) throw queuedError();
+    if (opts.fromQueue && session.status !== 'queued') return session;
     if (stopping) throw new AppError('Le serveur redémarre : réessayez dans quelques secondes', 'MAINTENANCE');
     serverSettings.assertNotInMaintenance();
     if (!(initialMessage ?? session.prompt)) throw new AppError('Envoyez une première instruction pour démarrer la session');
     const provider = getProvider(session.provider);
     const project = await projectService.get(session.projectId);
 
-    const started = await publishSession(
-      await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null }),
-    );
+    // Pas d'await entre la vérification et la réservation de la place (une place déjà prise : démarrage concurrent).
+    if (slots.has(id)) throw new AppError('La session est déjà en cours');
+    const blocker = slotBlocker(project);
+    if (blocker) return opts.fromQueue ? session : enqueue(session, blocker, initialMessage, attachments);
+    slots.set(id, project.id);
+    idleSince.delete(id);
 
     const emit = (type: string, payload: Record<string, unknown> = {}) => emitEvent(id, type, payload);
+
+    let started: Session;
+    try {
+      if (session.status === 'queued') {
+        await emit('system', { message: `Place libérée : la session démarre après ${formatWait(Date.now() - (session.queuedAt?.getTime() ?? Date.now()))} d'attente`, notice: true, reason: 'queue_start' });
+      }
+      started = await publishSession(
+        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null }),
+      );
+    } catch (err) {
+      slots.delete(id);
+      this.drainQueue();
+      throw err;
+    }
 
     let handle: RunningHandle;
     try {
@@ -262,6 +395,8 @@ export const sessionService = {
           await publishSession(await sessionRepository.update(id, { contextTokens }));
         },
         setActivity: async (activity) => {
+          if (activity === 'idle') idleSince.set(id, Date.now());
+          else idleSince.delete(id);
           await publishSession(await sessionRepository.update(id, { activity }));
         },
         recordConfig: async (changes) => {
@@ -287,6 +422,8 @@ export const sessionService = {
         isServerStopping: () => stopping,
       });
     } catch (err) {
+      slots.delete(id);
+      this.drainQueue();
       const message = (err as Error).message;
       await emit('status', { status: 'failed', error: message });
       return publishSession(await sessionRepository.update(id, { status: 'failed', activity: null, error: message, endedAt: new Date() }));
@@ -296,6 +433,11 @@ export const sessionService = {
     // Fin du processus gérée en tâche de fond : la mutation `start` rend la main immédiatement.
     const finished = handle.wait().then(async (result) => {
       running.delete(id);
+      slots.delete(id);
+      idleSince.delete(id);
+      const idleEnd = endedForIdle.delete(id);
+      // La place libérée revient à la première session de la file d'attente.
+      this.drainQueue();
       const current = await sessionRepository.findById(id);
       // Arrêt du serveur : la session est « interrompue », quelle que soit la façon dont son flux s'est
       // terminé (fermé par `stop()`, ou agent tué par le signal de pm2 avant). Statut peut-être déjà posé par `shutdown()`.
@@ -311,7 +453,8 @@ export const sessionService = {
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
       // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.
-      if ((status === 'completed' || status === 'failed') && !scheduledRuns.has(id)) {
+      // Une session terminée pour inactivité n'est pas notifiée : un événement l'explique dans le transcript.
+      if ((status === 'completed' || status === 'failed') && !scheduledRuns.has(id) && !idleEnd) {
         void notificationService.notify({
           type: `session.${status}`,
           title: status === 'completed' ? `Session « ${session.name} » terminée` : `Session « ${session.name} » en erreur`,
@@ -336,6 +479,7 @@ export const sessionService = {
     if (!trimmed) throw new AppError('Le message est vide');
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
+    if (session.status === 'queued') throw queuedError();
     const handle = running.get(id);
     if (handle && !handle.sendMessage) throw new AppError("Ce type de session n'accepte pas d'instructions en cours d'exécution");
     const attachments = files?.length ? await storeAttachments(await projectService.get(session.projectId), id, files) : [];
@@ -355,6 +499,7 @@ export const sessionService = {
   /** Fin propre : l'agent termine son tour en cours, puis la session se termine. */
   async end(id: string): Promise<Session> {
     const handle = running.get(id);
+    if (!handle && (await sessionRepository.findById(id))?.status === 'queued') return dequeue(id);
     if (!handle) throw new AppError("La session n'est pas en cours d'exécution");
     if (!handle.end) return this.stop(id);
     await handle.end();
@@ -398,6 +543,7 @@ export const sessionService = {
 
   async stop(id: string): Promise<Session> {
     const handle = running.get(id);
+    if (!handle && (await sessionRepository.findById(id))?.status === 'queued') return dequeue(id);
     if (!handle) throw new AppError("La session n'est pas en cours d'exécution");
     await publishSession(await sessionRepository.update(id, { status: 'stopped', activity: null, endedAt: new Date() }));
     await requestService.cancelAllForSession(id);
@@ -478,12 +624,86 @@ export const sessionService = {
     return { active: ids.length, ...(await sessionRepository.countByActivity(ids)) };
   },
 
+  /** Places occupées (sessions en cours ou en train de démarrer), au total et par projet. */
+  slotUsage(): { total: number; byProject: Map<string, number> } {
+    const byProject = new Map<string, number>();
+    for (const projectId of slots.values()) byProject.set(projectId, (byProject.get(projectId) ?? 0) + 1);
+    return { total: slots.size, byProject };
+  },
+
+  /** Rang d'une session dans la file d'attente (1 : la prochaine), null si elle n'y est pas. */
+  queuePosition: (id: string) => sessionRepository.queuePosition(id),
+
+  /**
+   * Démarre les sessions en file d'attente tant qu'il reste des places, dans l'ordre d'arrivée (une session
+   * bloquée par la limite de son projet laisse passer les suivantes). Sans effet pendant la maintenance ou
+   * l'arrêt. Renvoie la promesse du vidage en cours (un seul à la fois).
+   */
+  drainQueue(): Promise<void> {
+    if (draining) {
+      drainAgain = true;
+      return draining;
+    }
+    draining = (async () => {
+      do {
+        drainAgain = false;
+        await drainOnce();
+      } while (drainAgain);
+    })()
+      .catch((err) => console.error("[sessions] file d'attente", err))
+      .finally(() => {
+        draining = null;
+      });
+    return draining;
+  },
+
+  /**
+   * Termine proprement les sessions qui attendent des instructions depuis plus que le délai d'inactivité
+   * (réglage du serveur) : leur place et leur mémoire reviennent aux autres. Un message les relance.
+   */
+  async endIdleSessions(now = Date.now()): Promise<string[]> {
+    const minutes = serverSettings.current.idleSessionTimeoutMinutes;
+    if (!minutes || stopping) return [];
+    const ended: string[] = [];
+    for (const [id, since] of idleSince) {
+      if (now - since < minutes * 60_000 || !running.has(id) || endedForIdle.has(id)) continue;
+      try {
+        endedForIdle.add(id);
+        await emitEvent(id, 'system', {
+          message: `Session terminée après ${formatWait(now - since)} sans instruction, pour libérer sa place et sa mémoire. Envoyez un message pour la reprendre.`,
+          notice: true,
+          reason: 'idle_timeout',
+        });
+        await this.end(id);
+        ended.push(id);
+      } catch (err) {
+        endedForIdle.delete(id);
+        console.error(`[sessions] arrêt de la session inactive ${id}`, err);
+      }
+    }
+    return ended;
+  },
+
+  /** Lance la minuterie de la file d'attente et de l'arrêt des sessions inactives (au démarrage du serveur). */
+  startHousekeeping(): void {
+    if (housekeeping) return;
+    housekeeping = setInterval(() => {
+      void this.endIdleSessions()
+        .then((ids) => ids.length && console.log(`[sessions] ${ids.length} session(s) inactive(s) terminée(s)`))
+        .catch((err) => console.error('[sessions] sessions inactives', err));
+      void this.drainQueue();
+    }, HOUSEKEEPING_INTERVAL_MS);
+    housekeeping.unref();
+  },
+
   /**
    * Début de l'arrêt du serveur, à appeler de façon synchrone dès la réception du signal : à partir
    * de là, toute fin de session est une interruption et aucune session ne démarre plus.
    */
   beginShutdown(): void {
     stopping = true;
+    if (housekeeping) clearInterval(housekeeping);
+    housekeeping = null;
   },
 
   /**

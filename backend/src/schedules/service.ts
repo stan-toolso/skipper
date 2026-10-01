@@ -148,6 +148,7 @@ export const scheduleService = {
 
     if (session.status === 'running' && session.activity !== 'idle') return skip("l'agent travaillait encore");
     if (scheduledRuns.has(id)) return skip("l'exécution précédente n'est pas terminée");
+    if (session.status === 'queued') return skip("la session attend déjà une place dans la file d'attente");
     if (session.status !== 'running' && serverSettings.maintenance) return skip('le serveur est en maintenance');
     if (session.status !== 'running') {
       try {

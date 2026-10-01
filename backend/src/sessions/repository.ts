@@ -1,6 +1,6 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { Attachment, CreateSessionInput, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
@@ -21,6 +21,8 @@ interface SessionRow {
   context_tokens: number | null;
   cost_usd: string | number | null;
   base_commit: string | null;
+  queued_at: Date | null;
+  queued_start: QueuedStart | null;
   created_at: Date;
   updated_at: Date;
   started_at: Date | null;
@@ -55,6 +57,8 @@ function toSession(row: SessionRow): Session {
     contextTokens: row.context_tokens,
     costUsd: Number(row.cost_usd ?? 0),
     baseCommit: row.base_commit ?? null,
+    queuedAt: row.queued_at ?? null,
+    queuedStart: row.queued_start ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
@@ -86,6 +90,8 @@ export interface SessionPatch {
   error?: string | null;
   startedAt?: Date | null;
   endedAt?: Date | null;
+  queuedAt?: Date | null;
+  queuedStart?: QueuedStart | null;
 }
 
 const patchColumns: Record<keyof SessionPatch, string> = {
@@ -102,6 +108,8 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   error: 'error',
   startedAt: 'started_at',
   endedAt: 'ended_at',
+  queuedAt: 'queued_at',
+  queuedStart: 'queued_start',
 };
 
 export const sessionRepository = {
@@ -167,7 +175,7 @@ export const sessionRepository = {
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
         // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL) ; toJson retire les \u0000.
-        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' ? toJson(patch[key]) : patch[key]);
+        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' || key === 'queuedStart' ? (patch[key] === null ? null : toJson(patch[key])) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }
@@ -227,6 +235,24 @@ export const sessionRepository = {
       [since, limit],
     );
     return rows.map(toSession);
+  },
+
+  /** Sessions en file d'attente, dans l'ordre d'arrivée. */
+  async listQueued(): Promise<Session[]> {
+    const { rows } = await pool.query<SessionRow>(`SELECT * FROM sessions WHERE status = 'queued' ORDER BY queued_at ASC NULLS LAST, created_at ASC`);
+    return rows.map(toSession);
+  },
+
+  /** Rang (à partir de 1) d'une session dans la file d'attente, null si elle n'y est pas. */
+  async queuePosition(id: string): Promise<number | null> {
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM sessions q, sessions s
+       WHERE s.id = $1 AND s.status = 'queued' AND q.status = 'queued'
+         AND (q.queued_at, q.created_at, q.id) <= (s.queued_at, s.created_at, s.id)`,
+      [id],
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    return n > 0 ? n : null;
   },
 
   /** Activité des sessions données (comptage des sessions actives avant un redémarrage). */

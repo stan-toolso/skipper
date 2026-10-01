@@ -24,6 +24,13 @@ function validatePermissionMode(mode: string | null | undefined): void {
   if (mode && !(projectPermissionModes as readonly string[]).includes(mode)) throw new AppError(`Mode d'autorisation invalide : ${mode}`);
 }
 
+/** Limite de sessions simultanées du projet (runnerConfig.maxSessions) : entier positif, ou absente. */
+function validateRunnerConfig(runnerConfig: Record<string, unknown> | null | undefined): void {
+  const max = runnerConfig?.maxSessions;
+  if (max === undefined || max === null) return;
+  if (!Number.isInteger(max) || (max as number) < 0 || (max as number) > 100) throw new AppError('Sessions simultanées du projet : entier entre 0 et 100 attendu');
+}
+
 export const projectService = {
   list: () => projectRepository.list(),
   listForUser: (userId: string) => projectRepository.listForUser(userId),
@@ -40,6 +47,7 @@ export const projectService = {
     validateSlug(slug);
     if (await projectRepository.slugExists(slug)) throw new AppError(`Le slug "${slug}" est déjà utilisé`);
     validatePermissionMode(input.defaultPermissionMode);
+    validateRunnerConfig(input.runnerConfig);
 
     const project = await projectRepository.create({ ...input, name: input.name.trim(), slug });
     try {
@@ -55,6 +63,7 @@ export const projectService = {
   async update(id: string, input: UpdateProjectInput): Promise<Project> {
     if (input.name !== undefined && !input.name?.trim()) throw new AppError('Le nom du projet est obligatoire');
     validatePermissionMode(input.defaultPermissionMode);
+    validateRunnerConfig(input.runnerConfig);
     const project = await projectRepository.update(id, { ...input, name: input.name?.trim() });
     if (!project) throw new NotFoundError('Projet introuvable');
     return project;

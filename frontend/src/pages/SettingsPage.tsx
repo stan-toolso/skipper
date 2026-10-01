@@ -27,6 +27,7 @@ import { Nav } from 'react-bootstrap';
 import { useSearchParams } from 'react-router-dom';
 import { canAutoFocus } from '../lib/device';
 import RateLimitGauges from '../components/RateLimitGauges';
+import ServerHealthCard from '../components/ServerHealthCard';
 
 const modeLabels: Record<ClaudeAuthMode, { title: string; hint: string }> = {
   server: { title: 'Compte du serveur', hint: "Le compte connecté dans Claude Code pour l'utilisateur système qui fait tourner Skipper (connexion depuis cette page ou par SSH), ou les variables d'environnement du serveur. Recommandé : les identifiants se renouvellent seuls." },
@@ -510,7 +511,81 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
   );
 }
 
-/** Serveur : mode maintenance avant un redémarrage, et reprise automatique des sessions interrompues. */
+/** Limite de sessions simultanées, arrêt des sessions inactives et seuil d'alerte mémoire. */
+function SessionLimitsCard({ settings }: { settings: AppSettings }) {
+  const { server } = settings;
+  const [maxSessions, setMaxSessions] = useState(String(server.maxConcurrentSessions));
+  const [idleMinutes, setIdleMinutes] = useState(String(server.idleSessionTimeoutMinutes));
+  const [alertMb, setAlertMb] = useState(String(server.memoryAlertThresholdMb));
+  const [updateServer, { loading: saving, error }] = useMutation(UPDATE_SERVER_SETTINGS);
+  useEffect(() => {
+    setMaxSessions(String(server.maxConcurrentSessions));
+    setIdleMinutes(String(server.idleSessionTimeoutMinutes));
+    setAlertMb(String(server.memoryAlertThresholdMb));
+  }, [server.maxConcurrentSessions, server.idleSessionTimeoutMinutes, server.memoryAlertThresholdMb]);
+  const dirty =
+    maxSessions !== String(server.maxConcurrentSessions) || idleMinutes !== String(server.idleSessionTimeoutMinutes) || alertMb !== String(server.memoryAlertThresholdMb);
+  const toInt = (v: string) => Math.max(0, Math.round(Number(v) || 0));
+
+  return (
+    <Card className="mb-4">
+      <Card.Header>
+        Sessions simultanées
+        {server.queuedSessions > 0 && (
+          <Badge bg="info" className="ms-2">
+            {server.queuedSessions} en file d'attente
+          </Badge>
+        )}
+      </Card.Header>
+      <Card.Body>
+        <p className="text-secondary small">
+          Chaque session d'agent fait tourner un processus Claude de plusieurs centaines de Mo. Au-delà de la limite, une session qui devrait
+          démarrer (lancée à la main, par une tâche, par une planification ou par un autre agent, ou relancée par un message) passe « en file
+          d'attente » et démarre dès qu'une place se libère, dans l'ordre d'arrivée. Chaque projet peut fixer sa propre limite dans ses options
+          avancées.
+        </p>
+        <Form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void updateServer({
+              variables: { maxConcurrentSessions: toInt(maxSessions), idleSessionTimeoutMinutes: toInt(idleMinutes), memoryAlertThresholdMb: toInt(alertMb) },
+            }).catch(() => undefined);
+          }}
+        >
+          <Row className="g-3 mb-3">
+            <Col md={4}>
+              <Form.Label className="small mb-1">Sessions simultanées au maximum</Form.Label>
+              <Form.Control type="number" min={0} max={100} value={maxSessions} onChange={(e) => setMaxSessions(e.target.value)} />
+              <Form.Text>0 : illimité. Sur ce serveur, compter environ 400 Mo par session.</Form.Text>
+            </Col>
+            <Col md={4}>
+              <Form.Label className="small mb-1">Terminer une session inactive après</Form.Label>
+              <InputGroup>
+                <Form.Control type="number" min={0} value={idleMinutes} onChange={(e) => setIdleMinutes(e.target.value)} />
+                <InputGroup.Text>min</InputGroup.Text>
+              </InputGroup>
+              <Form.Text>Sans instruction depuis ce délai, la session se termine et libère sa place ; un message la reprend. 0 : jamais.</Form.Text>
+            </Col>
+            <Col md={4}>
+              <Form.Label className="small mb-1">Alerter sous</Form.Label>
+              <InputGroup>
+                <Form.Control type="number" min={0} value={alertMb} onChange={(e) => setAlertMb(e.target.value)} />
+                <InputGroup.Text>Mo disponibles</InputGroup.Text>
+              </InputGroup>
+              <Form.Text>Notification aux administrateurs quand la mémoire disponible passe sous ce seuil. 0 : jamais.</Form.Text>
+            </Col>
+          </Row>
+          <Button type="submit" disabled={saving || !dirty}>
+            {saving ? 'Enregistrement…' : 'Enregistrer'}
+          </Button>
+        </Form>
+        <ErrorLine error={error} />
+      </Card.Body>
+    </Card>
+  );
+}
+
+/** Serveur : santé, sessions simultanées, mode maintenance avant un redémarrage, et reprise automatique des sessions interrompues. */
 function ServerSection({ settings }: { settings: AppSettings }) {
   const { server } = settings;
   const [message, setMessage] = useState(server.maintenanceMessage ?? '');
@@ -521,6 +596,8 @@ function ServerSection({ settings }: { settings: AppSettings }) {
 
   return (
     <>
+      <ServerHealthCard memoryAlertThresholdMb={server.memoryAlertThresholdMb} />
+      <SessionLimitsCard settings={settings} />
       <Card className="mb-4">
         <Card.Header>
           Mode maintenance

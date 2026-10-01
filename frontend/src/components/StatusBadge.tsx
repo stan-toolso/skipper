@@ -3,6 +3,7 @@ import type { SessionStatus } from '../graphql/operations';
 
 const variants: Record<SessionStatus, { bg: string; label: string }> = {
   PENDING: { bg: 'secondary', label: 'En attente' },
+  QUEUED: { bg: 'info', label: "File d'attente" },
   RUNNING: { bg: 'primary', label: 'En cours' },
   COMPLETED: { bg: 'success', label: 'Terminée' },
   FAILED: { bg: 'danger', label: 'Échouée' },

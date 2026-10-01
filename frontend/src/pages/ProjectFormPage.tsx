@@ -72,6 +72,7 @@ export default function ProjectFormPage() {
   const [runnerMemory, setRunnerMemory] = useState('');
   const [runnerCpus, setRunnerCpus] = useState('');
   const [runnerBrowser, setRunnerBrowser] = useState(false);
+  const [maxSessions, setMaxSessions] = useState('');
   const [permissionMode, setPermissionMode] = useState('default');
   const [showAdvanced, setShowAdvanced] = useState(isEdit);
 
@@ -88,6 +89,7 @@ export default function ProjectFormPage() {
     setRunnerMemory(p.runnerConfig?.memory ?? '');
     setRunnerCpus(p.runnerConfig?.cpus ?? '');
     setRunnerBrowser(Boolean(p.runnerConfig?.browser));
+    setMaxSessions(p.runnerConfig?.maxSessions ? String(p.runnerConfig.maxSessions) : '');
     setPermissionMode(p.defaultPermissionMode ?? 'default');
   }, [data]);
 
@@ -95,6 +97,8 @@ export default function ProjectFormPage() {
     e.preventDefault();
     const runnerConfig: Record<string, unknown> = Object.fromEntries(Object.entries({ image: runnerImage.trim(), memory: runnerMemory.trim(), cpus: runnerCpus.trim() }).filter(([, v]) => v));
     if (runnerBrowser) runnerConfig.browser = true;
+    const max = Math.round(Number(maxSessions));
+    if (max > 0) runnerConfig.maxSessions = max;
     const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runnerConfig, defaultPermissionMode: permissionMode };
     if (isEdit) updateProject({ variables: { id, input: common } });
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
@@ -197,6 +201,11 @@ export default function ProjectFormPage() {
                     </Col>
                     <Form.Text>Vides : valeurs par défaut du serveur. Un changement d'image ou de limites s'applique après « Recréer » sur la page du projet.</Form.Text>
                   </Row>
+                  <Form.Group className="mb-3">
+                    <Form.Label className="small mb-1">Sessions simultanées au maximum dans ce projet</Form.Label>
+                    <Form.Control size="sm" type="number" min={0} max={100} value={maxSessions} onChange={(e) => setMaxSessions(e.target.value)} placeholder="limite du serveur" style={{ maxWidth: 200 }} />
+                    <Form.Text>Au-delà, les sessions du projet attendent en file qu'une place se libère. Vide : seule la limite du serveur (Paramètres → Serveur) s'applique.</Form.Text>
+                  </Form.Group>
                 </div>
               </Collapse>
             </div>

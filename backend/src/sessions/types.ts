@@ -1,4 +1,4 @@
-export type SessionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+export type SessionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 /** Pour une session en cours : l'agent travaille ('busy') ou attend des instructions ('idle'). */
 export type SessionActivity = 'busy' | 'idle';
 
@@ -28,6 +28,12 @@ export interface SessionCleanup {
   contextMaxTokens?: number | null;
 }
 
+/** Démarrage différé d'une session en file d'attente : l'instruction à transmettre quand une place se libère. */
+export interface QueuedStart {
+  message: string | null;
+  attachments: Attachment[];
+}
+
 export interface Session {
   id: string;
   projectId: string;
@@ -52,6 +58,10 @@ export interface Session {
   costUsd: number;
   /** Commit HEAD du dossier de travail au premier démarrage (référence de l'onglet « Modifications »), null sans git. */
   baseCommit: string | null;
+  /** Mise en file d'attente (statut « queued ») faute de place : null sinon. */
+  queuedAt: Date | null;
+  /** Instruction de démarrage différée par la file d'attente (null : la consigne de la session). */
+  queuedStart: QueuedStart | null;
   createdAt: Date;
   updatedAt: Date;
   startedAt: Date | null;

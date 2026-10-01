@@ -34,6 +34,8 @@ import { loginService, type ClaudeLoginKind } from '../settings/login.js';
 import { githubService } from '../settings/github.js';
 import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
 import { serverSettings } from '../settings/server.js';
+import { sessionRepository } from '../sessions/repository.js';
+import { healthService } from '../health/service.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { scheduleService } from '../schedules/service.js';
@@ -126,6 +128,10 @@ const appSettings = () => ({
       activeSessions: active.active,
       busySessions: active.busy,
       autoResumeInterrupted: serverSettings.current.autoResumeInterrupted,
+      maxConcurrentSessions: serverSettings.current.maxConcurrentSessions,
+      queuedSessions: (await sessionRepository.listQueued()).length,
+      idleSessionTimeoutMinutes: serverSettings.current.idleSessionTimeoutMinutes,
+      memoryAlertThresholdMb: serverSettings.current.memoryAlertThresholdMb,
     };
   },
 });
@@ -257,6 +263,7 @@ export const resolvers = {
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
     browserActive: (session: Session) => liveBrowserService.isActive(session.id),
+    queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
@@ -320,6 +327,16 @@ export const resolvers = {
     settings: (_: unknown, __: unknown, ctx: Ctx) => {
       requireAdmin(ctx);
       return appSettings();
+    },
+    serverHealth: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireAdmin(ctx);
+      const health = await healthService.snapshot();
+      const project = (id: string | null) => (id ? projectService.get(id).catch(() => null) : null);
+      return {
+        ...health,
+        docker: { ...health.docker, containers: health.docker.containers.map((c) => ({ ...c, project: () => project(c.projectId) })) },
+        disk: { ...health.disk, workspaces: health.disk.workspaces.map((w) => ({ ...w, project: () => project(w.projectId) })) },
+      };
     },
     claudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => {
       requireAdmin(ctx);
@@ -513,11 +530,24 @@ export const resolvers = {
       const user = requireAdmin(ctx);
       serverSettings.setMaintenance(args.enabled, args.message ?? null, user.id);
       console.log(`[server] mode maintenance ${args.enabled ? 'activé' : 'levé'} par ${user.email}`);
+      // Fin de la maintenance : les sessions en file d'attente peuvent démarrer.
+      if (!args.enabled) void sessionService.drainQueue();
       return appSettings();
     },
-    updateServerSettings: async (_: unknown, args: { autoResumeInterrupted: boolean }, ctx: Ctx) => {
+    updateServerSettings: async (
+      _: unknown,
+      args: { autoResumeInterrupted?: boolean | null; maxConcurrentSessions?: number | null; idleSessionTimeoutMinutes?: number | null; memoryAlertThresholdMb?: number | null },
+      ctx: Ctx,
+    ) => {
       requireAdmin(ctx);
-      await serverSettings.update({ autoResumeInterrupted: args.autoResumeInterrupted });
+      await serverSettings.update({
+        autoResumeInterrupted: args.autoResumeInterrupted ?? undefined,
+        maxConcurrentSessions: args.maxConcurrentSessions ?? undefined,
+        idleSessionTimeoutMinutes: args.idleSessionTimeoutMinutes ?? undefined,
+        memoryAlertThresholdMb: args.memoryAlertThresholdMb ?? undefined,
+      });
+      // Limite relevée : des places se libèrent peut-être pour la file d'attente.
+      void sessionService.drainQueue();
       return appSettings();
     },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {
@@ -597,7 +627,10 @@ export const resolvers = {
     },
     updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {
       await requireProject(ctx, id, 'admin');
-      return projectService.update(id, input);
+      const project = await projectService.update(id, input);
+      // Limite du projet changée : des places se libèrent peut-être pour la file d'attente.
+      void sessionService.drainQueue();
+      return project;
     },
     prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');

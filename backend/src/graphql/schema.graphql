@@ -3,6 +3,8 @@ scalar DateTime
 
 enum SessionStatus {
   PENDING
+  "En file d'attente : la limite de sessions simultanées (serveur ou projet) est atteinte, la session démarre dès qu'une place se libère."
+  QUEUED
   RUNNING
   COMPLETED
   FAILED
@@ -723,6 +725,10 @@ type Session {
   pendingRequestCount: Int!
   "Le navigateur headless de la session est ouvert et l'agent s'en est servi : vue en direct sur le WebSocket /browsers/<id>."
   browserActive: Boolean!
+  "Mise en file d'attente (statut QUEUED)."
+  queuedAt: DateTime
+  "Rang dans la file d'attente (1 : la prochaine à démarrer), null hors de la file."
+  queuePosition: Int
 }
 
 enum RequestStatus {
@@ -1036,6 +1042,90 @@ type ServerState {
   busySessions: Int!
   "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (trois au plus, depuis moins d'une heure)."
   autoResumeInterrupted: Boolean!
+  "Sessions simultanées au maximum sur le serveur (0 : illimité) ; au-delà, les sessions attendent en file. Un projet peut fixer sa propre limite (runnerConfig.maxSessions)."
+  maxConcurrentSessions: Int!
+  "Sessions en file d'attente."
+  queuedSessions: Int!
+  "Une session sans instruction depuis ce nombre de minutes est terminée pour libérer sa place (0 : jamais)."
+  idleSessionTimeoutMinutes: Int!
+  "Seuil de mémoire disponible (Mo) sous lequel les administrateurs sont notifiés (0 : jamais)."
+  memoryAlertThresholdMb: Int!
+}
+
+"Mémoire du serveur (Mo)."
+type MemoryHealth {
+  totalMb: Int!
+  "Disponible pour de nouveaux processus (libre et caches récupérables)."
+  availableMb: Int!
+  swapTotalMb: Int!
+  swapFreeMb: Int!
+}
+
+type SessionsHealth {
+  running: Int!
+  busy: Int!
+  idle: Int!
+  queued: Int!
+  "0 : illimité."
+  maxConcurrent: Int!
+}
+
+"Processus du CLI Claude Code (agents en cours, conteneurs compris)."
+type ClaudeProcess {
+  pid: Int!
+  rssMb: Int!
+  elapsedSeconds: Int!
+}
+
+type ContainerHealth {
+  name: String!
+  project: Project
+  "running, exited, created..."
+  state: String!
+  status: String!
+  memoryUsage: String
+  memoryPercent: Float
+  cpuPercent: Float
+}
+
+type DockerHealth {
+  available: Boolean!
+  version: String
+  error: String
+  containers: [ContainerHealth!]!
+}
+
+type WorkspaceUsage {
+  "Dossier de WORKSPACES_ROOT."
+  name: String!
+  project: Project
+  sizeMb: Int!
+}
+
+type DiskHealth {
+  path: String!
+  totalMb: Int
+  freeMb: Int
+  "Taille des dossiers des workspaces (mesure en tâche de fond, renouvelée au plus toutes les 10 minutes ; vide avant la première mesure)."
+  workspaces: [WorkspaceUsage!]!
+  workspacesMeasuredAt: DateTime
+}
+
+"Santé du serveur : mémoire, charge, sessions, processus, Docker et disque."
+type ServerHealth {
+  checkedAt: DateTime!
+  hostname: String!
+  uptimeSeconds: Int!
+  cpuCount: Int!
+  "Charge moyenne sur 1, 5 et 15 minutes."
+  loadAverage: [Float!]!
+  memory: MemoryHealth!
+  sessions: SessionsHealth!
+  "Terminaux web ouverts."
+  terminals: Int!
+  claudeProcesses: [ClaudeProcess!]!
+  docker: DockerHealth!
+  disk: DiskHealth!
 }
 
 "Connexion OAuth en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
@@ -1069,6 +1159,8 @@ type Query {
   "Lecture d'un fichier texte (2 Mo maximum)."
   workspaceFile(projectId: ID!, worktreeId: ID, path: String!): FileContent!
   settings: AppSettings!
+  "Santé du serveur (administrateurs de l'application)."
+  serverHealth: ServerHealth!
   claudeLogin(id: ID!): ClaudeLogin!
   "Dépôts GitHub accessibles avec la connexion GitHub (les plus récents d'abord)."
   githubRepositories(query: String): [GithubRepository!]!
@@ -1192,7 +1284,7 @@ type Mutation {
   "Active ou lève le mode maintenance (refuse les nouvelles sessions avant un redémarrage)."
   setMaintenanceMode(enabled: Boolean!, message: String): AppSettings!
   "Réglages du serveur : reprise automatique des sessions interrompues."
-  updateServerSettings(autoResumeInterrupted: Boolean!): AppSettings!
+  updateServerSettings(autoResumeInterrupted: Boolean, maxConcurrentSessions: Int, idleSessionTimeoutMinutes: Int, memoryAlertThresholdMb: Int): AppSettings!
   "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
   updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
   "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."

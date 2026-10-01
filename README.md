@@ -329,7 +329,7 @@ de la session. Le backend détient les jetons : l'agent, dans son conteneur, ne 
   conserve la branche sauf demande contraire. Sessions et terminaux portent un `worktreeId` optionnel
   qui fixe leur dossier de travail.
 - **Session** : `projectId`, `worktreeId`, `parentSessionId` (session d'agent qui l'a lancée, null
-  pour une session humaine), `name`, `provider`, `status` (`pending`, `running`, `completed`, `failed`,
+  pour une session humaine), `name`, `provider`, `status` (`pending`, `queued`, `running`, `completed`, `failed`,
   `stopped`, `interrupted`), `activity` pour une session en cours (`busy` : l'agent travaille, `idle` :
   il attend des instructions), `prompt` (première instruction), `config` (JSON propre au provider),
   `externalId` (ex. `session_id` Claude), `exitCode`, `error`, horodatages. Le provider Claude utilise
@@ -469,6 +469,33 @@ démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heur
 une instruction qui explique la coupure et signale que les demandes en attente ont été annulées (elles
 ne sont pas rejouées : l'agent refait l'action s'il en a encore besoin). Les sessions qui attendaient
 des instructions restent interrompues, sans occuper de mémoire, jusqu'au prochain message.
+
+**Santé et sessions simultanées** (Paramètres → Serveur, `backend/src/health/service.ts`). Le bloc
+**Santé** (query `serverHealth`, administrateurs) montre la mémoire disponible et le swap
+(`/proc/meminfo`), la charge, les sessions en cours et en file, les terminaux ouverts, les processus du
+CLI Claude (`ps`, conteneurs compris) avec leur mémoire, l'état de Docker et des conteneurs `skipper-*`
+(`docker stats`), l'espace libre du disque des workspaces et la taille de chaque dossier (`du`, mesuré
+en tâche de fond et gardé 10 minutes). Réglages (clé `server` de `app_settings`) :
+
+- **Sessions simultanées au maximum** (`maxConcurrentSessions`, 0 : illimité), et par projet
+  (`runnerConfig.maxSessions`, options avancées du formulaire). Toute session qui démarre passe par
+  `sessionService.start` : lancement à la main, tâche confiée à un agent, planification, session lancée
+  par un agent, relance par un message, reprise. Sans place libre, elle passe à `queued`
+  (`queued_at`, et `queued_start` garde l'instruction de démarrage, donc la file survit à un
+  redémarrage) avec un événement qui explique la limite atteinte. À chaque fin de session (et chaque
+  minute, et quand une limite est relevée ou la maintenance levée), la file est servie dans l'ordre
+  d'arrivée ; une session bloquée par la limite de son projet laisse passer celles des autres projets.
+  Les places sont comptées en mémoire, réservées sans `await` entre la vérification et la réservation.
+  Envoyer un message à une session en file est refusé (`SESSIONS_LIMIT`) ; l'arrêter la retire de la
+  file. Une échéance planifiée d'une session déjà en file est ignorée. Au démarrage du serveur, la file
+  est servie avant la reprise automatique.
+- **Terminer une session inactive après** N minutes (`idleSessionTimeoutMinutes`, 60 par défaut, 0 :
+  jamais) : une session en cours dont l'agent attend des instructions depuis ce délai est terminée
+  proprement (`end`), sans notification, avec un événement `idle_timeout` dans le transcript ; sa place
+  revient à la file. Un message la reprend.
+- **Alerte mémoire** (`memoryAlertThresholdMb`, 200 Mo par défaut, 0 : jamais) : vérifiée chaque
+  minute, une notification `server.memory_low` réservée aux administrateurs est émise au passage sous
+  le seuil, puis plus rien tant que la mémoire n'est pas remontée à 1,5 fois le seuil.
 
 `node-pty` a besoin que son binaire `spawn-helper` soit exécutable : le script `postinstall` s'en charge.
 

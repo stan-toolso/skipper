@@ -181,6 +181,7 @@ export function formatCost(usd: number): string {
 
 export const sessionStatusLabels: Record<string, string> = {
   PENDING: 'Pas encore démarrée',
+  QUEUED: "En file d'attente",
   RUNNING: 'En cours',
   COMPLETED: 'Terminée',
   FAILED: 'En erreur',
@@ -193,6 +194,7 @@ export function sessionStateHint(status: string, activity: string | null, pendin
   if (pendingRequests > 0) return 'a besoin de vous';
   if (status === 'RUNNING') return activity === 'BUSY' ? 'travaille' : 'attend vos instructions';
   if (status === 'FAILED') return 'en erreur';
+  if (status === 'QUEUED') return 'attend une place pour démarrer';
   if (status === 'INTERRUPTED' && activity === 'BUSY') return 'interrompue en plein travail';
   return null;
 }
