@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionEvent } from '../graphql/operations';
 import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
-import { describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
+import { clockTime, dayLabel, describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
 import Markdown from './Markdown';
 
 /** Fichiers joints à une instruction : vignettes pour les images, liens de téléchargement sinon. */
@@ -391,15 +391,33 @@ export default function Transcript({ events, autoScroll = true, technical = fals
   }, [events.length, autoScroll]);
 
   const nodes: React.ReactNode[] = [];
+  // Repères de temps, discrets : un séparateur à chaque changement de jour, l'heure sur les instructions,
+  // les fins de tour et les changements d'état, et sur les réponses quand la minute a changé.
+  let lastDay = '';
+  let lastClock = '';
   for (const e of events) {
     const p = e.payload as Record<string, unknown>;
     // Messages internes d'un sous-agent : Claude Code n'en montre que le décompte, sur l'appel qui l'a lancé.
     if (p.parent_tool_use_id && (e.type === 'claude.assistant' || e.type === 'claude.user')) continue;
+    const day = new Date(e.createdAt).toDateString();
+    if (day !== lastDay) lastClock = '';
+    const stamp = (always = false) => {
+      const clock = clockTime(e.createdAt);
+      if (!always && clock === lastClock) return null;
+      lastClock = clock;
+      return (
+        <time className="cc-time" dateTime={e.createdAt} title={new Date(e.createdAt).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' })}>
+          {clock}
+        </time>
+      );
+    };
+    const before = nodes.length;
     switch (e.type) {
       case 'instruction': {
         const attachments = Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [];
         nodes.push(
           <div key={e.id} className="cc-user">
+            {stamp(true)}
             <span className="cc-user-text">{String(p.text ?? '')}</span>
             {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
           </div>,
@@ -415,6 +433,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
               <div key={key} className="cc-assistant">
                 <span className="cc-dot">⏺</span>
                 <Markdown className="cc-body" text={block.text} />
+                {stamp()}
               </div>,
             );
           } else if (block.type === 'tool_use') {
@@ -442,6 +461,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
       case 'claude.result':
         nodes.push(
           <div key={e.id} className={`cc-note${p.is_error ? ' error' : ''}`}>
+            {stamp(true)}
             {p.is_error
               ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
               : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
@@ -535,7 +555,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
                     : 'Planification retirée';
         nodes.push(
           <div key={e.id} className={`cc-note${action === 'skipped' ? ' warn' : ''}`}>
-            ⏰ {text}
+            {stamp(true)}⏰ {text}
           </div>,
         );
         break;
@@ -545,7 +565,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         if (p.notice) {
           nodes.push(
             <div key={e.id} className="cc-note warn">
-              ⚠ {String(p.message ?? '')}
+              {stamp(true)}⚠ {String(p.message ?? '')}
             </div>,
           );
         } else if (technical) {
@@ -621,7 +641,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         const labels: Record<string, string> = { completed: 'Session terminée', failed: 'Session terminée avec une erreur', stopped: 'Session arrêtée', interrupted: 'Session interrompue' };
         nodes.push(
           <div key={e.id} className={`cc-note${p.status === 'failed' ? ' error' : ''}`}>
-            ■ {labels[String(p.status)] ?? `Session ${String(p.status)}`}
+            {stamp(true)}■ {labels[String(p.status)] ?? `Session ${String(p.status)}`}
             {p.error ? ` — ${String(p.error)}` : ''}
           </div>,
         );
@@ -630,6 +650,17 @@ export default function Transcript({ events, autoScroll = true, technical = fals
       default:
         // Événements techniques (rate limit, progression, consommation...) : non affichés.
         break;
+    }
+    // Séparateur de jour, seulement devant un événement qui s'affiche.
+    if (nodes.length > before && day !== lastDay) {
+      lastDay = day;
+      nodes.splice(
+        before,
+        0,
+        <div key={`day-${e.id}`} className="cc-day">
+          <span>{dayLabel(e.createdAt)}</span>
+        </div>,
+      );
     }
   }
 
