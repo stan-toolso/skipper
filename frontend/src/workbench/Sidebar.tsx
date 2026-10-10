@@ -209,8 +209,8 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
   const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
   const icon = worktreeIcon(ws, pr);
   const chips = [
-    ...visibleSessions.map((s) => ({ key: `s:${s.id}`, to: `/sessions/${s.id}`, active: isCurrent(`/sessions/${s.id}`), title: `${s.name} · ${statusTitle(s)}${s.owner ? ` · ${s.owner.name}` : ''}`, node: <span className={`wb-dot ${sessionDotClass(s)}`} />, owner: s.owner && !participates(s, userId) ? s.owner : null })),
-    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
+    ...visibleSessions.map((s) => ({ key: `s:${s.id}`, to: `/sessions/${s.id}`, active: isCurrent(`/sessions/${s.id}`), label: s.name, title: `${s.name} · ${statusTitle(s)}${s.owner ? ` · ${s.owner.name}` : ''}`, node: <span className={`wb-dot ${sessionDotClass(s)}`} />, owner: s.owner && !participates(s, userId) ? s.owner : null })),
+    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
   ];
   const activeIndex = chips.findIndex((c) => c.active);
   const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
@@ -261,6 +261,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
         {shown.map((c) => (
           <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
             {c.node}
+            <span className="wb-chip-label">{c.label}</span>
             {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
           </Link>
         ))}
