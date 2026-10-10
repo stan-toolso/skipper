@@ -614,8 +614,14 @@ réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Upda
 pour les lectures et recherches, diff numéroté pour les modifications, début de la sortie pour les
 commandes. Les chemins sont relatifs au dossier de travail ; les messages internes des sous-agents
 sont résumés sur l'appel qui les lance ; les autorisations accordées ne laissent pas de trace (un
-refus apparaît comme l'erreur de l'outil). « Afficher les détails techniques » ajoute les lignes de
-service : démarrage, demandes d'autorisation, audit des connexions, erreurs brutes. Les événements
+refus apparaît comme l'erreur de l'outil). Pour rester lisible, les étapes d'un tour sont **repliées
+en une ligne** (`⏺ 12 étapes · Read ×4 · Bash ×5`, dépliée au clic) : seuls le dernier message de
+l'agent et ses questions restent en vue ; pendant un tour, la ligne nomme l'étape en cours. Une
+commande sortie en code non nul avec une sortie est un avertissement (code en jaune), pas une erreur.
+Côté serveur, `sessions/providers/claudeNoise.ts` n'enregistre pas les messages du SDK sans intérêt
+pour l'historique (progression des outils, compteurs). « Afficher les détails techniques » montre
+chaque étape et ajoute les lignes de service : démarrage, demandes d'autorisation, audit des
+connexions, erreurs brutes. Les événements
 sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
 seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
