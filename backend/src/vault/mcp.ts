@@ -249,8 +249,8 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
           item: z.string().describe("Nom de l'élément API"),
           method: z.enum(api.API_METHODS).optional().describe('Défaut : GET'),
           path: z.string().describe("Chemin relatif à l'adresse de base (ex. v1/customers?limit=10)"),
-          query: z.record(z.string(), z.string()).optional().describe('Paramètres de requête supplémentaires'),
-          headers: z.record(z.string(), z.string()).optional().describe("En-têtes (jamais d'authentification : elle est ajoutée par le serveur)"),
+          query: z.object({}).catchall(z.string()).optional().describe('Paramètres de requête supplémentaires'),
+          headers: z.object({}).catchall(z.string()).optional().describe("En-têtes (jamais d'authentification : elle est ajoutée par le serveur)"),
           body: z.string().optional().describe('Corps (JSON par défaut), 1 Mo au plus'),
         },
         async ({ item, method, path: p, query, headers, body }) =>
