@@ -344,7 +344,7 @@
 .fx-chevron { width: 12px; font-size: 10px; color: var(--cc-dim); flex: 0 0 12px; }
 .fx-icon { color: var(--cc-dim); width: 1.2em; text-align: center; }
 .fx-dir .fx-icon { color: var(--cc-yellow); }
-.fx-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.fx-name { flex: 1; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
 .fx-size { color: var(--cc-dimmer); font-size: 11px; }
 .fx-actions { display: none; gap: 2px; margin-left: 8px; }
 .fx-row:hover .fx-actions { display: inline-flex; }
@@ -678,9 +678,14 @@
 .preview-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
 @media (max-width: 767.98px) {
   .fx-tree-toggle { display: inline-block; }
+  /* Sans fichier ouvert, l'arborescence prend toute la largeur (le panneau « Choisissez un fichier » est masqué) ;
+     sinon on voit soit le fichier, soit l'arborescence (bouton ≡ de l'en-tête). */
+  .fx-page:not(.has-file) .fx-main { display: none; }
   .fx-page.has-file:not(.show-tree) .fx-split .fx-tree { display: none; }
   .fx-page.has-file.show-tree .fx-main { display: none; }
   .fx-split .fx-tree { flex: 1; width: auto; border-right: 0; }
+  .fx-actions { margin-left: 4px; }
+  .fx-actions button { padding: 0 5px; }
 }
 
 /* ---- Coffre ----------------------------------------------------------------------------------- */
