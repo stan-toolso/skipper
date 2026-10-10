@@ -76,9 +76,22 @@ export function googleLoginUrl(next: string): string {
   return `${apiBaseUrl}/auth/google?next=${encodeURIComponent(next)}`;
 }
 
-/** Écran de consentement Google pour relier un compte (Gmail, Drive) à un projet ; le retour ramène sur la page du projet. */
-export function googleConnectUrl(projectId: string, gmail: string, drive: string, accountId?: string): string {
-  return `${apiBaseUrl}/auth/google/connect?${new URLSearchParams({ projectId, gmail, drive, ...(accountId ? { accountId } : {}) })}`;
+/** Écran de consentement Google pour relier un compte (Gmail, Drive) au coffre d'un projet ou au coffre personnel ; le retour ramène sur la page du coffre. */
+export function googleConnectUrl(projectId: string | null, gmail: string, drive: string, itemId?: string | null): string {
+  return `${apiBaseUrl}/auth/google/connect?${new URLSearchParams({ ...(projectId ? { projectId } : { personal: '1' }), gmail, drive, ...(itemId ? { itemId } : {}) })}`;
+}
+
+/** Fichier brut d'un workspace (aperçu HTML dans un bac à sable, téléchargement). */
+export function fileViewUrl(projectId: string, worktreeId: string | null | undefined, path: string, download = false): string {
+  const encoded = path.split('/').map(encodeURIComponent).join('/');
+  return `${apiBaseUrl}/api/files/view/${projectId}/${worktreeId ?? '-'}/${encoded}${download ? '?download=1' : ''}`;
+}
+
+/** Contenu d'une page partagée (bac à sable), éventuellement une version donnée ou en téléchargement. */
+export function sharedPageUrl(id: string, version?: number | null, download = false): string {
+  const params = new URLSearchParams({ ...(version ? { v: String(version) } : {}), ...(download ? { download: '1' } : {}) });
+  const q = params.toString();
+  return `${apiBaseUrl}/api/shared/${id}${q ? `?${q}` : ''}`;
 }
 
 /** Ferme la session côté serveur (le cookie est effacé par la réponse). */

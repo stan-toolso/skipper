@@ -1,14 +1,20 @@
 import { useMutation, useQuery } from '@apollo/client';
-import PageLoading from '../components/PageLoading';
 import { useEffect, useState } from 'react';
-import { Alert, Badge, Button, Card, Col, Form, InputGroup, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
-import { Link } from 'react-router-dom';
+import { Alert, Badge, Button, Card, Col, Form, InputGroup, Nav, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
+import GithubSection from '../components/GithubSection';
+import PageLoading from '../components/PageLoading';
+import RateLimitGauges from '../components/RateLimitGauges';
+import ServerHealthCard from '../components/ServerHealthCard';
+import OpencodeSection from '../components/settings/OpencodeSection';
+import VaultTokenPicker from '../components/settings/VaultTokenPicker';
 import {
   CANCEL_CLAUDE_LOGIN,
   CLEAR_CLAUDE_OAUTH_TOKEN,
   COMPLETE_CLAUDE_LOGIN,
-  LOGOUT_SERVER_CLAUDE,
-  SET_CLAUDE_API_KEY,
+  SET_CLAUDE_API_KEY_ITEM,
+  SET_CLAUDE_OAUTH_ITEM,
   SET_MAINTENANCE_MODE,
   SETTINGS,
   START_CLAUDE_LOGIN,
@@ -18,22 +24,17 @@ import {
   type AppSettings,
   type ClaudeAuthMode,
   type ClaudeLogin,
-  type ClaudeLoginKind,
   type ClaudeModel,
-} from '../graphql/operations';
-import { formatCost } from '../lib/humanize';
-import { useTabTitle } from '../workbench/TabsContext';
-import GithubSection from '../components/GithubSection';
-import { Nav } from 'react-bootstrap';
-import { useSearchParams } from 'react-router-dom';
+  type ServerState,
+} from '../graphql/settings';
 import { canAutoFocus } from '../lib/device';
-import RateLimitGauges from '../components/RateLimitGauges';
-import ServerHealthCard from '../components/ServerHealthCard';
+import { formatCost } from '../lib/humanize';
+import { resolveTheme, useThemePreference, type ThemePreference } from '../lib/theme';
+import { useTabTitle } from '../workbench/TabsContext';
 
 const modeLabels: Record<ClaudeAuthMode, { title: string; hint: string }> = {
-  server: { title: 'Compte du serveur', hint: "Le compte connecté dans Claude Code pour l'utilisateur système qui fait tourner Skipper (connexion depuis cette page ou par SSH), ou les variables d'environnement du serveur. Recommandé : les identifiants se renouvellent seuls." },
-  oauth: { title: 'Jeton OAuth (un an)', hint: 'Un jeton longue durée obtenu depuis cette page et stocké chiffré par Skipper. À refaire chaque année.' },
-  api_key: { title: 'Clé API Anthropic', hint: 'Facturation à la consommation via la console Anthropic.' },
+  oauth: { title: 'Abonnement Claude (jeton OAuth)', hint: 'Un jeton de votre abonnement, obtenu depuis cette page et rangé dans votre coffre. Rien n’est facturé en plus de l’abonnement.' },
+  api_key: { title: 'Clé API Anthropic', hint: 'Facturation à la consommation via la console Anthropic ; la clé est un jeton applicatif de votre coffre.' },
 };
 
 function fmtDate(iso: string | null | undefined): string {
@@ -44,15 +45,13 @@ function ErrorLine({ error }: { error: Error | undefined }) {
   return error ? <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert> : null;
 }
 
-/** Étapes de la connexion (OAuth ou compte du serveur) : ouvrir l'URL, coller le code. */
-function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label: string; onDone: () => void }) {
+/** Étapes de la connexion de l'abonnement : ouvrir l'URL d'autorisation, coller le code. */
+function ClaudeLoginFlow({ label, onDone }: { label: string; onDone: () => void }) {
   const [login, setLogin] = useState<ClaudeLogin | null>(null);
   const [code, setCode] = useState('');
-  const [start, { loading: starting, error: startError }] = useMutation<{ startClaudeLogin: ClaudeLogin }>(START_CLAUDE_LOGIN, {
-    variables: { kind },
-    onCompleted: (res) => setLogin(res.startClaudeLogin),
-  });
+  const [start, { loading: starting, error: startError }] = useMutation<{ startClaudeLogin: ClaudeLogin }>(START_CLAUDE_LOGIN, { onCompleted: (res) => setLogin(res.startClaudeLogin) });
   const [complete, { loading: completing, error: completeError }] = useMutation<{ completeClaudeLogin: ClaudeLogin }>(COMPLETE_CLAUDE_LOGIN, {
+    refetchQueries: ['Settings', 'VaultItems'],
     onCompleted: (res) => {
       setLogin(res.completeClaudeLogin);
       if (res.completeClaudeLogin.status === 'done') onDone();
@@ -64,7 +63,7 @@ function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label
     return (
       <div>
         {login?.status === 'failed' && <Alert variant="warning" className="py-2">{login.error ?? 'La connexion a échoué.'}</Alert>}
-        <Button size="sm" onClick={() => start()} disabled={starting}>
+        <Button size="sm" onClick={() => void start().catch(() => undefined)} disabled={starting}>
           {starting ? <><Spinner size="sm" className="me-1" /> Préparation…</> : <><i className="bi bi-box-arrow-in-right me-1" /> {label}</>}
         </Button>
         <ErrorLine error={startError} />
@@ -74,7 +73,7 @@ function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label
   if (login.status === 'done') {
     return (
       <Alert variant="success" className="py-2 mb-0">
-        <i className="bi bi-check-circle me-1" /> {kind === 'server' ? 'Connecté : le compte du serveur est actif.' : 'Connecté : le jeton est enregistré et le mode OAuth est actif.'}
+        <i className="bi bi-check-circle me-1" /> Connecté : le jeton est rangé dans votre coffre et le mode « abonnement » est actif.
       </Alert>
     );
   }
@@ -93,7 +92,7 @@ function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label
             className="mt-2"
             onSubmit={(e) => {
               e.preventDefault();
-              complete({ variables: { id: login.id, code } });
+              void complete({ variables: { id: login.id, code } }).catch(() => undefined);
             }}
           >
             <InputGroup size="sm" style={{ maxWidth: 560 }}>
@@ -104,7 +103,7 @@ function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label
               <Button
                 variant="outline-secondary"
                 onClick={() => {
-                  cancel({ variables: { id: login.id } });
+                  void cancel({ variables: { id: login.id } }).catch(() => undefined);
                   setLogin(null);
                   setCode('');
                 }}
@@ -120,56 +119,25 @@ function ClaudeLoginFlow({ kind, label, onDone }: { kind: ClaudeLoginKind; label
   );
 }
 
-function ApiKeyForm({ hint, setAt }: { hint: string | null; setAt: string | null }) {
-  const [value, setValue] = useState('');
-  const [save, { loading, error }] = useMutation(SET_CLAUDE_API_KEY, { onCompleted: () => setValue('') });
-  return (
-    <div>
-      {hint ? (
-        <div className="small text-secondary mb-2">
-          Clé enregistrée <code>{hint}</code> le {fmtDate(setAt)}.{' '}
-          <Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => save({ variables: { apiKey: null } })}>
-            Supprimer
-          </Button>
-        </div>
-      ) : (
-        <div className="small text-secondary mb-2">Aucune clé enregistrée.</div>
-      )}
-      <Form
-        onSubmit={(e) => {
-          e.preventDefault();
-          save({ variables: { apiKey: value } });
-        }}
-      >
-        <InputGroup size="sm" style={{ maxWidth: 560 }}>
-          <Form.Control type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="sk-ant-api03-…" autoComplete="off" />
-          <Button type="submit" disabled={loading || !value.trim()}>
-            {hint ? 'Remplacer' : 'Enregistrer'}
-          </Button>
-        </InputGroup>
-      </Form>
-      <ErrorLine error={error} />
-    </div>
-  );
-}
-
+/** Mode actif, jeton d'abonnement (connexion ou élément du coffre), clé API du coffre, vérification. */
 function AuthCard({ settings }: { settings: AppSettings }) {
   const auth = settings.claudeAuth;
   const [update, { loading: updating, error: updateError }] = useMutation(UPDATE_CLAUDE_SETTINGS);
   const [verify, { loading: verifying, error: verifyError }] = useMutation(VERIFY_CLAUDE_AUTH);
-  const [clearToken, { loading: clearing }] = useMutation(CLEAR_CLAUDE_OAUTH_TOKEN);
-  const [logoutServer, { loading: loggingOut, error: logoutError }] = useMutation(LOGOUT_SERVER_CLAUDE);
+  const [clearToken, { loading: clearing, error: clearError }] = useMutation(CLEAR_CLAUDE_OAUTH_TOKEN);
+  const [setOauthItem, { loading: settingOauth, error: oauthError }] = useMutation(SET_CLAUDE_OAUTH_ITEM);
+  const [setApiKeyItem, { loading: settingKey, error: keyError }] = useMutation(SET_CLAUDE_API_KEY_ITEM);
+  const [pickOauth, setPickOauth] = useState(false);
   const v = auth.verification;
-  const server = auth.server;
-
-  const available: Record<ClaudeAuthMode, boolean> = { server: true, oauth: auth.hasOauthToken, api_key: auth.hasApiKey };
+  const available: Record<ClaudeAuthMode, boolean> = { oauth: auth.hasOauthToken, api_key: auth.hasApiKey };
+  const run = (p: Promise<unknown>) => void p.catch(() => undefined);
 
   return (
     <Card className="mb-4">
       <Card.Header>Authentification Claude</Card.Header>
       <Card.Body>
         <p className="text-secondary small mb-3">
-          Les sessions lancent Claude Code sur le serveur. Choisissez avec quel compte il travaille. Les secrets sont chiffrés en base et ne sont jamais renvoyés à l'interface.
+          Vos sessions lancent Claude Code avec vos propres identifiants, rangés dans votre coffre comme jetons applicatifs : ils ne sont jamais montrés aux agents ni renvoyés à l'interface.
         </p>
 
         <Form.Group className="mb-3">
@@ -184,7 +152,7 @@ function AuthCard({ settings }: { settings: AppSettings }) {
                 className="mb-1"
                 checked={auth.mode === mode}
                 disabled={updating || !available[mode]}
-                onChange={() => update({ variables: { input: { authMode: mode } } })}
+                onChange={() => run(update({ variables: { input: { authMode: mode } } }))}
                 label={
                   <>
                     {modeLabels[mode].title}
@@ -198,54 +166,59 @@ function AuthCard({ settings }: { settings: AppSettings }) {
           <ErrorLine error={updateError} />
         </Form.Group>
 
-        <Row className="g-3 mb-3">
-          <Col lg={4}>
+        <Row className="g-4 mb-3">
+          <Col lg={6}>
             <div className="fw-semibold mb-1">
-              <i className="bi bi-hdd me-1" /> Compte du serveur
-              {server.loggedIn ? <Badge bg="success" className="ms-2">connecté</Badge> : auth.serverHasApiKey ? <Badge bg="success" className="ms-2">variable d'environnement</Badge> : <Badge bg="secondary" className="ms-2">non connecté</Badge>}
+              <i className="bi bi-person-badge me-1" /> Abonnement Claude
+              {auth.hasOauthToken ? <Badge bg="success" className="ms-2">jeton enregistré</Badge> : auth.oauthItemId ? <Badge bg="danger" className="ms-2">jeton inaccessible</Badge> : null}
             </div>
-            {server.loggedIn ? (
+            {auth.oauthItemId && (
               <div className="small text-secondary mb-2">
-                {server.email ?? 'Compte connecté'}
-                {server.subscriptionType ? ` · ${server.subscriptionType}` : ''}
-                {server.authMethod ? ` · ${server.authMethod}` : ''}.{' '}
-                <Button variant="link" size="sm" className="p-0 align-baseline" disabled={loggingOut} onClick={() => logoutServer()}>
-                  Déconnecter
-                </Button>
-              </div>
-            ) : (
-              <div className="small text-secondary mb-2">{server.error ? `État inconnu : ${server.error}` : 'Aucun compte Claude Code connecté pour cet utilisateur système.'}</div>
-            )}
-            <ClaudeLoginFlow kind="server" label={server.loggedIn ? 'Changer de compte' : 'Se connecter avec Claude'} onDone={() => verify({ variables: { mode: 'server' } })} />
-            <ErrorLine error={logoutError} />
-          </Col>
-          <Col lg={4}>
-            <div className="fw-semibold mb-1">
-              <i className="bi bi-person-badge me-1" /> Jeton OAuth (un an)
-              {auth.hasOauthToken && <Badge bg="success" className="ms-2">jeton enregistré</Badge>}
-            </div>
-            {auth.hasOauthToken && (
-              <div className="small text-secondary mb-2">
-                Jeton enregistré le {fmtDate(auth.oauthTokenSetAt)} (valable un an).{' '}
-                <Button variant="link" size="sm" className="p-0 align-baseline" disabled={clearing} onClick={() => clearToken()}>
-                  Déconnecter
+                Jeton du coffre « {auth.oauthItemName ?? '?'} »{auth.oauthTokenSetAt ? `, enregistré le ${fmtDate(auth.oauthTokenSetAt)}` : ''}.{' '}
+                <Button variant="link" size="sm" className="p-0 align-baseline" disabled={clearing} onClick={() => run(clearToken())}>
+                  Ne plus l'utiliser
                 </Button>
               </div>
             )}
-            <ClaudeLoginFlow kind="oauth" label="Obtenir un jeton" onDone={() => verify({ variables: { mode: 'oauth' } })} />
+            <ClaudeLoginFlow label={auth.hasOauthToken ? 'Se reconnecter avec Claude' : 'Se connecter avec Claude'} onDone={() => run(verify({ variables: { mode: 'oauth' } }))} />
+            <div className="mt-2 small">
+              {pickOauth ? (
+                <div style={{ maxWidth: 420 }}>
+                  <VaultTokenPicker
+                    service="claude"
+                    size="sm"
+                    label="Ou utiliser un jeton d'abonnement déjà dans le coffre"
+                    value={auth.oauthItemId}
+                    disabled={settingOauth}
+                    onChange={(itemId) => run(setOauthItem({ variables: { itemId } }).finally(() => setPickOauth(false)))}
+                  />
+                </div>
+              ) : (
+                <Button variant="link" size="sm" className="p-0" onClick={() => setPickOauth(true)}>
+                  Choisir un jeton d'abonnement déjà dans le coffre…
+                </Button>
+              )}
+            </div>
+            <ErrorLine error={clearError ?? oauthError} />
           </Col>
-          <Col lg={4}>
+          <Col lg={6}>
             <div className="fw-semibold mb-1">
               <i className="bi bi-key me-1" /> Clé API Anthropic
-              {auth.hasApiKey && <Badge bg="success" className="ms-2">enregistrée</Badge>}
+              {auth.hasApiKey ? <Badge bg="success" className="ms-2">enregistrée</Badge> : auth.apiKeyItemId ? <Badge bg="danger" className="ms-2">clé inaccessible</Badge> : null}
             </div>
-            <ApiKeyForm hint={auth.apiKeyHint} setAt={auth.apiKeySetAt} />
+            <div className="small text-secondary mb-2">
+              {auth.apiKeyItemId ? `Clé du coffre « ${auth.apiKeyItemName ?? '?'} »${auth.apiKeySetAt ? `, mise à jour le ${fmtDate(auth.apiKeySetAt)}` : ''}.` : 'Aucune clé choisie.'}
+            </div>
+            <div style={{ maxWidth: 420 }}>
+              <VaultTokenPicker service="anthropic" size="sm" value={auth.apiKeyItemId} disabled={settingKey} onChange={(itemId) => run(setApiKeyItem({ variables: { itemId } }))} />
+            </div>
+            <ErrorLine error={keyError} />
           </Col>
         </Row>
 
         <div className="border-top pt-3">
           <div className="d-flex align-items-center gap-2 flex-wrap">
-            <Button size="sm" variant="outline-secondary" disabled={verifying} onClick={() => verify()}>
+            <Button size="sm" variant="outline-secondary" disabled={verifying} onClick={() => run(verify())}>
               {verifying ? <><Spinner size="sm" className="me-1" /> Interrogation de Claude Code…</> : <><i className="bi bi-arrow-repeat me-1" /> Vérifier la connexion</>}
             </Button>
             {v && (
@@ -253,9 +226,7 @@ function AuthCard({ settings }: { settings: AppSettings }) {
                 Dernière vérification ({modeLabels[v.authMode].title.toLowerCase()}) le {fmtDate(v.verifiedAt)}
               </span>
             )}
-            {auth.mode === 'server' && !auth.serverHasApiKey && !server.loggedIn && (
-              <span className="small text-secondary">Aucun compte du serveur : connectez-vous ci-dessus, ou choisissez un autre mode.</span>
-            )}
+            {!available[auth.mode] && <span className="small text-secondary">Aucun identifiant pour le mode actif : vos sessions ne pourront pas démarrer.</span>}
           </div>
           {v && (
             <div className="mt-2">
@@ -369,11 +340,11 @@ function ModelsCard({ settings }: { settings: AppSettings }) {
               <Button
                 size="sm"
                 disabled={loading || !dirty}
-                onClick={() => update({ variables: { input: { allowedModels: allowed, defaultModel: defaultModel || null, fallbackModel: fallbackModel || null } } })}
+                onClick={() => void update({ variables: { input: { allowedModels: allowed, defaultModel: defaultModel || null, fallbackModel: fallbackModel || null } } }).catch(() => undefined)}
               >
                 {loading ? 'Enregistrement…' : 'Enregistrer'}
               </Button>
-              <Button size="sm" variant="outline-secondary" disabled={refreshing} onClick={() => verify()}>
+              <Button size="sm" variant="outline-secondary" disabled={refreshing} onClick={() => void verify().catch(() => undefined)}>
                 {refreshing ? <><Spinner size="sm" className="me-1" /> Actualisation…</> : <><i className="bi bi-arrow-repeat me-1" /> Actualiser la liste</>}
               </Button>
             </div>
@@ -385,7 +356,7 @@ function ModelsCard({ settings }: { settings: AppSettings }) {
   );
 }
 
-/** Limites d'utilisation de l'abonnement (fenêtres 5 h / 7 j), d'après le dernier événement reçu d'une session. */
+/** Limites d'utilisation de l'abonnement (fenêtres 5 h / 7 j), d'après le dernier événement reçu d'une session (administrateurs). */
 function RateLimitsCard({ settings }: { settings: AppSettings }) {
   const limits = settings.rateLimits;
   return (
@@ -430,13 +401,13 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
             <Form
               onSubmit={(e) => {
                 e.preventDefault();
-                update({ variables: { input: { monthlyBudgetUsd: num(monthly), sessionBudgetUsd: num(perSession), defaultMaxTurns: num(maxTurns) } } });
+                void update({ variables: { input: { monthlyBudgetUsd: num(monthly), sessionBudgetUsd: num(perSession), defaultMaxTurns: num(maxTurns) } } }).catch(() => undefined);
               }}
             >
               <Form.Group className="mb-3">
                 <Form.Label className="mb-1">Plafond mensuel (USD)</Form.Label>
                 <Form.Control size="sm" type="number" min={0} step="0.5" value={monthly} onChange={(e) => setMonthly(e.target.value)} placeholder="Aucun" />
-                <Form.Text>Atteint, plus aucune session ne démarre ni ne reçoit d'instruction jusqu'au mois suivant (ou jusqu'à ce que vous l'augmentiez).</Form.Text>
+                <Form.Text>Atteint, plus aucune de vos sessions ne démarre ni ne reçoit d'instruction jusqu'au mois suivant (ou jusqu'à ce que vous l'augmentiez).</Form.Text>
               </Form.Group>
               <Form.Group className="mb-3">
                 <Form.Label className="mb-1">Budget par session (USD)</Form.Label>
@@ -455,7 +426,7 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
           </Col>
           <Col lg={7}>
             <div className="d-flex justify-content-between align-items-baseline mb-1">
-              <span className="fw-semibold">Consommation de {monthLabel}</span>
+              <span className="fw-semibold">Votre consommation de {monthLabel}</span>
               <span>
                 {formatCost(usage.monthUsd)}
                 {cap ? <span className="text-secondary"> / {formatCost(cap)}</span> : null}
@@ -463,7 +434,7 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
             </div>
             {cap ? <ProgressBar now={ratio} variant={ratio >= 100 ? 'danger' : ratio >= 80 ? 'warning' : undefined} className="mb-2" style={{ height: 8 }} /> : null}
             <div className="small text-secondary mb-3">
-              Estimation calculée par Claude Code au tarif API. Avec un abonnement Claude (OAuth), rien n'est facturé en plus : c'est un indicateur d'usage. Total depuis le début : {formatCost(usage.totalUsd)}.
+              Estimation calculée par Claude Code au tarif API. Avec un abonnement Claude, rien n'est facturé en plus : c'est un indicateur d'usage. Total depuis le début : {formatCost(usage.totalUsd)}.
             </div>
             {usage.byModel.length > 0 && (
               <Table size="sm" className="mb-3">
@@ -513,8 +484,7 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
 }
 
 /** Limite de sessions simultanées, arrêt des sessions inactives et seuil d'alerte mémoire. */
-function SessionLimitsCard({ settings }: { settings: AppSettings }) {
-  const { server } = settings;
+function SessionLimitsCard({ server }: { server: ServerState }) {
   const [maxSessions, setMaxSessions] = useState(String(server.maxConcurrentSessions));
   const [idleMinutes, setIdleMinutes] = useState(String(server.idleSessionTimeoutMinutes));
   const [alertMb, setAlertMb] = useState(String(server.memoryAlertThresholdMb));
@@ -540,7 +510,7 @@ function SessionLimitsCard({ settings }: { settings: AppSettings }) {
       </Card.Header>
       <Card.Body>
         <p className="text-secondary small">
-          Chaque session d'agent fait tourner un processus Claude de plusieurs centaines de Mo. Au-delà de la limite, une session qui devrait
+          Chaque session d'agent fait tourner un processus de plusieurs centaines de Mo. Au-delà de la limite, une session qui devrait
           démarrer (lancée à la main, par une tâche, par une planification ou par un autre agent, ou relancée par un message) passe « en file
           d'attente » et démarre dès qu'une place se libère, dans l'ordre d'arrivée. Chaque projet peut fixer sa propre limite dans ses options
           avancées.
@@ -586,9 +556,8 @@ function SessionLimitsCard({ settings }: { settings: AppSettings }) {
   );
 }
 
-/** Serveur : santé, sessions simultanées, mode maintenance avant un redémarrage, et reprise automatique des sessions interrompues. */
-function ServerSection({ settings }: { settings: AppSettings }) {
-  const { server } = settings;
+/** Serveur (administrateurs) : santé, sessions simultanées, mode maintenance avant un redémarrage, reprise automatique des sessions interrompues. */
+function ServerSection({ server }: { server: ServerState }) {
   const [message, setMessage] = useState(server.maintenanceMessage ?? '');
   const [setMaintenance, { loading: switching, error: maintenanceError }] = useMutation(SET_MAINTENANCE_MODE);
   const [updateServer, { loading: saving, error: serverError }] = useMutation(UPDATE_SERVER_SETTINGS);
@@ -598,7 +567,7 @@ function ServerSection({ settings }: { settings: AppSettings }) {
   return (
     <>
       <ServerHealthCard memoryAlertThresholdMb={server.memoryAlertThresholdMb} />
-      <SessionLimitsCard settings={settings} />
+      <SessionLimitsCard server={server} />
       <Card className="mb-4">
         <Card.Header>
           Mode maintenance
@@ -665,17 +634,43 @@ function ServerSection({ settings }: { settings: AppSettings }) {
   );
 }
 
-type SettingsSection = 'claude' | 'github' | 'server';
+type SettingsSection = 'claude' | 'opencode' | 'github' | 'server' | 'appearance';
 
-/** Configuration générale, par service : Claude (authentification, modèles, budgets), GitHub (connexion, dépôts) et serveur (maintenance). */
+/** Thème clair / sombre / système, mémorisé dans ce navigateur seulement. */
+function AppearanceSection() {
+  const [pref, setPref] = useThemePreference();
+  const options: { value: ThemePreference; label: string; hint: string }[] = [
+    { value: 'system', label: `Système (actuellement ${resolveTheme('system') === 'light' ? 'clair' : 'sombre'})`, hint: 'Suit le réglage du système ou du navigateur.' },
+    { value: 'light', label: 'Clair', hint: 'Surfaces claires partout, y compris le fil des sessions et les terminaux.' },
+    { value: 'dark', label: 'Sombre', hint: 'Surfaces sombres, le thème par défaut.' },
+  ];
+  return (
+    <Card className="mb-4">
+      <Card.Header>Thème</Card.Header>
+      <Card.Body>
+        {options.map((o) => (
+          <Form.Check key={o.value} type="radio" id={`theme-${o.value}`} name="theme" className="mb-2" checked={pref === o.value} onChange={() => setPref(o.value)} label={<><span>{o.label}</span><div className="small text-secondary">{o.hint}</div></>} />
+        ))}
+        <Form.Text className="text-secondary">Ce choix est mémorisé dans ce navigateur seulement : il peut différer d'un appareil à l'autre.</Form.Text>
+      </Card.Body>
+    </Card>
+  );
+}
+
+/** Paramètres de la personne connectée : Claude (identifiants, modèles, budgets), OpenCode, GitHub, apparence ; serveur pour les administrateurs. */
 export default function SettingsPage() {
   useTabTitle('Paramètres');
+  const { user } = useAuth();
+  const isAdmin = Boolean(user?.isAdmin);
   const [searchParams, setSearchParams] = useSearchParams();
-  const section = (searchParams.get('section') as SettingsSection | null) ?? 'claude';
+  const requested = searchParams.get('section') as SettingsSection | null;
+  const section: SettingsSection = requested && (requested !== 'server' || isAdmin) ? requested : 'claude';
   const { data, loading, error } = useQuery<{ settings: AppSettings }>(SETTINGS, { pollInterval: 15_000 });
   if (loading && !data) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!data) return null;
+  const s = data.settings;
+  const claudeReady = s.claudeAuth.mode === 'oauth' ? s.claudeAuth.hasOauthToken : s.claudeAuth.hasApiKey;
   return (
     <>
       <h1 className="h3 mb-3">Paramètres</h1>
@@ -683,33 +678,48 @@ export default function SettingsPage() {
         <Nav.Item>
           <Nav.Link eventKey="claude">
             <i className="bi bi-stars me-1" /> Claude
-            {data.settings.claudeAuth.verification?.ok === false && <Badge bg="danger" className="ms-2">à vérifier</Badge>}
+            {!claudeReady ? <Badge bg="secondary" className="ms-2">à configurer</Badge> : s.claudeAuth.verification?.ok === false && <Badge bg="danger" className="ms-2">à vérifier</Badge>}
+          </Nav.Link>
+        </Nav.Item>
+        <Nav.Item>
+          <Nav.Link eventKey="opencode">
+            <i className="bi bi-terminal me-1" /> OpenCode
+            {s.opencode.apiKeys.some((k) => !k.usable) && <Badge bg="danger" className="ms-2">clé inaccessible</Badge>}
           </Nav.Link>
         </Nav.Item>
         <Nav.Item>
           <Nav.Link eventKey="github">
             <i className="bi bi-github me-1" /> GitHub
-            {data.settings.github.connected ? <Badge bg="success" className="ms-2">connecté</Badge> : <Badge bg="secondary" className="ms-2">non connecté</Badge>}
+            {s.github.connected ? <Badge bg="success" className="ms-2">{s.github.accounts.length > 1 ? `${s.github.accounts.length} comptes` : 'connecté'}</Badge> : <Badge bg="secondary" className="ms-2">non connecté</Badge>}
           </Nav.Link>
         </Nav.Item>
+        {isAdmin && s.server && (
+          <Nav.Item>
+            <Nav.Link eventKey="server">
+              <i className="bi bi-hdd-rack me-1" /> Serveur
+              {s.server.maintenance && <Badge bg="warning" text="dark" className="ms-2">maintenance</Badge>}
+            </Nav.Link>
+          </Nav.Item>
+        )}
         <Nav.Item>
-          <Nav.Link eventKey="server">
-            <i className="bi bi-hdd-rack me-1" /> Serveur
-            {data.settings.server.maintenance && <Badge bg="warning" text="dark" className="ms-2">maintenance</Badge>}
+          <Nav.Link eventKey="appearance">
+            <i className="bi bi-palette me-1" /> Apparence
           </Nav.Link>
         </Nav.Item>
       </Nav>
       <div style={{ maxWidth: 1100 }}>
         {section === 'claude' && (
           <>
-            <AuthCard settings={data.settings} />
-            <ModelsCard settings={data.settings} />
-            <RateLimitsCard settings={data.settings} />
-            <BudgetCard settings={data.settings} />
+            <AuthCard settings={s} />
+            <ModelsCard settings={s} />
+            {isAdmin && s.rateLimits !== null && <RateLimitsCard settings={s} />}
+            <BudgetCard settings={s} />
           </>
         )}
+        {section === 'opencode' && <OpencodeSection settings={s} />}
         {section === 'github' && <GithubSection />}
-        {section === 'server' && <ServerSection settings={data.settings} />}
+        {section === 'server' && s.server && <ServerSection server={s.server} />}
+        {section === 'appearance' && <AppearanceSection />}
       </div>
     </>
   );

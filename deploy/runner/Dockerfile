@@ -8,8 +8,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl ca-certificates openssh-client ripgrep jq less procps bash \
  && rm -rf /var/lib/apt/lists/*
 
-# CLI Claude Code (mis à jour en reconstruisant l'image).
-RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+# CLI Claude Code et OpenCode (mis à jour en reconstruisant l'image).
+RUN npm install -g @anthropic-ai/claude-code opencode-ai && npm cache clean --force
 
 # Navigateur headless pour les agents (option « navigateur » du projet) : serveur MCP Playwright et
 # son Chromium, installés dans un dossier lisible par tout uid (les conteneurs tournent avec l'uid hôte).

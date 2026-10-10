@@ -15,6 +15,11 @@ export const settingsRepository = {
     );
   },
 
+  /** Écrit la valeur seulement si la clé n'existe pas encore (plusieurs instances au démarrage). */
+  async setIfAbsent<T>(key: string, value: T): Promise<void> {
+    await pool.query('INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now()) ON CONFLICT (key) DO NOTHING', [key, JSON.stringify(value)]);
+  },
+
   async delete(key: string): Promise<void> {
     await pool.query('DELETE FROM app_settings WHERE key = $1', [key]);
   },

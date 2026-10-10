@@ -1,5 +1,5 @@
 import { pool } from '../db/pool.js';
-import type { ProjectMember, ProjectRole, User } from './types.js';
+import type { OpenItems, ProjectMember, ProjectRole, User } from './types.js';
 
 interface UserRow {
   id: string;
@@ -8,9 +8,13 @@ interface UserRow {
   avatar_url: string | null;
   google_sub: string | null;
   is_admin: boolean;
+  is_super_admin: boolean;
   created_at: Date;
   last_login_at: Date | null;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuids = (ids: string[] | null | undefined) => [...new Set((ids ?? []).map((s) => s.toLowerCase()).filter((s) => UUID_RE.test(s)))];
 
 interface MemberRow {
   project_id: string;
@@ -27,6 +31,7 @@ const toUser = (r: UserRow): User => ({
   avatarUrl: r.avatar_url,
   googleSub: r.google_sub,
   isAdmin: r.is_admin,
+  isSuperAdmin: Boolean(r.is_super_admin),
   createdAt: r.created_at,
   lastLoginAt: r.last_login_at,
 });
@@ -56,9 +61,53 @@ export const userRepository = {
   },
 
   /** Crée un utilisateur « invité » (pas encore connecté). */
-  async create(input: { email: string; name: string }): Promise<User> {
-    const { rows } = await pool.query<UserRow>('INSERT INTO users (email, name) VALUES ($1, $2) RETURNING *', [input.email.toLowerCase(), input.name]);
+  async create(input: { email: string; name: string; isAdmin?: boolean }): Promise<User> {
+    const { rows } = await pool.query<UserRow>('INSERT INTO users (email, name, is_admin) VALUES ($1, $2, $3) RETURNING *', [input.email.toLowerCase(), input.name, Boolean(input.isAdmin)]);
     return toUser(rows[0]);
+  },
+
+  async setAdmin(id: string, isAdmin: boolean): Promise<User | null> {
+    const { rows } = await pool.query<UserRow>('UPDATE users SET is_admin = $2 WHERE id = $1 RETURNING *', [id, isAdmin]);
+    return rows[0] ? toUser(rows[0]) : null;
+  },
+
+  /** Un super administrateur est toujours administrateur. */
+  async setSuperAdmin(id: string, isSuperAdmin: boolean): Promise<User | null> {
+    const { rows } = await pool.query<UserRow>('UPDATE users SET is_super_admin = $2, is_admin = CASE WHEN $2 THEN true ELSE is_admin END WHERE id = $1 RETURNING *', [id, isSuperAdmin]);
+    return rows[0] ? toUser(rows[0]) : null;
+  },
+
+  async delete(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    return (rowCount ?? 0) > 0;
+  },
+
+  async countAppAdmins(): Promise<{ admins: number; superAdmins: number }> {
+    const { rows } = await pool.query<{ a: string; s: string }>('SELECT count(*) FILTER (WHERE is_admin)::text AS a, count(*) FILTER (WHERE is_super_admin)::text AS s FROM users');
+    return { admins: Number(rows[0].a), superAdmins: Number(rows[0].s) };
+  },
+
+  /** Projets qui contiennent les éléments donnés (onglets ouverts d'un super administrateur). */
+  async projectIdsHolding(open: OpenItems): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT id FROM projects WHERE id = ANY($1::uuid[])
+       UNION SELECT project_id FROM worktrees WHERE id = ANY($2::uuid[])
+       UNION SELECT project_id FROM sessions WHERE id = ANY($3::uuid[])
+       UNION SELECT project_id FROM terminals WHERE id = ANY($4::uuid[])
+       UNION SELECT project_id FROM tasks WHERE id = ANY($5::uuid[])`,
+      [uuids(open.projectIds), uuids(open.worktreeIds), uuids(open.sessionIds), uuids(open.terminalIds), uuids(open.taskIds)],
+    );
+    return rows.map((r) => r.id);
+  },
+
+  /** Utilisateurs partageant au moins un projet avec la personne (candidats au partage). */
+  async listColleagues(userId: string): Promise<User[]> {
+    const { rows } = await pool.query<UserRow>(
+      `SELECT DISTINCT u.* FROM users u JOIN project_members m ON m.user_id = u.id
+       WHERE u.id <> $1 AND m.project_id IN (SELECT project_id FROM project_members WHERE user_id = $1) ORDER BY u.email`,
+      [userId],
+    );
+    return rows.map(toUser);
   },
 
   /** À chaque connexion : relie le compte Google et rafraîchit nom et avatar. */

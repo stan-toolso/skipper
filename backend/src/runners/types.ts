@@ -58,14 +58,21 @@ export interface Runner {
   remove(project: Project): Promise<void>;
   /** Exécutable Claude Code à donner au SDK ; undefined = celui embarqué par le SDK. */
   claudeExecutable(project: Project): Promise<string | undefined>;
-  /** Shell interactif dans `cwd` (terminal web). */
-  terminalCommand(project: Project, cwd: string): Promise<SpawnSpec>;
+  /** Shell interactif dans `cwd` (terminal web) ; `rcfile` : fichier de démarrage bash (historique des commandes). */
+  terminalCommand(project: Project, cwd: string, options?: { rcfile?: string }): Promise<SpawnSpec>;
+  /** Écrit un fichier dans l'environnement du projet (hors des volumes du code : /tmp du conteneur). */
+  putFile(project: Project, filePath: string, content: string): Promise<void>;
+  /** Lit un fichier de l'environnement du projet. */
+  getFile(project: Project, filePath: string): Promise<string>;
+  /** Le chemin existe-t-il dans l'environnement du projet ? */
+  pathExists(project: Project, filePath: string): Promise<boolean>;
+  /** Supprime un fichier ou un dossier de l'environnement du projet. */
+  removePath(project: Project, filePath: string): Promise<void>;
   /** Exécution d'un script shell dans `cwd` (provider shell). */
   shellCommand(project: Project, cwd: string, shell: string, script: string): Promise<SpawnSpec>;
   /**
    * Navigateur headless de la session : un Chromium lancé dans l'environnement du projet, avec son port
-   * CDP, et la commande du serveur MCP Playwright (stdio) qui s'y attache. Les secrets, s'il y en a, sont
-   * écrits dans un fichier (option `--secrets`). `dispose` arrête Chromium et supprime profil et secrets.
+   * CDP, et la commande du serveur MCP Playwright (stdio) qui s'y attache. `dispose` arrête Chromium et supprime le profil.
    */
   browserMcpCommand(project: Project, cwd: string, options: BrowserMcpOptions): Promise<BrowserMcpServer>;
   /**
@@ -73,19 +80,21 @@ export interface Runner {
    * n'écoute que sur la boucle locale du conteneur, le backend passe donc par un `docker exec -i`.
    */
   cdpTunnelCommand(project: Project, port: number): SpawnSpec;
+  /** Commande OpenCode (`opencode <args>`) dans `cwd` de l'environnement du projet ; `envKeys` : variables du backend transmises par leur nom. */
+  opencodeCommand(project: Project, cwd: string, envKeys: string[]): Promise<SpawnSpec>;
+  /** Adresse à laquelle un processus de l'environnement joint le serveur Skipper (ponts MCP d'OpenCode). */
+  hostAddress(project: Project): Promise<string>;
 }
 
 export interface BrowserMcpOptions {
-  /** Identifie le dossier du navigateur de la session (profil, secrets). */
+  /** Identifie le dossier du navigateur de la session (profil). */
   sessionId: string;
-  /** Secrets des sites web du projet (nom de variable → valeur) : l'agent tape le nom, le navigateur saisit la valeur. */
-  secrets: Record<string, string>;
 }
 
 export interface BrowserMcpServer extends SpawnSpec {
   /** Point d'accès CDP du Chromium de la session, dans l'environnement du projet. */
   cdp: { port: number; browserPath: string };
-  /** Arrête Chromium et supprime son dossier (profil, secrets) ; à appeler en fin de session. */
+  /** Arrête Chromium et supprime son dossier (profil) ; à appeler en fin de session. */
   dispose(): Promise<void>;
 }
 

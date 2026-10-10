@@ -152,6 +152,22 @@ export function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+/** Jour d'un instant, pour les séparateurs du transcript : « Aujourd'hui », « Hier », sinon la date (avec l'année si ce n'est pas l'année en cours). */
+export function dayLabel(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const midnight = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((midnight(now) - midnight(d)) / 86_400_000);
+  if (days === 0) return "Aujourd'hui";
+  if (days === 1) return 'Hier';
+  const label = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** Heure d'un instant (« 14:05 »). */
+export function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
 export const permissionModeLabels: Record<string, string> = {
   default: 'Vous demande avant chaque action sensible',
   acceptEdits: 'Modifie les fichiers librement',

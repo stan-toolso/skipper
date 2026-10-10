@@ -148,7 +148,7 @@ function DialogModal({ pending, show, onSettled, onExited }: { pending: Pending;
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          {message && <div className={pending.kind === 'prompt' ? 'mb-2 text-secondary' : 'app-dialog-message'}>{message}</div>}
+          {message ? <div className={pending.kind === 'prompt' ? 'mb-2 text-secondary' : 'app-dialog-message'}>{message}</div> : null}
           {pending.kind === 'prompt' && (
             <Form.Control autoFocus={canAutoFocus()} value={value} placeholder={pending.opts.placeholder} onChange={(e) => setValue(e.target.value)} onFocus={(e) => e.target.select()} />
           )}

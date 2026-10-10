@@ -3,11 +3,16 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { AppError } from '../errors.js';
+import { projectService } from '../projects/service.js';
 import { resolveRoot, type WorkspaceRef } from '../files/service.js';
-import { git } from '../projects/workspace.js';
-import { githubService } from '../settings/github.js';
+import { git, gitAuthFor } from '../projects/workspace.js';
 
 const execFileAsync = promisify(execFile);
+
+/** Authentification git de la personne qui agit, pour les opérations distantes d'un workspace. */
+async function authOf(ref: WorkspaceRef, actorId: string | null | undefined): Promise<string[]> {
+  return gitAuthFor(await projectService.get(ref.projectId), actorId);
+}
 
 export interface GitCommit {
   hash: string;
@@ -67,6 +72,16 @@ export interface GitChangeSince {
   untracked: boolean;
 }
 
+/** Modifications d'une branche depuis son point de divergence avec sa branche de base. */
+export interface GitBranchChanges {
+  /** null : HEAD détaché. */
+  branch: string | null;
+  baseBranch: string;
+  mergeBase: string;
+  commits: number;
+  files: GitChangeSince[];
+}
+
 export interface GitChangesSince {
   /** Référence effectivement utilisée : le commit demandé, sinon HEAD (commit inconnu ou introuvable). */
   base: string | null;
@@ -89,9 +104,8 @@ const LOG_FORMAT = '%H\u001f%h\u001f%an\u001f%aI\u001f%s';
 
 /** git brut, sans lever sur code de sortie non nul (utile pour diff --no-index). */
 async function gitRaw(args: string[], cwd: string): Promise<{ stdout: string; code: number }> {
-  const auth = await githubService.gitConfigArgs().catch(() => []);
   try {
-    const { stdout } = await execFileAsync('git', [...auth, ...args], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('git', args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, maxBuffer: 16 * 1024 * 1024 });
     return { stdout, code: 0 };
   } catch (err) {
     const e = err as { stdout?: string; code?: number; stderr?: string; message: string };
@@ -142,7 +156,59 @@ function tidyDiff(path: string, text: string): GitDiff {
   return { path, staged: false, text: truncated ? `${text.slice(0, DIFF_LIMIT)}\n… (diff tronqué)` : text, binary, truncated };
 }
 
+/** Cache court des modifications de branche (le panneau les relit souvent). */
+const branchCache = new Map<string, { at: number; value: GitBranchChanges }>();
+const BRANCH_CACHE_MS = 2000;
+const cacheKey = (ref: WorkspaceRef) => `${ref.projectId}|${ref.worktreeId ?? ''}`;
+
+/**
+ * Branche de base d'un dossier : la branche du projet (origin/… puis locale), sinon la cible de origin/HEAD,
+ * sinon main ou master.
+ */
+async function resolveBaseBranch(cwd: string, preferred: string | null): Promise<string> {
+  const candidates = [...(preferred ? [`origin/${preferred}`, preferred] : [])];
+  const head = (await gitRaw(['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD'], cwd)).stdout.trim();
+  if (head) candidates.push(head);
+  candidates.push('origin/main', 'origin/master', 'main', 'master');
+  for (const c of candidates) if ((await gitRaw(['rev-parse', '--verify', '-q', `${c}^{commit}`], cwd)).code === 0) return c;
+  throw new AppError('Aucune branche de base à comparer (ni la branche du projet, ni origin/HEAD, main ou master)');
+}
+
 export const gitService = {
+  /** Point de divergence de la branche courante avec sa base. */
+  async branchBase(ref: WorkspaceRef): Promise<{ cwd: string; baseBranch: string; mergeBase: string }> {
+    const cwd = await resolveRoot(ref);
+    const project = await projectService.get(ref.projectId);
+    const baseBranch = await resolveBaseBranch(cwd, project.gitBranch);
+    const mergeBase = (await gitRaw(['merge-base', 'HEAD', baseBranch], cwd)).stdout.trim();
+    if (!mergeBase) throw new AppError(`La branche courante ne partage aucun historique avec ${baseBranch}`);
+    return { cwd, baseBranch, mergeBase };
+  },
+
+  /** Fichiers modifiés sur la branche depuis sa base, travail non validé compris. */
+  async branchChanges(ref: WorkspaceRef): Promise<GitBranchChanges> {
+    const cached = branchCache.get(cacheKey(ref));
+    if (cached && Date.now() - cached.at < BRANCH_CACHE_MS) return cached.value;
+    const { cwd, baseBranch, mergeBase } = await this.branchBase(ref);
+    const since = await this.changesSince(ref, mergeBase);
+    const branch = (await gitRaw(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).stdout.trim();
+    const commits = Number((await gitRaw(['rev-list', '--count', `${mergeBase}..HEAD`], cwd)).stdout.trim() || 0);
+    const value: GitBranchChanges = { branch: branch === 'HEAD' ? null : branch, baseBranch, mergeBase, commits, files: since.files };
+    branchCache.set(cacheKey(ref), { at: Date.now(), value });
+    return value;
+  },
+
+  /** Diff d'un fichier entre la base de la branche et l'arbre de travail. */
+  async branchDiff(ref: WorkspaceRef, file: string, origPath?: string | null): Promise<GitDiff> {
+    const { mergeBase } = await this.branchBase(ref);
+    return this.diffSince(ref, mergeBase, file, origPath);
+  },
+
+  /** Oublie les lectures en cache (après une écriture git). */
+  invalidate(ref: WorkspaceRef): void {
+    branchCache.delete(cacheKey(ref));
+  },
+
   isRepo: (ref: WorkspaceRef) => resolveRoot(ref).then(isGitRepo),
 
   /**
@@ -358,22 +424,24 @@ export const gitService = {
     return parseCommitLine(head.stdout.trim());
   },
 
-  async fetch(ref: WorkspaceRef): Promise<void> {
+  /** `actorId` : personne qui agit, dont le compte GitHub authentifie l'accès au dépôt distant. */
+  async fetch(ref: WorkspaceRef, actorId?: string | null): Promise<void> {
     const cwd = await resolveRoot(ref);
-    await git(['fetch', '--prune', 'origin'], cwd);
+    await git(['fetch', '--prune', 'origin'], cwd, await authOf(ref, actorId));
   },
 
-  async pull(ref: WorkspaceRef): Promise<string> {
+  async pull(ref: WorkspaceRef, actorId?: string | null): Promise<string> {
     const cwd = await resolveRoot(ref);
-    return git(['pull', '--ff-only'], cwd);
+    return git(['pull', '--ff-only'], cwd, await authOf(ref, actorId));
   },
 
-  async push(ref: WorkspaceRef): Promise<string> {
+  async push(ref: WorkspaceRef, actorId?: string | null): Promise<string> {
     const cwd = await resolveRoot(ref);
     const branch = (await gitRaw(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).stdout.trim();
     if (branch === 'HEAD') throw new AppError('HEAD détaché : rien à pousser');
     const hasUpstream = (await gitRaw(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd)).code === 0;
-    return hasUpstream ? git(['push'], cwd) : git(['push', '-u', 'origin', branch], cwd);
+    const auth = await authOf(ref, actorId);
+    return hasUpstream ? git(['push'], cwd, auth) : git(['push', '-u', 'origin', branch], cwd, auth);
   },
 
   /** Bascule sur une branche (locale, ou distante suivie automatiquement) ; `create` la crée depuis HEAD. */

@@ -1,8 +1,13 @@
-import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useRef, useState } from 'react';
+import { useApolloClient, useMutation } from '@apollo/client';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { PUSH_PUBLIC_KEY, SEND_TEST_PUSH, SUBSCRIBE_PUSH, UNSUBSCRIBE_PUSH } from '../graphql/misc';
 import { MARK_ALL_NOTIFICATIONS_READ, MARK_NOTIFICATION_READ, NOTIFICATIONS, type AppNotification } from '../graphql/operations';
 import { timeAgo } from '../lib/humanize';
+import { OS_HINTS, osPlatform, pushSupported, subscribePush, unsubscribePush } from '../lib/push';
+import { onPushNavigate } from '../lib/pwa';
+import { usePollingQuery } from '../lib/usePollingQuery';
+import { useShortcut } from '../lib/useShortcut';
 
 const icons: Record<string, string> = {
   'request.created': 'bi-hand-index-thumb',
@@ -10,6 +15,8 @@ const icons: Record<string, string> = {
   'task.completed': 'bi-check2-square',
   'session.completed': 'bi-check-circle',
   'session.failed': 'bi-x-octagon',
+  'session.created': 'bi-chat-dots',
+  'page.shared': 'bi-file-earmark-richtext',
   'claude.rate_limit': 'bi-speedometer2',
   'server.memory_low': 'bi-memory',
   'container.memory_high': 'bi-memory',
@@ -17,29 +24,98 @@ const icons: Record<string, string> = {
   'schedule.run': 'bi-alarm',
   'schedule.skipped': 'bi-alarm',
   'schedule.failed': 'bi-alarm',
+  'agent.run': 'bi-robot',
+  'agent.failed': 'bi-robot',
+  'workflow.run': 'bi-diagram-3',
+  'workflow.failed': 'bi-diagram-3',
 };
 
 const BROWSER_KEY = 'skipper.notifications.browser';
+type Permission = 'unsupported' | 'default' | 'granted' | 'denied';
 
-/** Cloche de notifications : compteur de non-lues, panneau déroulant, notifications natives du navigateur en option. */
+const readPref = () => {
+  try {
+    return localStorage.getItem(BROWSER_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const writePref = (on: boolean) => {
+  try {
+    localStorage.setItem(BROWSER_KEY, on ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+};
+const currentPermission = (): Permission => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+
+/** Cloche de notifications : compteur de non-lues, panneau, notifications du navigateur et push (même application fermée). */
 export default function NotificationBell() {
   const navigate = useNavigate();
+  const client = useApolloClient();
   const [open, setOpen] = useState(false);
   const [ring, setRing] = useState(false);
-  const { data, refetch } = useQuery<{ notifications: AppNotification[]; unreadNotificationCount: number }>(NOTIFICATIONS, { variables: { limit: 30 }, pollInterval: 3000 });
+  const { data, refetch } = usePollingQuery<{ notifications: AppNotification[]; unreadNotificationCount: number }>(NOTIFICATIONS, { variables: { limit: 30 }, pollInterval: 3000 });
   const [markRead] = useMutation(MARK_NOTIFICATION_READ, { onCompleted: () => refetch() });
   const [markAllRead] = useMutation(MARK_ALL_NOTIFICATIONS_READ, { onCompleted: () => refetch() });
+  const [subscribe] = useMutation(SUBSCRIBE_PUSH);
+  const [unsubscribe] = useMutation(UNSUBSCRIBE_PUSH);
+  const [sendTest] = useMutation<{ sendTestPush: number }>(SEND_TEST_PUSH);
   const unread = data?.unreadNotificationCount ?? 0;
   const notifications = data?.notifications ?? [];
-  const [browserEnabled, setBrowserEnabled] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(BROWSER_KEY) === '1' && typeof Notification !== 'undefined' && Notification.permission === 'granted';
-    } catch {
-      return false;
-    }
-  });
+  const [permission, setPermission] = useState<Permission>(currentPermission);
+  const [pref, setPref] = useState(readPref);
+  const [pushOn, setPushOn] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const [showHint, setShowHint] = useState(false);
+  const browserEnabled = pref && permission === 'granted';
+  useShortcut({ id: 'notifications.close', keys: ['Escape'], label: 'Fermer les notifications', scope: 'context', area: 'Notifications', preventDefault: false }, () => setOpen(false), open);
 
-  // Détecte les nouvelles notifications pour faire sonner la cloche et, si activé, notifier le navigateur.
+  // Permission tenue à jour avec les réglages du site et du système.
+  useEffect(() => {
+    const refresh = () => setPermission(currentPermission());
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    let status: PermissionStatus | null = null;
+    navigator.permissions?.query({ name: 'notifications' as PermissionName }).then((s) => {
+      status = s;
+      s.onchange = refresh;
+    }).catch(() => undefined);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+      if (status) status.onchange = null;
+    };
+  }, []);
+
+  /** Abonne l'appareil au push (idempotent : garde l'abonnement à jour à chaque montage). */
+  const registerPush = useCallback(async () => {
+    if (!pushSupported()) return false;
+    const { data: keyData } = await client.query<{ pushPublicKey: string }>({ query: PUSH_PUBLIC_KEY, fetchPolicy: 'network-only' });
+    const reg = await subscribePush(keyData.pushPublicKey);
+    await subscribe({ variables: { input: reg } });
+    setPushOn(true);
+    return true;
+  }, [client, subscribe]);
+
+  useEffect(() => {
+    if (browserEnabled) registerPush().catch((err) => console.warn('[push] abonnement impossible', err));
+  }, [browserEnabled, registerPush]);
+
+  // Badge de l'icône de l'application installée.
+  useEffect(() => {
+    try {
+      if (unread > 0) void navigator.setAppBadge?.(unread);
+      else void navigator.clearAppBadge?.();
+    } catch {
+      /* badge indisponible */
+    }
+  }, [unread]);
+
+  // Clic sur une notification système : navigation dans l'application.
+  useEffect(() => onPushNavigate((link) => navigate(link)), [navigate]);
+
+  // Nouvelles notifications : la cloche sonne et, si activé, le navigateur notifie quand la fenêtre n'a pas le focus.
   const lastSeenId = useRef<string | null>(null);
   useEffect(() => {
     if (!notifications.length) return;
@@ -54,18 +130,23 @@ export default function NotificationBell() {
       if (fresh.length) {
         setRing(true);
         setTimeout(() => setRing(false), 1200);
-        if (browserEnabled && document.visibilityState !== 'visible') {
-          for (const n of fresh.slice(0, 3)) {
-            const notif = new Notification(n.title, { body: n.message ?? undefined, tag: `skipper-${n.id}` });
-            notif.onclick = () => {
-              window.focus();
-              if (n.link) navigate(n.link);
-            };
-          }
+        if (browserEnabled && !document.hasFocus()) {
+          for (const n of fresh.slice(0, 3)) void showLocal(n.title, n.message ?? undefined, `skipper-${n.id}`, n.link);
         }
       }
     }
-  }, [notifications, browserEnabled, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifications, browserEnabled]);
+
+  const showLocal = async (title: string, body: string | undefined, tag: string, link: string | null) => {
+    const registration = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
+    if (registration) return registration.showNotification(title, { body, tag, icon: '/icon-192.png', data: { link: link ?? '/' } });
+    const notif = new Notification(title, { body, tag });
+    notif.onclick = () => {
+      window.focus();
+      if (link) navigate(link);
+    };
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -74,16 +155,44 @@ export default function NotificationBell() {
     return () => window.removeEventListener('click', close);
   }, [open]);
 
-  const enableBrowser = async () => {
-    if (typeof Notification === 'undefined') return;
-    const permission = await Notification.requestPermission();
-    const ok = permission === 'granted';
-    setBrowserEnabled(ok);
+  const enable = async () => {
+    if (permission === 'unsupported') return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    if (result !== 'granted') return;
+    writePref(true);
+    setPref(true);
     try {
-      localStorage.setItem(BROWSER_KEY, ok ? '1' : '0');
-    } catch {
-      /* ignore */
+      await registerPush();
+    } catch (err) {
+      setNotice({ text: `Notifications push impossibles : ${(err as Error).message}`, error: true });
     }
+    void showLocal('Skipper', 'Les notifications fonctionnent', 'skipper-test', null);
+    setShowHint(true);
+  };
+
+  const disable = async () => {
+    writePref(false);
+    setPref(false);
+    setPushOn(false);
+    const endpoint = await unsubscribePush().catch(() => null);
+    if (endpoint) await unsubscribe({ variables: { endpoint } }).catch(() => undefined);
+  };
+
+  const test = async () => {
+    setNotice(null);
+    try {
+      if (pushOn) {
+        const res = await sendTest();
+        setNotice({ text: `Notification de test envoyée à ${res.data?.sendTestPush ?? 0} appareil(s). Si vous ne la voyez pas, vérifiez les réglages du système.` });
+      } else {
+        await showLocal('Skipper', 'Notification de test', 'skipper-test', null);
+        setNotice({ text: 'Notification de test affichée.' });
+      }
+    } catch (err) {
+      setNotice({ text: (err as Error).message, error: true });
+    }
+    setShowHint(true);
   };
 
   const openNotification = (n: AppNotification) => {
@@ -92,6 +201,7 @@ export default function NotificationBell() {
     if (n.link) navigate(n.link);
   };
 
+  const hint = OS_HINTS[osPlatform()];
   return (
     <div className="wb-bell" onClick={(e) => e.stopPropagation()}>
       <button type="button" className={`wb-bell-btn${open ? ' open' : ''}${ring ? ' ring' : ''}`} title="Notifications" onClick={() => setOpen((v) => !v)}>
@@ -126,13 +236,38 @@ export default function NotificationBell() {
               </div>
             ))}
           </div>
-          <div className="wb-notif-foot">
-            <span>{browserEnabled ? 'Notifications du navigateur activées' : 'Soyez prévenu même sur un autre onglet'}</span>
-            {!browserEnabled && typeof Notification !== 'undefined' && (
-              <button type="button" onClick={enableBrowser}>
-                Activer
-              </button>
+          <div className="wb-notif-foot flex-column align-items-stretch gap-1">
+            {permission === 'unsupported' && <span>Les notifications du navigateur ne sont pas prises en charge ici.</span>}
+            {permission === 'default' && (
+              <div className="d-flex justify-content-between align-items-center gap-2">
+                <span>Soyez prévenu même sur un autre onglet, ou application fermée</span>
+                <button type="button" onClick={() => void enable()}>
+                  Activer
+                </button>
+              </div>
             )}
+            {permission === 'granted' && (
+              <div className="d-flex justify-content-between align-items-center gap-2">
+                <span>{pushOn ? 'Notifications actives, même Skipper fermé' : browserEnabled ? 'Notifications du navigateur activées' : 'Notifications du navigateur désactivées'}</span>
+                <span className="d-flex gap-1">
+                  {browserEnabled && (
+                    <button type="button" onClick={() => void test()}>
+                      Tester
+                    </button>
+                  )}
+                  <button type="button" onClick={() => (browserEnabled ? void disable() : void enable())}>
+                    {browserEnabled ? 'Désactiver' : 'Activer'}
+                  </button>
+                </span>
+              </div>
+            )}
+            {permission === 'denied' && <span>Bloquées par le navigateur ou le système : autorisez les notifications pour ce site (cadenas de la barre d'adresse) et dans les réglages du système.</span>}
+            {notice && (
+              <span role="alert" className={notice.error ? 'text-danger' : ''}>
+                {notice.text}
+              </span>
+            )}
+            {(showHint || permission === 'denied') && <span className="text-secondary">{hint}</span>}
           </div>
         </div>
       )}

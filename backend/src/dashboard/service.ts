@@ -6,7 +6,7 @@ import { requestService } from '../requests/service.js';
 import type { HumanRequest } from '../requests/types.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
-import { settingsService } from '../settings/service.js';
+import { claudeSettings } from '../settings/claude.js';
 import { currentMonthStart } from '../settings/usage.js';
 import { taskService } from '../tasks/service.js';
 import type { Task } from '../tasks/types.js';
@@ -145,8 +145,9 @@ async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts,
   return { failedSessions24h: n(rows[0].failed), endedSessions24h: n(rows[0].ended), doneTasks7d: n(rows[0].done) };
 }
 
-async function usage(projectIds: string[], monthStart: Date): Promise<DashboardUsage> {
-  const monthlyBudgetUsd = settingsService.claude.monthlyBudgetUsd;
+async function usage(userId: string, projectIds: string[], monthStart: Date): Promise<DashboardUsage> {
+  // Le plafond affiché est celui de la personne (ses réglages Claude), la consommation celle de ses projets.
+  const monthlyBudgetUsd = (await claudeSettings.forUser(userId)).settings.monthlyBudgetUsd;
   const { rows: global } = await pool.query<{ total: string }>('SELECT COALESCE(sum(cost_usd), 0)::text AS total FROM usage_ledger WHERE recorded_at >= $1', [monthStart]);
   const globalMonthUsd = n(global[0].total);
   if (!projectIds.length) {
@@ -229,7 +230,7 @@ export const dashboardService = {
       projectService.listForUser(userId),
       projectStats(projectIds, monthStart),
       globalCounts(projectIds),
-      usage(projectIds, monthStart),
+      usage(userId, projectIds, monthStart),
       requestService.list({ projectIds, status: 'pending', limit: 20 }),
       projectIds.length ? sessionService.list({ projectIds, status: 'running', limit: 50 }) : Promise.resolve([]),
       recentSessions(projectIds),

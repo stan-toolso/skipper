@@ -9,7 +9,12 @@ export default defineConfig({
     // cache la coquille de l'application et se met à jour seul. Les appels API et les WebSockets ne
     // passent jamais par le cache.
     VitePWA({
-      registerType: 'autoUpdate',
+      // Service worker maison (src/sw.ts) : précache, navigation hors ligne, notifications push. La mise à jour
+      // est proposée par un bandeau (registerType prompt) plutôt qu'appliquée au milieu d'une saisie.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      registerType: 'prompt',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'logo-mark.svg', 'logo-mark-dark.svg', 'logo-mark-mono.svg'],
       manifest: {
         name: 'Skipper',
@@ -28,14 +33,9 @@ export default defineConfig({
           { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
-        // Les routes de l'application renvoient index.html ; tout ce qui est serveur (API, WebSocket,
-        // authentification) est exclu.
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/graphql/, /^\/terminals\//, /^\/browsers\//, /^\/auth\//, /^\/api\//, /^\/privacy\.html$/],
-        cleanupOutdatedCaches: true,
       },
     }),
   ],

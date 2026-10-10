@@ -6,7 +6,9 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
-import GoogleAccountsCard from '../components/GoogleAccountsCard';
+import { CREATE_PROJECT_API_KEY, DELETE_PROJECT_API_KEY, PROJECT_API_KEYS, type ProjectApiKey } from '../graphql/tasks';
+import { useRenameWorktree } from '../workbench/RenameWorktree';
+import { apiBaseUrl } from '../apollo';
 import StatusBadge from '../components/StatusBadge';
 import { useDialogs } from '../components/Dialogs';
 import { useDeletions } from '../workbench/useDeletions';
@@ -500,7 +502,8 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
 /** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
   const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
-  const { deleteWorktree } = useDeletions();
+  const { deleteWorktree, archiveWorktree } = useDeletions();
+  const { openRenameWorktree } = useRenameWorktree();
   const { openNewSession, openNewWorktree } = useSessionLauncher();
   const project = data?.project;
   if (!project?.gitUrl) return null;
@@ -510,7 +513,7 @@ function WorktreesCard({ projectId }: { projectId: string }) {
       <Card.Body className="small">
         <p className="text-secondary">
           Le dossier principal suit la branche <code>{project.git?.branch ?? 'par défaut'}</code>. Un worktree extrait une autre branche dans son propre dossier : les agents y travaillent sans gêner le
-          dossier principal.
+          dossier principal. Un worktree archivé garde son dossier et ses sessions : voyez l'<Link to={`/projects/${projectId}/history`}>historique</Link>.
         </p>
         <Table size="sm" className="mb-3">
           <tbody>
@@ -523,22 +526,25 @@ function WorktreesCard({ projectId }: { projectId: string }) {
               <tr key={w.id}>
                 <td>
                   <i className="bi bi-diagram-2 me-1" />
-                  <strong>{w.branch}</strong>
+                  <strong>{w.label}</strong>
+                  {w.label !== w.branch && <span className="text-secondary"> · {w.branch}</span>}
                   {w.git && <span className="text-secondary"> · {w.git.commit}</span>}
-                  {!w.exists && <span className="text-danger"> · dossier absent</span>}
+                  {!w.exists && <span className="text-warning"> · dossier absent (recréé à la prochaine utilisation)</span>}
                   <div className="text-secondary">
                     <code>{w.path}</code>
                   </div>
                 </td>
                 <td className="text-end text-nowrap">
-                  <Button size="sm" variant="outline-primary" className="me-1" disabled={!w.exists} onClick={() => openNewSession({ projectId, worktreeId: w.id })}>
+                  <Button size="sm" variant="outline-primary" className="me-1" onClick={() => openNewSession({ projectId, worktreeId: w.id })}>
                     Session
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline-danger"
-                    onClick={() => void deleteWorktree(w)}
-                  >
+                  <Button size="sm" variant="outline-secondary" className="me-1" title="Renommer le libellé ou le dossier" onClick={() => openRenameWorktree(w)}>
+                    Renommer
+                  </Button>
+                  <Button size="sm" variant="outline-secondary" className="me-1" title="Archiver : sessions archivées, dossier et branche conservés" onClick={() => void archiveWorktree(w)}>
+                    Archiver
+                  </Button>
+                  <Button size="sm" variant="outline-danger" onClick={() => void deleteWorktree(w)}>
                     Supprimer
                   </Button>
                 </td>
@@ -549,6 +555,77 @@ function WorktreesCard({ projectId }: { projectId: string }) {
         <Button size="sm" onClick={() => openNewWorktree({ projectId })}>
           <i className="bi bi-diagram-2 me-1" />
           Nouveau worktree
+        </Button>
+      </Card.Body>
+    </Card>
+  );
+}
+
+/** Clés d'API du projet : accès REST aux tâches (`/api/v1/tasks`) pour les outils externes. */
+function ApiKeysCard({ projectId }: { projectId: string }) {
+  const { data } = useQuery<{ project: { id: string; apiKeys: ProjectApiKey[] } | null }>(PROJECT_API_KEYS, { variables: { id: projectId } });
+  const { confirm, prompt, showError } = useDialogs();
+  const [created, setCreated] = useState<{ name: string; secret: string } | null>(null);
+  const [create] = useMutation<{ createProjectApiKey: { secret: string; key: ProjectApiKey } }>(CREATE_PROJECT_API_KEY, { refetchQueries: ['ProjectApiKeys'], onError: (e) => void showError(e) });
+  const [remove] = useMutation(DELETE_PROJECT_API_KEY, { refetchQueries: ['ProjectApiKeys'], onError: (e) => void showError(e) });
+  const keys = data?.project?.apiKeys ?? [];
+  const base = apiBaseUrl || window.location.origin;
+  return (
+    <Card className="mt-3">
+      <Card.Header>Clés d'API (tâches)</Card.Header>
+      <Card.Body className="small">
+        <p className="text-secondary">
+          Une clé d'API permet à un outil externe (formulaire, CRM, script) de lister et créer les tâches de ce projet par REST, sans compte Skipper. Le secret n'est montré qu'à la création.
+        </p>
+        {created && (
+          <Alert variant="success" className="py-2" onClose={() => setCreated(null)} dismissible>
+            <div>
+              Clé « {created.name} » créée. Copiez le secret maintenant, il ne sera plus affiché :
+            </div>
+            <code className="user-select-all d-block my-1">{created.secret}</code>
+            <pre className="mb-0 mt-2 pre-dark p-2" style={{ whiteSpace: 'pre-wrap' }}>{`curl -X POST ${base}/api/v1/tasks \\\n  -H "Authorization: Bearer ${created.secret}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"title": "Nouvelle tâche", "description": "…", "priority": "MEDIUM"}'`}</pre>
+          </Alert>
+        )}
+        {keys.length > 0 && (
+          <Table size="sm" className="mb-2">
+            <tbody>
+              {keys.map((k) => (
+                <tr key={k.id}>
+                  <td>
+                    <strong>{k.name}</strong> <code className="text-secondary">{k.prefix}…</code>
+                  </td>
+                  <td className="text-secondary">
+                    créée {new Date(k.createdAt).toLocaleDateString()}
+                    {k.createdBy && ` par ${k.createdBy.name}`} · {k.lastUsedAt ? `utilisée le ${new Date(k.lastUsedAt).toLocaleString()}` : 'jamais utilisée'}
+                  </td>
+                  <td className="text-end">
+                    <Button
+                      size="sm"
+                      variant="link"
+                      className="p-0 text-danger"
+                      onClick={async () => {
+                        if (await confirm({ title: 'Révoquer la clé', message: `Révoquer la clé « ${k.name} » ? Les outils qui l'utilisent n'auront plus accès.`, confirmLabel: 'Révoquer', danger: true })) remove({ variables: { id: k.id } });
+                      }}
+                    >
+                      Révoquer
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+        <Button
+          size="sm"
+          variant="outline-secondary"
+          onClick={async () => {
+            const name = await prompt({ title: "Nouvelle clé d'API", message: 'Nom de la clé, pour la reconnaître (ex. le nom de l’outil qui l’utilisera).', placeholder: 'Formulaire site web', confirmLabel: 'Créer' });
+            if (!name) return;
+            const res = await create({ variables: { projectId, name } });
+            if (res.data) setCreated({ name, secret: res.data.createProjectApiKey.secret });
+          }}
+        >
+          <i className="bi bi-key me-1" /> Nouvelle clé
         </Button>
       </Card.Body>
     </Card>
@@ -601,11 +678,20 @@ export default function ProjectDetailPage() {
           <Button as={Link as any} to={`/projects/${project.id}/context`} size="sm" variant="outline-primary">
             Contexte
           </Button>
+          <Button as={Link as any} to={`/projects/${project.id}/vault`} size="sm" variant="outline-primary" title="Serveurs, bases, API, sites et comptes utilisables par les agents">
+            Coffre
+          </Button>
+          <Button as={Link as any} to={`/projects/${project.id}/agents`} size="sm" variant="outline-primary" title="Agents : configurations réutilisables et planifiables">
+            Agents
+          </Button>
+          <Button as={Link as any} to={`/projects/${project.id}/workflows`} size="sm" variant="outline-primary" title="Workflows : enchaînements d'agents, de sessions et de tâches">
+            Workflows
+          </Button>
+          <Button as={Link as any} to={`/projects/${project.id}/history`} size="sm" variant="outline-primary" title="Sessions et worktrees archivés">
+            Historique
+          </Button>
           {isAdmin && (
             <>
-              <Button as={Link as any} to={`/projects/${project.id}/connections`} size="sm" variant="outline-primary">
-                Connexions
-              </Button>
               <Button as={Link as any} to={`/projects/${project.id}/edit`} size="sm" variant="outline-secondary">
                 Modifier
               </Button>
@@ -695,7 +781,7 @@ export default function ProjectDetailPage() {
       <MembersCard projectId={project.id} canManage={isAdmin} />
       <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
-      <GoogleAccountsCard projectId={project.id} canManage={isAdmin} />
+      {isAdmin && <ApiKeysCard projectId={project.id} />}
       <WorktreesCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>
@@ -728,7 +814,7 @@ export default function ProjectDetailPage() {
               <td>
                 <StatusBadge status={s.status} pendingRequests={s.pendingRequestCount} />
               </td>
-              <td className="text-secondary small">{s.worktree ? s.worktree.branch : '—'}</td>
+              <td className="text-secondary small">{s.worktree ? s.worktree.label : '—'}</td>
               <td className="text-secondary small">{new Date(s.createdAt).toLocaleString()}</td>
             </tr>
           ))}

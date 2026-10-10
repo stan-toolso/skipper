@@ -1,7 +1,7 @@
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { userRepository } from './repository.js';
-import type { GoogleProfile, ProjectMember, ProjectRole, User } from './types.js';
+import type { GoogleProfile, OpenItems, ProjectMember, ProjectRole, User } from './types.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -23,6 +23,43 @@ export const userService = {
   },
 
   list: () => userRepository.list(),
+  listColleagues: (userId: string) => userRepository.listColleagues(userId),
+  projectIdsHolding: (open: OpenItems) => userRepository.projectIdsHolding(open),
+
+  /** Invite une personne dans l'application (sans projet) ; une personne existante peut être promue administratrice. */
+  async inviteToApp(email: string, isAdmin: boolean): Promise<User> {
+    const normalized = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(normalized)) throw new AppError('Adresse e-mail invalide');
+    const existing = await userRepository.findByEmail(normalized);
+    if (existing) return isAdmin && !existing.isAdmin ? (await userRepository.setAdmin(existing.id, true))! : existing;
+    return userRepository.create({ email: normalized, name: nameFromEmail(normalized), isAdmin });
+  },
+
+  async setAdmin(userId: string, isAdmin: boolean): Promise<User> {
+    const user = await this.get(userId);
+    if (!isAdmin) {
+      if (user.isSuperAdmin) throw new AppError("Retirez d'abord le rôle de super administrateur");
+      if (user.isAdmin && (await userRepository.countAppAdmins()).admins <= 1) throw new AppError("L'application doit garder au moins un administrateur");
+    }
+    return (await userRepository.setAdmin(userId, isAdmin)) ?? user;
+  },
+
+  async setSuperAdmin(userId: string, isSuperAdmin: boolean): Promise<User> {
+    const user = await this.get(userId);
+    if (!isSuperAdmin && user.isSuperAdmin && (await userRepository.countAppAdmins()).superAdmins <= 1) throw new AppError("L'application doit garder au moins un super administrateur");
+    return (await userRepository.setSuperAdmin(userId, isSuperAdmin)) ?? user;
+  },
+
+  /** Supprime un utilisateur (ses appartenances suivent) ; jamais soi-même ni le dernier administrateur. */
+  async delete(userId: string, actor: User): Promise<boolean> {
+    if (userId === actor.id) throw new AppError('Vous ne pouvez pas supprimer votre propre compte');
+    const user = await this.get(userId);
+    if (user.isSuperAdmin && !actor.isSuperAdmin) throw new AppError('Seul un super administrateur peut supprimer un super administrateur', 'FORBIDDEN');
+    const counts = await userRepository.countAppAdmins();
+    if (user.isAdmin && counts.admins <= 1) throw new AppError("L'application doit garder au moins un administrateur");
+    if (user.isSuperAdmin && counts.superAdmins <= 1) throw new AppError("L'application doit garder au moins un super administrateur");
+    return userRepository.delete(userId);
+  },
 
   /**
    * Connexion Google : l'utilisateur doit déjà exister (créé par une invitation à un projet ou
@@ -41,9 +78,17 @@ export const userService = {
 
   members: (projectId: string) => userRepository.listMembers(projectId),
 
+  /** Rôle effectif : l'appartenance, sinon administrateur pour un super administrateur. */
   async roleFor(userId: string, projectId: string): Promise<ProjectRole | null> {
     const m = await userRepository.findMembership(projectId, userId);
-    return m?.role ?? null;
+    if (m) return m.role;
+    const user = await userRepository.findById(userId);
+    return user?.isSuperAdmin ? 'admin' : null;
+  },
+
+  /** Rôle d'appartenance seul (null pour un super administrateur non membre). */
+  async memberRoleFor(userId: string, projectId: string): Promise<ProjectRole | null> {
+    return (await userRepository.findMembership(projectId, userId))?.role ?? null;
   },
 
   projectIdsFor: (userId: string) => userRepository.projectIdsForUser(userId),

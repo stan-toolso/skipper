@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
+import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
 
 describe('describeTool', () => {
   it('décrit une commande Bash et tronque une longue commande dans la demande', () => {
@@ -61,6 +61,20 @@ describe('formats', () => {
     expect(timeAgo('2026-09-30T09:00:00Z')).toBe('il y a 3 h');
     expect(timeAgo('2026-09-28T12:00:00Z')).toBe('il y a 2 j');
     expect(timeAgo('2026-10-01T12:00:00Z')).toBe("à l'instant");
+  });
+});
+
+describe('dayLabel et clockTime', () => {
+  const now = new Date(2026, 8, 30, 10, 0);
+  it("nomme aujourd'hui et hier, sinon donne la date", () => {
+    expect(dayLabel(new Date(2026, 8, 30, 0, 5).toISOString(), now)).toBe("Aujourd'hui");
+    expect(dayLabel(new Date(2026, 8, 29, 23, 59).toISOString(), now)).toBe('Hier');
+    expect(dayLabel(new Date(2026, 8, 22, 12, 0).toISOString(), now)).toBe('Mardi 22 septembre');
+    expect(dayLabel(new Date(2025, 11, 31, 12, 0).toISOString(), now)).toBe('Mercredi 31 décembre 2025');
+  });
+
+  it("donne l'heure sur deux chiffres", () => {
+    expect(clockTime(new Date(2026, 8, 30, 9, 5).toISOString())).toBe('09:05');
   });
 });
 

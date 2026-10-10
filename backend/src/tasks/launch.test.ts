@@ -14,6 +14,7 @@ const tasks = vi.hoisted(() => ({
   get: vi.fn(async () => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', status: 'todo' })),
   update: vi.fn(async (_id: string, patch: Record<string, unknown>) => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', ...patch })),
   describeForPrompt: vi.fn(() => 'Réalise la tâche'),
+  comments: vi.fn(async () => []),
 }));
 
 vi.mock('../sessions/repository.js', () => ({ sessionRepository: repo }));
@@ -22,7 +23,7 @@ vi.mock('../projects/service.js', () => ({
   projectService: { get: async () => ({ id: 'p', name: 'Projet', gitUrl: null, defaultPermissionMode: state.projectMode }) },
   slugify: (s: string) => s,
 }));
-vi.mock('../worktrees/service.js', () => ({ worktreeService: { resolveCwd: async () => '/tmp' } }));
+vi.mock('../worktrees/service.js', () => ({ worktreeService: { resolveCwd: async () => '/tmp', assertUsable: async () => ({}) } }));
 vi.mock('../worktrees/repository.js', () => ({ worktreeRepository: { listByProject: async () => [] } }));
 vi.mock('../requests/service.js', () => ({ requestService: {} }));
 vi.mock('../notifications/service.js', () => ({ notificationService: { notify: vi.fn() } }));

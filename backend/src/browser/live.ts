@@ -169,6 +169,12 @@ class LiveBrowserService {
     this.send(sessionId, status('ended', 'Session terminée : navigateur fermé'));
   }
 
+  /** Navigateur enregistré pour la session (saisie des secrets du coffre), ou null. */
+  browserOf(sessionId: string): Pick<LiveBrowser, 'project' | 'cdp'> | null {
+    const b = this.browsers.get(sessionId);
+    return b ? { project: b.project, cdp: b.cdp } : null;
+  }
+
   /** Vue proposée dans l'interface : un navigateur tourne pour la session et l'agent s'en est servi. */
   isActive(sessionId: string): boolean {
     return this.browsers.get(sessionId)?.used ?? false;

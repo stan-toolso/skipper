@@ -4,11 +4,15 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createSchema, createYoga, maskError } from 'graphql-yoga';
 import { GraphQLError } from 'graphql';
-import { sweepStaleSessionDirs } from './connections/runtime.js';
 import { createAuthContext } from './auth/access.js';
 import { googleAuth } from './auth/google.js';
 import { handleAuthRoute } from './auth/routes.js';
 import { handleAttachmentRoute } from './sessions/attachmentRoute.js';
+import { handleSharedPageRoute } from './sharedPages/viewRoute.js';
+import { handleFileViewRoute } from './files/viewRoute.js';
+import { handleTasksApiRoute } from './tasks/api.js';
+import { registerTaskSessionFeed } from './tasks/sessionFeed.js';
+import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
 import { AppError } from './errors.js';
 import { config } from './config.js';
@@ -20,7 +24,9 @@ import { sessionService } from './sessions/service.js';
 import { containerMonitor } from './runners/monitor.js';
 import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
-import { settingsService } from './settings/service.js';
+import { migrateLegacyCredentials } from './settings/legacy.js';
+import { registerWorkflowTriggers } from './workflows/triggers.js';
+import { automationScheduler } from './workflows/scheduler.js';
 import { rateLimitService } from './settings/rateLimits.js';
 import { serverSettings } from './settings/server.js';
 import { terminalService } from './terminals/service.js';
@@ -35,20 +41,24 @@ async function main() {
   const applied = await runMigrations();
   if (applied.length) console.log(`[db] migrations appliquées : ${applied.join(', ')}`);
 
-  await settingsService.load();
   await rateLimitService.load();
   await serverSettings.load();
-  console.log(`[settings] authentification Claude : ${settingsService.claude.authMode}`);
 
   const recovered = await sessionService.recoverAfterRestart();
   if (recovered.sessions) console.log(`[sessions] ${recovered.sessions} session(s) marquée(s) comme interrompue(s)`);
   if (recovered.requests) console.log(`[requests] ${recovered.requests} demande(s) expirée(s)`);
-  const staleDirs = await sweepStaleSessionDirs();
-  if (staleDirs) console.log(`[connections] ${staleDirs} dossier(s) de session orphelin(s) nettoyé(s)`);
+  const vault = await vaultService.startup();
+  if (vault.converted || vault.rewrapped || vault.failed) console.log(`[vault] secrets convertis : ${vault.converted}, clés ré-enveloppées : ${vault.rewrapped}, échecs : ${vault.failed}`);
+  if (vault.pruned) console.log(`[vault] ${vault.pruned} entrée(s) de journal élaguée(s)`);
+  const legacy = await migrateLegacyCredentials();
+  if (legacy.length) console.log(`[settings] identifiants historiques transférés : ${legacy.join(', ')}`);
+  registerTaskSessionFeed();
+  registerWorkflowTriggers();
   const closedTerminals = await terminalService.recoverAfterRestart();
   if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
   const missedRuns = await scheduleService.start();
   if (missedRuns) console.log(`[schedules] ${missedRuns} échéance(s) manquée(s) pendant l'arrêt, non rattrapée(s)`);
+  automationScheduler.start();
   const purged = await authSession.purgeExpired();
   if (purged) console.log(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
   console.log(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
@@ -82,6 +92,9 @@ async function main() {
   const server = createServer((req, res) => {
     handleAuthRoute(req, res)
       .then((handled) => handled || handleAttachmentRoute(req, res))
+      .then((handled) => handled || handleSharedPageRoute(req, res))
+      .then((handled) => handled || handleFileViewRoute(req, res))
+      .then((handled) => handled || handleTasksApiRoute(req, res))
       .then((handled) => {
         if (!handled) return yoga(req, res);
       })
@@ -117,6 +130,7 @@ async function main() {
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
     scheduleService.stop();
+    automationScheduler.stop();
     healthService.stopMonitor();
     containerMonitor.stop();
     loginService.shutdown();

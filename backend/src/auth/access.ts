@@ -5,6 +5,7 @@ import { ROLE_RANK, type ProjectRole, type User } from '../users/types.js';
 /** Contexte GraphQL : utilisateur connecté et cache des rôles résolus pendant la requête. */
 export interface AuthContext {
   user: User | null;
+  /** Rôles d'appartenance (null : pas membre), par projet. */
   roles: Map<string, ProjectRole | null>;
   projectIds?: string[];
 }
@@ -24,11 +25,23 @@ export function requireAdmin(ctx: AuthContext): User {
   return user;
 }
 
-/** Rôle de l'utilisateur courant sur un projet (null : pas membre). */
+export function requireSuperAdmin(ctx: AuthContext): User {
+  const user = requireUser(ctx);
+  if (!user.isSuperAdmin) throw new AppError('Réservé aux super administrateurs', 'FORBIDDEN');
+  return user;
+}
+
+/** Rôle d'appartenance de l'utilisateur courant sur un projet (null : pas membre), mémorisé pour la requête. */
+export async function memberRoleFor(ctx: AuthContext, projectId: string): Promise<ProjectRole | null> {
+  const user = requireUser(ctx);
+  if (!ctx.roles.has(projectId)) ctx.roles.set(projectId, await userService.memberRoleFor(user.id, projectId));
+  return ctx.roles.get(projectId) ?? null;
+}
+
+/** Rôle effectif : l'appartenance, sinon administrateur pour un super administrateur (null : aucun accès). */
 export async function roleFor(ctx: AuthContext, projectId: string): Promise<ProjectRole | null> {
   const user = requireUser(ctx);
-  if (!ctx.roles.has(projectId)) ctx.roles.set(projectId, await userService.roleFor(user.id, projectId));
-  return ctx.roles.get(projectId) ?? null;
+  return (await memberRoleFor(ctx, projectId)) ?? (user.isSuperAdmin ? 'admin' : null);
 }
 
 /** Lève une erreur si l'utilisateur n'a pas au moins le rôle demandé sur le projet. */
@@ -39,15 +52,16 @@ export async function requireProject(ctx: AuthContext, projectId: string, min: P
   return role;
 }
 
-/** Projets auxquels l'utilisateur courant a accès (mémorisés pour la requête). */
+/** Projets dont l'utilisateur courant est membre (mémorisés pour la requête) : ce sont eux qui alimentent les listes et les flux. */
 export async function accessibleProjectIds(ctx: AuthContext): Promise<string[]> {
   const user = requireUser(ctx);
   if (!ctx.projectIds) ctx.projectIds = await userService.projectIdsFor(user.id);
   return ctx.projectIds;
 }
 
+/** Appartenance seule : un événement d'un projet dont un super administrateur n'est pas membre ne lui parvient pas. */
 export const canAccessProject = async (ctx: AuthContext, projectId: string | null | undefined): Promise<boolean> =>
-  Boolean(ctx.user) && (projectId == null || (await roleFor(ctx, projectId)) !== null);
+  Boolean(ctx.user) && (projectId == null || (await memberRoleFor(ctx, projectId)) !== null);
 
 /** Filtre un flux de subscription selon un prédicat asynchrone. */
 export async function* filterAsync<T>(source: AsyncIterable<T>, predicate: (value: T) => Promise<boolean> | boolean): AsyncGenerator<T> {

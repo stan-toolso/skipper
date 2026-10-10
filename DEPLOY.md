@@ -73,30 +73,33 @@ proxifier `/auth/` vers le backend (bloc présent dans `deploy/nginx-skipper.con
 
 ## Authentification Claude
 
-Le plus simple : dans l'application, **Paramètres → Compte du serveur → Se connecter avec
-Claude** (compte claude.ai avec abonnement). Le backend pilote `claude auth login` avec le CLI
-installé pour l'utilisateur `skipper` (`~/.local/bin/claude`) ; les identifiants sont rangés par
-le CLI dans `/home/skipper/.claude/` et se renouvellent seuls. Équivalent en SSH :
-`ssh skipper@skipper.toolso.io` puis `claude auth login`. Alternatives dans la même page : un jeton
-OAuth d'un an (`claude setup-token`, chiffré en base avec la clé
-`/home/skipper/skipper-workspaces/.secret-key`, à sauvegarder avec la base) ou une clé API. Le
-mode « compte du serveur » accepte aussi `ANTHROPIC_API_KEY=...` dans `~/skipper/.env` suivi d'un
-`pm2 restart skipper --update-env`.
+Chaque personne connecte **son** abonnement ou sa clé API : Paramètres → Claude → **Se connecter
+avec Claude** (le backend pilote `claude setup-token` avec le CLI installé pour l'utilisateur
+`skipper`, `~/.local/bin/claude` ; le jeton obtenu est rangé dans le coffre personnel de la personne
+comme jeton applicatif, chiffré avec la clé `/home/skipper/skipper-workspaces/.secret-key`, à
+sauvegarder avec la base), ou une clé API Anthropic déposée dans son coffre et choisie dans la même
+page. Il n'y a plus de compte du serveur partagé : une session n'utilise que les identifiants de son
+propriétaire, et les identifiants du compte `skipper` (`/home/skipper/.claude/`) ne sont plus montés
+dans les conteneurs. Les réglages Claude et GitHub de l'ancienne version sont repris au premier
+démarrage dans le coffre et les réglages du premier administrateur.
 
 ## Dépôts git privés des projets
 
 Deux possibilités.
 
-**Connexion GitHub depuis l'interface (recommandé)** : Paramètres → GitHub. Le plus simple est de
-coller un **jeton d'accès personnel** (Settings → Developer settings → Personal access tokens ;
+**Connexion GitHub depuis l'interface (recommandé)** : Paramètres → GitHub, **par personne**, un ou
+plusieurs comptes. Le plus simple est la **connexion par code** (device flow ; par défaut avec
+l'identifiant public du CLI GitHub, ou avec une OAuth App à vous — Settings → Developer settings →
+OAuth Apps, « Enable Device Flow » coché — dont le client id va dans `GITHUB_CLIENT_ID` du `.env` ;
+`GITHUB_CLIENT_ID=none` désactive ce mode). Sinon, un **jeton d'accès personnel** déposé dans le coffre
+(élément « jeton applicatif », service GitHub ; Settings → Developer settings → Personal access tokens ;
 « fine-grained » limité aux dépôts voulus avec *Contents : Read and write* et, pour les pull requests
 du panneau git, *Pull requests : Read and write* plus *Commit statuses* et *Checks* en lecture ; ou
-« classic » avec la portée `repo`). Alternative sans jeton à copier : une OAuth App GitHub (Settings → Developer
-settings → OAuth Apps, « Enable Device Flow » coché) dont le client id se saisit dans la page ou dans
-`GITHUB_CLIENT_ID` du `.env`, puis connexion par device flow. Dans les deux cas le jeton est chiffré
-en base (même clé que les secrets Claude) et injecté dans les commandes git pour les URL https de
-github.com. Les projets utilisent alors l'URL
-https du dépôt, et le formulaire de projet propose la liste des dépôts du compte.
+« classic » avec la portée `repo`) puis choisi dans la page. Le jeton est chiffré dans le coffre (même
+clé que les autres secrets) et injecté dans les commandes git de la personne et de ses sessions pour
+les URL https de github.com ; pour chaque dépôt, le compte retenu est celui qui le possède (identifiant
+ou organisation), sinon le compte par défaut. Les projets utilisent alors l'URL https du dépôt, et le
+formulaire de projet propose la liste des dépôts des comptes connectés.
 
 Les agents reçoivent ce jeton via un credential helper git (variables `GIT_CONFIG_*`) ainsi qu'une
 identité de commit (config git globale de l'utilisateur `skipper`, sinon le compte GitHub connecté) :
@@ -220,8 +223,8 @@ prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 
 ## Image du runner Docker
 
-Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, Playwright/Chromium pour
-l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
+Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, CLI OpenCode pour les
+sessions OpenCode, Playwright/Chromium pour l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
 (≈ 1 Go, l'ARM64 télécharge son propre Chromium), puis « Recréer » le conteneur sur la page de
 chaque projet concerné. Une session avec navigateur prend 300 à 500 Mo de plus : prévoir au moins
 1,5 Go pour le conteneur du projet.
@@ -230,7 +233,11 @@ La vue en direct du navigateur passe par le WebSocket `/browsers/<session>` : re
 `location /browsers/` de `deploy/nginx-skipper.conf` dans `/etc/nginx/sites-available/skipper`, puis
 `sudo nginx -t && sudo systemctl reload nginx`. Les conteneurs sont désormais créés avec `--init`
 (récolte des processus de Chromium arrêtés) : « Recréer » le conteneur des projets qui utilisent le
-navigateur pour en bénéficier.
+navigateur pour en bénéficier. Les sessions OpenCode exigent une image reconstruite (CLI `opencode`)
+et des conteneurs recréés (`--add-host host.docker.internal`, `~/.claude` propre au projet dans
+`.runners/<slug>/claude-home` à la place du dossier de l'hôte) : « Recréer » sur la page de chaque projet
+après la mise à jour. Les conversations Claude Code d'avant cette version sont dans `~/.claude/projects`
+de l'hôte : les copier dans le dossier du projet (`projects/-<chemin encodé>*`) pour pouvoir les reprendre.
 
 ## Vérifications
 
