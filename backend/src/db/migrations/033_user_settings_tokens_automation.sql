@@ -87,6 +87,9 @@ CREATE TABLE workflows (
   schedule_inputs   jsonb NOT NULL DEFAULT '{}',
   schedule_owner_id uuid REFERENCES users (id) ON DELETE SET NULL,
   event_owner_id    uuid REFERENCES users (id) ON DELETE SET NULL,   -- comptes des exécutions déclenchées par un événement
+  next_run_at       timestamptz,
+  last_run_at       timestamptz,
+  last_result       text,
   created_by        uuid REFERENCES users (id) ON DELETE SET NULL,
   created_at        timestamptz NOT NULL DEFAULT now(),
   updated_at        timestamptz NOT NULL DEFAULT now()
