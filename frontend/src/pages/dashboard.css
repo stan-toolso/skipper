@@ -21,7 +21,7 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 .dash-tile-value small { font-size: 14px; font-weight: 400; color: var(--cc-dim); margin-left: 6px; }
 .dash-tile-sub { font-size: 12px; color: var(--cc-dim); margin-top: 4px; }
 .dash-tile-sub .up { color: var(--cc-red); }
-.dash-tile-sub .down { color: #57ab5a; }
+.dash-tile-sub .down { color: var(--cc-green); }
 
 .dash-section { margin-bottom: 20px; }
 .dash-section-title {
