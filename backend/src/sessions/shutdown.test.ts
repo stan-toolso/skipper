@@ -50,6 +50,8 @@ vi.mock('../projects/service.js', () => ({ projectService: { get: async () => ({
 vi.mock('../worktrees/service.js', () => ({ worktreeService: { resolveCwd: async () => '/tmp' } }));
 vi.mock('../pubsub.js', () => ({ pubSub: { publish: vi.fn() } }));
 vi.mock('./providers/registry.js', () => ({ getProvider: () => providers.current }));
+// Le diagnostic de manque de mémoire interroge Docker : hors sujet ici.
+vi.mock('../runners/monitor.js', () => ({ containerMonitor: { explainFailure: async () => null } }));
 
 /** Flux Claude simulé : il se termine « de lui-même » (die) ou par stop(), comme le provider Claude. */
 function fakeProvider(opts: { stopHangs?: boolean } = {}) {
