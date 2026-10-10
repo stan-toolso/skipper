@@ -463,7 +463,11 @@ export const sessionService = {
       let error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
       // Processus tué faute de mémoire dans le conteneur : message explicite plutôt que « exited with code 137 ».
       if (status === 'failed') {
-        const oom = await containerMonitor.explainFailure(project, result).catch(() => null);
+        // Borné : un Docker qui ne répond pas ne doit pas retarder la fin de la session.
+        const oom = await Promise.race([
+          containerMonitor.explainFailure(project, result).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000).unref()),
+        ]);
         if (oom) error = `${oom} (détail : ${error})`;
       }
       await emit('status', { status, exitCode: result.exitCode, error });
