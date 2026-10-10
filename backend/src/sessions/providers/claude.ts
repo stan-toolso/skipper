@@ -249,7 +249,8 @@ export class ClaudeProvider implements SessionProvider {
       },
       plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
       model,
-      fallbackModel: general.fallbackModel ?? undefined,
+      // Le CLI refuse un repli identique au modèle principal : le repli est alors simplement omis.
+      fallbackModel: general.fallbackModel && general.fallbackModel !== model ? general.fallbackModel : undefined,
       env,
       permissionMode: cfg.permissionMode || 'default',
       // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé. Toujours vrai ici, car il rend
