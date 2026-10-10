@@ -10,6 +10,8 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import os from 'node:os';
+import path from 'node:path';
 import { config } from '../../config.js';
 import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
@@ -266,8 +268,8 @@ export class ClaudeProvider implements SessionProvider {
       allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Le coffre saisit des secrets dans le navigateur : les outils qui pourraient relire la valeur sont retirés à l'agent.
       ...(browserServer && vaultBrowser ? { disallowedTools: ['mcp__playwright__browser_evaluate', 'mcp__playwright__browser_run_code'] } : {}),
-      // Reprise de la conversation Claude si la session a déjà tourné.
-      resume: ctx.session.externalId ?? undefined,
+      // Reprise de la conversation Claude si la session a déjà tourné et que le CLI la retrouve encore.
+      resume: (await this.resumableConversation(ctx)) ?? undefined,
       pathToClaudeCodeExecutable: claudeExecutable,
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
@@ -504,6 +506,20 @@ export class ClaudeProvider implements SessionProvider {
    * message utilisateur : le texte, complété par la liste des fichiers joints et leur chemin, puis les images et
    * PDF en blocs de contenu pour que le modèle les voie directement.
    */
+  /**
+   * Identifiant de la conversation Claude Code à reprendre : celui de la session, si son transcript existe encore
+   * dans l'environnement du projet (`~/.claude/projects/<cwd encodé>/<id>.jsonl`). Sinon (conteneur recréé avant que
+   * ce dossier ne soit persistant, fichier purgé), la session repart d'une conversation neuve, avec un avertissement.
+   */
+  private async resumableConversation(ctx: RunContext): Promise<string | null> {
+    const id = ctx.session.externalId;
+    if (!id) return null;
+    const file = path.posix.join(os.homedir(), '.claude', 'projects', ctx.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
+    if (await runner.pathExists(ctx.project, file).catch(() => true)) return id;
+    await ctx.emit('system', { notice: true, message: `La conversation Claude Code précédente (${id}) est introuvable dans l'environnement du projet : la session repart d'une conversation neuve. L'agent ne se souvient pas des échanges affichés ci-dessus ; le fil reste consultable ici.` });
+    return null;
+  }
+
   private async instruction(ctx: RunContext, text: string, attachments: Attachment[]): Promise<SDKUserMessage['message']['content']> {
     await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
     if (!attachments.length) return text;

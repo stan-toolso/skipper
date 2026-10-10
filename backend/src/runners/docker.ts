@@ -176,6 +176,11 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     return stdout;
   }
 
+  async pathExists(project: Project, filePath: string): Promise<boolean> {
+    await this.ensureReady(project);
+    return docker(['exec', this.containerName(project), 'test', '-e', filePath]).then(() => true, () => false);
+  }
+
   async removePath(project: Project, filePath: string): Promise<void> {
     await docker(['exec', this.containerName(project), 'rm', '-rf', filePath], { allowFail: true });
   }

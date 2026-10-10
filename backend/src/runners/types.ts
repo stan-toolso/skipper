@@ -58,6 +58,8 @@ export interface Runner {
   putFile(project: Project, filePath: string, content: string): Promise<void>;
   /** Lit un fichier de l'environnement du projet. */
   getFile(project: Project, filePath: string): Promise<string>;
+  /** Le chemin existe-t-il dans l'environnement du projet ? */
+  pathExists(project: Project, filePath: string): Promise<boolean>;
   /** Supprime un fichier ou un dossier de l'environnement du projet. */
   removePath(project: Project, filePath: string): Promise<void>;
   /** Exécution d'un script shell dans `cwd` (provider shell). */
