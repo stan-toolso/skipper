@@ -1,24 +1,47 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { displayCombo } from '../lib/shortcuts';
+import { useShortcut } from '../lib/useShortcut';
 import NotificationBell from './NotificationBell';
 import { useTabs, type Tab, type TabKind } from './TabsContext';
 
 const icons: Record<TabKind, string> = {
+  dashboard: 'bi-speedometer2',
   projects: 'bi-folder2',
   sessions: 'bi-chat-dots',
   requests: 'bi-bell',
   project: 'bi-folder2-open',
   'project-form': 'bi-pencil',
   context: 'bi-journal-text',
+  vault: 'bi-shield-lock',
   session: 'bi-chat-dots-fill',
   browser: 'bi-globe2',
   terminal: 'bi-terminal',
   tasks: 'bi-check2-square',
+  task: 'bi-check2-square',
+  history: 'bi-clock-history',
   settings: 'bi-gear',
+  users: 'bi-people',
   files: 'bi-folder2-open',
   file: 'bi-file-earmark-code',
+  worktree: 'bi-diagram-2',
+  'shared-pages': 'bi-file-earmark-richtext',
+  'shared-page': 'bi-file-earmark-richtext',
+  agents: 'bi-robot',
+  agent: 'bi-robot',
+  workflows: 'bi-diagram-3',
+  workflow: 'bi-diagram-3',
+  'workflow-run': 'bi-play-circle',
   other: 'bi-file-earmark',
 };
+
+const Keys = ({ combo }: { combo: string }) => (
+  <kbd>
+    {displayCombo(combo).map((c, i) => (
+      <span key={i}>{c}</span>
+    ))}
+  </kbd>
+);
 
 /** Menu listant tous les onglets ouverts (utile quand la barre déborde). */
 function TabsMenu({ tabs, activeKey, onClose }: { tabs: Tab[]; activeKey: string; onClose: () => void }) {
@@ -65,31 +88,26 @@ function TabsMenu({ tabs, activeKey, onClose }: { tabs: Tab[]; activeKey: string
 
 /** Menu contextuel d'un onglet (clic droit), positionné au curseur. */
 function TabContextMenu({ tab, index, x, y, onClose }: { tab: Tab; index: number; x: number; y: number; onClose: () => void }) {
-  const { tabs, closeTab, closeOthers, closeRight, closeAll } = useTabs();
+  const { tabs, closeTab, closeOthers, closeRight, closeAll, reopenClosed, canReopen } = useTabs();
   useEffect(() => {
     const close = () => onClose();
-    const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
     window.addEventListener('click', close);
     window.addEventListener('contextmenu', close);
-    window.addEventListener('keydown', key);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('contextmenu', close);
-      window.removeEventListener('keydown', key);
     };
   }, [onClose]);
+  useShortcut({ id: 'tabs.menu.close', keys: ['Escape'], label: 'Fermer le menu', scope: 'context', area: "Menu d'un onglet", preventDefault: false }, () => onClose());
   const run = (fn: () => void) => () => {
     fn();
     onClose();
   };
-  // Le menu reste dans la fenêtre même près du bord droit.
-  const left = Math.min(x, window.innerWidth - 220);
+  const left = Math.min(x, window.innerWidth - 240);
   return (
     <div className="wb-ctx-menu" style={{ left, top: y }} role="menu" onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
       <button type="button" role="menuitem" onClick={run(() => closeTab(tab.key))}>
-        Fermer <kbd>clic molette</kbd>
+        Fermer <Keys combo="alt+code:KeyW" />
       </button>
       <button type="button" role="menuitem" disabled={tabs.length < 2} onClick={run(() => closeOthers(tab.key))}>
         Fermer les autres
@@ -101,6 +119,9 @@ function TabContextMenu({ tab, index, x, y, onClose }: { tab: Tab; index: number
       <button type="button" role="menuitem" onClick={run(closeAll)}>
         Tout fermer
       </button>
+      <button type="button" role="menuitem" disabled={!canReopen} onClick={run(reopenClosed)}>
+        Rouvrir l'onglet fermé <Keys combo="alt+shift+code:KeyT" />
+      </button>
     </div>
   );
 }
@@ -110,13 +131,23 @@ function TabContextMenu({ tab, index, x, y, onClose }: { tab: Tab; index: number
  * défilement à la molette ou au trackpad, des ombres sur les bords, l'onglet actif toujours ramené
  * en vue, et un menu qui liste tous les onglets.
  */
-export default function TabBar({ onToggleSidebar, sidebarOpen = false }: { onToggleSidebar?: () => void; sidebarOpen?: boolean }) {
-  const { tabs, activeKey, closeTab } = useTabs();
+export default function TabBar({ onToggleSidebar, sidebarOpen = false, sidebarCollapsed = false }: { onToggleSidebar?: () => void; sidebarOpen?: boolean; sidebarCollapsed?: boolean }) {
+  const { tabs, activeKey, closeTab, reopenClosed, previous, next, goTo } = useTabs();
   const navigate = useNavigate();
   const stripRef = useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [menuOpen, setMenuOpen] = useState(false);
   const [ctx, setCtx] = useState<{ tab: Tab; index: number; x: number; y: number } | null>(null);
+
+  // Raccourcis d'onglets, sur Alt/Option : Ctrl/⌘+W et +T appartiennent au navigateur. Alt+W tape ∑ sur un
+  // clavier Mac français, d'où l'alternative Alt+< (touche physique à gauche du W ou du X).
+  useShortcut({ id: 'tabs.close', keys: ['alt+code:KeyW', 'alt+code:IntlBackslash', 'alt+code:Comma'], label: "Fermer l'onglet actif", scope: 'global', area: 'Onglets' }, () => {
+    if (tabs.some((t) => t.key === activeKey)) closeTab(activeKey);
+  });
+  useShortcut({ id: 'tabs.reopen', keys: ['alt+shift+code:KeyT'], label: "Rouvrir l'onglet fermé", scope: 'global', area: 'Onglets' }, () => reopenClosed());
+  useShortcut({ id: 'tabs.previous', keys: ['alt+code:BracketLeft', 'alt+shift+code:BracketLeft'], label: 'Onglet précédent', scope: 'global', area: 'Onglets', anyShift: true }, () => previous());
+  useShortcut({ id: 'tabs.next', keys: ['alt+code:BracketRight', 'alt+shift+code:BracketRight'], label: 'Onglet suivant', scope: 'global', area: 'Onglets', anyShift: true }, () => next());
+  useShortcut({ id: 'tabs.go', keys: ['alt+code:digit'], label: 'Aller à l’onglet n° (9 : le dernier)', scope: 'global', area: 'Onglets' }, (e) => goTo(Number(e.code.replace('Digit', ''))));
 
   const updateOverflow = useCallback(() => {
     const el = stripRef.current;
@@ -126,7 +157,6 @@ export default function TabBar({ onToggleSidebar, sidebarOpen = false }: { onTog
     setOverflow((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
   }, []);
 
-  // Ombres de débordement : recalculées au défilement, au redimensionnement et quand les onglets changent.
   useEffect(() => {
     const el = stripRef.current;
     if (!el) return;
@@ -136,16 +166,14 @@ export default function TabBar({ onToggleSidebar, sidebarOpen = false }: { onTog
     return () => observer.disconnect();
   }, [updateOverflow, tabs]);
 
-  // L'onglet actif est toujours visible.
   useEffect(() => {
-    const el = stripRef.current?.querySelector<HTMLElement>('.wb-tab.active');
-    el?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    stripRef.current?.querySelector<HTMLElement>('.wb-tab.active')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   }, [activeKey, tabs.length]);
 
   return (
     <div className="wb-topbar">
       {onToggleSidebar && (
-        <button type="button" className={`wb-burger${sidebarOpen ? ' open' : ''}`} onClick={onToggleSidebar} aria-label="Menu" aria-expanded={sidebarOpen} title="Menu">
+        <button type="button" className={`wb-burger${sidebarOpen ? ' open' : ''}${sidebarCollapsed ? ' collapsed' : ''}`} onClick={onToggleSidebar} aria-label="Menu" aria-expanded={sidebarOpen} title="Menu">
           <i className={`bi ${sidebarOpen ? 'bi-x-lg' : 'bi-list'}`} />
         </button>
       )}
@@ -156,7 +184,6 @@ export default function TabBar({ onToggleSidebar, sidebarOpen = false }: { onTog
           ref={stripRef}
           onScroll={updateOverflow}
           onWheel={(e) => {
-            // Molette verticale = défilement horizontal de la barre.
             const el = stripRef.current;
             if (!el || el.scrollWidth <= el.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
             el.scrollLeft += e.deltaY;

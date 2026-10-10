@@ -12,7 +12,6 @@ import { attachmentsRoot } from '../sessions/attachments.js';
 import { worktreesRoot } from '../worktrees/service.js';
 import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
-import { renderSecretsFile } from '../connections/website.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,14 +30,14 @@ async function docker(args: string[], opts: { allowFail?: boolean } = {}): Promi
   }
 }
 
-/** `docker` avec un contenu sur l'entrée standard (écriture d'un fichier dans le conteneur sans passer par un volume). */
+/** `docker` avec un contenu sur l'entrée standard (écriture d'un fichier dans le conteneur). */
 function dockerWithInput(args: string[], input: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn('docker', args, { stdio: ['pipe', 'ignore', 'pipe'] });
-    let err = '';
-    child.stderr.on('data', (d: Buffer) => (err += d.toString()));
-    child.on('error', (e) => reject(new AppError(`docker ${args[0]} a échoué : ${e.message}`)));
-    child.on('close', (code) => (code === 0 ? resolve() : reject(new AppError(`docker ${args[0]} a échoué : ${err.trim() || `code ${code}`}`))));
+    let stderr = '';
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new AppError(`docker ${args[0]} a échoué : ${stderr.trim().split('\n').slice(-2).join(' ')}`))));
     child.stdin.end(input);
   });
 }
@@ -108,24 +107,25 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
         // Processus init (tini) : récolte les processus orphelins, dont ceux de Chromium, lancé par `docker exec -d`.
         '--init',
         '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
+        // Le serveur Skipper reste joignable depuis le conteneur (ponts MCP des sessions OpenCode), y compris sous Linux.
+        '--add-host', 'host.docker.internal:host-gateway',
         // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de
-        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; les montages
-        // ci-dessous (~/.claude, ~/.claude.json, ~/.gitconfig) viennent s'y superposer.
+        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; le montage de
+        // ~/.gitconfig vient s'y superposer. Les identifiants Claude de l'hôte (~/.claude) ne sont jamais
+        // montés : chaque session reçoit ceux de son propriétaire par variables d'environnement.
         '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0750,size=512m`,
         // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
         '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
         // Le code, les worktrees, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
         '-v', `${workspace}:${workspace}`, '-v', `${worktrees}:${worktrees}`, '-v', `${plugin}:${plugin}`, '-v', `${attachments}:${attachments}`,
       ];
-      // Configuration et identifiants Claude Code de l'utilisateur système (dossier ~/.claude et fichier
-      // ~/.claude.json), s'ils existent : le CLI du conteneur retrouve ainsi le compte du serveur.
-      for (const entry of [path.join(home, '.claude'), path.join(home, '.claude.json'), path.join(home, '.gitconfig')]) {
-        try {
-          await execFileAsync('test', ['-e', entry]);
-          args.push('-v', `${entry}:${entry}`);
-        } catch {
-          /* absent : l'authentification passe par les variables d'environnement */
-        }
+      // Identité git de l'utilisateur système (repli quand le propriétaire de la session n'a pas de compte GitHub).
+      const gitconfig = path.join(home, '.gitconfig');
+      try {
+        await execFileAsync('test', ['-e', gitconfig]);
+        args.push('-v', `${gitconfig}:${gitconfig}`);
+      } catch {
+        /* absent : l'identité des commits vient des variables d'environnement, ou reste celle du conteneur */
       }
       args.push(s.image, 'sleep', 'infinity');
       await docker(args);
@@ -151,9 +151,25 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     return this.relayPath(project);
   }
 
-  async terminalCommand(project: Project, cwd: string): Promise<SpawnSpec> {
+  async terminalCommand(project: Project, cwd: string, options: { rcfile?: string } = {}): Promise<SpawnSpec> {
     await this.ensureReady(project);
-    return { command: 'docker', args: ['exec', '-it', '-w', cwd, '-e', 'TERM=xterm-256color', ...PASSTHROUGH_ENV.flatMap((v) => ['-e', v]), this.containerName(project), 'bash', '-l'] };
+    const shell = options.rcfile ? ['bash', '--rcfile', options.rcfile, '-i'] : ['bash', '-l'];
+    return { command: 'docker', args: ['exec', '-it', '-w', cwd, '-e', 'TERM=xterm-256color', ...PASSTHROUGH_ENV.flatMap((v) => ['-e', v]), this.containerName(project), ...shell] };
+  }
+
+  async putFile(project: Project, filePath: string, content: string): Promise<void> {
+    await this.ensureReady(project);
+    const dir = path.posix.dirname(filePath);
+    await dockerWithInput(['exec', '-i', this.containerName(project), 'sh', '-c', 'umask 077 && mkdir -p "$1" && cat > "$2"', 'sh', dir, filePath], content);
+  }
+
+  async getFile(project: Project, filePath: string): Promise<string> {
+    const { stdout } = await docker(['exec', this.containerName(project), 'cat', filePath]);
+    return stdout;
+  }
+
+  async removePath(project: Project, filePath: string): Promise<void> {
+    await docker(['exec', this.containerName(project), 'rm', '-rf', filePath], { allowFail: true });
   }
 
   async shellCommand(project: Project, cwd: string, _shell: string, script: string): Promise<SpawnSpec> {
@@ -164,7 +180,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   /**
    * Navigateur de la session : Skipper lance lui-même Chromium dans le conteneur (profil jetable dans le
    * /tmp du conteneur, hors des volumes), puis Playwright MCP s'y attache par CDP. Le backend peut ainsi
-   * observer la même page que l'agent (vue en direct). Les secrets sont écrits dans le même dossier.
+   * observer la même page que l'agent (vue en direct) et y saisir les secrets du coffre à la demande.
    * C'est le CLI qui lance Playwright MCP, et le CLI tourne déjà dans le conteneur (où `docker` n'existe
    * pas) : la commande s'exécute donc directement, sans `docker exec`.
    */
@@ -190,15 +206,27 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       throw new AppError(`Le navigateur headless n'a pas démarré : ${(err as Error).message}`);
     }
     const args = ['--cdp-endpoint', `http://127.0.0.1:${cdp.port}`, '--output-dir', `${cwd}/.playwright-mcp`];
-    if (Object.keys(options.secrets).length) {
-      await dockerWithInput(['exec', '-i', container, 'sh', '-c', 'umask 077 && cat > "$1/secrets.env"', 'sh', dir], renderSecretsFile(options.secrets));
-      args.push('--secrets', `${dir}/secrets.env`);
-    }
     return { command: 'playwright-mcp', args, cdp, dispose };
   }
 
   cdpTunnelCommand(project: Project, port: number): SpawnSpec {
     return { command: 'docker', args: ['exec', '-i', this.containerName(project), 'node', '-e', CDP_RELAY, String(port)] };
+  }
+
+  async opencodeCommand(project: Project, cwd: string, envKeys: string[]): Promise<SpawnSpec> {
+    await this.ensureReady(project);
+    return { command: 'docker', args: ['exec', '-i', '-w', cwd, ...[...PASSTHROUGH_ENV, ...envKeys].flatMap((v) => ['-e', v]), this.containerName(project), 'opencode'] };
+  }
+
+  /** `host.docker.internal` quand le conteneur le résout (Docker Desktop, ou `--add-host` sous Linux), sinon la passerelle du réseau. */
+  async hostAddress(project: Project): Promise<string> {
+    const name = this.containerName(project);
+    const { code } = await docker(['exec', name, 'getent', 'hosts', 'host.docker.internal'], { allowFail: true });
+    if (code === 0) return 'host.docker.internal';
+    const { stdout } = await docker(['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}', name]);
+    const gateway = stdout.trim();
+    if (!gateway) throw new AppError("Impossible de joindre le serveur depuis l'environnement du projet : recréez l'environnement (page du projet)");
+    return gateway;
   }
 }
 

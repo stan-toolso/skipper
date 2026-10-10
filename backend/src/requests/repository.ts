@@ -11,6 +11,7 @@ interface RequestRow {
   message: string | null;
   payload: Record<string, unknown>;
   response: Record<string, unknown> | null;
+  answered_by: string | null;
   created_at: Date;
   answered_at: Date | null;
 }
@@ -25,6 +26,7 @@ function toRequest(row: RequestRow): HumanRequest {
     message: row.message,
     payload: row.payload ?? {},
     response: row.response,
+    answeredById: row.answered_by ?? null,
     createdAt: row.created_at,
     answeredAt: row.answered_at,
   };
@@ -77,11 +79,11 @@ export const requestRepository = {
   },
 
   /** Passe une demande en attente à `status` ; renvoie null si elle n'était plus en attente. */
-  async settle(id: string, status: Exclude<RequestStatus, 'pending'>, response: Record<string, unknown> | null): Promise<HumanRequest | null> {
+  async settle(id: string, status: Exclude<RequestStatus, 'pending'>, response: Record<string, unknown> | null, answeredBy: string | null = null): Promise<HumanRequest | null> {
     const { rows } = await pool.query<RequestRow>(
-      `UPDATE requests SET status = $2, response = $3, answered_at = now()
+      `UPDATE requests SET status = $2, response = $3, answered_at = now(), answered_by = $4
        WHERE id = $1 AND status = 'pending' RETURNING *`,
-      [id, status, response === null ? null : toJson(response)],
+      [id, status, response === null ? null : toJson(response), answeredBy],
     );
     return rows[0] ? toRequest(rows[0]) : null;
   },

@@ -27,7 +27,10 @@ import {
   type GitStatus,
   type PullRequest,
 } from '../graphql/operations';
+import { GIT_BRANCH_CHANGES, GIT_BRANCH_FILE_DIFF, type GitBranchChanges } from '../graphql/sessions';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitPanel } from './GitTargetContext';
+import TaskPanel from './TaskPanel';
 
 const statusLabels: Record<string, { label: string; cls: string }> = {
   M: { label: 'M', cls: 'git-m' },
@@ -40,7 +43,7 @@ const statusLabels: Record<string, { label: string; cls: string }> = {
   T: { label: 'T', cls: 'git-m' },
 };
 
-type DiffRequest = { kind: 'file'; path: string; staged: boolean } | { kind: 'commit'; hash: string; subject: string };
+type DiffRequest = { kind: 'file'; path: string; staged: boolean } | { kind: 'commit'; hash: string; subject: string } | { kind: 'branch'; path: string; origPath: string | null; base: string };
 
 function timeAgo(iso: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -55,8 +58,9 @@ function timeAgo(iso: string): string {
 function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId: string; worktreeId: string | null }; onClose: () => void }) {
   const fileQ = useQuery<{ gitDiff: GitDiff }>(GIT_DIFF, { variables: { ...vars, path: req.kind === 'file' ? req.path : '', staged: req.kind === 'file' ? req.staged : false }, skip: req.kind !== 'file', fetchPolicy: 'network-only' });
   const commitQ = useQuery<{ gitCommitDiff: GitDiff }>(GIT_COMMIT_DIFF, { variables: { ...vars, hash: req.kind === 'commit' ? req.hash : '' }, skip: req.kind !== 'commit', fetchPolicy: 'network-only' });
-  const q = req.kind === 'file' ? fileQ : commitQ;
-  const diff = req.kind === 'file' ? fileQ.data?.gitDiff : commitQ.data?.gitCommitDiff;
+  const branchQ = useQuery<{ gitBranchFileDiff: GitDiff }>(GIT_BRANCH_FILE_DIFF, { variables: { ...vars, path: req.kind === 'branch' ? req.path : '', origPath: req.kind === 'branch' ? req.origPath : null }, skip: req.kind !== 'branch', fetchPolicy: 'network-only' });
+  const q = req.kind === 'file' ? fileQ : req.kind === 'commit' ? commitQ : branchQ;
+  const diff = req.kind === 'file' ? fileQ.data?.gitDiff : req.kind === 'commit' ? commitQ.data?.gitCommitDiff : branchQ.data?.gitBranchFileDiff;
   return (
     <Modal show onHide={onClose} size="xl" centered scrollable>
       <Modal.Header closeButton>
@@ -64,6 +68,10 @@ function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId
           {req.kind === 'file' ? (
             <>
               {req.path} <span className="text-secondary">· {req.staged ? 'indexé (vs HEAD)' : 'non indexé (vs index)'}</span>
+            </>
+          ) : req.kind === 'branch' ? (
+            <>
+              {req.path} <span className="text-secondary">· depuis {req.base}</span>
             </>
           ) : (
             <>
@@ -132,6 +140,97 @@ function Section({ title, count, defaultOpen = true, children, action }: { title
       </div>
       {open && <div className="git-section-body">{children}</div>}
     </div>
+  );
+}
+
+/** Revue de toutes les modifications de la branche depuis sa base, fichier par fichier (comme l'onglet « Files changed » d'une PR). */
+function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChanges; vars: { projectId: string; worktreeId: string | null }; onClose: () => void }) {
+  return (
+    <Modal show onHide={onClose} size="xl" centered scrollable>
+      <Modal.Header closeButton>
+        <Modal.Title className="h6">
+          Modifications de la branche <span className="font-monospace">{changes.branch ?? 'HEAD'}</span> <span className="text-secondary">· {changes.files.length} fichier(s) depuis {changes.baseBranch}</span>
+        </Modal.Title>
+      </Modal.Header>
+      <Modal.Body className="p-0">
+        {changes.files.map((f) => (
+          <BranchFileDiff key={f.path} file={f} vars={vars} />
+        ))}
+        {changes.files.length === 0 && <div className="p-3 text-secondary">Aucune modification depuis {changes.baseBranch}.</div>}
+      </Modal.Body>
+    </Modal>
+  );
+}
+
+function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number]; vars: { projectId: string; worktreeId: string | null } }) {
+  const q = useQuery<{ gitBranchFileDiff: GitDiff }>(GIT_BRANCH_FILE_DIFF, { variables: { ...vars, path: file.path, origPath: file.origPath }, fetchPolicy: 'network-only' });
+  return (
+    <div className="border-bottom">
+      <div className="px-3 py-2 font-monospace small d-flex justify-content-between">
+        <span>
+          <span className={`git-status ${statusLabels[file.status]?.cls ?? ''} me-2`}>{statusLabels[file.status]?.label ?? file.status}</span>
+          {file.origPath ? `${file.origPath} → ` : ''}
+          {file.path}
+        </span>
+        <span className="text-secondary">
+          {file.additions != null && <span className="git-a">+{file.additions}</span>} {file.deletions != null && <span className="git-d">−{file.deletions}</span>}
+        </span>
+      </div>
+      {q.loading && !q.data && <div className="px-3 pb-2 small text-secondary">Chargement…</div>}
+      {q.error && <div className="px-3 pb-2 small text-danger">{q.error.message}</div>}
+      {q.data && <DiffView text={q.data.gitBranchFileDiff.text} binary={q.data.gitBranchFileDiff.binary} />}
+    </div>
+  );
+}
+
+/** Modifications de la branche depuis son point de divergence avec sa base (commits et travail non validé). */
+function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worktreeId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
+  const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
+  const [review, setReview] = useState(false);
+  const changes = q.data?.gitBranchChanges;
+  return (
+    <Section
+      title={changes ? `Branche vs ${changes.baseBranch}` : 'Branche vs base'}
+      count={changes?.files.length}
+      defaultOpen={false}
+      action={
+        <span className="d-flex">
+          {changes && changes.files.length > 0 && (
+            <button type="button" className="git-icon-btn" title="Relire toutes les modifications" onClick={() => setReview(true)}>
+              <i className="bi bi-arrows-fullscreen" />
+            </button>
+          )}
+          <button type="button" className="git-icon-btn" title="Rafraîchir" onClick={() => void q.refetch()}>
+            <i className={`bi bi-arrow-clockwise${q.loading ? ' spin' : ''}`} />
+          </button>
+        </span>
+      }
+    >
+      {q.error && <div className="git-empty">{q.error.message}</div>}
+      {changes && (
+        <>
+          <div className="git-subhead" title={`Point de divergence : ${changes.mergeBase.slice(0, 7)}`}>
+            {changes.commits} commit(s) + travail non validé
+          </div>
+          {changes.files.length === 0 && <div className="git-empty">Aucune modification depuis {changes.baseBranch}.</div>}
+          {changes.files.map((f) => {
+            const st = statusLabels[f.status] ?? { label: f.status, cls: '' };
+            const name = f.path.split('/').pop() ?? f.path;
+            const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
+            return (
+              <div key={f.path} className="git-row" title={f.origPath ? `${f.origPath} → ${f.path}` : f.path}>
+                <button type="button" className="git-row-main" onClick={() => onOpen({ kind: 'branch', path: f.path, origPath: f.origPath, base: changes.baseBranch })}>
+                  <span className={`git-status ${st.cls}`}>{st.label}</span>
+                  <span className="git-name">{name}</span>
+                  {dir && <span className="git-dir">{dir}</span>}
+                </button>
+              </div>
+            );
+          })}
+        </>
+      )}
+      {review && changes && <BranchReviewModal changes={changes} vars={vars} onClose={() => setReview(false)} />}
+    </Section>
   );
 }
 
@@ -204,18 +303,29 @@ function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: str
   );
 }
 
-/** Panneau git (sidebar droite) : modifications, commit, pull requests, branches, historique. */
+/** Choix d'onglet mémorisé par tâche pendant la session de navigation (une page avec une tâche s'ouvre sur la tâche). */
+const panelTabChoice = new Map<string, 'task' | 'git'>();
+
+/** Panneau de droite : onglet « Tâche » (session en charge d'une tâche) et onglet git (modifications, commit, branche, pull requests, historique). */
 export default function GitPanel() {
   const { target, open, setOpen } = useGitPanel();
   const vars = target ? { projectId: target.projectId, worktreeId: target.worktreeId } : null;
+  const taskId = target?.taskId ?? null;
+  const [tabState, setTabState] = useState<{ taskId: string | null; tab: 'task' | 'git' } | null>(null);
+  const tab: 'task' | 'git' = taskId ? (tabState?.taskId === taskId ? tabState.tab : panelTabChoice.get(taskId) ?? 'task') : 'git';
+  const chooseTab = (t: 'task' | 'git') => {
+    if (taskId) panelTabChoice.set(taskId, t);
+    setTabState({ taskId, tab: t });
+  };
   const [diffReq, setDiffReq] = useState<DiffRequest | null>(null);
   const [message, setMessage] = useState('');
   const [newBranch, setNewBranch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const gitVisible = Boolean(vars) && open && tab === 'git';
 
-  const statusQ = useQuery<{ gitStatus: GitStatus }>(GIT_STATUS, { variables: vars ?? undefined, skip: !vars || !open, pollInterval: 5000 });
-  const branchesQ = useQuery<{ gitBranches: GitBranch[] }>(GIT_BRANCHES, { variables: vars ?? undefined, skip: !vars || !open, pollInterval: 15000 });
-  const logQ = useQuery<{ gitLog: GitCommit[] }>(GIT_LOG, { variables: { ...(vars ?? {}), limit: 30 }, skip: !vars || !open, pollInterval: 15000 });
+  const statusQ = usePollingQuery<{ gitStatus: GitStatus }>(GIT_STATUS, { variables: vars ?? undefined, skip: !gitVisible, pollInterval: 5000 });
+  const branchesQ = usePollingQuery<{ gitBranches: GitBranch[] }>(GIT_BRANCHES, { variables: vars ?? undefined, skip: !gitVisible, pollInterval: 15000 });
+  const logQ = usePollingQuery<{ gitLog: GitCommit[] }>(GIT_LOG, { variables: { ...(vars ?? {}), limit: 30 }, skip: !gitVisible, pollInterval: 15000 });
   const refetchAll = () => Promise.all([statusQ.refetch(), branchesQ.refetch(), logQ.refetch()]);
   const opts = { onCompleted: () => void refetchAll(), onError: (e: Error) => setActionError(e.message) };
   const [stage, { loading: staging }] = useMutation(GIT_STAGE, opts);
@@ -232,9 +342,16 @@ export default function GitPanel() {
   if (!target) return null;
   if (!open) {
     return (
-      <button type="button" className="git-collapsed" title="Afficher le suivi git" onClick={() => setOpen(true)}>
-        <i className="bi bi-git" />
-      </button>
+      <div className="git-collapsed-rail">
+        {taskId && (
+          <button type="button" className="git-collapsed" title="Afficher la tâche" onClick={() => { chooseTab('task'); setOpen(true); }}>
+            <i className="bi bi-card-checklist" />
+          </button>
+        )}
+        <button type="button" className="git-collapsed" title="Afficher le suivi git" onClick={() => { if (taskId) chooseTab('git'); setOpen(true); }}>
+          <i className="bi bi-git" />
+        </button>
+      </div>
     );
   }
 
@@ -245,17 +362,36 @@ export default function GitPanel() {
   const local = branchesQ.data?.gitBranches.filter((b) => !b.remote) ?? [];
   const remote = branchesQ.data?.gitBranches.filter((b) => b.remote) ?? [];
 
+  const headTitle = target.label ?? (status ? (status.detached ? 'HEAD détaché' : status.branch ?? 'Git') : 'Git');
   return (
     <aside className="git-panel">
       <div className="git-head">
-        <div className="git-head-title">
-          <i className="bi bi-git me-1" />
-          <span title={target.label}>{target.label}</span>
-        </div>
+        {taskId ? (
+          <div className="git-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={tab === 'task'} className={`git-tab${tab === 'task' ? ' active' : ''}`} onClick={() => chooseTab('task')}>
+              <i className="bi bi-card-checklist me-1" /> Tâche
+            </button>
+            <button type="button" role="tab" aria-selected={tab === 'git'} className={`git-tab${tab === 'git' ? ' active' : ''}`} onClick={() => chooseTab('git')}>
+              <i className="bi bi-git me-1" /> Git
+            </button>
+          </div>
+        ) : (
+          <div className="git-head-title">
+            <i className="bi bi-git me-1" />
+            <span title={headTitle}>{headTitle}</span>
+          </div>
+        )}
         <button type="button" className="git-icon-btn" title="Masquer" onClick={() => setOpen(false)}>
           <i className="bi bi-chevron-double-right" />
         </button>
       </div>
+      {tab === 'task' && taskId && (
+        <div className="git-body">
+          <TaskPanel taskId={taskId} />
+        </div>
+      )}
+      {tab === 'git' && (
+      <>
 
       {statusQ.error && <Alert variant="warning" className="m-2 py-1 small">{statusQ.error.message}</Alert>}
       {actionError && (
@@ -359,6 +495,7 @@ export default function GitPanel() {
           </div>
         </div>
 
+        {vars && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
         <PullRequestsSection projectId={target.projectId} worktreeId={target.worktreeId} branch={status && !status.detached ? status.branch : null} />
 
         <Section title="Branches" count={local.length} defaultOpen={false}>
@@ -412,6 +549,8 @@ export default function GitPanel() {
         </Section>
       </div>
 
+      </>
+      )}
       {diffReq && vars && <DiffModal req={diffReq} vars={vars} onClose={() => setDiffReq(null)} />}
     </aside>
   );

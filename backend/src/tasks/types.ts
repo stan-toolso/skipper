@@ -5,6 +5,20 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 export const TASK_STATUSES: TaskStatus[] = ['todo', 'in_progress', 'done', 'cancelled'];
 export const TASK_PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
+/** Statuts « ouverts » : filtre par défaut de toutes les listes. */
+export const OPEN_STATUSES: TaskStatus[] = ['todo', 'in_progress'];
+
+/** Champ libre d'une tâche (lien du ticket, environnement...). La clé est unique dans la tâche, sans tenir compte de la casse. */
+export interface TaskField {
+  key: string;
+  value: string;
+}
+
+/** Personne désignée librement sur une tâche : nom et/ou e-mail (au moins l'un des deux). */
+export interface TaskPerson {
+  name: string | null;
+  email: string | null;
+}
 
 export interface Task {
   id: string;
@@ -13,15 +27,26 @@ export interface Task {
   description: string;
   status: TaskStatus;
   priority: TaskPriority;
+  /** Session en charge actuellement (l'historique complet est dans task_sessions). */
   sessionId: string | null;
   /** Branche git de la tâche (worktree dédié), conservée après suppression du worktree. */
   branch: string | null;
   createdByType: Actor['type'];
   createdBySessionId: string | null;
   dueDate: string | null;
+  customFields: TaskField[];
+  assignee: TaskPerson | null;
+  reporter: TaskPerson | null;
+  commentCount: number;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
+}
+
+/** Entrée d'une personne : `undefined` = inchangé, `null` ou deux champs vides = retirée. */
+export interface TaskPersonInput {
+  name?: string | null;
+  email?: string | null;
 }
 
 export interface CreateTaskInput {
@@ -31,6 +56,9 @@ export interface CreateTaskInput {
   status?: TaskStatus | null;
   sessionId?: string | null;
   dueDate?: string | null;
+  customFields?: TaskField[] | null;
+  assignee?: TaskPersonInput | null;
+  reporter?: TaskPersonInput | null;
 }
 
 export interface UpdateTaskInput {
@@ -41,6 +69,10 @@ export interface UpdateTaskInput {
   sessionId?: string | null;
   branch?: string | null;
   dueDate?: string | null;
+  /** Remplace la liste complète. */
+  customFields?: TaskField[] | null;
+  assignee?: TaskPersonInput | null;
+  reporter?: TaskPersonInput | null;
 }
 
 export interface TaskFilter {
@@ -49,5 +81,49 @@ export interface TaskFilter {
   status?: TaskStatus[];
   priority?: TaskPriority;
   sessionId?: string;
+  /** Texte cherché dans le nom ou l'e-mail du responsable / du rapporteur. */
+  assignee?: string;
+  reporter?: string;
+  /** Tâches dont le responsable a cet e-mail (« mes tâches »). */
+  assigneeEmail?: string;
+  /** Tâches traitées sur cette branche. */
+  branch?: string;
   limit?: number;
+}
+
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  authorType: Actor['type'];
+  authorUserId: string | null;
+  authorSessionId: string | null;
+  /** Nom au moment de l'écriture (utilisateur ou session), conservé ensuite. */
+  authorName: string;
+  body: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Qui modifie ou commente une tâche, pour prévenir la session en charge et attribuer les commentaires. */
+export interface TaskActor extends Actor {
+  userId?: string | null;
+  /** Nom affiché : utilisateur, session d'agent ou intégration (clé d'API). */
+  name?: string | null;
+  /** Tâche créée par un nœud « créer une tâche » d'une exécution de workflow (garde anti-boucle du déclencheur). */
+  workflowRunId?: string | null;
+}
+
+/** Changement de tâche diffusé aux écouteurs (session en charge, notamment). */
+export type TaskChange =
+  | { kind: 'updated'; before: Task; task: Task; actor: TaskActor | null }
+  | { kind: 'commented'; task: Task; comment: TaskComment };
+
+export interface ProjectApiKey {
+  id: string;
+  projectId: string;
+  name: string;
+  prefix: string;
+  createdById: string | null;
+  createdAt: Date;
+  lastUsedAt: Date | null;
 }

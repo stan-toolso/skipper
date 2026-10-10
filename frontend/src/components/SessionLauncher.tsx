@@ -31,7 +31,7 @@ export function useSessionLauncher(): LauncherState {
 /** Dernier mode d'autorisation choisi dans ce formulaire, par projet (prioritaire sur le réglage du projet). */
 const permissionModeKey = (projectId: string) => `skipper.launcher.permissionMode.${projectId}`;
 
-function lastPermissionMode(projectId: string): string | null {
+export function lastPermissionMode(projectId: string): string | null {
   try {
     return localStorage.getItem(permissionModeKey(projectId));
   } catch {
@@ -39,7 +39,7 @@ function lastPermissionMode(projectId: string): string | null {
   }
 }
 
-function rememberPermissionMode(projectId: string, mode: string): void {
+export function rememberPermissionMode(projectId: string, mode: string): void {
   try {
     localStorage.setItem(permissionModeKey(projectId), mode);
   } catch {
@@ -73,7 +73,7 @@ function ConfigInput({ field, value, onChange }: { field: ConfigField; value: st
 }
 
 /** Convertit les valeurs textuelles du formulaire vers les types attendus par le provider. */
-function buildConfig(fields: ConfigField[], values: Record<string, string>): Record<string, unknown> {
+export function buildConfig(fields: ConfigField[], values: Record<string, string>): Record<string, unknown> {
   const config: Record<string, unknown> = {};
   for (const field of fields) {
     const raw = values[field.key];
@@ -83,7 +83,7 @@ function buildConfig(fields: ConfigField[], values: Record<string, string>): Rec
   return config;
 }
 
-function FieldGroup({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
+export function FieldGroup({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
   return (
     <Form.Group className="mb-3">
       <Form.Label className="mb-1">
@@ -261,7 +261,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                     <option value="">Dossier principal{mainBranch ? ` (${mainBranch})` : ''}</option>
                     {worktrees.map((w) => (
                       <option key={w.id} value={w.id} disabled={!w.exists}>
-                        Worktree {w.branch}
+                        Worktree {w.label}
                         {!w.exists ? ' (absent du disque)' : ''}
                       </option>
                     ))}

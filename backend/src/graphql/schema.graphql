@@ -61,8 +61,10 @@ type User {
   email: String!
   name: String!
   avatarUrl: String
-  "Administrateur de l'application : accès aux paramètres généraux."
+  "Administrateur de l'application : accès aux paramètres généraux et aux utilisateurs."
   isAdmin: Boolean!
+  "Super administrateur : administrateur de l'application qui administre aussi tous les projets, membre ou non."
+  isSuperAdmin: Boolean!
   createdAt: DateTime!
   "Null tant que l'utilisateur ne s'est jamais connecté."
   lastLoginAt: DateTime
@@ -93,8 +95,10 @@ type Project {
   runnerConfig: JSON!
   "Mode d'autorisation des nouvelles sessions qui n'en précisent pas (default, acceptEdits, bypassPermissions, plan)."
   defaultPermissionMode: String!
-  "Noms des connexions dont les appels sont soumis à l'approbation d'un humain (non soumis en mode bypassPermissions)."
+  "Noms des éléments du coffre dont les usages par les agents sont soumis à l'approbation d'un humain (même en mode bypassPermissions)."
   approvalConnections: [String!]!
+  "Faux quand l'utilisateur atteint le projet en tant que super administrateur sans en être membre."
+  isMember: Boolean!
   runnerStatus: RunnerStatus!
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
@@ -108,12 +112,17 @@ type Project {
   contextFolders: [ContextFolder!]!
   contextInstructions: [ContextInstruction!]!
   contextChanges(limit: Int): [ContextChange!]!
+  "Terminaux de l'utilisateur connecté dans ce projet."
   terminals: [Terminal!]!
   tasks(status: [TaskStatus!]): [Task!]!
+  "Worktrees actifs."
   worktrees: [Worktree!]!
-  connections: [Connection!]!
-  "Comptes Google reliés au projet (Gmail, Drive)."
-  googleAccounts: [GoogleAccount!]!
+  "Worktrees archivés, les plus récemment archivés d'abord."
+  archivedWorktrees: [Worktree!]!
+  "Éléments du coffre à disposition des agents de ce projet (pour les sessions de l'utilisateur connecté)."
+  vaultItems: [ProjectVaultItem!]!
+  "Clés d'API du projet (administrateurs)."
+  apiKeys: [ProjectApiKey!]!
   members: [ProjectMember!]!
   "Rôle de l'utilisateur connecté sur ce projet."
   myRole: ProjectRole!
@@ -209,6 +218,47 @@ enum TaskPriority {
   URGENT
 }
 
+"Champ libre d'une tâche (lien du ticket, environnement...)."
+type TaskField {
+  key: String!
+  value: String!
+}
+
+input TaskFieldInput {
+  key: String!
+  value: String!
+}
+
+"Personne désignée sur une tâche : nom et/ou e-mail libres (au moins l'un des deux)."
+type TaskPerson {
+  name: String
+  email: String
+}
+
+"Nom et/ou e-mail ; les deux vides retirent la personne."
+input TaskPersonInput {
+  name: String
+  email: String
+}
+
+"Commentaire d'une tâche, par une personne ou un agent (Markdown)."
+type TaskComment {
+  id: ID!
+  "'human' ou 'agent'."
+  authorType: String!
+  "Nom au moment de l'écriture."
+  authorName: String!
+  author: User
+  authorSession: Session
+  body: String!
+  "Modifiable par l'utilisateur connecté (ses propres commentaires)."
+  editable: Boolean!
+  "Supprimable : ses propres commentaires, ou administrateur du projet."
+  deletable: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
 "Tâche d'un projet, avec priorité. Créée et mise à jour par les humains ou les agents (outils MCP `tasks`)."
 type Task {
   id: ID!
@@ -217,13 +267,21 @@ type Task {
   description: String!
   status: TaskStatus!
   priority: TaskPriority!
-  "Session d'agent qui s'en occupe, le cas échéant."
+  "Session d'agent qui s'en occupe actuellement, le cas échéant."
   session: Session
+  "Toutes les sessions passées par la tâche (archivées comprises), la plus récemment reliée d'abord."
+  sessions: [Session!]!
   "'human' ou 'agent'."
   createdByType: String!
   createdBySession: Session
   "Échéance AAAA-MM-JJ."
   dueDate: String
+  customFields: [TaskField!]!
+  assignee: TaskPerson
+  reporter: TaskPerson
+  commentCount: Int!
+  "Commentaires, du plus ancien au plus récent."
+  comments: [TaskComment!]!
   "Branche git de la tâche (worktree dédié task/<slug>), conservée après suppression du worktree."
   branch: String
   "Pull request GitHub de la branche de la tâche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
@@ -240,6 +298,9 @@ input CreateTaskInput {
   priority: TaskPriority
   status: TaskStatus
   dueDate: String
+  customFields: [TaskFieldInput!]
+  assignee: TaskPersonInput
+  reporter: TaskPersonInput
 }
 
 input UpdateTaskInput {
@@ -249,7 +310,30 @@ input UpdateTaskInput {
   status: TaskStatus
   "Session assignée (null pour retirer)."
   sessionId: ID
+  "Chaîne vide ou null pour retirer l'échéance."
   dueDate: String
+  "Remplace la liste complète."
+  customFields: [TaskFieldInput!]
+  "Absent : inchangé ; null : retiré."
+  assignee: TaskPersonInput
+  reporter: TaskPersonInput
+}
+
+"Clé d'API d'un projet (API REST des tâches) ; le secret n'est montré qu'à la création."
+type ProjectApiKey {
+  id: ID!
+  name: String!
+  "Début du secret, pour le reconnaître."
+  prefix: String!
+  createdBy: User
+  createdAt: DateTime!
+  lastUsedAt: DateTime
+}
+
+type CreatedProjectApiKey {
+  key: ProjectApiKey!
+  "Secret complet, montré cette seule fois."
+  secret: String!
 }
 
 "Notification affichée dans la cloche de l'interface."
@@ -264,6 +348,8 @@ type Notification {
   project: Project
   session: Session
   payload: JSON!
+  "Adressée à cette seule personne (session ou page partagée...)."
+  user: User
   readAt: DateTime
   createdAt: DateTime!
 }
@@ -278,6 +364,8 @@ type Terminal {
   id: ID!
   project: Project!
   worktree: Worktree
+  "Qui a ouvert le terminal : seule cette personne le voit et s'y attache."
+  createdBy: User
   name: String!
   status: TerminalStatus!
   exitCode: Int
@@ -292,127 +380,290 @@ type Worktree {
   "Nom du dossier."
   name: String!
   branch: String!
+  "Libellé affiché : le libellé choisi, sinon la branche."
+  label: String!
+  "Libellé choisi (null : la branche est affichée)."
+  customLabel: String
   path: String!
   exists: Boolean!
   git: WorkspaceGit
+  archivedAt: DateTime
+  "Pull request de la branche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
+  pullRequest: PullRequest
+  "Tâche traitée sur la branche du worktree."
+  task: Task
   createdAt: DateTime!
+  "Sessions actives."
   sessions: [Session!]!
+  "Terminaux de l'utilisateur connecté."
   terminals: [Terminal!]!
 }
 
-# ---- Connexions ------------------------------------------------------------------------------------
+# ---- Coffre ----------------------------------------------------------------------------------------
 
-"Type de système distant."
-enum ConnectionKind {
+"Type d'élément du coffre."
+enum VaultItemKind {
   ssh
   postgres
-  "Site web : une adresse et autant de champs qu'on veut (identifiant, mot de passe...), utilisés par le navigateur headless des agents."
   website
+  google
+  api
+  secret
+  "Jeton applicatif : identifiant que Skipper utilise pour la personne (Claude, fournisseur OpenCode, GitHub), référencé par ses réglages ; jamais offert aux agents."
+  token
+  "Proxy LiteLLM : adresse et clé d'API, identifiants des appels de modèle de Skipper (agents automatisés) ; jamais offert aux agents des sessions."
+  litellm
+  "Projet Langfuse : hôte, clé publique et clé secrète, où Skipper trace ses appels de modèle ; jamais offert aux agents des sessions."
+  langfuse
 }
 
-"Comment les agents accèdent à la connexion : outils MCP (le serveur garde les identifiants ; pour un site web, le navigateur headless saisit les secrets), shell de la session (ssh, psql, variables d'environnement), ou les deux."
-enum ConnectionExposure {
-  mcp
-  direct
-  both
+"Service que sert un jeton applicatif du coffre."
+type VaultTokenService {
+  id: String!
+  label: String!
+  "Début attendu du jeton, quand le service en a un."
+  prefix: String
+  "Le service est un fournisseur de modèles d'OpenCode."
+  opencode: Boolean!
 }
 
-"Champ d'un site web (identifiant, mot de passe, code d'organisation...)."
-type ConnectionField {
+"Jeton applicatif : ce qu'il sert (sa valeur ne quitte jamais le coffre)."
+type VaultTokenInfo {
+  service: String!
+  serviceLabel: String!
+  "manual : saisi à la main (révélable avec READ) ; oauth : obtenu par une connexion de Skipper (jamais révélable, renouvelé par Skipper)."
+  obtained: String!
+  "Compte auquel appartient le jeton, quand on le connaît (identifiant GitHub...)."
+  account: String
+  tokenExpiresAt: DateTime
+}
+
+"Permission d'une personne sur un élément : USE (voir et utiliser), READ (aussi révéler les secrets), MANAGE (tout)."
+enum VaultPermission {
+  USE
+  READ
+  MANAGE
+}
+
+"Portée d'un lien vers un projet : tous ses agents, ou les seules sessions de la personne."
+enum VaultLinkScope {
+  PROJECT
+  PERSONAL
+}
+
+"Mode d'authentification d'une API HTTP."
+enum VaultApiAuth {
+  bearer
+  header
+  basic
+  query
+}
+
+"Niveau d'accès des agents à un service Google : NONE, READ (lire, chercher) ou WRITE (aussi envoyer / déposer)."
+enum GoogleAccess {
+  NONE
+  READ
+  WRITE
+}
+
+"D'où un élément entre dans la portée d'un projet : propriété du projet, lien pour tous les agents, lien personnel."
+enum VaultItemVia {
+  OWN
+  PROJECT
+  PERSONAL
+}
+
+"Champ d'un site web ou d'un secret."
+type VaultField {
   "Clé technique (minuscules, chiffres, soulignés)."
   key: String!
   label: String!
   secret: Boolean!
   "Valeur d'un champ public ; null pour un secret (jamais renvoyé)."
   value: String
-  "Nom de variable sous lequel le navigateur et le shell des agents désignent le champ (ex. ADMIN_SITE_PASSWORD)."
+  "Nom de variable historique du champ (ex. ADMIN_SITE_PASSWORD), pour l'affichage."
   variable: String!
 }
 
-"Connexion d'un projet vers un système externe (serveur SSH, base PostgreSQL, site web), utilisable par les agents. Les secrets ne sont jamais renvoyés."
-type Connection {
+type VaultGoogleAccount {
+  email: String!
+  name: String
+  avatarUrl: String
+  gmailAccess: GoogleAccess!
+  driveAccess: GoogleAccess!
+  "Portées OAuth accordées par Google."
+  scopes: [String!]!
+}
+
+type VaultShare {
+  user: User!
+  permission: VaultPermission!
+  grantedBy: User
+  createdAt: DateTime!
+}
+
+type VaultLink {
   id: ID!
-  project: Project!
+  "Projet, quand l'utilisateur en est membre."
+  project: Project
+  projectName: String!
+  scope: VaultLinkScope!
+  "Personne dont les sessions utilisent l'élément (portée PERSONAL)."
+  user: User
+  linkedBy: User
+  createdAt: DateTime!
+}
+
+"Entrée du journal d'un élément du coffre."
+type VaultAuditEvent {
+  id: ID!
+  "created, updated, secret_changed, key_regenerated, host_key_forgotten, deleted, shared, unshared, linked, unlinked, revealed, tested, used, connected, copied, migrated"
+  action: String!
+  actor: User
+  sessionId: ID
+  project: Project
+  projectName: String
+  ok: Boolean!
+  detail: String
+  createdAt: DateTime!
+}
+
+"Élément du coffre : serveur SSH, base PostgreSQL, API HTTP, site web, secret ou compte Google. Les secrets ne sont jamais renvoyés (sauf révélation explicite, journalisée)."
+type VaultItem {
+  id: ID!
   "Nom court employé par les agents (ex. prod, rds-prod)."
   name: String!
-  kind: ConnectionKind!
+  kind: VaultItemKind!
   description: String!
-  "ssh, postgres : hôte (null pour un site web)."
+  "Propriétaire personnel."
+  ownerUser: User
+  "Projet propriétaire, quand l'utilisateur en est membre."
+  ownerProject: Project
+  ownerProjectName: String
+  "Permission de l'utilisateur connecté."
+  myPermission: VaultPermission!
+  "Partage explicite dont bénéficie l'utilisateur connecté (il peut y renoncer)."
+  myShare: VaultPermission
+  "ssh, postgres : hôte ; api basic : null."
   host: String
-  "ssh, postgres : port (null pour un site web)."
   port: Int
-  "ssh, postgres : utilisateur (null pour un site web)."
+  "ssh, postgres : utilisateur ; api basic : utilisateur."
   username: String
-  "website : adresse du site ou de sa page de connexion."
+  "website : adresse du site ; api, litellm : URL de base ; langfuse : hôte."
   url: String
-  "website : champs, dans l'ordre de saisie (vide pour les autres types)."
-  fields: [ConnectionField!]!
-  "postgres : nom de la base."
+  "langfuse : clé publique (pk-lf-..., non secrète)."
+  langfusePublicKey: String
+  "token : service et provenance du jeton."
+  token: VaultTokenInfo
+  "website, secret : champs ; vide pour les autres types."
+  fields: [VaultField!]!
   database: String
-  "postgres : connexion TLS."
   ssl: Boolean
-  "postgres : connexion SSH traversée (tunnel)."
-  viaConnection: Connection
-  exposure: ConnectionExposure!
-  "postgres : transactions en lecture seule."
+  "postgres : certificat de l'autorité du serveur (PEM), pour une vérification sans contrôle du nom d'hôte."
+  sslCa: String
+  "postgres : serveur SSH traversé (tunnel), du même propriétaire."
+  via: VaultItem
+  authScheme: VaultApiAuth
+  "api : nom de l'en-tête ou du paramètre qui porte le jeton."
+  authName: String
+  google: VaultGoogleAccount
+  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement."
   readOnly: Boolean!
-  "Chaque appel d'outil est soumis à l'approbation d'un humain."
+  "Chaque usage par un agent est soumis à l'approbation d'un humain, même en mode « tout autoriser »."
   requireApproval: Boolean!
-  "ssh : préfixes de commandes autorisés par les outils (vide = tout)."
+  "ssh : préfixes de commandes autorisés (vide = tout ; non vide : ni enchaînement ni transfert de fichiers)."
   commandAllowlist: [String!]!
   "ssh : clé publique à ajouter dans authorized_keys du serveur."
   publicKey: String
-  "ssh : empreinte de la clé d'hôte mémorisée à la première connexion."
   hostFingerprint: String
   hostKeySeenAt: DateTime
-  "Un secret (clé privée, mot de passe, champ secret d'un site) est enregistré."
   hasSecret: Boolean!
+  "Champs secrets que l'utilisateur connecté peut révéler (permission READ ; jamais la clé SSH ni le jeton Google)."
+  revealableFields: [String!]!
+  secretUpdatedAt: DateTime
+  "Rappel de rotation (indicatif)."
+  expiresAt: DateTime
   lastTestAt: DateTime
   lastTestOk: Boolean
   lastTestError: String
+  "Partages (permission MANAGE ; vide sinon)."
+  shares: [VaultShare!]!
+  "Liens vers des projets (tous pour MANAGE ; sinon les siens et ceux des projets dont on est membre)."
+  links: [VaultLink!]!
+  "Journal (permission MANAGE ; vide sinon), le plus récent d'abord. before = identifiant de la dernière entrée reçue."
+  audit(limit: Int = 50, before: ID): [VaultAuditEvent!]!
+  createdBy: User
   createdAt: DateTime!
   updatedAt: DateTime!
 }
 
-input ConnectionInput {
+"Élément tel que la page du coffre d'un projet le montre : d'où il vient et par quel lien."
+type ProjectVaultItem {
+  item: VaultItem!
+  via: VaultItemVia!
+  "Lien PROJECT, ou lien PERSONAL de l'utilisateur connecté (null pour OWN)."
+  link: VaultLink
+  "Les agents du projet peuvent utiliser l'élément. Faux pour les éléments du projet réservés à Skipper (jetons, LiteLLM, Langfuse) : listés pour être gérés, jamais offerts aux agents."
+  forAgents: Boolean!
+}
+
+input VaultFieldInput {
+  key: String!
+  label: String
+  "Secret : chiffré, jamais renvoyé, saisi par le serveur dans le navigateur à la place de l'agent. Défaut : false (ou inchangé)."
+  secret: Boolean
+  "Valeur. Pour un secret existant, absente ou null = inchangée."
+  value: String
+}
+
+"Création ou mise à jour d'un élément (les champs absents sont inchangés)."
+input VaultItemInput {
   name: String
-  kind: ConnectionKind
+  kind: VaultItemKind
   description: String
   host: String
   port: Int
   username: String
   database: String
   ssl: Boolean
-  viaConnectionId: ID
-  exposure: ConnectionExposure
+  "postgres : certificat PEM de l'autorité ; chaîne vide pour le retirer."
+  sslCa: String
+  "postgres : élément SSH du même coffre à traverser ; chaîne vide ou null pour retirer."
+  viaItemId: ID
   readOnly: Boolean
   requireApproval: Boolean
   commandAllowlist: [String!]
+  "Rappel de rotation ; null pour retirer."
+  expiresAt: DateTime
   "ssh : clé privée à importer (sinon une paire est générée à la création et la clé privée ne quitte jamais le serveur)."
   privateKey: String
-  "postgres : mot de passe (chaîne vide pour l'effacer)."
+  "postgres : mot de passe (chaîne vide pour l'effacer) ; api basic : mot de passe."
   password: String
-  "website : adresse du site."
+  "website : adresse du site ; api, litellm : URL de base ; langfuse : hôte."
   url: String
-  "website : liste complète des champs (remplace la précédente)."
-  fields: [ConnectionFieldInput!]
+  authScheme: VaultApiAuth
+  authName: String
+  "api, litellm, token : jeton ou clé (absent = inchangé)."
+  token: String
+  "website, secret : liste complète des champs (remplace la précédente)."
+  fields: [VaultFieldInput!]
+  "token : service du jeton (voir vaultTokenServices ; fixé à la création)."
+  service: String
+  "langfuse : clé publique (pk-lf-...) ; la clé secrète (sk-lf-...) passe par `password`."
+  publicKey: String
 }
 
-input ConnectionFieldInput {
-  key: String!
-  label: String
-  "Secret : chiffré, jamais renvoyé, saisi par le navigateur à la place de l'agent. Défaut : false (ou inchangé en mise à jour)."
-  secret: Boolean
-  "Valeur. Pour un secret existant, absente ou null = inchangée."
-  value: String
-}
-
-type ConnectionTest {
-  connection: Connection!
+type VaultTest {
+  item: VaultItem!
   ok: Boolean!
   error: String
   "Réponse de la cible (système, version de PostgreSQL...)."
   detail: String
+}
+
+type VaultSecretValue {
+  field: String!
+  value: String!
 }
 
 # ---- Explorateur de fichiers ---------------------------------------------------------------------
@@ -512,6 +763,17 @@ type SessionChanges {
   files: [SessionFileChange!]!
   "Liste incomplète (dossier sans git trop volumineux)."
   truncated: Boolean!
+}
+
+"Modifications d'une branche depuis son point de divergence avec sa branche de base, travail non validé compris."
+type GitBranchChanges {
+  "null : HEAD détaché."
+  branch: String
+  baseBranch: String!
+  mergeBase: String!
+  "Commits de la branche depuis la base."
+  commits: Int!
+  files: [SessionFileChange!]!
 }
 
 type GitDiff {
@@ -658,48 +920,26 @@ input MergePullRequestCleanup {
   completeTasks: Boolean = true
 }
 
-"Niveau d'accès des agents à un service Google : NONE, READ (lire, chercher) ou WRITE (aussi envoyer / déposer)."
-enum GoogleAccess {
-  NONE
-  READ
-  WRITE
-}
-
-"Compte Google relié à un projet par OAuth (plusieurs par projet) : les agents accèdent à sa messagerie et/ou à son Drive via le serveur MCP `google`. Le rattachement se fait par GET /auth/google/connect?projectId=…&gmail=…&drive=…[&accountId=… pour remplacer un compte] ; les jetons ne sont jamais renvoyés."
-type GoogleAccount {
-  id: ID!
-  email: String!
-  name: String
-  avatarUrl: String
-  gmailAccess: GoogleAccess!
-  driveAccess: GoogleAccess!
-  "Portées OAuth accordées par Google."
-  scopes: [String!]!
-  connectedBy: User
-  lastCheckAt: DateTime
-  lastCheckOk: Boolean
-  lastCheckError: String
-  createdAt: DateTime!
-  updatedAt: DateTime!
-}
-
-type GoogleAccountCheck {
-  account: GoogleAccount!
-  ok: Boolean!
-  error: String
-  "Ce que Google a répondu (adresse, nombre de messages, espace Drive)."
-  detail: String
-}
-
 type Session {
   id: ID!
   project: Project!
   "Worktree dans lequel la session s'exécute (null : checkout principal)."
   worktree: Worktree
+  "Utilisateur qui a lancé la session ; null : session d'avant cette version ou ouverte à tous les membres."
+  owner: User
+  "Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet."
+  archivedAt: DateTime
+  "Tâche dont la session est en charge."
+  task: Task
   "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
   parentSession: Session
   "Sessions lancées par l'agent de cette session."
   childSessions: [Session!]!
+  "Agent (configuration réutilisable) pour lequel la session tourne, et l'exécution qui l'a lancée ; null pour une session lancée à la main."
+  agent: Agent
+  agentRun: AgentRun
+  "Exécution de workflow qui a ouvert la session (nœud tâche ou session)."
+  workflowRun: WorkflowRun
   name: String!
   provider: String!
   status: SessionStatus!
@@ -751,6 +991,8 @@ type Request {
   payload: JSON!
   "Réponse fournie : { decision: allow|deny, always?, message? } pour 'permission', { answers: { question: réponse } } pour 'question'."
   response: JSON
+  "Qui a répondu ou annulé."
+  answeredBy: User
   createdAt: DateTime!
   answeredAt: DateTime
 }
@@ -771,11 +1013,10 @@ type SessionEvent {
   createdAt: DateTime!
 }
 
-# ---- Paramètres généraux ---------------------------------------------------------------------
+# ---- Paramètres (par personne : Claude, OpenCode, GitHub ; serveur : administrateurs) -----------------
 
-"Comment le serveur s'authentifie auprès de Claude : compte de l'utilisateur système (server), jeton OAuth obtenu depuis l'interface (oauth), ou clé API (api_key)."
+"Comment les sessions d'une personne s'authentifient auprès de Claude : jeton OAuth de son abonnement obtenu depuis l'interface (oauth), ou clé API (api_key). Les deux sont des jetons applicatifs du coffre."
 enum ClaudeAuthMode {
-  server
   oauth
   api_key
 }
@@ -795,7 +1036,7 @@ type ClaudeModel {
   description: String!
 }
 
-"Dernière vérification de connexion : compte lu et modèles disponibles."
+"Dernière vérification de connexion de la personne : compte lu et modèles disponibles."
 type ClaudeVerification {
   verifiedAt: DateTime!
   authMode: ClaudeAuthMode!
@@ -805,34 +1046,19 @@ type ClaudeVerification {
   models: [ClaudeModel!]!
 }
 
-"Compte connecté dans le magasin du CLI de l'utilisateur système (mode server), d'après `claude auth status`."
-type ServerAuthStatus {
-  loggedIn: Boolean!
-  "claude.ai (abonnement) ou console (facturation API)."
-  authMethod: String
-  email: String
-  organization: String
-  subscriptionType: String
-  error: String
-}
-
-"Parcours de connexion : oauth = jeton longue durée stocké par Skipper (claude setup-token) ; server = identifiants rangés par le CLI pour l'utilisateur système (claude auth login)."
-enum ClaudeLoginKind {
-  oauth
-  server
-}
-
+"Identifiants Claude de la personne connectée : les éléments du coffre choisis (jetons applicatifs claude et anthropic)."
 type ClaudeAuthStatus {
   mode: ClaudeAuthMode!
-  server: ServerAuthStatus!
+  "Un jeton d'abonnement du coffre est choisi et encore utilisable."
   hasOauthToken: Boolean!
   oauthTokenSetAt: DateTime
   hasApiKey: Boolean!
-  "Derniers caractères de la clé API enregistrée."
-  apiKeyHint: String
   apiKeySetAt: DateTime
-  "Le processus serveur a lui-même ANTHROPIC_API_KEY ou CLAUDE_CODE_OAUTH_TOKEN dans son environnement."
-  serverHasApiKey: Boolean!
+  "Éléments du coffre référencés (null : aucun, ou plus utilisable par la personne)."
+  oauthItemId: ID
+  oauthItemName: String
+  apiKeyItemId: ID
+  apiKeyItemName: String
   verification: ClaudeVerification
 }
 
@@ -843,7 +1069,7 @@ type ClaudeSettings {
   "Modèles proposés à la création d'une session ; vide = tous."
   allowedModels: [String!]!
   fallbackModel: String
-  "Plafond de dépense estimée sur le mois calendaire, toutes sessions confondues (USD)."
+  "Plafond de dépense estimée sur le mois calendaire, toutes les sessions de la personne confondues (USD)."
   monthlyBudgetUsd: Float
   "Budget par défaut d'une session (USD)."
   sessionBudgetUsd: Float
@@ -862,13 +1088,129 @@ type UsageBySession {
   usd: Float!
 }
 
-"Consommation estimée (d'après total_cost_usd du SDK : une estimation au tarif API, pas une facture)."
+"Consommation estimée des sessions de la personne (d'après total_cost_usd du SDK : une estimation au tarif API, pas une facture)."
 type UsageSummary {
   monthStart: DateTime!
   monthUsd: Float!
   totalUsd: Float!
   byModel: [UsageByModel!]!
   bySession: [UsageBySession!]!
+}
+
+"Compte GitHub connecté par la personne. Un dépôt est atteint avec le compte dont l'identifiant ou les organisations le possèdent, sinon le compte par défaut. Les jetons ne sont jamais renvoyés."
+type GithubAccount {
+  id: ID!
+  login: String!
+  avatarUrl: String
+  "OAUTH (connexion par code) ou PAT (jeton personnel du coffre)."
+  method: String!
+  scopes: [String!]!
+  organizations: [String!]!
+  isDefault: Boolean!
+  "Élément du coffre (jeton applicatif github) qui détient le jeton."
+  vaultItemId: ID!
+  connectedAt: DateTime!
+  "Expiration du jeton courant (jetons OAuth expirants seulement ; renouvelés automatiquement)."
+  tokenExpiresAt: DateTime
+}
+
+"Connexion GitHub de la personne connectée : ses comptes (plusieurs possibles), utilisés par ses actions git, ses pull requests et ses sessions. login/avatarUrl/scopes/tokenSetAt décrivent le compte par défaut."
+type GithubAuthStatus {
+  connected: Boolean!
+  login: String
+  avatarUrl: String
+  scopes: [String!]!
+  tokenSetAt: DateTime
+  accounts: [GithubAccount!]!
+  "La connexion par code (device flow) est possible sur ce serveur."
+  deviceAvailable: Boolean!
+}
+
+"Connexion GitHub par code (device flow) en cours : saisir userCode sur verificationUri, puis interroger pollGithubDeviceLogin."
+type GithubDeviceLogin {
+  id: ID!
+  userCode: String!
+  verificationUri: String!
+  expiresAt: DateTime!
+  "Secondes à attendre entre deux interrogations."
+  interval: Int!
+}
+
+"Résultat d'une interrogation : PENDING (attendre `interval` secondes), CONNECTED (compte enregistré), EXPIRED ou DENIED."
+type GithubDevicePoll {
+  status: String!
+  interval: Int!
+  account: GithubAccount
+}
+
+type GithubRepository {
+  fullName: String!
+  name: String!
+  owner: String!
+  description: String
+  private: Boolean!
+  defaultBranch: String!
+  cloneUrl: String!
+  htmlUrl: String!
+  pushedAt: DateTime
+  "Identifiant du compte connecté avec lequel le dépôt a été listé."
+  account: String!
+}
+
+"Fournisseur de modèles d'OpenCode auquel la personne peut donner une clé (jeton applicatif du coffre)."
+type OpencodeProvider {
+  id: String!
+  label: String!
+  keyPrefix: String
+}
+
+"Clé d'un fournisseur OpenCode choisie par la personne : un élément du coffre ; sa valeur ne quitte jamais le coffre."
+type OpencodeApiKey {
+  provider: String!
+  label: String!
+  itemId: ID!
+  itemName: String
+  "La personne peut encore utiliser l'élément."
+  usable: Boolean!
+  setAt: DateTime
+}
+
+"Modèles qu'OpenCode offre avec les clés de la personne (dernière liste)."
+type OpencodeModelList {
+  listedAt: DateTime!
+  ok: Boolean!
+  error: String
+  models: [String!]!
+}
+
+"Réglages OpenCode de la personne connectée."
+type OpencodeSettings {
+  "Modèle des sessions OpenCode qui n'en précisent pas (fournisseur/modèle)."
+  defaultModel: String
+  sessionBudgetUsd: Float
+  apiKeys: [OpencodeApiKey!]!
+  providers: [OpencodeProvider!]!
+  modelList: OpencodeModelList
+}
+
+input OpencodeSettingsInput {
+  defaultModel: String
+  sessionBudgetUsd: Float
+}
+
+"Paramètres de la personne connectée (Claude, OpenCode, GitHub, consommation) et, pour les administrateurs, du serveur."
+type AppSettings {
+  claude: ClaudeSettings!
+  claudeAuth: ClaudeAuthStatus!
+  "Modèles connus de la personne (dernière vérification, sinon liste de base)."
+  models: [ClaudeModel!]!
+  usage: UsageSummary!
+  github: GithubAuthStatus!
+  opencode: OpencodeSettings!
+  "Limites d'utilisation de l'abonnement d'après les sessions (administrateurs seulement ; null sinon, ou sans événement reçu)."
+  rateLimits: ClaudeRateLimits
+  "État du serveur : mode maintenance, sessions actives, reprise automatique (administrateurs seulement ; null sinon)."
+  server: ServerState
 }
 
 # ---- Tableau de bord ----------------------------------------------------------------------------
@@ -950,46 +1292,6 @@ type Dashboard {
   attentionTasks: [Task!]!
 }
 
-"Connexion GitHub en cours (device flow) : saisir userCode sur verificationUri."
-type GithubLogin {
-  id: ID!
-  userCode: String!
-  verificationUri: String!
-  expiresAt: DateTime!
-  intervalSeconds: Int!
-  "pending, done, failed, expired, cancelled"
-  status: String!
-  error: String
-  createdAt: DateTime!
-}
-
-type GithubAuthStatus {
-  "Identifiant (public) de l'OAuth App GitHub utilisée pour la connexion."
-  clientId: String
-  "'env' (GITHUB_CLIENT_ID), 'settings' (saisi dans l'interface) ou null."
-  clientIdSource: String
-  connected: Boolean!
-  "'pat' (jeton personnel) ou 'oauth' (device flow)."
-  method: String
-  login: String
-  avatarUrl: String
-  scopes: [String!]!
-  tokenSetAt: DateTime
-  currentLogin: GithubLogin
-}
-
-type GithubRepository {
-  fullName: String!
-  name: String!
-  owner: String!
-  description: String
-  private: Boolean!
-  defaultBranch: String!
-  cloneUrl: String!
-  htmlUrl: String!
-  pushedAt: DateTime
-}
-
 "Une fenêtre de limite d'utilisation de l'abonnement Claude (claude.ai)."
 type ClaudeRateLimitWindow {
   "five_hour, seven_day, seven_day_overage_included, seven_day_opus, seven_day_sonnet, overage..."
@@ -1015,19 +1317,6 @@ type ClaudeRateLimits {
   overageDisabledReason: String
   isUsingOverage: Boolean!
   windows: [ClaudeRateLimitWindow!]!
-}
-
-type AppSettings {
-  claude: ClaudeSettings!
-  "Limites d'utilisation de l'abonnement (null : aucun événement reçu, ex. authentification par clé API)."
-  rateLimits: ClaudeRateLimits
-  "État du serveur : mode maintenance, sessions actives, reprise automatique."
-  server: ServerState!
-  claudeAuth: ClaudeAuthStatus!
-  github: GithubAuthStatus!
-  "Modèles connus (dernière vérification, sinon liste de base)."
-  models: [ClaudeModel!]!
-  usage: UsageSummary!
 }
 
 "État du serveur, à consulter avant un redémarrage."
@@ -1128,10 +1417,9 @@ type ServerHealth {
   disk: DiskHealth!
 }
 
-"Connexion OAuth en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
+"Connexion de l'abonnement Claude de la personne en cours : ouvrir `url`, autoriser, puis fournir le code via completeClaudeLogin."
 type ClaudeLogin {
   id: ID!
-  kind: ClaudeLoginKind!
   url: String!
   "starting, awaiting_code, exchanging, done, failed"
   status: String!
@@ -1149,36 +1437,455 @@ input ClaudeSettingsInput {
   defaultMaxTurns: Int
 }
 
+"Éléments ouverts dans les onglets du workbench, par type (identifiants non UUID ignorés)."
+input OpenItemsInput {
+  projectIds: [ID!]
+  worktreeIds: [ID!]
+  sessionIds: [ID!]
+  terminalIds: [ID!]
+  taskIds: [ID!]
+}
+
+enum SearchKind {
+  PROJECT
+  WORKTREE
+  SESSION
+  TERMINAL
+  TASK
+  VAULT_ITEM
+}
+
+type SearchHit {
+  kind: SearchKind!
+  id: ID!
+  title: String!
+  detail: String
+  projectId: ID
+  projectName: String
+  "Projet dont l'utilisateur n'est pas membre (super administrateur)."
+  outsideProjects: Boolean!
+  worktreeBranch: String
+  status: String
+  activity: String
+  updatedAt: DateTime!
+}
+
+type SearchGroup {
+  kind: SearchKind!
+  hits: [SearchHit!]!
+  "Correspondances du type, celles renvoyées comprises."
+  total: Int!
+}
+
+type SearchResults {
+  query: String!
+  groups: [SearchGroup!]!
+}
+
+"Page HTML publiée, servie à /api/shared/<id>, privée par défaut."
+type SharedPage {
+  id: ID!
+  title: String!
+  description: String
+  owner: User!
+  "Visible par quiconque est connecté et a le lien."
+  linkAccess: Boolean!
+  version: Int!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  "Propriétaire et personnes ajoutées seulement ; vide pour qui ne voit la page que par le lien."
+  members: [SharedPageMember!]!
+  versions: [SharedPageVersion!]!
+  "Origine (propriétaire seulement)."
+  project: Project
+  session: Session
+  sourcePath: String
+  viewerAccess: SharedPageViewerAccess!
+}
+
+type SharedPageMember {
+  user: User!
+  addedBy: User
+  addedAt: DateTime!
+}
+
+type SharedPageVersion {
+  version: Int!
+  size: Int!
+  createdBy: User
+  createdAt: DateTime!
+}
+
+type SharedPageViewerAccess {
+  owner: Boolean!
+  "Personne ajoutée (hors propriétaire)."
+  member: Boolean!
+}
+
+input SharedPageInput {
+  title: String
+  description: String
+  linkAccess: Boolean
+}
+
+input PushSubscriptionInput {
+  endpoint: String!
+  p256dh: String!
+  auth: String!
+  userAgent: String
+}
+
+input RelaunchSessionInput {
+  worktreeId: ID
+  newWorktree: NewWorktreeInput
+  name: String
+  instruction: String
+}
+
+# ---- Agents et workflows ---------------------------------------------------------------------
+
+"Statut d'une exécution d'agent ou de workflow ; QUEUED : exécution de workflow déclenchée par un événement, en attente d'une place."
+enum RunStatus {
+  QUEUED
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+"Ce qui a lancé l'exécution ; EVENT : un événement du projet (une tâche créée)."
+enum RunTrigger {
+  MANUAL
+  SCHEDULE
+  WORKFLOW
+  TEST
+  EVENT
+}
+
+enum AgentOutputFormat {
+  TEXT
+  JSON
+}
+
+"Variable déclarée par un agent ou un workflow, remplie au lancement (disponible comme {{input.<clé>}})."
+type InputVariable {
+  key: String!
+  label: String!
+  description: String
+  required: Boolean!
+  defaultValue: String
+}
+
+input InputVariableInput {
+  key: String!
+  label: String
+  description: String
+  required: Boolean
+  defaultValue: String
+}
+
+"Planification d'un agent ou d'un workflow."
+type AutomationSchedule {
+  cron: String!
+  timezone: String!
+  enabled: Boolean!
+  nextRunAt: DateTime
+  lastRunAt: DateTime
+  "Issue de la dernière exécution planifiée (une ligne)."
+  lastResult: String
+}
+
+input AutomationScheduleInput {
+  cron: String!
+  timezone: String
+  enabled: Boolean
+}
+
+"""
+Un agent : configuration réutilisable et paramétrée. Fournisseur `llm` : appel direct d'un modèle (LiteLLM,
+OpenAI ou Anthropic, clé du coffre, trace Langfuse optionnelle) ; sinon un type de session (claude, opencode,
+shell) et ses options, chaque exécution étant une session dédiée.
+"""
+type Agent {
+  id: ID!
+  project: Project!
+  name: String!
+  description: String!
+  "llm, claude, opencode ou shell."
+  provider: String!
+  "Réglages du modèle (backend, keyItemId, model, temperature, maxTokens, langfuseItemId) ou de la session (model, permissionMode…)."
+  config: JSON!
+  "Rôle et consignes : prompt système du modèle, ou ajouté au prompt système du projet dans les sessions."
+  systemPrompt: String!
+  "Instruction envoyée à chaque exécution ; les {{input.<clé>}} sont remplis par les entrées."
+  promptTemplate: String!
+  inputs: [InputVariable!]!
+  outputFormat: AgentOutputFormat!
+  "Forme JSON attendue, montrée à l'agent (sortie JSON seulement)."
+  outputSchema: String
+  "Worktree où travaillent les exécutions (null : dossier principal)."
+  worktree: Worktree
+  timeoutMinutes: Int!
+  schedule: AutomationSchedule
+  "Entrées des exécutions planifiées."
+  scheduleInputs: JSON!
+  runs(limit: Int): [AgentRun!]!
+  lastRun: AgentRun
+  "Workflows dont le graphe exécute cet agent."
+  workflows: [Workflow!]!
+  createdBy: User
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+input CreateAgentInput {
+  projectId: ID!
+  name: String!
+  description: String
+  provider: String!
+  config: JSON
+  systemPrompt: String
+  promptTemplate: String
+  inputs: [InputVariableInput!]
+  outputFormat: AgentOutputFormat
+  outputSchema: String
+  worktreeId: ID
+  timeoutMinutes: Int
+}
+
+input UpdateAgentInput {
+  name: String
+  description: String
+  provider: String
+  config: JSON
+  systemPrompt: String
+  promptTemplate: String
+  inputs: [InputVariableInput!]
+  outputFormat: AgentOutputFormat
+  outputSchema: String
+  worktreeId: ID
+  timeoutMinutes: Int
+}
+
+"Une exécution d'un agent : sa session, l'instruction rendue, la réponse."
+type AgentRun {
+  id: ID!
+  agent: Agent!
+  project: Project!
+  session: Session
+  workflowRun: WorkflowRun
+  "Nœud de l'exécution de workflow (déclencheur workflow)."
+  nodeKey: String
+  trigger: RunTrigger!
+  status: RunStatus!
+  inputs: JSON!
+  prompt: String!
+  output: String
+  "La réponse lue comme JSON (format de sortie JSON)."
+  outputJson: JSON
+  error: String
+  costUsd: Float!
+  durationMs: Int
+  owner: User
+  createdAt: DateTime!
+  startedAt: DateTime
+  finishedAt: DateTime
+}
+
+"Aperçu de l'instruction qu'un agent recevrait."
+type AgentPromptPreview {
+  inputs: JSON!
+  prompt: String!
+}
+
+"Éléments du coffre utilisables par la personne pour les agents à appel direct : proxys LiteLLM, projets Langfuse, jetons OpenAI et Anthropic."
+type AgentLlmKeys {
+  litellm: [VaultItem!]!
+  langfuse: [VaultItem!]!
+  tokens: [VaultItem!]!
+}
+
+"Problème trouvé dans le graphe d'un workflow : les erreurs bloquent les exécutions, pas les avertissements."
+type WorkflowIssue {
+  nodeKey: String
+  edgeId: String
+  severity: String!
+  message: String!
+}
+
+"""
+Un workflow : un graphe de nœuds (déclencheur, agent, tâche, session, création de tâche, condition, fin) et
+d'arêtes à branches (oui / non, en cas d'erreur), lancé à la main, par planification ou par une tâche créée.
+La définition est enregistrée telle que l'éditeur la dessine :
+{ nodes: [{ key, type, label, position, … }], edges: [{ id, source, target, sourceHandle? }] }.
+"""
+type Workflow {
+  id: ID!
+  project: Project!
+  name: String!
+  description: String!
+  definition: JSON!
+  "Un workflow en pause ignore ses exécutions planifiées et ses déclencheurs (les lancements manuels restent possibles)."
+  enabled: Boolean!
+  "Problèmes du graphe courant."
+  issues: [WorkflowIssue!]!
+  "Variables d'un déclencheur du workflow ; sans clé, de son déclencheur par défaut (premier manuel, sinon premier)."
+  variables(triggerKey: String): [InputVariable!]!
+  schedule: AutomationSchedule
+  scheduleInputs: JSON!
+  "Personne dont les comptes servent aux exécutions déclenchées par un événement (la dernière à avoir enregistré le déclencheur)."
+  eventOwner: User
+  runs(limit: Int): [WorkflowRun!]!
+  lastRun: WorkflowRun
+  createdBy: User
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+input CreateWorkflowInput {
+  projectId: ID!
+  name: String!
+  description: String
+  definition: JSON
+  enabled: Boolean
+}
+
+input UpdateWorkflowInput {
+  name: String
+  description: String
+  definition: JSON
+  enabled: Boolean
+}
+
+type WorkflowRun {
+  id: ID!
+  workflow: Workflow!
+  project: Project!
+  trigger: RunTrigger!
+  "Clé du nœud déclencheur de départ."
+  triggerKey: String
+  status: RunStatus!
+  "Le graphe tel qu'il était au lancement."
+  definition: JSON!
+  inputs: JSON!
+  "Sortie du ou des nœuds de fin atteints."
+  output: JSON
+  error: String
+  costUsd: Float!
+  cancelRequested: Boolean!
+  nodes: [WorkflowRunNode!]!
+  logs(after: ID, limit: Int): [WorkflowRunLog!]!
+  owner: User
+  createdAt: DateTime!
+  startedAt: DateTime
+  finishedAt: DateTime
+}
+
+"État d'un nœud dans une exécution."
+type WorkflowRunNode {
+  id: ID!
+  nodeKey: String!
+  nodeType: String!
+  "pending, running, succeeded, failed, skipped, cancelled."
+  status: String!
+  input: JSON
+  output: JSON
+  error: String
+  agentRun: AgentRun
+  startedAt: DateTime
+  finishedAt: DateTime
+}
+
+type WorkflowRunLog {
+  id: ID!
+  nodeKey: String
+  "debug, info, warn, error."
+  level: String!
+  message: String!
+  data: JSON
+  createdAt: DateTime!
+}
+
 type Query {
   "Utilisateur connecté (null sinon). Seule requête accessible sans session."
   me: User
   "Tous les utilisateurs (administrateurs de l'application)."
   users: [User!]!
+  "Projets de la sidebar : ceux de l'utilisateur, plus, pour un super administrateur, ceux des éléments ouverts dans ses onglets."
+  sidebarProjects(open: OpenItemsInput): [Project!]!
+  "Recherche globale ; requête vide = objets les plus récents. limit = résultats par type (défaut 8, 50 au plus)."
+  search(query: String!, kinds: [SearchKind!], limit: Int): SearchResults!
+  "Propriétaires des sessions actives des projets de l'utilisateur (ou d'un projet)."
+  sessionOwners(projectId: ID): [User!]!
+  "Sessions archivées d'un projet, les plus récemment archivées d'abord ; search cherche dans le nom, la consigne et la conversation."
+  archivedSessions(projectId: ID!, worktreeId: ID, search: String, limit: Int, offset: Int): [Session!]!
+  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base."
+  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges!
+  gitBranchFileDiff(projectId: ID!, worktreeId: ID, path: String!, origPath: String): GitDiff!
+  "Éléments du coffre visibles par l'utilisateur connecté (siens, partagés, de ses projets, reliés à ses projets)."
+  vaultItems(kind: VaultItemKind): [VaultItem!]!
+  vaultItem(id: ID!): VaultItem
+  "Personnes avec qui partager : celles qui partagent au moins un projet avec l'utilisateur."
+  vaultShareCandidates: [User!]!
+  "La connexion d'un compte Google est configurée sur le serveur."
+  vaultGoogleAvailable: Boolean!
+  "Instruction qu'un agent recevrait pour la tâche (pré-remplit le formulaire « Confier à un agent »)."
+  taskPrompt(id: ID!): String!
+  "Personnes déjà désignées sur les tâches (suggestions)."
+  taskPeople(projectId: ID): [TaskPerson!]!
+  sharedPage(id: ID!): SharedPage
+  "Pages dont l'utilisateur est propriétaire ou membre."
+  sharedPages: [SharedPage!]!
+  "Clé publique VAPID avec laquelle les navigateurs s'abonnent aux notifications push."
+  pushPublicKey: String!
   "Contenu d'un dossier du workspace du projet (ou du worktree). path vide = racine."
   workspaceEntries(projectId: ID!, worktreeId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
   workspaceFile(projectId: ID!, worktreeId: ID, path: String!): FileContent!
+  "Paramètres de la personne connectée (et du serveur pour les administrateurs)."
   settings: AppSettings!
   "Santé du serveur (administrateurs de l'application)."
   serverHealth: ServerHealth!
+  "Une connexion Claude lancée par la personne connectée."
   claudeLogin(id: ID!): ClaudeLogin!
-  "Dépôts GitHub accessibles avec la connexion GitHub (les plus récents d'abord)."
+  "Dépôts GitHub accessibles avec les comptes de la personne connectée (les plus récents d'abord)."
   githubRepositories(query: String): [GithubRepository!]!
+  "Services qu'un jeton applicatif du coffre peut servir."
+  vaultTokenServices: [VaultTokenService!]!
+  "Types de session, avec les formulaires adaptés aux réglages de la personne connectée."
   providers: [Provider!]!
-  sessions(projectId: ID, status: SessionStatus, provider: String, limit: Int, offset: Int): [Session!]!
+  # ---- Agents et workflows ------------------------------------------------------------------
+  "Agents d'un projet, ou de tous les projets accessibles."
+  agents(projectId: ID): [Agent!]!
+  agent(id: ID!): Agent
+  "Exécutions d'un agent (ou des agents d'un projet), les plus récentes d'abord."
+  agentRuns(agentId: ID, projectId: ID, limit: Int): [AgentRun!]!
+  agentRun(id: ID!): AgentRun
+  "L'instruction qu'un agent recevrait avec ces entrées (défauts appliqués, obligatoires vérifiées)."
+  agentPromptPreview(id: ID!, inputs: JSON): AgentPromptPreview!
+  "Éléments du coffre utilisables par la personne connectée pour configurer un agent à appel direct."
+  agentLlmKeys: AgentLlmKeys!
+  workflows(projectId: ID): [Workflow!]!
+  workflow(id: ID!): Workflow
+  workflowRuns(workflowId: ID, projectId: ID, limit: Int): [WorkflowRun!]!
+  workflowRun(id: ID!): WorkflowRun
+  "Problèmes d'un graphe en cours d'édition (avant enregistrement)."
+  validateWorkflow(projectId: ID!, definition: JSON!): [WorkflowIssue!]!
+  sessions(projectId: ID, status: SessionStatus, provider: String, ownerId: ID, limit: Int, offset: Int): [Session!]!
   session(id: ID!): Session
   "Fichiers modifiés dans le dossier de travail de la session depuis son démarrage."
   sessionChanges(sessionId: ID!): SessionChanges!
   "Diff d'un fichier depuis le démarrage de la session ; origPath pour un renommage."
   sessionFileDiff(sessionId: ID!, path: String!, origPath: String): GitDiff!
-  projects: [Project!]!
+  "Projets dont l'utilisateur est membre ; all : tous les projets, pour un super administrateur (ignoré sinon)."
+  projects(all: Boolean = false): [Project!]!
   project(id: ID!): Project
   "Demandes, toutes sessions confondues. `status` à null renvoie tout l'historique (par défaut : celles en attente)."
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
   terminal(id: ID!): Terminal
   worktree(id: ID!): Worktree
-  connection(id: ID!): Connection
   "Suivi git d'un workspace (checkout principal) ou d'un worktree."
   gitStatus(projectId: ID!, worktreeId: ID): GitStatus!
   gitDiff(projectId: ID!, worktreeId: ID, path: String!, staged: Boolean = false): GitDiff!
@@ -1194,8 +1901,8 @@ type Query {
   unreadNotificationCount: Int!
   "Tableau de bord de l'utilisateur connecté."
   dashboard: Dashboard!
-  "Tâches, tous projets confondus (par défaut : ouvertes)."
-  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, limit: Int): [Task!]!
+  "Tâches, tous projets confondus (par défaut : ouvertes). assignee / reporter : texte cherché dans le nom ou l'e-mail ; mine : tâches dont le responsable a mon e-mail."
+  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, mine: Boolean, limit: Int): [Task!]!
   task(id: ID!): Task
   contextInstruction(id: ID!): ContextInstruction
   searchContext(projectId: ID!, query: String!): [ContextInstruction!]!
@@ -1285,31 +1992,61 @@ type Mutation {
   setMaintenanceMode(enabled: Boolean!, message: String): AppSettings!
   "Réglages du serveur : reprise automatique des sessions interrompues."
   updateServerSettings(autoResumeInterrupted: Boolean, maxConcurrentSessions: Int, idleSessionTimeoutMinutes: Int, memoryAlertThresholdMb: Int): AppSettings!
-  "Met à jour les réglages Claude (les champs absents sont inchangés ; null efface)."
+  "Met à jour les réglages Claude de la personne connectée (les champs absents sont inchangés ; null efface)."
   updateClaudeSettings(input: ClaudeSettingsInput!): AppSettings!
-  "Enregistre (chiffrée) la clé API Anthropic ; null la supprime."
-  setClaudeApiKey(apiKey: String): AppSettings!
-  "Supprime le jeton OAuth enregistré."
+  "Choisit la clé API Anthropic : un jeton applicatif du coffre (service anthropic) que la personne peut utiliser ; null retire le choix."
+  setClaudeApiKeyItem(itemId: ID): AppSettings!
+  "Choisit le jeton d'abonnement : un jeton applicatif du coffre (service claude) ; null retire le choix."
+  setClaudeOauthItem(itemId: ID): AppSettings!
+  "Oublie le jeton d'abonnement (celui obtenu par Skipper est supprimé du coffre)."
   clearClaudeOauthToken: AppSettings!
-  "Lance la connexion : renvoie l'URL d'autorisation à ouvrir."
-  startClaudeLogin(kind: ClaudeLoginKind = oauth): ClaudeLogin!
-  "GitHub : enregistre l'identifiant de l'OAuth App (null pour effacer)."
-  setGithubClientId(clientId: String): AppSettings!
-  "GitHub : enregistre un jeton d'accès personnel après vérification auprès de GitHub."
-  setGithubPersonalToken(token: String!): AppSettings!
-  "GitHub : démarre la connexion par device flow."
-  startGithubLogin: GithubLogin!
-  cancelGithubLogin: AppSettings!
-  "GitHub : oublie le jeton."
-  disconnectGithub: AppSettings!
-  "Transmet le code d'autorisation ; en cas de succès le mode passe à celui du parcours (oauth ou server)."
+  "Lance la connexion de l'abonnement Claude de la personne : renvoie l'URL d'autorisation à ouvrir."
+  startClaudeLogin: ClaudeLogin!
+  "Transmet le code d'autorisation ; en cas de succès le jeton est rangé dans le coffre personnel et choisi."
   completeClaudeLogin(id: ID!, code: String!): ClaudeLogin!
-  "Déconnecte le compte du serveur (claude auth logout)."
-  logoutServerClaude: AppSettings!
   cancelClaudeLogin(id: ID!): Boolean!
-  "Interroge Claude Code avec l'authentification du mode indiqué (défaut : mode courant) : compte et modèles."
+  "Éprouve les identifiants Claude de la personne pour le mode indiqué (défaut : mode courant) : compte et modèles."
   verifyClaudeAuth(mode: ClaudeAuthMode): AppSettings!
+  "OpenCode : modèle par défaut et budget par session de la personne."
+  updateOpencodeSettings(input: OpencodeSettingsInput!): AppSettings!
+  "OpenCode : choisit la clé d'un fournisseur (jeton applicatif du coffre) ; null retire le choix."
+  setOpencodeKeyItem(provider: String!, itemId: ID): AppSettings!
+  "OpenCode : liste les modèles disponibles avec les clés de la personne."
+  refreshOpencodeModels: AppSettings!
+  "GitHub : démarre la connexion par code (device flow)."
+  startGithubDeviceLogin: GithubDeviceLogin!
+  "GitHub : une interrogation de la connexion par code ; le compte est enregistré quand l'autorisation est donnée."
+  pollGithubDeviceLogin(id: ID!): GithubDevicePoll!
+  "GitHub : connecte un compte avec un jeton personnel du coffre (vérifié auprès de GitHub)."
+  connectGithubFromVault(itemId: ID!): GithubAccount!
+  setDefaultGithubAccount(accountId: ID!): AppSettings!
+  "GitHub : oublie un compte (tous sans accountId)."
+  disconnectGithub(accountId: ID): AppSettings!
+  # ---- Agents et workflows ------------------------------------------------------------------
+  createAgent(input: CreateAgentInput!): Agent!
+  updateAgent(id: ID!, input: UpdateAgentInput!): Agent!
+  deleteAgent(id: ID!): Boolean!
+  "Exécute l'agent maintenant (en tâche de fond) et renvoie l'exécution ; test : true la marque comme un essai."
+  runAgent(id: ID!, inputs: JSON, test: Boolean = false): AgentRun!
+  cancelAgentRun(id: ID!): AgentRun!
+  "Planifie l'agent avec ces entrées ; les exécutions planifiées utilisent les comptes de l'appelant."
+  setAgentSchedule(id: ID!, input: AutomationScheduleInput!, inputs: JSON): Agent!
+  clearAgentSchedule(id: ID!): Agent!
+  createWorkflow(input: CreateWorkflowInput!): Workflow!
+  updateWorkflow(id: ID!, input: UpdateWorkflowInput!): Workflow!
+  deleteWorkflow(id: ID!): Boolean!
+  "Exécute le workflow maintenant (en tâche de fond) depuis l'un de ses déclencheurs (défaut : le premier manuel, sinon le premier) ; refusé si le graphe a des erreurs."
+  runWorkflow(id: ID!, inputs: JSON, test: Boolean = false, triggerKey: String): WorkflowRun!
+  cancelWorkflowRun(id: ID!): WorkflowRun!
+  setWorkflowSchedule(id: ID!, input: AutomationScheduleInput!, inputs: JSON): Workflow!
+  clearWorkflowSchedule(id: ID!): Workflow!
 
+  "Invite une personne dans l'application, administratrice ou non (administrateurs)."
+  inviteUser(email: String!, isAdmin: Boolean = false): User!
+  setUserAdmin(userId: ID!, isAdmin: Boolean!): User!
+  "Super administrateurs seulement."
+  setUserSuperAdmin(userId: ID!, isSuperAdmin: Boolean!): User!
+  deleteUser(userId: ID!): Boolean!
   "Invite un e-mail sur le projet (l'utilisateur est créé s'il n'existe pas) ou change son rôle. Réservé aux administrateurs du projet."
   inviteProjectMember(projectId: ID!, email: String!, role: ProjectRole = MEMBER): ProjectMember!
   updateProjectMemberRole(projectId: ID!, userId: ID!, role: ProjectRole!): ProjectMember!
@@ -1340,6 +2077,12 @@ type Mutation {
   startSession(id: ID!): Session!
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
+  "Archive la session (arrêtée si elle tourne) : cachée des listes, historique conservé, relançable depuis l'historique du projet."
+  archiveSession(id: ID!): Session!
+  unarchiveSession(id: ID!): Session!
+  "Nouvelle session qui reprend la conversation de celle-ci comme contexte."
+  relaunchSession(id: ID!, input: RelaunchSessionInput!): Session!
+  "Suppression définitive de la session et de son historique."
   deleteSession(id: ID!): Boolean!
   "Envoie une instruction (texte et fichiers joints ; l'un des deux au moins). Une session terminée est relancée."
   sendSessionMessage(id: ID!, text: String!, attachments: [AttachmentInput!]): Session!
@@ -1365,8 +2108,16 @@ type Mutation {
   createTask(input: CreateTaskInput!): Task!
   updateTask(id: ID!, input: UpdateTaskInput!): Task!
   deleteTask(id: ID!): Boolean!
-  "Confie la tâche à un agent. Sans worktreeId, un worktree dédié (task/<slug>) est créé si le projet est relié à git, sauf dedicatedWorktree: false (dossier principal)."
-  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID, dedicatedWorktree: Boolean = true): Session!
+  addTaskComment(taskId: ID!, body: String!): TaskComment!
+  "Ses propres commentaires seulement."
+  updateTaskComment(id: ID!, body: String!): TaskComment!
+  "Ses propres commentaires, ou administrateur du projet."
+  deleteTaskComment(id: ID!): Boolean!
+  "Confie la tâche à un agent. Sans worktreeId, un worktree dédié (task/<slug>) est créé si le projet est relié à git, sauf dedicatedWorktree: false (dossier principal). prompt : consigne relue (sinon le texte de la tâche)."
+  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID, dedicatedWorktree: Boolean = true, prompt: String): Session!
+  "Crée une clé d'API du projet (administrateurs) ; le secret n'est montré qu'une fois."
+  createProjectApiKey(projectId: ID!, name: String!): CreatedProjectApiKey!
+  deleteProjectApiKey(id: ID!): Boolean!
 
   "git add (paths vide = tout)."
   gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
@@ -1387,27 +2138,52 @@ type Mutation {
   "Fusionne une pull request puis nettoie (branche distante, worktree, branche locale, tâches) et met à jour le dossier principal."
   mergePullRequest(projectId: ID!, number: Int!, method: PullRequestMergeMethod = MERGE, cleanup: MergePullRequestCleanup): MergePullRequestResult!
 
-  "Ouvre un shell dans le workspace du projet (ou dans un worktree)."
+  "Ouvre un shell dans le workspace du projet (ou dans un worktree), avec l'historique des commandes de l'utilisateur sur le projet."
   createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!
   "Crée un worktree git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal)."
-  createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String): Worktree!
-  "Supprime le worktree et tout ce qui y est rattaché (sessions arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
+  createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String, label: String): Worktree!
+  "Renomme le libellé (null ou vide : la branche) et/ou le dossier (git worktree move, seulement si rien n'y tourne)."
+  renameWorktree(id: ID!, label: String, name: String): Worktree!
+  "Archive le worktree avec ses sessions (arrêtées si elles tournent) ; dossier et branche conservés ; restaurable depuis l'historique du projet."
+  archiveWorktree(id: ID!): Worktree!
+  "Restaure un worktree archivé et les sessions archivées avec lui."
+  restoreWorktree(id: ID!): Worktree!
+  "Supprime le worktree et tout ce qui y est rattaché (sessions actives arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
   deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
-  "Crée une connexion ; pour ssh sans privateKey, génère une paire de clés (la clé publique est à installer sur le serveur)."
-  createConnection(projectId: ID!, input: ConnectionInput!): Connection!
-  "Met à jour une connexion (les champs absents sont inchangés)."
-  updateConnection(id: ID!, input: ConnectionInput!): Connection!
-  deleteConnection(id: ID!): Boolean!
-  "Vérifie la connexion depuis le serveur ; mémorise la clé d'hôte SSH à la première réussite."
-  testConnection(id: ID!): ConnectionTest!
+  "Crée un élément dans le coffre du projet (administrateurs) ou, sans projectId, dans le coffre personnel."
+  createVaultItem(projectId: ID, input: VaultItemInput!): VaultItem!
+  "Met à jour un élément (permission MANAGE ; les champs absents sont inchangés)."
+  updateVaultItem(id: ID!, input: VaultItemInput!): VaultItem!
+  "Supprime un élément (MANAGE) ; un compte Google voit son autorisation révoquée sauf si un autre élément porte le même compte."
+  deleteVaultItem(id: ID!): Boolean!
+  "Vérifie l'élément depuis le serveur (MANAGE) ; mémorise la clé d'hôte SSH à la première réussite."
+  testVaultItem(id: ID!): VaultTest!
   "ssh : nouvelle paire de clés (l'ancienne clé publique est à retirer du serveur)."
-  regenerateConnectionKey(id: ID!): Connection!
+  regenerateVaultKey(id: ID!): VaultItem!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
-  forgetConnectionHostKey(id: ID!): Connection!
-  "Vérifie qu'un compte Google du projet répond encore (jeton renouvelé, profil, Gmail, Drive)."
-  checkGoogleAccount(id: ID!): GoogleAccountCheck!
-  "Détache un compte Google du projet et révoque le jeton côté Google."
-  disconnectGoogleAccount(id: ID!): Project!
+  forgetVaultHostKey(id: ID!): VaultItem!
+  "Révèle un champ secret (permission READ) ; journalisé et limité en fréquence."
+  revealVaultSecret(id: ID!, field: String!): VaultSecretValue!
+  shareVaultItem(id: ID!, email: String!, permission: VaultPermission!): VaultItem!
+  "Retire un partage (MANAGE), ou son propre partage."
+  unshareVaultItem(id: ID!, userId: ID!): Boolean!
+  "Relie l'élément à un projet : PROJECT (tous ses agents : MANAGE + administrateur du projet) ou PERSONAL (ses propres sessions : accès direct + membre)."
+  linkVaultItem(id: ID!, projectId: ID!, scope: VaultLinkScope!): VaultItem!
+  unlinkVaultItem(linkId: ID!): Boolean!
+  "Copie l'élément (secrets compris) dans le coffre d'un projet (MANAGE + administrateur du projet) ; l'original est intact."
+  copyVaultItem(id: ID!, projectId: ID!, name: String): VaultItem!
+  "Publie un fichier HTML d'un workspace comme page partagée (membres), nouvelle page ou nouvelle version (pageId)."
+  publishSharedPage(projectId: ID!, worktreeId: ID, path: String!, title: String!, pageId: ID): SharedPage!
+  updateSharedPage(id: ID!, input: SharedPageInput!): SharedPage!
+  addSharedPageMember(id: ID!, email: String!): SharedPage!
+  "Le propriétaire retire qui il veut ; une personne ajoutée peut se retirer elle-même."
+  removeSharedPageMember(id: ID!, userId: ID!): SharedPage!
+  deleteSharedPage(id: ID!): Boolean!
+  "Abonne cet appareil aux notifications push (notifications système, même application fermée)."
+  subscribePush(input: PushSubscriptionInput!): Boolean!
+  unsubscribePush(endpoint: String!): Boolean!
+  "Envoie une notification de test aux appareils de l'utilisateur ; renvoie leur nombre."
+  sendTestPush: Int!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

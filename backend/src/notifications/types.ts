@@ -9,6 +9,8 @@ export interface Notification {
   payload: Record<string, unknown>;
   /** Réservée aux administrateurs de l'application. */
   adminsOnly: boolean;
+  /** Adressée à une seule personne (session ou page partagée...) ; null : à tous les membres du projet. */
+  userId: string | null;
   readAt: Date | null;
   createdAt: Date;
 }
@@ -22,10 +24,13 @@ export interface NotifyInput {
   sessionId?: string | null;
   payload?: Record<string, unknown>;
   adminsOnly?: boolean;
+  userId?: string | null;
 }
 
 /** Notifications visibles par l'utilisateur : celles de ses projets et, pour un administrateur, les notifications réservées. */
 export interface NotificationScope {
   projectIds?: string[];
   admin?: boolean;
+  /** Personne connectée : voit aussi les notifications qui lui sont adressées, jamais celles adressées à d'autres. */
+  userId?: string;
 }

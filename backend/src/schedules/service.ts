@@ -8,7 +8,7 @@ import { scheduledRuns } from '../sessions/scheduledRuns.js';
 import { serverSettings } from '../settings/server.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
-import { settingsService } from '../settings/service.js';
+import { claudeSettings } from '../settings/claude.js';
 import { CronError, isValidTimeZone, nextRun, nextRuns, parseCron } from './cron.js';
 import { scheduleRepository } from './repository.js';
 import type { SessionSchedule, SessionScheduleInput } from './types.js';
@@ -151,8 +151,11 @@ export const scheduleService = {
     if (session.status === 'queued') return skip("la session attend déjà une place dans la file d'attente");
     if (session.status !== 'running' && serverSettings.maintenance) return skip('le serveur est en maintenance');
     if (session.status !== 'running') {
+      // La session redémarre avec les identifiants et le plafond de son propriétaire.
       try {
-        await settingsService.assertBudgetAvailable();
+        const owner = await claudeSettings.forSession(session.ownerId);
+        owner.assertCredentials();
+        await owner.assertBudgetAvailable();
       } catch (err) {
         return skip((err as Error).message);
       }

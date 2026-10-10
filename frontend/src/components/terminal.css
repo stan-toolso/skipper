@@ -1,16 +1,5 @@
 /* Rendu "terminal" inspiré de Claude Code pour la page de session. */
 .cc {
-  --cc-bg: #141414;
-  --cc-bg-user: #1f1f1f;
-  --cc-fg: #e8e6e3;
-  --cc-dim: #8b8b8b;
-  --cc-dimmer: #5c5c5c;
-  --cc-accent: #d97757;
-  --cc-green: #5cb85c;
-  --cc-red: #e5534b;
-  --cc-blue: #6fa8dc;
-  --cc-yellow: #e3b341;
-  --cc-border: #333;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 13px;
   line-height: 1.5;
@@ -144,12 +133,12 @@
   padding: 2px 4px;
   cursor: pointer;
 }
-.cc-prompt .cc-option:hover, .cc-prompt .cc-option.selected { background: #2a2a2a; border-radius: 3px; }
+.cc-prompt .cc-option:hover, .cc-prompt .cc-option.selected { background: var(--cc-bg-hover); border-radius: 3px; }
 .cc-prompt .cc-option .cc-cursor { display: inline-block; width: 1.2em; color: var(--cc-accent); }
 .cc-prompt .cc-option .cc-desc { color: var(--cc-dim); }
 .cc-prompt input, .cc-prompt textarea {
   width: 100%;
-  background: #1c1c1c;
+  background: var(--cc-bg-elevated);
   color: var(--cc-fg);
   border: 1px solid var(--cc-border);
   border-radius: 4px;
@@ -188,7 +177,7 @@
 }
 .cc-select:hover, .cc-select:focus { border-color: var(--cc-border); color: var(--cc-fg); outline: none; }
 .cc-select:disabled { opacity: 0.5; cursor: default; }
-.cc-select option { background: #1a1a1a; color: var(--cc-fg); }
+.cc-select option { background: var(--cc-bg-elevated); color: var(--cc-fg); }
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .cc-input {
   display: flex;
@@ -198,7 +187,7 @@
   border: 1px solid var(--cc-border);
   border-radius: 6px;
   padding: 8px 10px;
-  background: #1a1a1a;
+  background: var(--cc-bg-elevated);
 }
 .cc-input:focus-within { border-color: var(--cc-dim); }
 .cc-input .cc-input-row { display: flex; gap: 8px; }

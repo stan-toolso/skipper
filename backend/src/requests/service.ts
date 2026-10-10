@@ -52,8 +52,8 @@ export const requestService = {
     });
   },
 
-  async answer(id: string, response: Record<string, unknown>): Promise<HumanRequest> {
-    const request = await requestRepository.settle(id, 'answered', response);
+  async answer(id: string, response: Record<string, unknown>, answeredBy: string | null = null): Promise<HumanRequest> {
+    const request = await requestRepository.settle(id, 'answered', response, answeredBy);
     if (!request) {
       const existing = await this.get(id);
       throw new AppError(`La demande n'est plus en attente (statut : ${existing.status})`);
@@ -64,8 +64,8 @@ export const requestService = {
     return request;
   },
 
-  async cancel(id: string): Promise<HumanRequest> {
-    const request = await requestRepository.settle(id, 'cancelled', null);
+  async cancel(id: string, cancelledBy: string | null = null): Promise<HumanRequest> {
+    const request = await requestRepository.settle(id, 'cancelled', null, cancelledBy);
     if (!request) return this.get(id);
     pubSub.publish('requestUpdated', request);
     settleWaiter(request);

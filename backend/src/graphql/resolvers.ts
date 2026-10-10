@@ -1,19 +1,24 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
-import { accessibleProjectIds, canAccessProject, filterAsync, requireAdmin, requireProject, requireUser, roleFor, type AuthContext } from '../auth/access.js';
+import { accessibleProjectIds, canAccessProject, filterAsync, memberRoleFor, requireAdmin, requireProject, requireSuperAdmin, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { liveBrowserService } from '../browser/live.js';
-import { connectionService } from '../connections/service.js';
-import { fingerprint } from '../connections/ssh.js';
-import type { Connection, ConnectionInput, PostgresSettings, WebsiteSettings } from '../connections/types.js';
-import { variableName } from '../connections/website.js';
+import { apiKeyService } from '../apiKeys/service.js';
 import { contextService, HUMAN } from '../context/service.js';
+import { accountOf, googleAccountService } from '../google/service.js';
+import { pushService, type PushSubscriptionInput } from '../notifications/push.js';
+import { searchService, type SearchKind } from '../search/service.js';
+import { sharedPageService } from '../sharedPages/service.js';
+import type { SharedPage, SharedPageMember, SharedPageVersion } from '../sharedPages/types.js';
+import { readRawFile } from '../files/service.js';
+import { fingerprint } from '../vault/ssh.js';
+import { isOauthToken, vaultService, type VaultItemWithPermission } from '../vault/service.js';
+import type { ApiSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
+import { variableName } from '../vault/website.js';
 import { dashboardService } from '../dashboard/service.js';
-import { NotFoundError } from '../errors.js';
+import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
-import { googleAccountService } from '../google/service.js';
-import type { GoogleAccount } from '../google/types.js';
-import { deleteProjectCascade, deleteWorktreeCascade } from '../projects/cleanup.js';
+import { archiveWorktreeCascade, deleteProjectCascade, deleteWorktreeCascade, restoreWorktreeCascade } from '../projects/cleanup.js';
 import { runner } from '../runners/index.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
@@ -29,10 +34,19 @@ import { listProviders } from '../sessions/providers/registry.js';
 import { publicAttachment } from '../sessions/attachments.js';
 import { sessionService } from '../sessions/service.js';
 import { sessionChangesService, type SessionChanges } from '../sessions/changes.js';
-import { serverAuthStatus, serverLogout } from '../settings/cli.js';
-import { loginService, type ClaudeLoginKind } from '../settings/login.js';
+import { loginService } from '../settings/login.js';
 import { githubService } from '../settings/github.js';
-import { settingsService, type ClaudeSettingsPatch } from '../settings/service.js';
+import { githubDeviceAvailable, githubDeviceService } from '../settings/githubDevice.js';
+import { claudeSettings, type ClaudeSettingsPatch } from '../settings/claude.js';
+import { opencodeProviders, opencodeSettings, type OpencodeSettingsPatch } from '../settings/opencode.js';
+import { agentService } from '../agents/service.js';
+import { cancelAgentRun, startAgentRun } from '../agents/execution.js';
+import { agentRepository } from '../agents/repository.js';
+import type { Agent, AgentInput, AgentRun, AutomationScheduleInput, InputVariable, RunStatus, RunTrigger } from '../agents/types.js';
+import { workflowService } from '../workflows/service.js';
+import { workflowVariables } from '../workflows/graph.js';
+import type { Workflow, WorkflowInput, WorkflowRun, WorkflowRunNode } from '../workflows/types.js';
+import { TOKEN_SERVICES, TOKEN_SERVICE_IDS, tokenServiceLabel } from '../vault/tokens.js';
 import { serverSettings } from '../settings/server.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { healthService } from '../health/service.js';
@@ -43,12 +57,13 @@ import { cleanupService } from '../sessions/cleanup.js';
 import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreePath, worktreeService } from '../worktrees/service.js';
-import type { Worktree } from '../worktrees/types.js';
+import { worktreeLabel, type Worktree } from '../worktrees/types.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
-import type { Task, TaskPriority, TaskStatus } from '../tasks/types.js';
+import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskStatus, ProjectApiKey } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
-import type { AttachmentInput, CreateSessionInput, Session, SessionStatus } from '../sessions/types.js';
+import type { AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionStatus } from '../sessions/types.js';
+import type { OpenItems, User } from '../users/types.js';
 import { permissionRuleService } from '../permissions/service.js';
 import { formatRule, type PermissionRule } from '../permissions/types.js';
 import type { SessionScheduleInput } from '../schedules/types.js';
@@ -76,7 +91,12 @@ const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requirePr
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
 const guardWorktree = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worktreeService.get(id)).projectId, min);
-const guardConnection = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await connectionService.get(id)).projectId, min);
+const guardComment = async (ctx: Ctx, id: string) => {
+  const comment = await taskService.getComment(id);
+  const task = await taskService.get(comment.taskId);
+  const role = await requireProject(ctx, task.projectId, 'member');
+  return { comment, task, role };
+};
 const guardFolder = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await contextService.getFolder(id)).projectId, min);
 const guardInstruction = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await contextService.getInstruction(id)).projectId, min);
 
@@ -94,6 +114,9 @@ interface GqlTaskInput {
   status?: GqlTaskStatus | null;
   sessionId?: string | null;
   dueDate?: string | null;
+  customFields?: TaskField[] | null;
+  assignee?: TaskPersonInput | null;
+  reporter?: TaskPersonInput | null;
 }
 const toTaskInput = (i: GqlTaskInput) => ({
   title: i.title ?? undefined,
@@ -102,7 +125,17 @@ const toTaskInput = (i: GqlTaskInput) => ({
   status: fromGqlTaskStatus(i.status),
   sessionId: i.sessionId,
   dueDate: i.dueDate,
+  customFields: i.customFields ?? undefined,
+  assignee: i.assignee,
+  reporter: i.reporter,
 });
+const actorOf = (user: User) => ({ type: 'human' as const, userId: user.id, name: user.name || user.email });
+const fromGqlPermission = (p: string): VaultPermission => p.toLowerCase() as VaultPermission;
+const fromGqlScope = (sc: string): VaultLinkScope => sc.toLowerCase() as VaultLinkScope;
+const vaultActor = (ctx: Ctx) => ({ userId: requireUser(ctx).id });
+const userOrNull = (id: string | null | undefined) => (id ? userService.get(id).catch(() => null) : null);
+/** Projet renvoyé seulement si l'utilisateur y a accès (sinon null, le nom restant disponible à part). */
+const projectIfAccessible = async (ctx: Ctx, id: string | null | undefined) => (id && (await roleFor(ctx, id)) ? projectService.get(id).catch(() => null) : null);
 const fromGqlRequestStatus = (s?: GqlRequestStatus | null): RequestStatus | undefined =>
   s ? (s.toLowerCase() as RequestStatus) : undefined;
 
@@ -110,16 +143,24 @@ const toGqlStatus = (s: SessionStatus): GqlStatus => s.toUpperCase() as GqlStatu
 const fromGqlStatus = (s?: GqlStatus | null): SessionStatus | undefined =>
   s ? (s.toLowerCase() as SessionStatus) : undefined;
 
-/** Vue agrégée des paramètres ; les champs coûteux (consommation) sont résolus à la demande. */
-const appSettings = () => ({
-  claude: settingsService.claude,
-  claudeAuth: settingsService.authStatus(),
-  github: githubService.status(),
-  models: settingsService.models(),
-  usage: () => usageService.summary(),
-  rateLimits: () => rateLimitView(),
-  server: async () => {
-    const maintenance = serverSettings.maintenance;
+/** Paramètres de la personne connectée (Claude, OpenCode, GitHub, consommation) ; les champs du serveur sont réservés aux administrateurs. */
+const appSettings = (ctx: Ctx) => {
+  const user = requireUser(ctx);
+  const claude = () => claudeSettings.forUser(user.id);
+  return {
+    claude: async () => (await claude()).settings,
+    claudeAuth: async () => (await claude()).authStatus(),
+    models: async () => (await claude()).models(),
+    usage: () => usageService.summary(user.id),
+    github: () => githubService.status(user.id, githubDeviceAvailable()),
+    opencode: async () => {
+      const o = await opencodeSettings.forUser(user.id);
+      return { defaultModel: o.settings.defaultModel, sessionBudgetUsd: o.settings.sessionBudgetUsd, apiKeys: await o.keyStatus(), providers: opencodeProviders, modelList: o.modelList };
+    },
+    rateLimits: () => (user.isAdmin ? rateLimitView() : null),
+    server: async () => {
+      if (!user.isAdmin) return null;
+      const maintenance = serverSettings.maintenance;
     const active = await sessionService.activeSummary();
     return {
       maintenance: Boolean(maintenance),
@@ -133,8 +174,31 @@ const appSettings = () => ({
       idleSessionTimeoutMinutes: serverSettings.current.idleSessionTimeoutMinutes,
       memoryAlertThresholdMb: serverSettings.current.memoryAlertThresholdMb,
     };
-  },
+    },
+  };
+};
+
+// ---- Agents et workflows : accès par le projet de l'objet visé -------------------------------
+const guardAgent = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await agentService.get(id)).projectId, min);
+const guardWorkflow = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await workflowService.get(id)).projectId, min);
+const toGqlRunStatus = (s: RunStatus) => s.toUpperCase();
+const toGqlTrigger = (t: RunTrigger) => t.toUpperCase();
+const fromGqlOutputFormat = (f?: string | null) => (f ? (f.toLowerCase() as 'text' | 'json') : undefined);
+const toAgentInput = (i: Record<string, unknown>): AgentInput => ({
+  name: i.name as string | undefined,
+  description: i.description as string | null | undefined,
+  provider: i.provider as string | undefined,
+  config: i.config as Record<string, unknown> | null | undefined,
+  systemPrompt: i.systemPrompt as string | null | undefined,
+  promptTemplate: i.promptTemplate as string | null | undefined,
+  inputs: i.inputs === undefined ? undefined : ((i.inputs ?? []) as InputVariable[]),
+  outputFormat: fromGqlOutputFormat(i.outputFormat as string | null | undefined),
+  outputSchema: i.outputSchema as string | null | undefined,
+  worktreeId: i.worktreeId as string | null | undefined,
+  timeoutMinutes: i.timeoutMinutes as number | null | undefined,
 });
+/** Éléments du coffre d'un type, utilisables par la personne (choix dans un formulaire). */
+const usableItems = async (ctx: Ctx, kinds: VaultItemKind[]) => vaultService.listAccessible(requireUser(ctx).id, kinds);
 
 export const resolvers = {
   JSON: JSONResolver,
@@ -150,10 +214,6 @@ export const resolvers = {
     pending: async (m: ProjectMember) => (await userService.get(m.userId)).lastLoginAt === null,
   },
 
-  ClaudeAuthStatus: {
-    server: () => serverAuthStatus(),
-  },
-
   ContextInstruction: {
     versions: (instruction: ContextInstruction) => contextService.versions(instruction.id),
   },
@@ -167,6 +227,7 @@ export const resolvers = {
   Notification: {
     project: (n: Notification) => (n.projectId ? projectService.get(n.projectId).catch(() => null) : null),
     session: (n: Notification) => (n.sessionId ? sessionService.get(n.sessionId) : null),
+    user: (n: Notification) => userOrNull(n.userId),
   },
 
   Task: {
@@ -174,8 +235,29 @@ export const resolvers = {
     priority: (t: Task) => t.priority.toUpperCase(),
     project: (t: Task) => projectService.get(t.projectId),
     session: (t: Task) => (t.sessionId ? sessionService.get(t.sessionId) : null),
+    sessions: async (t: Task) => {
+      const ids = await taskService.sessionIds(t.id);
+      const sessions = ids.length ? await sessionService.list({ ids, archived: 'all', limit: 500 }) : [];
+      return ids.map((id) => sessions.find((s) => s.id === id)).filter((s): s is Session => Boolean(s));
+    },
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
-    pullRequest: (t: Task) => (t.branch ? pullRequestService.forBranch(t.projectId, t.branch) : null),
+    comments: (t: Task) => taskService.comments(t.id),
+    pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
+  },
+
+  TaskComment: {
+    author: (c: TaskComment) => userOrNull(c.authorUserId),
+    authorSession: (c: TaskComment) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
+    editable: (c: TaskComment, _: unknown, ctx: Ctx) => c.authorType === 'human' && c.authorUserId === ctx.user?.id,
+    deletable: async (c: TaskComment, _: unknown, ctx: Ctx) => {
+      if (c.authorUserId === ctx.user?.id) return true;
+      const task = await taskService.get(c.taskId).catch(() => null);
+      return task ? (await roleFor(ctx, task.projectId)) === 'admin' : false;
+    },
+  },
+
+  ProjectApiKey: {
+    createdBy: (k: ProjectApiKey) => userOrNull(k.createdById),
   },
 
   PullRequest: {
@@ -183,42 +265,170 @@ export const resolvers = {
     tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
   },
 
-  Connection: {
-    project: (c: Connection) => projectService.get(c.projectId),
-    host: (c: Connection) => (c.kind === 'website' ? null : (c.settings as PostgresSettings).host),
-    port: (c: Connection) => (c.kind === 'website' ? null : (c.settings as PostgresSettings).port),
-    username: (c: Connection) => (c.kind === 'website' ? null : (c.settings as PostgresSettings).username),
-    url: (c: Connection) => (c.kind === 'website' ? (c.settings as WebsiteSettings).url : null),
-    fields: (c: Connection) => (c.kind === 'website' ? (c.settings as WebsiteSettings).fields.map((f) => ({ ...f, variable: variableName(c.name, f.key) })) : []),
-    database: (c: Connection) => (c.kind === 'postgres' ? (c.settings as PostgresSettings).database : null),
-    ssl: (c: Connection) => (c.kind === 'postgres' ? (c.settings as PostgresSettings).ssl : null),
-    viaConnection: (c: Connection) => {
-      const via = c.kind === 'postgres' ? (c.settings as PostgresSettings).viaConnectionId : null;
-      return via ? connectionService.get(via).catch(() => null) : null;
+  VaultItem: {
+    kind: (i: VaultItem) => i.kind,
+    ownerUser: (i: VaultItem) => userOrNull(i.ownerUserId),
+    ownerProject: (i: VaultItem, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, i.ownerProjectId),
+    ownerProjectName: async (i: VaultItem) => (i.ownerProjectId ? (await projectService.get(i.ownerProjectId).catch(() => null))?.name ?? null : null),
+    myPermission: async (i: VaultItemWithPermission, _: unknown, ctx: Ctx) => ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i)) ?? 'use') as string).toUpperCase(),
+    myShare: async (i: VaultItem, _: unknown, ctx: Ctx) => (await vaultService.shares(i.id)).find((sh) => sh.userId === ctx.user?.id)?.permission.toUpperCase() ?? null,
+    host: (i: VaultItem) => (i.kind === 'ssh' || i.kind === 'postgres' ? (i.settings as SshSettings).host : null),
+    port: (i: VaultItem) => (i.kind === 'ssh' || i.kind === 'postgres' ? (i.settings as SshSettings).port : null),
+    username: (i: VaultItem) => (i.kind === 'ssh' || i.kind === 'postgres' ? (i.settings as SshSettings).username : i.kind === 'api' ? (i.settings as ApiSettings).username : null),
+    url: (i: VaultItem) => (i.kind === 'website' ? (i.settings as WebsiteSettings).url : i.kind === 'api' ? (i.settings as ApiSettings).baseUrl : i.kind === 'litellm' ? (i.settings as LitellmSettings).baseUrl : i.kind === 'langfuse' ? (i.settings as LangfuseSettings).host : null),
+    langfusePublicKey: (i: VaultItem) => (i.kind === 'langfuse' ? (i.settings as LangfuseSettings).publicKey : null),
+    token: (i: VaultItem) => {
+      if (i.kind !== 'token') return null;
+      const t = i.settings as TokenSettings;
+      return { service: t.service, serviceLabel: tokenServiceLabel(t.service), obtained: t.obtained, account: t.account, tokenExpiresAt: t.tokenExpiresAt };
     },
-    hostFingerprint: (c: Connection) => (c.hostKey ? fingerprint(c.hostKey) : null),
-    hasSecret: (c: Connection) => connectionService.hasSecret(c),
+    fields: (i: VaultItem) => (i.kind === 'website' || i.kind === 'secret' ? (i.settings as SecretSettings).fields.map((f) => ({ ...f, variable: variableName(i.name, f.key) })) : []),
+    database: (i: VaultItem) => (i.kind === 'postgres' ? (i.settings as PostgresSettings).database : null),
+    ssl: (i: VaultItem) => (i.kind === 'postgres' ? (i.settings as PostgresSettings).ssl : null),
+    sslCa: (i: VaultItem) => (i.kind === 'postgres' ? (i.settings as PostgresSettings).sslCa ?? null : null),
+    via: async (i: VaultItem) => {
+      const id = i.kind === 'postgres' ? (i.settings as PostgresSettings).viaItemId : null;
+      return id ? vaultService.getInternal(id).catch(() => null) : null;
+    },
+    authScheme: (i: VaultItem) => (i.kind === 'api' ? (i.settings as ApiSettings).authScheme : null),
+    authName: (i: VaultItem) => (i.kind === 'api' ? (i.settings as ApiSettings).authName : null),
+    google: (i: VaultItem) => {
+      if (i.kind !== 'google') return null;
+      const a = accountOf(i);
+      return { email: a.email, name: a.displayName, avatarUrl: a.avatarUrl, gmailAccess: a.gmailAccess.toUpperCase(), driveAccess: a.driveAccess.toUpperCase(), scopes: a.scopes };
+    },
+    hostFingerprint: (i: VaultItem) => (i.hostKey ? fingerprint(i.hostKey) : null),
+    hasSecret: (i: VaultItem) => vaultService.hasSecret(i),
+    revealableFields: async (i: VaultItemWithPermission, _: unknown, ctx: Ctx) => vaultService.revealableFields(i, i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i))),
+    shares: async (i: VaultItemWithPermission, _: unknown, ctx: Ctx) => ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i))) === 'manage' ? vaultService.shares(i.id) : []),
+    links: async (i: VaultItemWithPermission, _: unknown, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      const links = await vaultService.links(i.id);
+      if ((i.permission ?? (await vaultService.permissionFor(user.id, i))) === 'manage') return links;
+      const mine = await accessibleProjectIds(ctx);
+      return links.filter((l) => (l.scope === 'personal' ? l.userId === user.id : mine.includes(l.projectId)));
+    },
+    audit: async (i: VaultItemWithPermission, args: { limit?: number | null; before?: string | null }, ctx: Ctx) => ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i))) === 'manage' ? vaultService.auditLog(i.id, args.limit ?? 50, args.before) : []),
+    createdBy: (i: VaultItem) => userOrNull(i.createdById),
+  },
+
+  VaultShare: {
+    user: (sh: VaultShare) => userService.get(sh.userId),
+    permission: (sh: VaultShare) => sh.permission.toUpperCase(),
+    grantedBy: (sh: VaultShare) => userOrNull(sh.grantedById),
+  },
+
+  VaultLink: {
+    project: (l: VaultLink, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, l.projectId),
+    projectName: async (l: VaultLink) => (await projectService.get(l.projectId).catch(() => null))?.name ?? 'projet supprimé',
+    scope: (l: VaultLink) => l.scope.toUpperCase(),
+    user: (l: VaultLink) => userOrNull(l.userId),
+    linkedBy: (l: VaultLink) => userOrNull(l.linkedById),
+  },
+
+  VaultAuditEvent: {
+    actor: (e: VaultAuditEvent) => userOrNull(e.actorUserId),
+    project: (e: VaultAuditEvent, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, e.projectId),
+    projectName: async (e: VaultAuditEvent) => (e.projectId ? (await projectService.get(e.projectId).catch(() => null))?.name ?? null : null),
+  },
+
+  ProjectVaultItem: {
+    via: (r: ProjectVaultRow) => r.via.toUpperCase(),
+    forAgents: (r: ProjectVaultRow) => r.forAgents !== false,
+  },
+
+  GithubAccount: {
+    method: (a: { method: string }) => a.method.toUpperCase(),
+  },
+
+  Agent: {
+    project: (a: Agent) => projectService.get(a.projectId),
+    outputFormat: (a: Agent) => a.outputFormat.toUpperCase(),
+    worktree: (a: Agent) => (a.worktreeId ? worktreeService.get(a.worktreeId).catch(() => null) : null),
+    runs: (a: Agent, args: { limit?: number | null }) => agentRepository.listRuns({ agentId: a.id, limit: args.limit ?? 20 }),
+    lastRun: (a: Agent) => agentRepository.lastRun(a.id),
+    workflows: (a: Agent) => workflowService.listUsingAgent(a.id),
+    createdBy: (a: Agent) => userOrNull(a.createdById),
+  },
+
+  AgentRun: {
+    agent: (r: AgentRun) => agentService.get(r.agentId),
+    project: (r: AgentRun) => projectService.get(r.projectId),
+    session: (r: AgentRun) => (r.sessionId ? sessionService.get(r.sessionId) : null),
+    workflowRun: (r: AgentRun) => (r.workflowRunId ? workflowService.findRun(r.workflowRunId) : null),
+    trigger: (r: AgentRun) => toGqlTrigger(r.trigger),
+    status: (r: AgentRun) => toGqlRunStatus(r.status),
+    owner: (r: AgentRun) => userOrNull(r.ownerId),
+  },
+
+  Workflow: {
+    project: (w: Workflow) => projectService.get(w.projectId),
+    issues: (w: Workflow) => workflowService.issues(w.projectId, w.definition),
+    variables: (w: Workflow, args: { triggerKey?: string | null }) => workflowVariables(w.definition, args.triggerKey),
+    eventOwner: (w: Workflow) => userOrNull(w.eventOwnerId),
+    runs: (w: Workflow, args: { limit?: number | null }) => workflowService.listRuns({ workflowId: w.id, limit: args.limit ?? 20 }),
+    lastRun: (w: Workflow) => workflowService.lastRun(w.id),
+    createdBy: (w: Workflow) => userOrNull(w.createdById),
+  },
+
+  WorkflowRun: {
+    workflow: (r: WorkflowRun) => workflowService.get(r.workflowId),
+    project: (r: WorkflowRun) => projectService.get(r.projectId),
+    trigger: (r: WorkflowRun) => toGqlTrigger(r.trigger),
+    status: (r: WorkflowRun) => toGqlRunStatus(r.status),
+    nodes: (r: WorkflowRun) => workflowService.runNodes(r.id),
+    logs: (r: WorkflowRun, args: { after?: string | null; limit?: number | null }) => workflowService.runLogs(r.id, { after: args.after, limit: args.limit ?? 500 }),
+    owner: (r: WorkflowRun) => userOrNull(r.ownerId),
+  },
+
+  WorkflowRunNode: {
+    agentRun: (n: WorkflowRunNode) => (n.agentRunId ? agentRepository.findRun(n.agentRunId) : null),
+  },
+
+  SharedPage: {
+    owner: (p: SharedPage) => userService.get(p.ownerId),
+    members: async (p: SharedPage, _: unknown, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      const members = await sharedPageService.members(p.id);
+      return p.ownerId === user.id || members.some((m) => m.userId === user.id) ? members : [];
+    },
+    versions: (p: SharedPage) => sharedPageService.versions(p.id),
+    project: (p: SharedPage, _: unknown, ctx: Ctx) => (p.ownerId === ctx.user?.id ? projectIfAccessible(ctx, p.projectId) : null),
+    session: (p: SharedPage, _: unknown, ctx: Ctx) => (p.ownerId === ctx.user?.id && p.sessionId ? sessionService.get(p.sessionId) : null),
+    sourcePath: (p: SharedPage, _: unknown, ctx: Ctx) => (p.ownerId === ctx.user?.id ? p.sourcePath : null),
+    viewerAccess: async (p: SharedPage, _: unknown, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      const members = await sharedPageService.members(p.id);
+      return { owner: p.ownerId === user.id, member: members.some((m) => m.userId === user.id) };
+    },
+  },
+  SharedPageMember: {
+    user: (m: SharedPageMember) => userService.get(m.userId),
+    addedBy: (m: SharedPageMember) => userOrNull(m.addedById),
+    addedAt: (m: SharedPageMember) => m.createdAt,
+  },
+  SharedPageVersion: {
+    createdBy: (v: SharedPageVersion) => userOrNull(v.createdById),
   },
 
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
     project: (t: TerminalRecord) => projectService.get(t.projectId),
     worktree: (t: TerminalRecord) => (t.worktreeId ? worktreeService.get(t.worktreeId).catch(() => null) : null),
+    createdBy: (t: TerminalRecord) => userOrNull(t.createdById),
   },
 
   Worktree: {
     project: (w: Worktree) => projectService.get(w.projectId),
+    label: (w: Worktree) => worktreeLabel(w),
+    customLabel: (w: Worktree) => w.label,
     path: async (w: Worktree) => worktreePath(await projectService.get(w.projectId), w),
     exists: async (w: Worktree) => worktreeService.exists(await projectService.get(w.projectId), w),
     git: async (w: Worktree) => worktreeService.gitInfo(await projectService.get(w.projectId), w),
-    sessions: (w: Worktree) => sessionService.list({ projectId: w.projectId, worktreeId: w.id }),
-    terminals: async (w: Worktree) => (await terminalService.listByProject(w.projectId)).filter((t) => t.worktreeId === w.id),
-  },
-
-  GoogleAccount: {
-    gmailAccess: (a: GoogleAccount) => a.gmailAccess.toUpperCase(),
-    driveAccess: (a: GoogleAccount) => a.driveAccess.toUpperCase(),
-    connectedBy: (a: GoogleAccount) => (a.connectedById ? userService.get(a.connectedById).catch(() => null) : null),
+    pullRequest: (w: Worktree, _: unknown, ctx: Ctx) => pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null),
+    task: (w: Worktree) => taskService.forBranch(w.projectId, w.branch),
+    sessions: (w: Worktree) => sessionService.list({ projectId: w.projectId, worktreeId: w.id, limit: 200 }),
+    terminals: async (w: Worktree, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worktreeId === w.id),
   },
 
   PermissionRule: {
@@ -232,11 +442,13 @@ export const resolvers = {
     runnerStatus: (project: Project) => runner.status(project),
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
-    terminals: (project: Project) => terminalService.listByProject(project.id),
+    isMember: async (project: Project, _: unknown, ctx: Ctx) => (await memberRoleFor(ctx, project.id)) !== null,
+    terminals: (project: Project, _: unknown, ctx: Ctx) => terminalService.listByProject(project.id, requireUser(ctx).id),
     worktrees: (project: Project) => worktreeService.listByProject(project.id),
-    connections: (project: Project) => connectionService.listByProject(project.id),
-    approvalConnections: async (project: Project) => (await connectionService.listByProject(project.id)).filter((c) => c.requireApproval).map((c) => c.name),
-    googleAccounts: (project: Project) => googleAccountService.list(project.id),
+    archivedWorktrees: (project: Project) => worktreeService.listByProject(project.id, { archived: 'only' }),
+    vaultItems: (project: Project, _: unknown, ctx: Ctx) => vaultService.projectRows(project.id, requireUser(ctx).id),
+    apiKeys: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) === 'admin' ? apiKeyService.list(project.id) : []),
+    approvalConnections: async (project: Project, _: unknown, ctx: Ctx) => vaultService.approvalNames(await vaultService.agentItems(project.id, ctx.user?.id ?? null)),
     tasks: (project: Project, args: { status?: GqlTaskStatus[] | null }) => taskService.list({ projectId: project.id, status: fromGqlTaskStatuses(args.status) }),
     contextFolders: async (project: Project) => (await contextService.tree(project.id)).folders,
     contextInstructions: async (project: Project) => (await contextService.tree(project.id)).instructions,
@@ -250,13 +462,19 @@ export const resolvers = {
   Request: {
     status: (request: HumanRequest) => request.status.toUpperCase(),
     session: (request: HumanRequest) => sessionService.get(request.sessionId),
+    answeredBy: (request: HumanRequest) => userOrNull(request.answeredById),
   },
 
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
     worktree: (session: Session) => (session.worktreeId ? worktreeService.get(session.worktreeId).catch(() => null) : null),
+    owner: (session: Session) => userOrNull(session.ownerId),
+    task: (session: Session) => taskService.forSession(session.id),
     parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
     childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
+    agent: (session: Session) => (session.agentId ? agentService.find(session.agentId) : null),
+    agentRun: (session: Session) => (session.agentRunId ? agentRepository.findRun(session.agentRunId) : null),
+    workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
@@ -297,15 +515,15 @@ export const resolvers = {
     },
     githubPullRequests: async (_: unknown, args: { projectId: string; state?: PullRequestFilter | null; limit?: number | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
-      return pullRequestService.list(args.projectId, args.state ?? 'OPEN', args.limit ?? 50);
+      return pullRequestService.list(args.projectId, requireUser(ctx).id, args.state ?? 'OPEN', args.limit ?? 50);
     },
     githubPullRequest: async (_: unknown, args: { projectId: string; number: number }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
-      return pullRequestService.get(args.projectId, args.number);
+      return pullRequestService.get(args.projectId, requireUser(ctx).id, args.number);
     },
     githubPullRequestDraft: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.draft(args);
+      return pullRequestService.draft(args, requireUser(ctx).id);
     },
     workspaceEntries: async (_: unknown, args: WorkspaceRef & { path?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
@@ -317,16 +535,128 @@ export const resolvers = {
     },
     githubRepositories: (_: unknown, args: { query?: string | null }, ctx: Ctx) => {
       requireUser(ctx);
-      return githubService.listRepositories(args.query);
+      return githubService.listRepositories(requireUser(ctx).id, args.query);
     },
     me: (_: unknown, __: unknown, ctx: Ctx) => ctx.user,
     users: (_: unknown, __: unknown, ctx: Ctx) => {
       requireAdmin(ctx);
       return userService.list();
     },
-    settings: (_: unknown, __: unknown, ctx: Ctx) => {
-      requireAdmin(ctx);
-      return appSettings();
+    sidebarProjects: async (_: unknown, args: { open?: OpenItems | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      const mine = await projectService.listForUser(user.id);
+      if (!user.isSuperAdmin || !args.open) return mine;
+      const extra = (await userService.projectIdsHolding(args.open)).filter((id) => !mine.some((p) => p.id === id));
+      const others = (await Promise.all(extra.map((id) => projectService.get(id).catch(() => null)))).filter((p): p is Project => Boolean(p));
+      return [...mine, ...others].sort((a, b) => a.name.localeCompare(b.name));
+    },
+    search: async (_: unknown, args: { query: string; kinds?: SearchKind[] | null; limit?: number | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      const memberProjectIds = await accessibleProjectIds(ctx);
+      const projectIds = user.isSuperAdmin ? (await projectService.list()).map((p) => p.id) : memberProjectIds;
+      return { query: args.query, groups: await searchService.search({ userId: user.id, memberProjectIds, projectIds }, args.query, args.kinds, args.limit) };
+    },
+    sessionOwners: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      const ids = await sessionRepository.listOwnerIds(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
+      const users = (await Promise.all(ids.map((id) => userService.get(id).catch(() => null)))).filter((u): u is User => Boolean(u));
+      return users.sort((a, b) => a.name.localeCompare(b.name));
+    },
+    archivedSessions: async (_: unknown, args: { projectId: string; worktreeId?: string | null; search?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return sessionService.list({ projectId: args.projectId, worktreeId: args.worktreeId ?? undefined, search: args.search ?? undefined, archived: 'only', limit: args.limit ?? 50, offset: args.offset ?? 0 });
+    },
+    gitBranchChanges: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.branchChanges(args);
+    },
+    gitBranchFileDiff: async (_: unknown, args: WorkspaceRef & { path: string; origPath?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return gitService.branchDiff(args, args.path, args.origPath);
+    },
+    vaultItems: (_: unknown, args: { kind?: VaultItemKind | null }, ctx: Ctx) => vaultService.listAccessible(requireUser(ctx).id, args.kind),
+    vaultItem: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.findFor(requireUser(ctx).id, args.id),
+    vaultShareCandidates: (_: unknown, __: unknown, ctx: Ctx) => userService.listColleagues(requireUser(ctx).id),
+    vaultGoogleAvailable: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireUser(ctx);
+      return googleAccountService.configured;
+    },
+    taskPrompt: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.id, 'viewer');
+      return taskService.promptFor(args.id);
+    },
+    taskPeople: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return taskService.people(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
+    },
+    sharedPage: (_: unknown, args: { id: string }, ctx: Ctx) => sharedPageService.getFor(requireUser(ctx).id, args.id).catch(() => null),
+    sharedPages: (_: unknown, __: unknown, ctx: Ctx) => sharedPageService.listFor(requireUser(ctx).id),
+    pushPublicKey: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireUser(ctx);
+      return pushService.publicKey();
+    },
+    settings: (_: unknown, __: unknown, ctx: Ctx) => appSettings(ctx),
+    vaultTokenServices: (_: unknown, __: unknown, ctx: Ctx) => {
+      requireUser(ctx);
+      return TOKEN_SERVICE_IDS.map((id) => ({ id, label: TOKEN_SERVICES[id].label, prefix: TOKEN_SERVICES[id].prefix, opencode: Boolean((TOKEN_SERVICES[id] as { opencode?: boolean }).opencode) }));
+    },
+    // ---- Agents et workflows ------------------------------------------------------------------
+    agents: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) {
+        await requireProject(ctx, args.projectId);
+        return agentService.list({ projectId: args.projectId });
+      }
+      return agentService.list({ projectIds: await accessibleProjectIds(ctx) });
+    },
+    agent: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const agent = await agentService.find(args.id);
+      if (!agent || !(await roleFor(ctx, agent.projectId))) return null;
+      return agent;
+    },
+    agentRuns: async (_: unknown, args: { agentId?: string | null; projectId?: string | null; limit?: number | null }, ctx: Ctx) => {
+      if (args.agentId) await guardAgent(ctx, args.agentId, 'viewer');
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return agentRepository.listRuns({ agentId: args.agentId ?? undefined, projectId: args.projectId ?? undefined, projectIds: args.agentId || args.projectId ? undefined : await accessibleProjectIds(ctx), limit: args.limit ?? 50 });
+    },
+    agentRun: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const run = await agentRepository.findRun(args.id);
+      if (!run || !(await roleFor(ctx, run.projectId))) return null;
+      return run;
+    },
+    agentPromptPreview: async (_: unknown, args: { id: string; inputs?: Record<string, unknown> | null }, ctx: Ctx) => {
+      await guardAgent(ctx, args.id, 'viewer');
+      return agentService.renderPrompt(await agentService.get(args.id), args.inputs);
+    },
+    agentLlmKeys: async (_: unknown, __: unknown, ctx: Ctx) => ({
+      litellm: await usableItems(ctx, ['litellm']),
+      langfuse: await usableItems(ctx, ['langfuse']),
+      tokens: (await usableItems(ctx, ['token'])).filter((i) => ['openai', 'anthropic'].includes((i.settings as TokenSettings).service) && !isOauthToken(i)),
+    }),
+    workflows: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) {
+        await requireProject(ctx, args.projectId);
+        return workflowService.list({ projectId: args.projectId });
+      }
+      return workflowService.list({ projectIds: await accessibleProjectIds(ctx) });
+    },
+    workflow: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const workflow = await workflowService.find(args.id);
+      if (!workflow || !(await roleFor(ctx, workflow.projectId))) return null;
+      return workflow;
+    },
+    workflowRuns: async (_: unknown, args: { workflowId?: string | null; projectId?: string | null; limit?: number | null }, ctx: Ctx) => {
+      if (args.workflowId) await guardWorkflow(ctx, args.workflowId, 'viewer');
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return workflowService.listRuns({ workflowId: args.workflowId ?? undefined, projectId: args.projectId ?? undefined, projectIds: args.workflowId || args.projectId ? undefined : await accessibleProjectIds(ctx), limit: args.limit ?? 50 });
+    },
+    workflowRun: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const run = await workflowService.findRun(args.id);
+      if (!run || !(await roleFor(ctx, run.projectId))) return null;
+      return run;
+    },
+    validateWorkflow: async (_: unknown, args: { projectId: string; definition: unknown }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return workflowService.issues(args.projectId, args.definition);
     },
     serverHealth: async (_: unknown, __: unknown, ctx: Ctx) => {
       requireAdmin(ctx);
@@ -338,21 +668,16 @@ export const resolvers = {
         disk: { ...health.disk, workspaces: health.disk.workspaces.map((w) => ({ ...w, project: () => project(w.projectId) })) },
       };
     },
-    claudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      return loginService.get(args.id);
-    },
-    providers: (_: unknown, __: unknown, ctx: Ctx) => {
-      requireUser(ctx);
-      return listProviders();
-    },
-    sessions: async (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
+    claudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => loginService.get(args.id, requireUser(ctx).id),
+    providers: (_: unknown, __: unknown, ctx: Ctx) => listProviders(requireUser(ctx).id),
+    sessions: async (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; ownerId?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return sessionService.list({
         projectId: args.projectId ?? undefined,
         projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
         status: fromGqlStatus(args.status),
         provider: args.provider ?? undefined,
+        ownerId: args.ownerId ?? undefined,
         limit: args.limit ?? undefined,
         offset: args.offset ?? undefined,
       });
@@ -374,7 +699,10 @@ export const resolvers = {
       requireUser(ctx);
       return scheduleService.preview(args.cron, args.timezone, args.count ?? 5);
     },
-    projects: (_: unknown, __: unknown, ctx: Ctx) => projectService.listForUser(requireUser(ctx).id),
+    projects: (_: unknown, args: { all?: boolean | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      return args.all && user.isSuperAdmin ? projectService.list() : projectService.listForUser(user.id);
+    },
     project: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id);
       return projectService.get(args.id);
@@ -401,21 +729,20 @@ export const resolvers = {
       await guardWorktree(ctx, args.id, 'viewer');
       return worktreeService.get(args.id);
     },
-    connection: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardConnection(ctx, args.id, 'viewer');
-      return connectionService.get(args.id);
-    },
     notifications: async (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }, ctx: Ctx) =>
-      notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin }),
-    unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin }),
+      notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
+    unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
     dashboard: async (_: unknown, __: unknown, ctx: Ctx) => dashboardService.build(requireUser(ctx).id, await accessibleProjectIds(ctx), new Date(), requireUser(ctx).isAdmin),
-    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; limit?: number | null }, ctx: Ctx) => {
+    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; mine?: boolean | null; limit?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return taskService.list({
         projectId: args.projectId ?? undefined,
         projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
         status: fromGqlTaskStatuses(args.status) ?? ['todo', 'in_progress'],
         priority: fromGqlTaskPriority(args.priority),
+        assignee: args.assignee ?? undefined,
+        reporter: args.reporter ?? undefined,
+        assigneeEmail: args.mine ? requireUser(ctx).email : undefined,
         limit: args.limit ?? undefined,
       });
     },
@@ -460,17 +787,17 @@ export const resolvers = {
     },
     gitFetch: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      await gitService.fetch(args);
+      await gitService.fetch(args, requireUser(ctx).id);
       return gitService.status(args);
     },
     gitPull: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      await gitService.pull(args);
+      await gitService.pull(args, requireUser(ctx).id);
       return gitService.status(args);
     },
     gitPush: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      await gitService.push(args);
+      await gitService.push(args, requireUser(ctx).id);
       return gitService.status(args);
     },
     gitCheckout: async (_: unknown, args: WorkspaceRef & { branch: string; create?: boolean | null }, ctx: Ctx) => {
@@ -480,11 +807,11 @@ export const resolvers = {
     },
     createPullRequest: async (_: unknown, args: WorkspaceRef & { title: string; body?: string | null; base?: string | null; draft?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.create(args, args);
+      return pullRequestService.create(args, requireUser(ctx).id, args);
     },
     mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.merge(args.projectId, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
+      return pullRequestService.merge(args.projectId, requireUser(ctx).id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
@@ -502,37 +829,13 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       return fileService.delete(args, args.path);
     },
-    setGithubClientId: async (_: unknown, args: { clientId?: string | null }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await githubService.setClientId(args.clientId ?? null);
-      return appSettings();
-    },
-    setGithubPersonalToken: async (_: unknown, args: { token: string }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await githubService.setPersonalToken(args.token);
-      return appSettings();
-    },
-    startGithubLogin: (_: unknown, __: unknown, ctx: Ctx) => {
-      requireAdmin(ctx);
-      return githubService.startLogin();
-    },
-    cancelGithubLogin: async (_: unknown, __: unknown, ctx: Ctx) => {
-      requireAdmin(ctx);
-      githubService.cancelLogin();
-      return appSettings();
-    },
-    disconnectGithub: async (_: unknown, __: unknown, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await githubService.disconnect();
-      return appSettings();
-    },
     setMaintenanceMode: (_: unknown, args: { enabled: boolean; message?: string | null }, ctx: Ctx) => {
       const user = requireAdmin(ctx);
       serverSettings.setMaintenance(args.enabled, args.message ?? null, user.id);
       console.log(`[server] mode maintenance ${args.enabled ? 'activé' : 'levé'} par ${user.email}`);
       // Fin de la maintenance : les sessions en file d'attente peuvent démarrer.
       if (!args.enabled) void sessionService.drainQueue();
-      return appSettings();
+      return appSettings(ctx);
     },
     updateServerSettings: async (
       _: unknown,
@@ -548,47 +851,135 @@ export const resolvers = {
       });
       // Limite relevée : des places se libèrent peut-être pour la file d'attente.
       void sessionService.drainQueue();
-      return appSettings();
+      return appSettings(ctx);
     },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await settingsService.update(input);
-      return appSettings();
+      await (await claudeSettings.forUser(requireUser(ctx).id)).update(input);
+      return appSettings(ctx);
     },
-    setClaudeApiKey: async (_: unknown, args: { apiKey?: string | null }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await settingsService.setApiKey(args.apiKey ?? null);
-      return appSettings();
+    setClaudeApiKeyItem: async (_: unknown, args: { itemId?: string | null }, ctx: Ctx) => {
+      await (await claudeSettings.forUser(requireUser(ctx).id)).setApiKeyItem(args.itemId ?? null);
+      return appSettings(ctx);
+    },
+    setClaudeOauthItem: async (_: unknown, args: { itemId?: string | null }, ctx: Ctx) => {
+      await (await claudeSettings.forUser(requireUser(ctx).id)).setOauthItem(args.itemId ?? null);
+      return appSettings(ctx);
     },
     clearClaudeOauthToken: async (_: unknown, __: unknown, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await settingsService.clearOauthToken();
-      return appSettings();
+      await (await claudeSettings.forUser(requireUser(ctx).id)).clearOauthToken();
+      return appSettings(ctx);
     },
-    startClaudeLogin: (_: unknown, args: { kind?: ClaudeLoginKind | null }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      return loginService.start(args.kind ?? 'oauth');
-    },
-    logoutServerClaude: async (_: unknown, __: unknown, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await serverLogout();
-      settingsService.invalidateVerification();
-      return appSettings();
-    },
-    completeClaudeLogin: (_: unknown, args: { id: string; code: string }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      return loginService.complete(args.id, args.code);
-    },
-    cancelClaudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      return loginService.cancel(args.id);
-    },
+    startClaudeLogin: (_: unknown, __: unknown, ctx: Ctx) => loginService.start(requireUser(ctx).id),
+    completeClaudeLogin: (_: unknown, args: { id: string; code: string }, ctx: Ctx) => loginService.complete(args.id, args.code, requireUser(ctx).id),
+    cancelClaudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => loginService.cancel(args.id, requireUser(ctx).id),
     verifyClaudeAuth: async (_: unknown, args: { mode?: ClaudeAuthMode | null }, ctx: Ctx) => {
-      requireAdmin(ctx);
-      await settingsService.verify(args.mode ?? undefined);
-      return appSettings();
+      await claudeSettings.verify(requireUser(ctx).id, args.mode ?? null);
+      return appSettings(ctx);
+    },
+    updateOpencodeSettings: async (_: unknown, { input }: { input: OpencodeSettingsPatch }, ctx: Ctx) => {
+      await (await opencodeSettings.forUser(requireUser(ctx).id)).update(input);
+      return appSettings(ctx);
+    },
+    setOpencodeKeyItem: async (_: unknown, args: { provider: string; itemId?: string | null }, ctx: Ctx) => {
+      await (await opencodeSettings.forUser(requireUser(ctx).id)).setKeyItem(args.provider, args.itemId ?? null);
+      return appSettings(ctx);
+    },
+    refreshOpencodeModels: async (_: unknown, __: unknown, ctx: Ctx) => {
+      await (await opencodeSettings.forUser(requireUser(ctx).id)).listModels();
+      return appSettings(ctx);
+    },
+    startGithubDeviceLogin: (_: unknown, __: unknown, ctx: Ctx) => githubDeviceService.start(requireUser(ctx).id),
+    pollGithubDeviceLogin: (_: unknown, args: { id: string }, ctx: Ctx) => githubDeviceService.poll(requireUser(ctx).id, args.id),
+    connectGithubFromVault: (_: unknown, args: { itemId: string }, ctx: Ctx) => githubService.connectFromVault(requireUser(ctx).id, args.itemId),
+    setDefaultGithubAccount: async (_: unknown, args: { accountId: string }, ctx: Ctx) => {
+      await githubService.setDefault(requireUser(ctx).id, args.accountId);
+      return appSettings(ctx);
+    },
+    disconnectGithub: async (_: unknown, args: { accountId?: string | null }, ctx: Ctx) => {
+      await githubService.disconnect(requireUser(ctx).id, args.accountId ?? null);
+      return appSettings(ctx);
+    },
+    // ---- Agents et workflows ------------------------------------------------------------------
+    createAgent: async (_: unknown, { input }: { input: Record<string, unknown> & { projectId: string } }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await requireProject(ctx, input.projectId, 'member');
+      return agentService.create(input.projectId, toAgentInput(input), user.id);
+    },
+    updateAgent: async (_: unknown, { id, input }: { id: string; input: Record<string, unknown> }, ctx: Ctx) => {
+      await guardAgent(ctx, id, 'member');
+      return agentService.update(id, toAgentInput(input));
+    },
+    deleteAgent: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardAgent(ctx, args.id, 'member');
+      return agentService.delete(args.id);
+    },
+    runAgent: async (_: unknown, args: { id: string; inputs?: Record<string, unknown> | null; test?: boolean | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await guardAgent(ctx, args.id, 'member');
+      return startAgentRun(await agentService.get(args.id), { inputs: args.inputs, trigger: args.test ? 'test' : 'manual', ownerId: user.id });
+    },
+    cancelAgentRun: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const run = await agentRepository.findRun(args.id);
+      if (!run) throw new NotFoundError('Exécution introuvable');
+      await requireProject(ctx, run.projectId, 'member');
+      return cancelAgentRun(args.id);
+    },
+    setAgentSchedule: async (_: unknown, args: { id: string; input: AutomationScheduleInput; inputs?: Record<string, unknown> | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await guardAgent(ctx, args.id, 'member');
+      return agentService.setSchedule(args.id, args.input, args.inputs, user.id);
+    },
+    clearAgentSchedule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardAgent(ctx, args.id, 'member');
+      return agentService.clearSchedule(args.id);
+    },
+    createWorkflow: async (_: unknown, { input }: { input: WorkflowInput & { projectId: string } }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await requireProject(ctx, input.projectId, 'member');
+      return workflowService.create(input.projectId, input, user.id);
+    },
+    updateWorkflow: async (_: unknown, { id, input }: { id: string; input: WorkflowInput }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await guardWorkflow(ctx, id, 'member');
+      return workflowService.update(id, input, user.id);
+    },
+    deleteWorkflow: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorkflow(ctx, args.id, 'member');
+      return workflowService.delete(args.id);
+    },
+    runWorkflow: async (_: unknown, args: { id: string; inputs?: Record<string, unknown> | null; test?: boolean | null; triggerKey?: string | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await guardWorkflow(ctx, args.id, 'member');
+      return workflowService.run(args.id, { inputs: args.inputs, trigger: args.test ? 'test' : 'manual', ownerId: user.id, triggerKey: args.triggerKey });
+    },
+    cancelWorkflowRun: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const run = await workflowService.getRun(args.id);
+      await requireProject(ctx, run.projectId, 'member');
+      return workflowService.cancelRun(args.id);
+    },
+    setWorkflowSchedule: async (_: unknown, args: { id: string; input: AutomationScheduleInput; inputs?: Record<string, unknown> | null }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      await guardWorkflow(ctx, args.id, 'member');
+      return workflowService.setSchedule(args.id, args.input, args.inputs, user.id);
+    },
+    clearWorkflowSchedule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorkflow(ctx, args.id, 'member');
+      return workflowService.clearSchedule(args.id);
     },
 
+    inviteUser: (_: unknown, args: { email: string; isAdmin?: boolean | null }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return userService.inviteToApp(args.email, Boolean(args.isAdmin));
+    },
+    setUserAdmin: (_: unknown, args: { userId: string; isAdmin: boolean }, ctx: Ctx) => {
+      requireAdmin(ctx);
+      return userService.setAdmin(args.userId, args.isAdmin);
+    },
+    setUserSuperAdmin: (_: unknown, args: { userId: string; isSuperAdmin: boolean }, ctx: Ctx) => {
+      requireSuperAdmin(ctx);
+      return userService.setSuperAdmin(args.userId, args.isSuperAdmin);
+    },
+    deleteUser: (_: unknown, args: { userId: string }, ctx: Ctx) => userService.delete(args.userId, requireAdmin(ctx)),
     inviteProjectMember: async (_: unknown, args: { projectId: string; email: string; role?: GqlRole | null }, ctx: Ctx) => {
       const user = requireUser(ctx);
       await requireProject(ctx, args.projectId, 'admin');
@@ -621,7 +1012,7 @@ export const resolvers = {
 
     createProject: async (_: unknown, { input }: { input: CreateProjectInput }, ctx: Ctx) => {
       const user = requireUser(ctx);
-      const project = await projectService.create(input);
+      const project = await projectService.create(input, user.id);
       await userService.addCreator(project.id, user);
       return project;
     },
@@ -634,7 +1025,7 @@ export const resolvers = {
     },
     prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
-      return projectService.prepareWorkspace(args.id);
+      return projectService.prepareWorkspace(args.id, requireUser(ctx).id);
     },
     startProjectRunner: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
@@ -664,7 +1055,7 @@ export const resolvers = {
       ctx: Ctx,
     ) => {
       await requireProject(ctx, input.projectId, 'member');
-      return sessionService.create({ ...input, autoStart: input.autoStart ?? true });
+      return sessionService.create({ ...input, ownerId: requireUser(ctx).id, autoStart: input.autoStart ?? true });
     },
     startSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
@@ -673,6 +1064,19 @@ export const resolvers = {
     stopSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return sessionService.stop(args.id);
+    },
+    archiveSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      await scheduleService.remove(args.id).catch(() => undefined);
+      return sessionService.archive(args.id);
+    },
+    unarchiveSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.unarchive(args.id);
+    },
+    relaunchSession: async (_: unknown, args: { id: string; input: RelaunchInput }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return sessionService.relaunch(args.id, { ...args.input, ownerId: requireUser(ctx).id });
     },
     deleteSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
@@ -723,11 +1127,11 @@ export const resolvers = {
     },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');
-      return requestService.answer(args.id, args.response ?? {});
+      return requestService.answer(args.id, args.response ?? {}, requireUser(ctx).id);
     },
     cancelRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');
-      return requestService.cancel(args.id);
+      return requestService.cancel(args.id, requireUser(ctx).id);
     },
 
     markNotificationRead: async (_: unknown, args: { id: string }, ctx: Ctx) => {
@@ -744,65 +1148,100 @@ export const resolvers = {
     },
     updateTask: async (_: unknown, { id, input }: { id: string; input: GqlTaskInput }, ctx: Ctx) => {
       await guardTask(ctx, id, 'member');
-      return taskService.update(id, toTaskInput(input));
+      return taskService.update(id, toTaskInput(input), actorOf(requireUser(ctx)));
     },
     deleteTask: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
       return taskService.delete(args.id);
     },
-    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null; dedicatedWorktree?: boolean | null }, ctx: Ctx) => {
+    addTaskComment: async (_: unknown, args: { taskId: string; body: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.taskId, 'member');
+      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)));
+    },
+    updateTaskComment: async (_: unknown, args: { id: string; body: string }, ctx: Ctx) => {
+      const { comment } = await guardComment(ctx, args.id);
+      if (comment.authorUserId !== requireUser(ctx).id) throw new AppError('Seul l\'auteur modifie son commentaire', 'FORBIDDEN');
+      return taskService.updateComment(args.id, args.body);
+    },
+    deleteTaskComment: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const { comment, role } = await guardComment(ctx, args.id);
+      if (comment.authorUserId !== requireUser(ctx).id && role !== 'admin') throw new AppError("Seuls l'auteur et les administrateurs du projet suppriment un commentaire", 'FORBIDDEN');
+      return taskService.deleteComment(args.id);
+    },
+    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null; dedicatedWorktree?: boolean | null; prompt?: string | null }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
-      return startTaskSession(args.id, args);
+      return startTaskSession(args.id, { ...args, ownerId: requireUser(ctx).id });
+    },
+    createProjectApiKey: async (_: unknown, args: { projectId: string; name: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'admin');
+      return apiKeyService.create(args.projectId, args.name, requireUser(ctx).id);
+    },
+    deleteProjectApiKey: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, (await apiKeyService.get(args.id)).projectId, 'admin');
+      return apiKeyService.delete(args.id);
     },
     createTerminal: async (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return terminalService.create(args.projectId, args.name, args.worktreeId);
+      return terminalService.create(args.projectId, args.name, args.worktreeId, requireUser(ctx).id);
     },
-    createWorktree: async (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null }, ctx: Ctx) => {
+    createWorktree: async (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null; label?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return worktreeService.create(args.projectId, args);
+      return worktreeService.create(args.projectId, args, requireUser(ctx).id);
+    },
+    renameWorktree: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
+      await guardWorktree(ctx, args.id, 'member');
+      return worktreeService.rename(args.id, args);
+    },
+    archiveWorktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorktree(ctx, args.id, 'member');
+      return archiveWorktreeCascade(args.id);
+    },
+    restoreWorktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorktree(ctx, args.id, 'member');
+      return restoreWorktreeCascade(args.id);
     },
     deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
       await guardWorktree(ctx, args.id, 'member');
       return deleteWorktreeCascade(args.id, args.deleteBranch ?? false);
     },
-    // Connexions : identifiants et politique d'accès des agents, réservés aux administrateurs du projet.
-    createConnection: async (_: unknown, args: { projectId: string; input: ConnectionInput }, ctx: Ctx) => {
+    // Coffre : les droits sont vérifiés par le service (use / read / manage) ; un projet propriétaire exige un administrateur.
+    createVaultItem: async (_: unknown, args: { projectId?: string | null; input: VaultItemInput }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId, 'admin');
+      return vaultService.create(vaultActor(ctx), args.projectId ?? null, args.input);
+    },
+    updateVaultItem: (_: unknown, args: { id: string; input: VaultItemInput }, ctx: Ctx) => vaultService.update(vaultActor(ctx), args.id, args.input),
+    deleteVaultItem: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.delete(vaultActor(ctx), args.id),
+    testVaultItem: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const { item, result } = await vaultService.test(vaultActor(ctx), args.id);
+      return { item, ...result };
+    },
+    regenerateVaultKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.regenerateKey(vaultActor(ctx), args.id),
+    forgetVaultHostKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.forgetHostKey(vaultActor(ctx), args.id),
+    revealVaultSecret: async (_: unknown, args: { id: string; field: string }, ctx: Ctx) => ({ field: args.field, value: await vaultService.reveal(vaultActor(ctx), args.id, args.field) }),
+    shareVaultItem: (_: unknown, args: { id: string; email: string; permission: string }, ctx: Ctx) => vaultService.share(vaultActor(ctx), args.id, args.email, fromGqlPermission(args.permission)),
+    unshareVaultItem: (_: unknown, args: { id: string; userId: string }, ctx: Ctx) => vaultService.unshare(vaultActor(ctx), args.id, args.userId),
+    linkVaultItem: (_: unknown, args: { id: string; projectId: string; scope: string }, ctx: Ctx) => vaultService.link(vaultActor(ctx), args.id, args.projectId, fromGqlScope(args.scope)),
+    unlinkVaultItem: (_: unknown, args: { linkId: string }, ctx: Ctx) => vaultService.unlink(vaultActor(ctx), args.linkId),
+    copyVaultItem: async (_: unknown, args: { id: string; projectId: string; name?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');
-      return connectionService.create(args.projectId, args.input);
+      return vaultService.copyToProject(vaultActor(ctx), args.id, args.projectId, args.name);
     },
-    updateConnection: async (_: unknown, args: { id: string; input: ConnectionInput }, ctx: Ctx) => {
-      await guardConnection(ctx, args.id, 'admin');
-      return connectionService.update(args.id, args.input);
+    publishSharedPage: async (_: unknown, args: WorkspaceRef & { path: string; title: string; pageId?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      if (!/\.html?$/i.test(args.path)) throw new AppError('Seul un fichier HTML (.html) peut être publié');
+      const file = await readRawFile(args, args.path);
+      return sharedPageService.publish({ ownerId: requireUser(ctx).id, title: args.title, html: file.data, pageId: args.pageId ?? null, projectId: args.projectId, sourcePath: args.path });
     },
-    deleteConnection: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardConnection(ctx, args.id, 'admin');
-      return connectionService.delete(args.id);
+    updateSharedPage: (_: unknown, args: { id: string; input: { title?: string | null; description?: string | null; linkAccess?: boolean | null } }, ctx: Ctx) => sharedPageService.update(requireUser(ctx).id, args.id, args.input),
+    addSharedPageMember: (_: unknown, args: { id: string; email: string }, ctx: Ctx) => sharedPageService.addMember(requireUser(ctx), args.id, args.email),
+    removeSharedPageMember: (_: unknown, args: { id: string; userId: string }, ctx: Ctx) => sharedPageService.removeMember(requireUser(ctx), args.id, args.userId),
+    deleteSharedPage: (_: unknown, args: { id: string }, ctx: Ctx) => sharedPageService.delete(requireUser(ctx).id, args.id),
+    subscribePush: async (_: unknown, args: { input: PushSubscriptionInput }, ctx: Ctx) => {
+      await pushService.subscribe(requireUser(ctx).id, args.input);
+      return true;
     },
-    testConnection: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardConnection(ctx, args.id, 'admin');
-      const { connection, result } = await connectionService.test(args.id);
-      return { connection, ...result };
-    },
-    regenerateConnectionKey: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardConnection(ctx, args.id, 'admin');
-      return connectionService.regenerateKey(args.id);
-    },
-    forgetConnectionHostKey: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardConnection(ctx, args.id, 'admin');
-      return connectionService.forgetHostKey(args.id);
-    },
-    checkGoogleAccount: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await requireProject(ctx, (await googleAccountService.get(args.id)).projectId, 'admin');
-      const { account, result } = await googleAccountService.check(args.id);
-      return { account, ...result };
-    },
-    disconnectGoogleAccount: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      const { projectId } = await googleAccountService.get(args.id);
-      await requireProject(ctx, projectId, 'admin');
-      await googleAccountService.disconnect(args.id);
-      return projectService.get(projectId);
-    },
+    unsubscribePush: (_: unknown, args: { endpoint: string }, ctx: Ctx) => pushService.unsubscribe(requireUser(ctx).id, args.endpoint),
+    sendTestPush: (_: unknown, __: unknown, ctx: Ctx) => pushService.test(requireUser(ctx).id),
     closeTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTerminal(ctx, args.id, 'member');
       return terminalService.close(args.id);
@@ -885,7 +1324,7 @@ export const resolvers = {
     notificationCreated: {
       subscribe: (_: unknown, __: unknown, ctx: Ctx) => {
         requireUser(ctx);
-        return filterAsync(pubSub.subscribe('notificationCreated'), async (n: Notification) => (!n.adminsOnly || Boolean(ctx.user?.isAdmin)) && canAccessProject(ctx, n.projectId));
+        return filterAsync(pubSub.subscribe('notificationCreated'), async (n: Notification) => (n.userId ? n.userId === ctx.user?.id : (!n.adminsOnly || Boolean(ctx.user?.isAdmin)) && (await canAccessProject(ctx, n.projectId))));
       },
       resolve: (payload: unknown) => payload,
     },

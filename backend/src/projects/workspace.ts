@@ -23,9 +23,14 @@ export async function workspaceExists(project: Pick<Project, 'slug'>): Promise<b
   }
 }
 
-export async function git(args: string[], cwd?: string): Promise<string> {
-  // Les dépôts GitHub en https utilisent le jeton de la connexion GitHub (Paramètres), s'il existe.
-  const auth = await githubService.gitConfigArgs().catch(() => []);
+/** Arguments d'authentification git d'une personne pour le dépôt d'un projet (jeton de son compte GitHub qui sert le dépôt), vides sans compte. */
+export async function gitAuthFor(project: Pick<Project, 'gitUrl'>, actorId: string | null | undefined): Promise<string[]> {
+  if (!actorId || !project.gitUrl) return [];
+  return githubService.gitConfigArgs(actorId, project.gitUrl).catch(() => []);
+}
+
+/** Commande git ; `auth` : arguments `-c` d'authentification (voir `gitAuthFor`), pour les opérations qui contactent le dépôt distant. */
+export async function git(args: string[], cwd?: string, auth: string[] = []): Promise<string> {
   try {
     const { stdout } = await execFileAsync('git', [...auth, ...args], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
     return stdout.trim();
@@ -60,14 +65,14 @@ async function isEmptyDir(dir: string): Promise<boolean> {
  * configurée, simple dossier vide sinon. Un dossier existant mais vide est cloné également
  * (cas d'un projet auquel on associe un dépôt après coup). Un dossier non vide n'est jamais touché.
  */
-export async function ensureWorkspace(project: Project): Promise<string> {
+export async function ensureWorkspace(project: Project, actorId?: string | null): Promise<string> {
   const dir = workspacePath(project);
   if (await workspaceExists(project)) {
     if (project.gitUrl && (await isEmptyDir(dir))) {
       const args = ['clone'];
       if (project.gitBranch) args.push('--branch', project.gitBranch);
       args.push('--', project.gitUrl, dir);
-      await git(args);
+      await git(args, undefined, await gitAuthFor(project, actorId));
     }
     return dir;
   }
@@ -76,7 +81,7 @@ export async function ensureWorkspace(project: Project): Promise<string> {
     const args = ['clone'];
     if (project.gitBranch) args.push('--branch', project.gitBranch);
     args.push('--', project.gitUrl, dir);
-    await git(args);
+    await git(args, undefined, await gitAuthFor(project, actorId));
   } else {
     await mkdir(dir, { recursive: true });
   }

@@ -1,9 +1,9 @@
 import { AppError } from '../errors.js';
 import { resolveRoot, type WorkspaceRef } from '../files/service.js';
 import { projectService } from '../projects/service.js';
-import { git, workspacePath } from '../projects/workspace.js';
+import { git, gitAuthFor, workspacePath } from '../projects/workspace.js';
 import { sessionService } from '../sessions/service.js';
-import { githubService } from '../settings/github.js';
+import { githubOwnerOf, githubService } from '../settings/github.js';
 import { taskRepository } from '../tasks/repository.js';
 import { taskService } from '../tasks/service.js';
 import { terminalService } from '../terminals/service.js';
@@ -128,9 +128,11 @@ export function buildDraftText(branch: string, commits: { subject: string }[], t
 
 // --- Appels GitHub -----------------------------------------------------------
 
-async function requireToken(): Promise<string> {
-  const token = await githubService.token();
-  if (!token) throw new AppError('GitHub non connecté : ajoutez un jeton dans Paramètres → GitHub');
+/** Jeton GitHub de la personne qui agit, pour le dépôt du projet (compte qui le sert, sinon compte par défaut). */
+async function requireToken(projectId: string, userId: string | null | undefined): Promise<string> {
+  const project = await projectService.get(projectId);
+  const token = await githubService.token(userId, githubOwnerOf(project.gitUrl));
+  if (!token) throw new AppError('GitHub non connecté : connectez un compte dans Paramètres → GitHub', 'GITHUB_NOT_CONNECTED');
   return token;
 }
 
@@ -153,8 +155,7 @@ class RestError extends AppError {
   }
 }
 
-async function rest<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const token = await requireToken();
+async function rest<T>(token: string, method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
     headers: {
@@ -172,8 +173,7 @@ async function rest<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T;
 }
 
-async function graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const token = await requireToken();
+async function graphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'skipper', Authorization: `Bearer ${token}` },
@@ -317,9 +317,9 @@ async function projectRepo(projectId: string): Promise<GithubRepoRef> {
   return repo;
 }
 
-async function defaultBranch(repo: GithubRepoRef): Promise<string> {
+async function defaultBranch(repo: GithubRepoRef, token: string): Promise<string> {
   return cached(repoKey(repo, 'default'), async () => {
-    const r = await rest<{ default_branch: string }>('GET', `/repos/${repo.owner}/${repo.name}`);
+    const r = await rest<{ default_branch: string }>(token, 'GET', `/repos/${repo.owner}/${repo.name}`);
     return r.default_branch;
   });
 }
@@ -339,12 +339,15 @@ export const pullRequestService = {
   isGithubProject: async (projectId: string) => Boolean(parseGithubRepo((await projectService.get(projectId)).gitUrl)),
 
   /** PR du dépôt du projet, les plus récemment mises à jour d'abord. */
-  async list(projectId: string, filter: PullRequestFilter = 'OPEN', limit = 50): Promise<PullRequest[]> {
+  /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt. */
+  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50): Promise<PullRequest[]> {
     const repo = await projectRepo(projectId);
+    const token = await requireToken(projectId, userId);
     const states = filter === 'ALL' ? ['OPEN', 'CLOSED', 'MERGED'] : [filter];
     const first = Math.min(Math.max(limit, 1), 100);
-    const nodes = await cached(repoKey(repo, `list:${states.join(',')}:${first}`), async () => {
+    const nodes = await cached(repoKey(repo, `list:${states.join(',')}:${first}:${userId ?? ''}`), async () => {
       const data = await graphql<{ repository: { pullRequests: { nodes: GqlPullRequest[] } } }>(
+        token,
         `query($owner: String!, $name: String!, $states: [PullRequestState!], $first: Int!) {
           repository(owner: $owner, name: $name) {
             pullRequests(states: $states, first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }
@@ -357,9 +360,11 @@ export const pullRequestService = {
     return nodes.map((p) => toPullRequest(projectId, p));
   },
 
-  async get(projectId: string, number: number): Promise<PullRequest> {
+  async get(projectId: string, userId: string | null | undefined, number: number): Promise<PullRequest> {
     const repo = await projectRepo(projectId);
+    const token = await requireToken(projectId, userId);
     const data = await graphql<{ repository: { pullRequest: GqlPullRequest | null } }>(
+      token,
       `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} } } }`,
       { owner: repo.owner, name: repo.name, number },
     );
@@ -371,9 +376,9 @@ export const pullRequestService = {
    * PR la plus récente d'une branche (ouverte de préférence), parmi les 100 dernières du dépôt.
    * Null si le projet n'est pas sur GitHub ou si GitHub ne répond pas : sert à l'affichage des tâches.
    */
-  async forBranch(projectId: string, branch: string): Promise<PullRequest | null> {
+  async forBranch(projectId: string, userId: string | null | undefined, branch: string): Promise<PullRequest | null> {
     try {
-      const all = (await this.list(projectId, 'ALL', 100)).filter((p) => p.headRefName === branch && !p.isCrossRepository);
+      const all = (await this.list(projectId, userId, 'ALL', 100)).filter((p) => p.headRefName === branch && !p.isCrossRepository);
       return all.find((p) => p.state === 'OPEN') ?? all[0] ?? null;
     } catch {
       return null;
@@ -381,14 +386,15 @@ export const pullRequestService = {
   },
 
   /** Titre, description et base proposés pour une PR de la branche courante du workspace. */
-  async draft(ref: WorkspaceRef): Promise<PullRequestDraft> {
+  async draft(ref: WorkspaceRef, userId: string | null | undefined): Promise<PullRequestDraft> {
     const repo = await projectRepo(ref.projectId);
     const project = await projectService.get(ref.projectId);
+    const token = await requireToken(ref.projectId, userId);
     const cwd = await resolveRoot(ref);
     const branch = await currentBranch(cwd);
-    const base = project.gitBranch || (await defaultBranch(repo));
+    const base = project.gitBranch || (await defaultBranch(repo, token));
     if (branch === base) throw new AppError(`Vous êtes sur la branche de base (${base}) : créez ou choisissez une autre branche`);
-    await git(['fetch', 'origin', base], cwd).catch(() => undefined);
+    await git(['fetch', 'origin', base], cwd, await gitAuthFor(project, userId)).catch(() => undefined);
     const baseRef = (await git(['rev-parse', '--verify', '--quiet', `origin/${base}`], cwd).catch(() => '')) ? `origin/${base}` : base;
     const log = await git(['log', '--format=%H%x1f%s', `${baseRef}..HEAD`], cwd).catch(() => '');
     const commits = log
@@ -401,31 +407,32 @@ export const pullRequestService = {
     const upstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd).catch(() => '');
     const task = (await taskRepository.list({ projectId: ref.projectId, limit: 1000 })).find((t) => t.branch === branch);
     const { title, body } = buildDraftText(branch, commits, task?.title);
-    const existing = (await this.list(ref.projectId, 'OPEN')).find((p) => p.headRefName === branch && !p.isCrossRepository) ?? null;
+    const existing = (await this.list(ref.projectId, userId, 'OPEN')).find((p) => p.headRefName === branch && !p.isCrossRepository) ?? null;
     return { branch, base, title, body, commits, needsPush: !upstream, existing };
   },
 
   /** Pousse la branche courante du workspace puis ouvre la PR. */
-  async create(ref: WorkspaceRef, input: { title: string; body?: string | null; base?: string | null; draft?: boolean | null }): Promise<PullRequest> {
+  async create(ref: WorkspaceRef, userId: string | null | undefined, input: { title: string; body?: string | null; base?: string | null; draft?: boolean | null }): Promise<PullRequest> {
     const repo = await projectRepo(ref.projectId);
     const project = await projectService.get(ref.projectId);
+    const token = await requireToken(ref.projectId, userId);
     const title = input.title.trim();
     if (!title) throw new AppError('Le titre de la pull request est vide');
     const cwd = await resolveRoot(ref);
     const branch = await currentBranch(cwd);
-    const base = validateBranchName(input.base?.trim() || project.gitBranch || (await defaultBranch(repo)));
+    const base = validateBranchName(input.base?.trim() || project.gitBranch || (await defaultBranch(repo, token)));
     if (branch === base) throw new AppError('La branche et la base sont identiques');
-    await gitService.push(ref);
+    await gitService.push(ref, userId);
     let created: { number: number };
     try {
-      created = await rest<{ number: number }>('POST', `/repos/${repo.owner}/${repo.name}/pulls`, { title, head: branch, base, body: input.body ?? '', draft: Boolean(input.draft) });
+      created = await rest<{ number: number }>(token, 'POST', `/repos/${repo.owner}/${repo.name}/pulls`, { title, head: branch, base, body: input.body ?? '', draft: Boolean(input.draft) });
     } catch (err) {
       if (err instanceof RestError && err.status === 422 && /already exists/i.test(err.message)) throw new AppError(`Une pull request est déjà ouverte pour la branche ${branch}`);
       if (err instanceof RestError && err.status === 422 && /No commits between/i.test(err.message)) throw new AppError(`Aucun commit entre ${base} et ${branch} : rien à proposer`);
       throw err;
     }
     invalidate(repo);
-    return this.get(ref.projectId, created.number);
+    return this.get(ref.projectId, userId, created.number);
   },
 
   /**
@@ -433,14 +440,15 @@ export const pullRequestService = {
    * la branche de la PR (sessions encore ouvertes arrêtées si `stopSessions`), tâches liées terminées.
    * Le checkout principal est ensuite mis à jour (fetch, et pull si sa branche est la base).
    */
-  async merge(projectId: string, number: number, method: MergeMethod = 'MERGE', cleanup: MergeCleanup = {}): Promise<MergeResult> {
+  async merge(projectId: string, userId: string | null | undefined, number: number, method: MergeMethod = 'MERGE', cleanup: MergeCleanup = {}): Promise<MergeResult> {
     const repo = await projectRepo(projectId);
-    const pr = await this.get(projectId, number);
+    const token = await requireToken(projectId, userId);
+    const pr = await this.get(projectId, userId, number);
     if (pr.state !== 'OPEN') throw new AppError(`La pull request #${number} n'est pas ouverte`);
     if (pr.isDraft) throw new AppError('Pull request en brouillon : marquez-la prête pour la revue sur GitHub avant de la fusionner');
     let sha: string | null = null;
     try {
-      const res = await rest<{ sha: string; merged: boolean; message: string }>('PUT', `/repos/${repo.owner}/${repo.name}/pulls/${number}/merge`, { merge_method: method.toLowerCase() });
+      const res = await rest<{ sha: string; merged: boolean; message: string }>(token, 'PUT', `/repos/${repo.owner}/${repo.name}/pulls/${number}/merge`, { merge_method: method.toLowerCase() });
       sha = res.sha;
     } catch (err) {
       if (err instanceof RestError && err.status === 405) throw new AppError(`Fusion refusée par GitHub : ${err.message.replace(/^GitHub \(405\) : /, '')}`);
@@ -455,10 +463,11 @@ export const pullRequestService = {
     const branch = pr.headRefName;
     const project = await projectService.get(projectId);
     const main = workspacePath(project);
+    const auth = await gitAuthFor(project, userId);
 
     if (cleanup.deleteRemoteBranch && !pr.isCrossRepository) {
       try {
-        await rest('DELETE', `/repos/${repo.owner}/${repo.name}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`);
+        await rest(token, 'DELETE', `/repos/${repo.owner}/${repo.name}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`);
       } catch (err) {
         // 422 : déjà supprimée (suppression automatique des branches activée sur le dépôt).
         if (!(err instanceof RestError && err.status === 422)) warnings.push(`Branche distante ${branch} conservée : ${(err as Error).message}`);
@@ -501,13 +510,13 @@ export const pullRequestService = {
     }
 
     // Met à jour le checkout principal : références distantes, et avance rapide si on est sur la base.
-    await git(['fetch', '--prune', 'origin'], main).catch(() => undefined);
+    await git(['fetch', '--prune', 'origin'], main, auth).catch(() => undefined);
     const mainBranch = await git(['rev-parse', '--abbrev-ref', 'HEAD'], main).catch(() => '');
     if (mainBranch === pr.baseRefName) {
-      await git(['pull', '--ff-only'], main).catch((err) => warnings.push(`Dossier principal non mis à jour : ${(err as Error).message}`));
+      await git(['pull', '--ff-only'], main, auth).catch((err) => warnings.push(`Dossier principal non mis à jour : ${(err as Error).message}`));
     }
 
-    const merged = await this.get(projectId, number).catch(() => ({ ...pr, state: 'MERGED' as const, mergedAt: new Date() }));
+    const merged = await this.get(projectId, userId, number).catch(() => ({ ...pr, state: 'MERGED' as const, mergedAt: new Date() }));
     return { pullRequest: merged, sha, deletedWorktreeIds, completedTaskIds, warnings };
   },
 };

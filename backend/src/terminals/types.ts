@@ -4,6 +4,8 @@ export interface TerminalRecord {
   id: string;
   projectId: string;
   worktreeId: string | null;
+  /** Utilisateur qui a ouvert le terminal : seul lui le voit et s'y attache (null : terminal d'avant cette version). */
+  createdById: string | null;
   name: string;
   status: TerminalStatus;
   exitCode: number | null;

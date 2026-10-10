@@ -1,21 +1,33 @@
 import { useQuery } from '@apollo/client';
-import PageLoading from '../components/PageLoading';
-import { Alert, Button, Table } from 'react-bootstrap';
+import { useState } from 'react';
+import { Alert, Badge, Button, Form, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
-import { PROJECTS, type Project } from '../graphql/operations';
+import { useAuth } from '../auth/AuthContext';
+import PageLoading from '../components/PageLoading';
 import { useSessionLauncher } from '../components/SessionLauncher';
+import { PROJECTS, type Project } from '../graphql/operations';
+import { usePollingQuery } from '../lib/usePollingQuery';
+import { useTabTitle } from '../workbench/TabsContext';
 
 export default function ProjectsPage() {
-  const { data, loading, error } = useQuery<{ projects: Project[] }>(PROJECTS, { pollInterval: 10000 });
+  const { user } = useAuth();
+  useTabTitle('Projets');
+  // Un super administrateur voit tous les projets ; il peut se limiter à ceux dont il est membre.
+  const [all, setAll] = useState(true);
+  const superAdmin = Boolean(user?.isSuperAdmin);
+  const { data, loading, error } = usePollingQuery<{ projects: Project[] }>(PROJECTS, { variables: { all: superAdmin ? all : null }, pollInterval: 10_000 });
   const { openNewSession } = useSessionLauncher();
 
   return (
     <>
-      <div className="d-flex align-items-center justify-content-between mb-3">
+      <div className="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
         <h1 className="h3 mb-0">Projets</h1>
-        <Button as={Link as any} to="/projects/new" size="sm">
-          Nouveau projet
-        </Button>
+        <div className="d-flex align-items-center gap-3">
+          {superAdmin && <Form.Check type="switch" id="projects-all" label="Tous les projets" checked={all} onChange={(e) => setAll(e.target.checked)} title="Super administrateur : afficher aussi les projets dont vous n'êtes pas membre" />}
+          <Button as={Link as any} to="/projects/new" size="sm">
+            Nouveau projet
+          </Button>
+        </div>
       </div>
 
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
@@ -43,6 +55,11 @@ export default function ProjectsPage() {
               <tr key={p.id}>
                 <td>
                   <Link to={`/projects/${p.id}`}>{p.name}</Link>
+                  {!p.isMember && (
+                    <Badge bg="secondary" className="ms-2" title="Vous n'êtes pas membre : accès de super administrateur">
+                      non membre
+                    </Badge>
+                  )}
                   {p.description && <div className="small text-secondary">{p.description}</div>}
                 </td>
                 <td className="small">

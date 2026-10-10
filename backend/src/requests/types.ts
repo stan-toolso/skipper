@@ -11,6 +11,8 @@ export interface HumanRequest {
   message: string | null;
   payload: Record<string, unknown>;
   response: Record<string, unknown> | null;
+  /** Qui a répondu (ou annulé), le cas échéant. */
+  answeredById: string | null;
   createdAt: Date;
   answeredAt: Date | null;
 }

@@ -98,6 +98,16 @@ function assertValidName(name: string): void {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\') || name.includes('\0')) throw new AppError(`Nom invalide : "${name}"`);
 }
 
+/** Lecture binaire d'un fichier (aperçu HTML, téléchargement), 100 Mo au plus. */
+export async function readRawFile(ref: WorkspaceRef, rel: string): Promise<{ name: string; data: Buffer; modifiedAt: Date }> {
+  const root = await resolveRoot(ref);
+  const { abs } = await safePath(root, rel);
+  const s = await stat(abs).catch(() => null);
+  if (!s || !s.isFile()) throw new NotFoundError('Fichier introuvable');
+  if (s.size > 100 * 1024 * 1024) throw new AppError('Fichier trop volumineux (100 Mo au plus)');
+  return { name: path.basename(abs), data: await readFile(abs), modifiedAt: s.mtime };
+}
+
 export const fileService = {
   async list(ref: WorkspaceRef, rel = ''): Promise<FileEntry[]> {
     const root = await resolveRoot(ref);

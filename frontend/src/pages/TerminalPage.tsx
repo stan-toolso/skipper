@@ -13,9 +13,10 @@ import { CLOSE_TERMINAL, TERMINAL, TERMINAL_NAME, type Terminal } from '../graph
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { useTheme } from '../lib/theme';
 
 
-const theme = {
+const darkTheme = {
   background: '#141414',
   foreground: '#e8e6e3',
   cursor: '#d97757',
@@ -31,6 +32,22 @@ const theme = {
   cyan: '#56b6c2',
   white: '#e8e6e3',
 };
+const lightTheme = {
+  background: '#ffffff',
+  foreground: '#1f2328',
+  cursor: '#b85c3a',
+  cursorAccent: '#ffffff',
+  selectionBackground: 'rgba(184, 92, 58, 0.25)',
+  black: '#24292f',
+  brightBlack: '#6e7781',
+  red: '#cf222e',
+  green: '#1a7f37',
+  yellow: '#9a6700',
+  blue: '#0969da',
+  magenta: '#8250df',
+  cyan: '#1b7c83',
+  white: '#6e7781',
+};
 
 /** Terminal web : xterm.js relié par WebSocket au shell lancé dans le workspace du projet. */
 export default function TerminalPage() {
@@ -40,20 +57,27 @@ export default function TerminalPage() {
   const { deleteTerminal } = useDeletions();
   const cachedName = useCachedName(TERMINAL_NAME, 'Terminal', id);
   const containerRef = useRef<HTMLDivElement>(null);
+  const uiTheme = useTheme();
+  const termRef = useRef<XTerm | null>(null);
+  // Le terminal suit le thème de l'application sans être recréé.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = uiTheme === 'light' ? lightTheme : darkTheme;
+  }, [uiTheme]);
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const terminal = data?.terminal;
   useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : cachedName);
-  useGitTarget(terminal ? { projectId: terminal.project.id, worktreeId: terminal.worktree?.id ?? null, label: terminal.worktree ? `${terminal.project.name} · ${terminal.worktree.branch}` : terminal.project.name } : null);
+  useGitTarget(terminal ? { projectId: terminal.project.id, worktreeId: terminal.worktree?.id ?? null, label: terminal.worktree ? `${terminal.project.name} · ${terminal.worktree.label}` : terminal.project.name } : null);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !terminal || terminal.status !== 'RUNNING') return;
 
-    const term = new XTerm({ theme, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: 13, cursorBlink: true, scrollback: 5000, allowProposedApi: true });
+    const term = new XTerm({ theme: uiTheme === 'light' ? lightTheme : darkTheme, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontSize: 13, cursorBlink: true, scrollback: 5000, allowProposedApi: true });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(container);
+    termRef.current = term;
     fit.fit();
 
     const ws = new WebSocket(terminalSocketUrl(terminal.id));
@@ -97,6 +121,7 @@ export default function TerminalPage() {
       input.dispose();
       ws.close();
       term.dispose();
+      termRef.current = null;
     };
   }, [terminal?.id, terminal?.status]);
 
@@ -129,7 +154,7 @@ export default function TerminalPage() {
             {terminal.worktree && (
               <>
                 {' '}
-                · <i className="bi bi-diagram-2" /> {terminal.worktree.branch}
+                · <i className="bi bi-diagram-2" /> {terminal.worktree.label}
               </>
             )}{' '}
             · {terminal.worktree?.path ?? terminal.project.workspacePath}
