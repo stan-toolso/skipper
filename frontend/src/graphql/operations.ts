@@ -1038,6 +1038,7 @@ export const SIDEBAR = gql`
       gitUrl
       gitBranch
       isMember
+      myRole
       sessions(limit: 50) {
         ...SidebarSession
         worktree {

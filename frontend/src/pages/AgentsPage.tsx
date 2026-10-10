@@ -1,7 +1,7 @@
 import { useQuery } from '@apollo/client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Form } from 'react-bootstrap';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AgentEditor from '../components/automation/AgentEditor';
 import { RunStatusBadge } from '../components/automation/RunBadges';
 import PageLoading from '../components/PageLoading';
@@ -22,7 +22,12 @@ export default function AgentsPage() {
   const { data, loading, error } = usePollingQuery<{ agents: Agent[] }>(AGENTS, { variables: { projectId }, pollInterval: 10_000 });
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const [creating, setCreating] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // « ?new=1 » (menu du projet dans la sidebar) : ouvre tout de suite la création, puis s'efface de l'adresse.
+  const [creating, setCreating] = useState(searchParams.has('new'));
+  useEffect(() => {
+    if (searchParams.has('new')) setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [search, setSearch] = useState('');
   const project = routeProjectId ? projectsData?.projects.find((p) => p.id === routeProjectId) : null;
   useTabTitle(project ? `Agents · ${project.name}` : 'Agents');
