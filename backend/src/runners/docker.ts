@@ -60,6 +60,11 @@ export class DockerRunner implements Runner {
     return path.join(config.workspacesRoot, '.runners', project.slug, 'claude');
   }
 
+  /** Dossier `~/.claude` persistant du conteneur : conversations Claude Code du projet (reprises après recréation), sans les identifiants de l'hôte. */
+  private claudeHome(project: Project): string {
+    return path.join(config.workspacesRoot, '.runners', project.slug, 'claude-home');
+  }
+
   private async writeRelay(project: Project): Promise<string> {
     const file = this.relayPath(project);
     await mkdir(path.dirname(file), { recursive: true });
@@ -95,8 +100,9 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const worktrees = worktreesRoot(project);
     const plugin = contextPluginDir(project);
     const attachments = attachmentsRoot(project);
+    const claudeHome = this.claudeHome(project);
     // Les dossiers montés doivent exister avant `docker run`, sinon Docker les crée appartenant à root.
-    await Promise.all([mkdir(worktrees, { recursive: true }), mkdir(plugin, { recursive: true }), mkdir(attachments, { recursive: true })]);
+    await Promise.all([mkdir(worktrees, { recursive: true }), mkdir(plugin, { recursive: true }), mkdir(attachments, { recursive: true }), mkdir(claudeHome, { recursive: true, mode: 0o700 })]);
     const home = os.homedir();
     const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
     const gid = typeof process.getgid === 'function' ? process.getgid() : 1000;
@@ -110,10 +116,12 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
         // Le serveur Skipper reste joignable depuis le conteneur (ponts MCP des sessions OpenCode), y compris sous Linux.
         '--add-host', 'host.docker.internal:host-gateway',
         // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de
-        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; le montage de
-        // ~/.gitconfig vient s'y superposer. Les identifiants Claude de l'hôte (~/.claude) ne sont jamais
-        // montés : chaque session reçoit ceux de son propriétaire par variables d'environnement.
+        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; ~/.claude (propre au
+        // projet : ses conversations, qui survivent à la recréation) et ~/.gitconfig viennent s'y superposer.
+        // Les identifiants Claude de l'hôte ne sont jamais montés : chaque session reçoit ceux de son
+        // propriétaire par variables d'environnement.
         '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0750,size=512m`,
+        '-v', `${claudeHome}:${path.join(home, '.claude')}`,
         // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
         '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
         // Le code, les worktrees, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
