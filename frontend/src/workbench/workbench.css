@@ -80,7 +80,7 @@
 .wb-row-actions { visibility: hidden; display: flex; gap: 6px; }
 .wb-row-actions a { color: var(--cc-dim); text-decoration: none; }
 .wb-row-actions a:hover { color: var(--cc-accent); }
-.wb-project-row:hover .wb-row-actions, .wb-session-row:hover .wb-row-actions, .wb-row-actions.open { visibility: visible; }
+.wb-project-row:hover .wb-row-actions, .wb-session-row:hover .wb-row-actions, .wb-ws-head:hover .wb-row-actions, .wb-row-actions.open { visibility: visible; }
 .wb-session-row .wb-row-actions { margin-left: 4px; }
 .wb-pop-sep { border-top: 1px solid var(--cc-border); margin: 4px 0; }
 .wb-pop-item.danger { color: var(--cc-red); }
@@ -439,6 +439,7 @@
 @media (hover: none) {
   .wb-menu-item { padding: 9px 14px; }
   .wb-row { padding-top: 7px; padding-bottom: 7px; }
+  .wb-row-actions { visibility: visible; }
   .wb-tab-close { color: var(--cc-dim); }
   .fx-row { padding-top: 7px; padding-bottom: 7px; }
   .fx-actions { display: inline-flex; }

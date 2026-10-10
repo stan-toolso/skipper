@@ -1,4 +1,4 @@
-import type { SessionActivity, SessionStatus, TerminalStatus } from '../graphql/operations';
+import type { ProjectRole, SessionActivity, SessionStatus, TerminalStatus } from '../graphql/operations';
 
 /**
  * Dossiers de travail : le checkout principal d'un projet (« primary ») ou l'un de ses worktrees. Tout ce qui
@@ -43,6 +43,8 @@ export interface SidebarProject {
   gitUrl: string | null;
   gitBranch: string | null;
   isMember: boolean;
+  /** Rôle de la personne : ADMIN peut modifier et supprimer le projet. */
+  myRole: ProjectRole;
   sessions: SidebarSession[];
   terminals: SidebarTerminal[];
   worktrees: SidebarWorktree[];
