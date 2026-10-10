@@ -155,7 +155,7 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
           Quand un agent demande une autorisation, « ne plus demander dans ce projet » enregistre la règle ici : toutes les sessions du projet l'appliquent sans redemander. Modifier ou retirer une
           règle ne concerne que les prochaines sessions. Une règle Bash en <code>préfixe *</code> (ex. <code>git checkout *</code>) couvre toutes les commandes qui commencent ainsi.
         </p>
-        <Table size="sm" className="mb-3 align-middle">
+        <Table size="sm" className="mb-3 align-middle table-stack">
           <tbody>
             {rules.length === 0 && (
               <tr>
@@ -271,7 +271,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
     <Card className="mt-3">
       <Card.Header>Membres</Card.Header>
       <Card.Body className="small">
-        <Table size="sm" className="mb-3 align-middle">
+        <Table size="sm" className="mb-3 align-middle table-stack">
           <tbody>
             {members.map((m) => (
               <tr key={m.user.id}>
@@ -370,7 +370,7 @@ function WorktreesCard({ projectId }: { projectId: string }) {
           Le dossier principal suit la branche <code>{project.git?.branch ?? 'par défaut'}</code>. Un worktree extrait une autre branche dans son propre dossier : les agents y travaillent sans gêner le
           dossier principal. Un worktree archivé garde son dossier et ses sessions : voyez l'<Link to={`/projects/${projectId}/history`}>historique</Link>.
         </p>
-        <Table size="sm" className="mb-3">
+        <Table size="sm" className="mb-3 table-stack">
           <tbody>
             {project.worktrees.length === 0 && (
               <tr>
@@ -442,7 +442,7 @@ function ApiKeysCard({ projectId }: { projectId: string }) {
           </Alert>
         )}
         {keys.length > 0 && (
-          <Table size="sm" className="mb-2">
+          <Table size="sm" className="mb-2 table-stack">
             <tbody>
               {keys.map((k) => (
                 <tr key={k.id}>
@@ -644,9 +644,9 @@ export default function ProjectDetailPage() {
         <thead>
           <tr>
             <th>Nom</th>
-            <th>Type</th>
+            <th className="d-none d-md-table-cell">Type</th>
             <th>Statut</th>
-            <th>Branche</th>
+            <th className="d-none d-md-table-cell">Branche</th>
             <th>Créée</th>
           </tr>
         </thead>
@@ -663,13 +663,13 @@ export default function ProjectDetailPage() {
               <td>
                 <Link to={`/sessions/${s.id}`}>{s.name}</Link>
               </td>
-              <td>
+              <td className="d-none d-md-table-cell">
                 <code>{s.provider}</code>
               </td>
               <td>
                 <StatusBadge status={s.status} pendingRequests={s.pendingRequestCount} />
               </td>
-              <td className="text-secondary small">{s.worktree ? s.worktree.label : '—'}</td>
+              <td className="text-secondary small d-none d-md-table-cell">{s.worktree ? s.worktree.label : '—'}</td>
               <td className="text-secondary small">{new Date(s.createdAt).toLocaleString()}</td>
             </tr>
           ))}

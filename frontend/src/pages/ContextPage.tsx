@@ -245,7 +245,7 @@ function InstructionEditor({ id, folders, onDeleted }: { id: string; folders: Co
       {saveError && <Alert variant="danger">{saveError.message}</Alert>}
 
       <h3 className="h6 mt-3">Versions</h3>
-      <Table size="sm" hover className="small">
+      <Table size="sm" hover responsive className="small">
         <tbody>
           {(instruction.versions ?? []).map((v) => (
             <tr key={v.id} className={v.version === viewVersion ? 'table-active' : undefined} style={{ cursor: 'pointer' }} onClick={() => setViewVersion(v.version === instruction.version ? null : v.version)}>

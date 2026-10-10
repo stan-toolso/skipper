@@ -94,7 +94,7 @@
   top: 100%;
   z-index: 20;
   min-width: 190px;
-  background: #1c1c1c;
+  background: var(--cc-bg-elevated);
   border: 1px solid var(--cc-border);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -221,7 +221,7 @@
 .browser-state.error .browser-state-dot { background: var(--cc-red, var(--cc-red)); }
 .browser-urlbar {
   display: flex; align-items: center; gap: 8px; margin: 8px 14px 0; padding: 4px 10px;
-  border: 1px solid var(--cc-border); border-radius: 6px; background: #1c1c1c;
+  border: 1px solid var(--cc-border); border-radius: 6px; background: var(--cc-bg-elevated);
   font-family: var(--bs-font-monospace); font-size: 12px; color: var(--cc-dim);
 }
 .browser-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-fg); user-select: all; }
@@ -243,7 +243,7 @@
 /* Menu contextuel d'un onglet */
 .wb-ctx-menu {
   position: fixed; z-index: 40; min-width: 200px; padding: 4px 0;
-  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  background: var(--cc-bg-elevated); border: 1px solid var(--cc-border); border-radius: 6px; box-shadow: 0 12px 32px var(--cc-shadow);
   font-family: var(--bs-font-sans-serif); font-size: 13px;
 }
 .wb-ctx-menu button {
@@ -260,7 +260,7 @@
 .wb-tabs-count { margin-left: 4px; font-size: 11px; color: var(--cc-dimmer); }
 .wb-tabs-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 320px; max-height: 70vh; display: flex; flex-direction: column;
-  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  background: var(--cc-bg-elevated); border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px var(--cc-shadow);
   font-family: var(--bs-font-sans-serif); font-size: 13px;
 }
 .wb-tabs-menu-list { overflow-y: auto; padding: 4px 0; }
@@ -290,7 +290,7 @@
 @keyframes wb-ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(18deg); } 40% { transform: rotate(-14deg); } 60% { transform: rotate(8deg); } 80% { transform: rotate(-4deg); } }
 .wb-notif-panel {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 380px; max-height: 70vh; display: flex; flex-direction: column;
-  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  background: var(--cc-bg-elevated); border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px var(--cc-shadow);
   font-family: var(--bs-font-sans-serif); font-size: 13px;
 }
 .wb-notif-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--cc-border); font-weight: 600; }
@@ -469,8 +469,22 @@
   .fx-header { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
   .fx-header-actions .btn { flex: 1; }
   .fe-header { flex-wrap: wrap; padding: 6px 10px; }
-  .fe-meta { margin-left: auto; }
+  /* Barre d'actions de l'éditeur sur sa propre ligne, boutons qui passent à la ligne au lieu d'être coupés à droite. */
+  .fe-meta { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: 0; }
   .fe-meta .fx-muted { display: none; }
+  .fx-header-actions .btn { white-space: nowrap; }
+  /* Tableaux « contenu + actions » (worktrees, membres, règles, comptes…) : chaque ligne devient un bloc et les
+     actions passent sous le contenu plutôt que d'être repoussées hors de l'écran. */
+  .table-stack thead { display: none; }
+  .table-stack tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--cc-border); }
+  .table-stack tr:last-child { border-bottom: 0; }
+  .table-stack td { display: block; width: auto !important; max-width: none !important; border: 0; padding: 2px 0; }
+  .table-stack td:empty { display: none; }
+  .table-stack td.text-end { text-align: left !important; }
+  .table-stack td.text-nowrap { white-space: normal !important; }
+  .table-stack td .btn { margin-bottom: 4px; }
+  /* Sélecteurs et champs à largeur fixe : jamais plus larges que l'écran. */
+  .wb-content .form-select, .wb-content .form-control { max-width: 100%; }
 }
 @media (max-width: 767.98px) {
   /* En-têtes de page (titre à gauche, actions à droite) : passent à la ligne au lieu de déborder. */
@@ -614,6 +628,12 @@
 .git-collapsed-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 8px; height: 100%; }
 .git-collapsed-rail .bi { font-size: 14px; }
 .git-collapsed-rail .git-count { margin: 0; }
+/* Mobile : pas de bande repliée à droite du contenu ; un bouton de la barre du haut ouvre le panneau. */
+.wb-git-btn { display: none; }
+@media (max-width: 767.98px) {
+  .git-collapsed-rail { display: none; }
+  .wb-git-btn { display: inline-flex; }
+}
 
 /* ---- Tâches : badges, panneau latéral, commentaires, tableau de bord ------------------------- */
 .task-status { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; white-space: nowrap; }
@@ -685,6 +705,7 @@
 
 /* ---- Coffre ----------------------------------------------------------------------------------- */
 .vault-row { cursor: pointer; }
+.vault-desc { max-width: 320px; }
 .vault-row.open td { border-bottom-color: transparent; }
 .vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); }
 .vault-item-details { padding: 6px 4px 10px; }
@@ -706,6 +727,8 @@
 @media (max-width: 767.98px) {
   .vault-field-row { grid-template-columns: 1fr 1fr; }
   .vault-table .small.font-monospace { max-width: 160px; }
+  /* La description tronquée fixe la largeur minimale de la colonne : plus courte pour que le tableau tienne dans l'écran. */
+  .vault-desc { max-width: 170px; }
 }
 
 /* ---- Petits écrans en hauteur : menu de la sidebar en grille d'icônes ------------------------ */

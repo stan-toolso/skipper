@@ -62,7 +62,7 @@ export default function SessionsPage() {
             </Button>
           </ButtonGroup>
           {!mine && (
-            <Form.Select size="sm" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={{ width: 'auto' }} title="Auteur">
+            <Form.Select size="sm" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={{ width: 'auto', maxWidth: 260 }} title="Auteur">
               <option value="">Par n'importe qui</option>
               {(ownersData?.sessionOwners ?? []).map((o) => (
                 <option key={o.id} value={o.id}>
