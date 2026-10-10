@@ -444,7 +444,8 @@ conteneur de l'agent.
   du CLI dans le conteneur, stdio relayés ; demandes d'autorisation, outils MCP (contexte, tâches)
   et skills fonctionnent donc sans changement. Les identifiants Claude et le jeton GitHub **du
   propriétaire de la session** sont transmis par variables d'environnement à chaque `docker exec` ;
-  rien de l'hôte n'est monté dans le dossier personnel du conteneur, hormis `~/.gitconfig`. Le
+  le `~/.claude` du conteneur est un dossier propre au projet (`WORKSPACES_ROOT/.runners/<slug>/claude-home`,
+  ses conversations survivent à la recréation) et seul `~/.gitconfig` vient de l'hôte. Le
   conteneur joint le serveur Skipper par `host.docker.internal` (ponts MCP des sessions OpenCode). Le
   terminal web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
   page du projet (démarrer, arrêter, recréer).

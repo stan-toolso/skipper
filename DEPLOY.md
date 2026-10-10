@@ -217,8 +217,10 @@ La vue en direct du navigateur passe par le WebSocket `/browsers/<session>` : re
 `sudo nginx -t && sudo systemctl reload nginx`. Les conteneurs sont désormais créés avec `--init`
 (récolte des processus de Chromium arrêtés) : « Recréer » le conteneur des projets qui utilisent le
 navigateur pour en bénéficier. Les sessions OpenCode exigent une image reconstruite (CLI `opencode`)
-et des conteneurs recréés (`--add-host host.docker.internal`, sans montage de `~/.claude`) : « Recréer »
-sur la page de chaque projet après la mise à jour.
+et des conteneurs recréés (`--add-host host.docker.internal`, `~/.claude` propre au projet dans
+`.runners/<slug>/claude-home` à la place du dossier de l'hôte) : « Recréer » sur la page de chaque projet
+après la mise à jour. Les conversations Claude Code d'avant cette version sont dans `~/.claude/projects`
+de l'hôte : les copier dans le dossier du projet (`projects/-<chemin encodé>*`) pour pouvoir les reprendre.
 
 ## Vérifications
 
