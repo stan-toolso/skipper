@@ -7,6 +7,11 @@ interface SessionRow {
   project_id: string;
   worktree_id: string | null;
   parent_session_id: string | null;
+  owner_id: string | null;
+  agent_id: string | null;
+  agent_run_id: string | null;
+  workflow_run_id: string | null;
+  archived_at: Date | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -43,6 +48,11 @@ function toSession(row: SessionRow): Session {
     projectId: row.project_id,
     worktreeId: row.worktree_id,
     parentSessionId: row.parent_session_id,
+    ownerId: row.owner_id ?? null,
+    agentId: row.agent_id ?? null,
+    agentRunId: row.agent_run_id ?? null,
+    workflowRunId: row.workflow_run_id ?? null,
+    archivedAt: row.archived_at ?? null,
     name: row.name,
     provider: row.provider,
     status: row.status,
@@ -79,6 +89,8 @@ function toEvent(row: EventRow): SessionEvent {
 export interface SessionPatch {
   status?: SessionStatus;
   name?: string;
+  archivedAt?: Date | null;
+  ownerId?: string | null;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
   baseCommit?: string | null;
@@ -97,6 +109,8 @@ export interface SessionPatch {
 const patchColumns: Record<keyof SessionPatch, string> = {
   status: 'status',
   name: 'name',
+  archivedAt: 'archived_at',
+  ownerId: 'owner_id',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
   baseCommit: 'base_commit',
@@ -115,10 +129,10 @@ const patchColumns: Record<keyof SessionPatch, string> = {
 export const sessionRepository = {
   async create(input: CreateSessionInput): Promise<Session> {
     const { rows } = await pool.query<SessionRow>(
-      `INSERT INTO sessions (project_id, worktree_id, parent_session_id, name, provider, prompt, config)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO sessions (project_id, worktree_id, parent_session_id, owner_id, name, provider, prompt, config, agent_id, agent_run_id, workflow_run_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [input.projectId, input.worktreeId ?? null, input.parentSessionId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {})],
+      [input.projectId, input.worktreeId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.agentId ?? null, input.agentRunId ?? null, input.workflowRunId ?? null],
     );
     return toSession(rows[0]);
   },
@@ -155,18 +169,52 @@ export const sessionRepository = {
       params.push(filter.provider);
       where.push(`provider = $${params.length}`);
     }
-    params.push(Math.min(filter.limit ?? 50, 200));
+    if (filter.ownerId) {
+      params.push(filter.ownerId);
+      where.push(`owner_id = $${params.length}`);
+    }
+    if (filter.ids) {
+      params.push(filter.ids);
+      where.push(`id = ANY($${params.length}::uuid[])`);
+    }
+    const archived = filter.archived ?? 'exclude';
+    if (archived === 'exclude') where.push('archived_at IS NULL');
+    else if (archived === 'only') where.push('archived_at IS NOT NULL');
+    if (filter.search?.trim()) {
+      params.push(`%${filter.search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      const s = `$${params.length}`;
+      where.push(`(name ILIKE ${s} OR prompt ILIKE ${s} OR EXISTS (SELECT 1 FROM session_events e WHERE e.session_id = sessions.id AND e.type IN ('instruction', 'claude.assistant') AND e.payload::text ILIKE ${s}))`);
+    }
+    params.push(Math.min(filter.limit ?? 50, 500));
     const limitIdx = params.length;
     params.push(filter.offset ?? 0);
     const offsetIdx = params.length;
     const { rows } = await pool.query<SessionRow>(
       `SELECT * FROM sessions
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY created_at DESC
+       ORDER BY ${archived === 'only' ? 'archived_at DESC' : 'created_at DESC'}
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params,
     );
     return rows.map(toSession);
+  },
+
+  /** Propriétaires distincts des sessions actives des projets donnés. */
+  async listOwnerIds(projectIds: string[]): Promise<string[]> {
+    const { rows } = await pool.query<{ owner_id: string }>(`SELECT DISTINCT owner_id FROM sessions WHERE owner_id IS NOT NULL AND archived_at IS NULL AND project_id = ANY($1::uuid[])`, [projectIds]);
+    return rows.map((r) => r.owner_id);
+  },
+
+  /** Archive les sessions actives d'un worktree ; renvoie leurs identifiants. */
+  async archiveByWorktree(worktreeId: string, at: Date): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(`UPDATE sessions SET archived_at = $2, updated_at = now() WHERE worktree_id = $1 AND archived_at IS NULL RETURNING id`, [worktreeId, at]);
+    return rows.map((r) => r.id);
+  },
+
+  /** Restaure les sessions d'un worktree archivées à partir de la date d'archivage du worktree. */
+  async unarchiveByWorktree(worktreeId: string, since: Date): Promise<number> {
+    const { rowCount } = await pool.query(`UPDATE sessions SET archived_at = NULL, updated_at = now() WHERE worktree_id = $1 AND archived_at IS NOT NULL AND archived_at >= $2`, [worktreeId, since]);
+    return rowCount ?? 0;
   },
 
   async update(id: string, patch: SessionPatch): Promise<Session | null> {
@@ -229,7 +277,7 @@ export const sessionRepository = {
   async listInterruptedMidTurn(since: Date, limit: number): Promise<Session[]> {
     const { rows } = await pool.query<SessionRow>(
       `SELECT * FROM sessions
-       WHERE status = 'interrupted' AND activity = 'busy' AND external_id IS NOT NULL AND ended_at >= $1
+       WHERE status = 'interrupted' AND activity = 'busy' AND external_id IS NOT NULL AND archived_at IS NULL AND ended_at >= $1
        ORDER BY ended_at DESC
        LIMIT $2`,
       [since, limit],

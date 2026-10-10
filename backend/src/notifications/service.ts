@@ -1,5 +1,6 @@
 import { NotFoundError } from '../errors.js';
 import { pubSub } from '../pubsub.js';
+import { pushService } from './push.js';
 import { notificationRepository } from './repository.js';
 import type { Notification, NotificationScope, NotifyInput } from './types.js';
 
@@ -18,6 +19,7 @@ export const notificationService = {
     try {
       const notification = await notificationRepository.create(input);
       pubSub.publish('notificationCreated', notification);
+      void pushService.deliver(notification);
       return notification;
     } catch (err) {
       console.error('[notifications] création impossible', err);

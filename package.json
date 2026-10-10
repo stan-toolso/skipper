@@ -22,5 +22,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
   }
 }

@@ -41,7 +41,8 @@ export const projectService = {
     return project;
   },
 
-  async create(input: CreateProjectInput): Promise<Project> {
+  /** `actorId` : personne qui crée le projet, dont le compte GitHub sert au clone d'un dépôt privé. */
+  async create(input: CreateProjectInput, actorId?: string | null): Promise<Project> {
     if (!input.name.trim()) throw new AppError('Le nom du projet est obligatoire');
     const slug = input.slug?.trim() || slugify(input.name);
     validateSlug(slug);
@@ -51,7 +52,7 @@ export const projectService = {
 
     const project = await projectRepository.create({ ...input, name: input.name.trim(), slug });
     try {
-      await ensureWorkspace(project);
+      await ensureWorkspace(project, actorId);
     } catch (err) {
       // Le workspace n'a pas pu être préparé (ex. clone impossible) : on ne garde pas le projet.
       await projectRepository.delete(project.id);
@@ -70,9 +71,9 @@ export const projectService = {
   },
 
   /** (Re)crée le dossier du projet s'il a disparu ; ne modifie jamais un dossier existant. */
-  async prepareWorkspace(id: string): Promise<Project> {
+  async prepareWorkspace(id: string, actorId?: string | null): Promise<Project> {
     const project = await this.get(id);
-    await ensureWorkspace(project);
+    await ensureWorkspace(project, actorId);
     return project;
   },
 

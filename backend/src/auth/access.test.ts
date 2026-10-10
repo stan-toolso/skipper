@@ -5,6 +5,7 @@ import type { ProjectRole, User } from '../users/types.js';
 // Le service des utilisateurs interroge la base : on le remplace par des fonctions simulées.
 const userService = vi.hoisted(() => ({
   roleFor: vi.fn<(userId: string, projectId: string) => Promise<ProjectRole | null>>(),
+  memberRoleFor: vi.fn<(userId: string, projectId: string) => Promise<ProjectRole | null>>(),
   projectIdsFor: vi.fn<(userId: string) => Promise<string[]>>(),
 }));
 vi.mock('../users/service.js', () => ({ userService }));
@@ -18,6 +19,7 @@ const makeUser = (overrides: Partial<User> = {}): User => ({
   avatarUrl: null,
   googleSub: null,
   isAdmin: false,
+  isSuperAdmin: false,
   createdAt: new Date('2026-01-01'),
   lastLoginAt: null,
   ...overrides,
@@ -35,7 +37,7 @@ async function caught(fn: () => unknown): Promise<AppError> {
 }
 
 beforeEach(() => {
-  userService.roleFor.mockReset();
+  userService.memberRoleFor.mockReset();
   userService.projectIdsFor.mockReset();
 });
 
@@ -69,11 +71,11 @@ describe('requireAdmin', () => {
 describe('requireProject', () => {
   it("refuse une requête sans utilisateur sans interroger la base", async () => {
     expect((await caught(() => requireProject(createAuthContext(null), 'p1'))).code).toBe('UNAUTHENTICATED');
-    expect(userService.roleFor).not.toHaveBeenCalled();
+    expect(userService.memberRoleFor).not.toHaveBeenCalled();
   });
 
   it("refuse un utilisateur qui n'est pas membre du projet, même administrateur de l'application", async () => {
-    userService.roleFor.mockResolvedValue(null);
+    userService.memberRoleFor.mockResolvedValue(null);
     const err = await caught(() => requireProject(createAuthContext(makeUser({ isAdmin: true })), 'p1', 'viewer'));
     expect(err.code).toBe('FORBIDDEN');
     expect(err.message).toMatch(/pas accès/);
@@ -92,7 +94,7 @@ describe('requireProject', () => {
   ];
 
   it.each(cases)('rôle %s, rôle minimum %s : accès %s', async (role, min, allowed) => {
-    userService.roleFor.mockResolvedValue(role);
+    userService.memberRoleFor.mockResolvedValue(role);
     const ctx = createAuthContext(makeUser());
     if (allowed) {
       await expect(requireProject(ctx, 'p1', min)).resolves.toBe(role);
@@ -101,26 +103,26 @@ describe('requireProject', () => {
       expect(err.code).toBe('FORBIDDEN');
       expect(err.message).toMatch(/demande le rôle/);
     }
-    expect(userService.roleFor).toHaveBeenCalledWith('user-1', 'p1');
+    expect(userService.memberRoleFor).toHaveBeenCalledWith('user-1', 'p1');
   });
 
   it('exige le rôle lecteur par défaut', async () => {
-    userService.roleFor.mockResolvedValue('viewer');
+    userService.memberRoleFor.mockResolvedValue('viewer');
     await expect(requireProject(createAuthContext(makeUser()), 'p1')).resolves.toBe('viewer');
   });
 
   it('mémorise le rôle pendant la requête, y compris une absence de rôle', async () => {
-    userService.roleFor.mockImplementation(async (_user, projectId) => (projectId === 'p1' ? 'member' : null));
+    userService.memberRoleFor.mockImplementation(async (_user, projectId) => (projectId === 'p1' ? 'member' : null));
     const ctx = createAuthContext(makeUser());
     await requireProject(ctx, 'p1');
     await requireProject(ctx, 'p1', 'member');
     await expect(roleFor(ctx, 'p2')).resolves.toBeNull();
     await expect(roleFor(ctx, 'p2')).resolves.toBeNull();
-    expect(userService.roleFor).toHaveBeenCalledTimes(2);
+    expect(userService.memberRoleFor).toHaveBeenCalledTimes(2);
   });
 
   it("ne partage pas le cache entre deux requêtes", async () => {
-    userService.roleFor.mockResolvedValueOnce('admin').mockResolvedValueOnce('viewer');
+    userService.memberRoleFor.mockResolvedValueOnce('admin').mockResolvedValueOnce('viewer');
     const user = makeUser();
     await expect(requireProject(createAuthContext(user), 'p1', 'admin')).resolves.toBe('admin');
     expect((await caught(() => requireProject(createAuthContext(user), 'p1', 'admin'))).code).toBe('FORBIDDEN');
@@ -141,7 +143,7 @@ describe('accessibleProjectIds et canAccessProject', () => {
   });
 
   it('filtre selon la connexion et le rôle', async () => {
-    userService.roleFor.mockImplementation(async (_user, projectId) => (projectId === 'p1' ? 'viewer' : null));
+    userService.memberRoleFor.mockImplementation(async (_user, projectId) => (projectId === 'p1' ? 'viewer' : null));
     const ctx = createAuthContext(makeUser());
     await expect(canAccessProject(createAuthContext(null), 'p1')).resolves.toBe(false);
     await expect(canAccessProject(ctx, null)).resolves.toBe(true);

@@ -293,7 +293,7 @@ function DailyChart({ days }: { days: { day: string; usd: number }[] }) {
 }
 
 /** Largeur courante d'un élément, suivie par ResizeObserver (le graphique se redessine avec la fenêtre). */
-function useElementWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
+function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {

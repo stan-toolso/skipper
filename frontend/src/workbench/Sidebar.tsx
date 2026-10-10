@@ -1,134 +1,51 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useState } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
-import {
-  CLOSE_TERMINAL,
-  CREATE_TERMINAL,
-  REQUESTS,
-  SIDEBAR,
-  STOP_SESSION,
-  type HumanRequest,
-  type Session,
-  type SessionActivity,
-  type SessionStatus,
-  type Terminal,
-} from '../graphql/operations';
-import { useDeletions } from './useDeletions';
+import { useAuth } from '../auth/AuthContext';
+import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKTREE_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
 import InstallButton from '../components/InstallButton';
-import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
+import { useSearchPalette } from '../components/SearchPalette';
+import { useShortcutsHelp } from '../components/ShortcutsHelp';
+import { displayComboText } from '../lib/shortcuts';
+import AddMenu from './AddMenu';
+import { useDeletions } from './useDeletions';
+import { useTabs } from './TabsContext';
+import { initialsOf, sessionDotClass } from './WorkspaceTabs';
+import { mineFirst, openItemsOf, participates, workspaceState, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
 
-type SidebarSession = Pick<Session, 'id' | 'name' | 'status' | 'activity' | 'pendingRequestCount' | 'browserActive'> & { worktree?: { id: string } | null };
-type SidebarTerminal = Pick<Terminal, 'id' | 'name' | 'status'> & { worktree?: { id: string } | null };
-interface SidebarWorktree {
-  id: string;
-  name: string;
-  branch: string;
-  exists: boolean;
-  sessions: SidebarSession[];
-  terminals: SidebarTerminal[];
-}
-interface SidebarProject {
-  id: string;
-  name: string;
-  slug: string;
-  gitUrl: string | null;
-  sessions: SidebarSession[];
-  terminals: SidebarTerminal[];
-  worktrees: SidebarWorktree[];
-}
+const EXPANDED_KEY = 'skipper.workbench.expanded';
+const FILTER_KEY = 'skipper.workbench.sessionFilter';
+const MAX_CHIPS = 6;
 
-function statusDot(status: SessionStatus, activity: SessionActivity | null): { cls: string; title: string } {
-  if (status === 'RUNNING') return activity === 'BUSY' ? { cls: 'busy', title: "L'agent travaille" } : { cls: 'idle', title: "L'agent attend vos instructions" };
-  if (status === 'QUEUED') return { cls: 'pending', title: "En file d'attente : démarrera dès qu'une place se libère" };
-  if (status === 'FAILED') return { cls: 'failed', title: 'Terminée avec une erreur' };
-  if (status === 'COMPLETED') return { cls: 'done', title: 'Terminée' };
-  if (status === 'STOPPED' || status === 'INTERRUPTED') return { cls: 'stopped', title: status === 'STOPPED' ? 'Arrêtée' : 'Interrompue par un redémarrage' };
-  return { cls: 'pending', title: 'Pas encore démarrée' };
+interface PullRequestRef {
+  number: number;
+  url: string;
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  isDraft: boolean;
 }
 
-/** Menu « + » d'un projet ou d'un worktree : session, terminal, et pour un projet git : worktree. */
-function AddMenu({ projectId, worktree, canWorktree, onClose }: { projectId: string; worktree?: { id: string; branch: string }; canWorktree: boolean; onClose: () => void }) {
-  const worktreeId = worktree?.id;
-  const navigate = useNavigate();
-  const [createTerminal, { loading }] = useMutation<{ createTerminal: { id: string } }>(CREATE_TERMINAL, {
-    refetchQueries: ['Sidebar'],
-    onCompleted: (res) => {
-      onClose();
-      navigate(`/terminals/${res.createTerminal.id}`);
-    },
-  });
-  const { openNewSession, openNewWorktree } = useSessionLauncher();
-  const { deleteWorktree } = useDeletions();
-  useEffect(() => {
-    const close = () => onClose();
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [onClose]);
-  return (
-    <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
-      <Link to={worktreeId ? `/worktrees/${worktreeId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
-        <i className="bi bi-folder2-open wb-icon" /> Fichiers
-      </Link>
-      <button
-        type="button"
-        className="wb-pop-item"
-        onClick={() => {
-          onClose();
-          openNewSession({ projectId, worktreeId: worktreeId ?? null });
-        }}
-      >
-        <i className="bi bi-chat-dots wb-icon" /> Nouvelle session
-      </button>
-      <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId, worktreeId: worktreeId ?? null } })}>
-        <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal'}
-      </button>
-      {canWorktree && !worktreeId && (
-        <button
-          type="button"
-          className="wb-pop-item"
-          onClick={() => {
-            onClose();
-            openNewWorktree({ projectId });
-          }}
-        >
-          <i className="bi bi-diagram-2 wb-icon" /> Nouveau worktree
-        </button>
-      )}
-      {worktree && (
-        <>
-          <div className="wb-pop-sep" />
-          <button
-            type="button"
-            className="wb-pop-item danger"
-            onClick={() => {
-              onClose();
-              void deleteWorktree(worktree);
-            }}
-          >
-            <i className="bi bi-trash wb-icon" /> Supprimer le worktree
-          </button>
-        </>
-      )}
-      {!worktreeId && (
-        <>
-          <Link to={`/projects/${projectId}/tasks`} className="wb-pop-item" onClick={onClose}>
-            <i className="bi bi-check2-square wb-icon" /> Tâches du projet
-          </Link>
-          <Link to={`/projects/${projectId}/connections`} className="wb-pop-item" onClick={onClose}>
-            <i className="bi bi-hdd-network wb-icon" /> Connexions du projet
-          </Link>
-          <Link to={`/projects/${projectId}/context`} className="wb-pop-item" onClick={onClose}>
-            <i className="bi bi-journal-text wb-icon" /> Contexte du projet
-          </Link>
-        </>
-      )}
-    </div>
-  );
+function statusTitle(s: SidebarSession): string {
+  if (s.status === 'RUNNING') return s.activity === 'BUSY' ? "L'agent travaille" : "L'agent attend vos instructions";
+  if (s.status === 'QUEUED') return "En file d'attente : démarrera dès qu'une place se libère";
+  if (s.status === 'FAILED') return 'Terminée avec une erreur';
+  if (s.status === 'COMPLETED') return 'Terminée';
+  if (s.status === 'STOPPED') return 'Arrêtée';
+  if (s.status === 'INTERRUPTED') return 'Interrompue par un redémarrage';
+  return 'Pas encore démarrée';
+}
+
+/** Icône d'un worktree, colorée par l'état de la pull request de sa branche. */
+function worktreeIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
+  if (!ws.exists) return { cls: 'wt-missing', title: 'Worktree absent du disque' };
+  const base = `Worktree · branche ${ws.branch}`;
+  if (!pr) return { cls: '', title: base };
+  const state = pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase();
+  return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
 }
 
 interface MenuItem {
@@ -140,22 +57,47 @@ interface MenuItem {
   separatorBefore?: boolean;
 }
 
-/**
- * Ligne de l'explorateur (session, terminal) avec menu « ⋯ » au survol et au clic droit.
- * Le menu propose notamment la suppression.
- */
-function RowWithMenu({ to, active, indent, title, items, children }: { to: string; active: boolean; indent: number; title: string; items: MenuItem[]; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+/** Menu contextuel d'une ligne (clic sur ⋯ ou clic droit). */
+function PopMenu({ items, onClose }: { items: MenuItem[]; onClose: () => void }) {
   useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
+    const close = () => onClose();
     window.addEventListener('click', close);
     window.addEventListener('contextmenu', close);
     return () => {
       window.removeEventListener('click', close);
       window.removeEventListener('contextmenu', close);
     };
-  }, [open]);
+  }, [onClose]);
+  return (
+    <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
+      {items.map((it) => (
+        <div key={it.label}>
+          {it.separatorBefore && <div className="wb-pop-sep" />}
+          {it.to ? (
+            <Link to={it.to} className={`wb-pop-item${it.danger ? ' danger' : ''}`} onClick={onClose}>
+              <i className={`bi ${it.icon} wb-icon`} /> {it.label}
+            </Link>
+          ) : (
+            <button
+              type="button"
+              className={`wb-pop-item${it.danger ? ' danger' : ''}`}
+              onClick={(e) => {
+                e.preventDefault();
+                onClose();
+                it.onClick?.();
+              }}
+            >
+              <i className={`bi ${it.icon} wb-icon`} /> {it.label}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RowWithMenu({ to, active, indent, title, items, children }: { to: string; active: boolean; indent: number; title: string; items: MenuItem[]; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
     <Link
       to={to}
@@ -182,64 +124,38 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
         >
           <i className="bi bi-three-dots" />
         </button>
-        {open && (
-          <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
-            {items.map((it) => (
-              <div key={it.label}>
-                {it.separatorBefore && <div className="wb-pop-sep" />}
-                {it.to ? (
-                  <Link to={it.to} className={`wb-pop-item${it.danger ? ' danger' : ''}`} onClick={() => setOpen(false)}>
-                    <i className={`bi ${it.icon} wb-icon`} /> {it.label}
-                  </Link>
-                ) : (
-                  <button
-                    type="button"
-                    className={`wb-pop-item${it.danger ? ' danger' : ''}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setOpen(false);
-                      it.onClick?.();
-                    }}
-                  >
-                    <i className={`bi ${it.icon} wb-icon`} /> {it.label}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        {open && <PopMenu items={items} onClose={() => setOpen(false)} />}
       </span>
     </Link>
   );
 }
 
-function SessionRow({ s, worktreeId, active, indent }: { s: SidebarSession; worktreeId: string | null; active: boolean; indent: number }) {
+function SessionRow({ s, worktreeId, indent }: { s: SidebarSession; worktreeId: string | null; indent: number }) {
   const location = useLocation();
+  const { user } = useAuth();
   const { showError } = useDialogs();
-  const { deleteSession } = useDeletions();
+  const { archiveSession } = useDeletions();
   const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
-  const dot = statusDot(s.status, s.activity);
   const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
+  const mine = participates(s, user?.id ?? null);
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
     ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch(showError) }] : []),
-    {
-      label: 'Supprimer',
-      icon: 'bi-trash',
-      danger: true,
-      separatorBefore: true,
-      onClick: () => void deleteSession({ id: s.id, name: s.name, worktreeId }),
-    },
+    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name, worktreeId }) },
   ];
   const browserPath = `/sessions/${s.id}/browser`;
   return (
     <>
-      <RowWithMenu to={`/sessions/${s.id}`} active={active} indent={indent} title={dot.title} items={items}>
-        <span className={`wb-dot ${dot.cls}`} />
+      <RowWithMenu to={`/sessions/${s.id}`} active={location.pathname === `/sessions/${s.id}`} indent={indent} title={statusTitle(s)} items={items}>
+        <span className={`wb-dot ${sessionDotClass(s)}`} />
         <span className="wb-row-label">{s.name}</span>
+        {s.owner && !mine && (
+          <span className="wb-owner" title={`Session de ${s.owner.name}`}>
+            {initialsOf(s.owner.name)}
+          </span>
+        )}
         {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
       </RowWithMenu>
-      {/* Navigateur headless ouvert par l'agent : vue en direct de la page courante. */}
       {s.browserActive && (
         <Link to={browserPath} className={`wb-row wb-session-row wb-browser-row${location.pathname === browserPath ? ' active' : ''}`} style={{ paddingLeft: indent + 16 }} title="Voir en direct la page ouverte par l'agent">
           <i className="bi bi-globe2 wb-browser-icon" />
@@ -250,39 +166,140 @@ function SessionRow({ s, worktreeId, active, indent }: { s: SidebarSession; work
   );
 }
 
-function TerminalRow({ t, worktreeId, active, indent }: { t: SidebarTerminal; worktreeId: string | null; active: boolean; indent: number }) {
+function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId: string | null; indent: number }) {
+  const location = useLocation();
   const { showError } = useDialogs();
   const { deleteTerminal } = useDeletions();
   const [closeTerminal] = useMutation(CLOSE_TERMINAL, { refetchQueries: ['Sidebar'] });
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
     ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
-    {
-      label: 'Supprimer',
-      icon: 'bi-trash',
-      danger: true,
-      separatorBefore: true,
-      onClick: () => void deleteTerminal({ id: t.id, name: t.name, worktreeId }),
-    },
+    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name, worktreeId }) },
   ];
   return (
-    <RowWithMenu to={`/terminals/${t.id}`} active={active} indent={indent} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'} items={items}>
+    <RowWithMenu to={`/terminals/${t.id}`} active={location.pathname === `/terminals/${t.id}`} indent={indent} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'} items={items}>
       <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />
       <span className="wb-row-label">{t.name}</span>
     </RowWithMenu>
   );
 }
 
-function SessionRows({ sessions, terminals, worktreeId = null, activeSessionId, activeTerminalId, indent }: { sessions: SidebarSession[]; terminals: SidebarTerminal[]; worktreeId?: string | null; activeSessionId?: string; activeTerminalId?: string; indent: number }) {
+/**
+ * Carte d'un dossier de travail (checkout principal ou worktree) : état, nom, puces de ce qui y est ouvert,
+ * et lignes détaillées quand on la déplie.
+ */
+function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean }) {
+  const location = useLocation();
+  const { user } = useAuth();
+  const { activeKey } = useTabs();
+  const [menu, setMenu] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
+  const userId = user?.id ?? null;
+  const current = location.pathname;
+  const isCurrent = (path: string) => current === path || current === `${path}/browser`;
+  const visibleSessions = useMemo(() => {
+    const all = mineFirst(ws.sessions, userId);
+    if (!filterMine || showOthers) return all;
+    // La session affichée reste listée même si elle est à quelqu'un d'autre.
+    return all.filter((s) => participates(s, userId) || isCurrent(`/sessions/${s.id}`));
+  }, [ws.sessions, userId, filterMine, showOthers, current]);
+  const hiddenOthers = ws.sessions.length - visibleSessions.length;
+  const state = workspaceState(ws.sessions);
+  const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
+  const icon = worktreeIcon(ws, pr);
+  const chips = [
+    ...visibleSessions.map((s) => ({ key: `s:${s.id}`, to: `/sessions/${s.id}`, active: isCurrent(`/sessions/${s.id}`), title: `${s.name} · ${statusTitle(s)}${s.owner ? ` · ${s.owner.name}` : ''}`, node: <span className={`wb-dot ${sessionDotClass(s)}`} />, owner: s.owner && !participates(s, userId) ? s.owner : null })),
+    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
+  ];
+  const activeIndex = chips.findIndex((c) => c.active);
+  const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
+  // Clic sur la tête : la première session du worktree, sinon la page où l'onglet du dossier en était, sinon les fichiers.
+  const headTo = !ws.primary && visibleSessions.length ? `/sessions/${visibleSessions[0].id}` : tabUrl ?? ws.key;
+  const name = ws.task && !ws.worktree?.customLabel ? ws.task.title : ws.name;
+  const title = ws.primary ? `Dossier principal · ${ws.name}` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()} · ` : ''}${icon.title}`;
   return (
-    <>
-      {sessions.map((s) => (
-        <SessionRow key={s.id} s={s} worktreeId={worktreeId} active={s.id === activeSessionId} indent={indent} />
-      ))}
-      {terminals.map((t) => (
-        <TerminalRow key={t.id} t={t} worktreeId={worktreeId} active={t.id === activeTerminalId} indent={indent} />
-      ))}
-    </>
+    <div className={`wb-ws${activeKey === ws.key ? ' active' : ''}`}>
+      <div
+        className="wb-ws-head"
+        title={title}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenu(true);
+        }}
+      >
+        <Link to={headTo} className="wb-ws-link">
+          <span className={`wb-ws-state ${state ?? 'none'}`} />
+          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-diagram-2'} wb-icon ${icon.cls}`} />}
+          <span className="wb-ws-name">{name}</span>
+          {ws.primary && ws.projectName && <span className="wb-tag">principal</span>}
+          {!ws.exists && <span className="wb-tag missing">absent</span>}
+          {pending > 0 && <span className="wb-badge">{pending}</span>}
+        </Link>
+        <span className={`wb-row-actions${menu ? ' open' : ''}`}>
+          <button
+            type="button"
+            className="wb-plus"
+            title="Ouvrir quelque chose ici, ou gérer le worktree"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenu((v) => !v);
+            }}
+          >
+            <i className="bi bi-three-dots" />
+          </button>
+          {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={false} onClose={() => setMenu(false)} />}
+        </span>
+      </div>
+      <div className="wb-ws-items">
+        {ws.task && (
+          <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
+            {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
+          </Link>
+        )}
+        {shown.map((c) => (
+          <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
+            {c.node}
+            {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
+          </Link>
+        ))}
+        {!showAll && chips.length > shown.length && (
+          <button type="button" className="wb-chip wb-chip-more" title="Tout afficher" onClick={() => setShowAll(true)}>
+            +{chips.length - shown.length}
+          </button>
+        )}
+        {hiddenOthers > 0 && (
+          <button type="button" className="wb-chip wb-chip-more" title={`Afficher les ${hiddenOthers} session(s) d'autres personnes`} onClick={() => setShowOthers(true)}>
+            <i className="bi bi-people" /> {hiddenOthers}
+          </button>
+        )}
+        {chips.length === 0 && hiddenOthers === 0 && <span className="wb-ws-empty">rien d'ouvert</span>}
+        <button type="button" className="wb-chevron wb-ws-chevron" title={expanded ? 'Replier' : 'Détailler'} onClick={onToggle}>
+          <i className={`bi bi-chevron-${expanded ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
+        </button>
+      </div>
+      {expanded && (
+        <div className="wb-ws-rows">
+          {visibleSessions.map((s) => (
+            <SessionRow key={s.id} s={s} worktreeId={ws.worktreeId} indent={30} />
+          ))}
+          {ws.terminals.map((t) => (
+            <TerminalRow key={t.id} t={t} worktreeId={ws.worktreeId} indent={30} />
+          ))}
+          {hiddenOthers > 0 && (
+            <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 30 }} onClick={() => setShowOthers(true)}>
+              + {hiddenOthers} session(s) d'autres personnes
+            </button>
+          )}
+          {visibleSessions.length === 0 && ws.terminals.length === 0 && hiddenOthers === 0 && (
+            <div className="wb-row wb-empty" style={{ paddingLeft: 30 }}>
+              rien d'ouvert dans ce dossier
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -290,15 +307,9 @@ function SessionRows({ sessions, terminals, worktreeId = null, activeSessionId, 
 function UserBlock() {
   const { user, logout } = useAuth();
   if (!user) return null;
-  const initials = user.name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
   return (
     <div className="wb-user" title={user.email}>
-      {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initials}</span>}
+      {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initialsOf(user.name)}</span>}
       <span className="wb-user-name">
         {user.name}
         <span className="wb-user-email">{user.email}</span>
@@ -310,35 +321,83 @@ function UserBlock() {
   );
 }
 
-/** Sidebar : menus principaux, puis les projets avec leurs sessions, terminaux et worktrees. */
-export default function Sidebar() {
+function loadExpanded(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+/** Sidebar : recherche, menus principaux, puis les projets avec leurs dossiers de travail. */
+export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const location = useLocation();
   const { user } = useAuth();
-  const { data } = useQuery<{ projects: SidebarProject[] }>(SIDEBAR, { pollInterval: 3000 });
-  const { data: pendingData } = useQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
+  const { tabs, workspaces, activeKey } = useTabs();
+  const { openSearch } = useSearchPalette();
+  const { openHelp } = useShortcutsHelp();
+  const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
+  const { data } = usePollingQuery<{ projects: SidebarProject[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
+  const { data: prData } = usePollingQuery<{ projects: { id: string; worktrees: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKTREE_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+  const prByWorktree = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worktrees.map((w) => [w.id, w.pullRequest] as const))), [prData]);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
+  const [filter, setFilter] = useState<'mine' | 'all'>(() => {
     try {
-      return JSON.parse(localStorage.getItem('skipper.workbench.collapsed') ?? '{}');
+      return localStorage.getItem(FILTER_KEY) === 'all' ? 'all' : 'mine';
     } catch {
-      return {};
+      return 'mine';
     }
   });
-  const toggle = (id: string) =>
-    setCollapsed((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
+  const setFilterPersist = (f: 'mine' | 'all') => {
+    setFilter(f);
+    try {
+      localStorage.setItem(FILTER_KEY, f);
+    } catch {
+      /* ignore */
+    }
+  };
+  const toggle = (id: string, defaultOpen: boolean) =>
+    setExpanded((prev) => {
+      const next = { ...prev, [id]: !(prev[id] ?? defaultOpen) };
       try {
-        localStorage.setItem('skipper.workbench.collapsed', JSON.stringify(next));
+        localStorage.setItem(EXPANDED_KEY, JSON.stringify(next));
       } catch {
         /* ignore */
       }
       return next;
     });
 
-  const activeSessionId = location.pathname.match(/^\/sessions\/([^/]+)$/)?.[1];
-  const activeTerminalId = location.pathname.match(/^\/terminals\/([^/]+)$/)?.[1];
-  const activeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  const activeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? (activeKey ? workspaces.get(activeKey)?.projectId : undefined);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const explorerRef = useRef<HTMLDivElement>(null);
+  const userId = user?.id ?? null;
+
+  // Révélation : le projet qui contient la page affichée est déplié s'il avait été replié à la main.
+  useEffect(() => {
+    if (!activeProjectId || expanded[activeProjectId] !== false) return;
+    setExpanded((prev) => ({ ...prev, [activeProjectId]: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, activeProjectId]);
+
+  // Défilement vers la ligne courante, une fois par chemin, quand elle est hors de vue.
+  const scrolledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data || scrolledFor.current === location.pathname) return;
+    scrolledFor.current = location.pathname;
+    const root = explorerRef.current;
+    const target = root?.querySelector<HTMLElement>('.wb-chip.active, .wb-session-row.active, .wb-ws.active, .wb-row.active');
+    if (!root || !target) return;
+    const r = root.getBoundingClientRect();
+    const t = target.getBoundingClientRect();
+    if (t.top < r.top || t.bottom > r.bottom) root.scrollTop += t.top - r.top - r.height / 2 + t.height / 2;
+  }, [data, location.pathname]);
+
+  const projectDefaultOpen = (p: SidebarProject) => {
+    if (p.id === activeProjectId) return true;
+    return p.sessions.some((s) => participates(s, userId) && (s.status === 'RUNNING' || s.status === 'QUEUED' || s.pendingRequestCount > 0));
+  };
 
   return (
     <aside className="wb-sidebar">
@@ -347,23 +406,50 @@ export default function Sidebar() {
           <Logo size={18} />
           Skipper
         </Link>
+        <span className="wb-brand-actions">
+          <button type="button" className="wb-plus" title="Raccourcis clavier (?)" onClick={openHelp}>
+            <i className="bi bi-keyboard" />
+          </button>
+          {onCollapse && (
+            <button type="button" className="wb-plus d-none d-md-inline" title="Replier la barre latérale" onClick={onCollapse}>
+              <i className="bi bi-chevron-double-left" />
+            </button>
+          )}
+        </span>
       </div>
 
+      <button type="button" className="wb-search-btn" onClick={() => openSearch()}>
+        <i className="bi bi-search" /> Rechercher…
+        <kbd>{displayComboText('mod+k')}</kbd>
+      </button>
+
       <nav className="wb-menu">
-        <NavLink to="/" end className="wb-menu-item">
-          <i className="bi bi-speedometer2 wb-icon" /> Tableau de bord
+        <NavLink to="/" end className="wb-menu-item" title="Tableau de bord">
+          <i className="bi bi-speedometer2 wb-icon" /> <span>Tableau de bord</span>
         </NavLink>
-        <NavLink to="/projects" end className="wb-menu-item">
-          <i className="bi bi-folder2 wb-icon" /> Projets
+        <NavLink to="/projects" end className="wb-menu-item" title="Projets">
+          <i className="bi bi-folder2 wb-icon" /> <span>Projets</span>
         </NavLink>
-        <NavLink to="/sessions" end className="wb-menu-item">
-          <i className="bi bi-chat-dots wb-icon" /> Sessions
+        <NavLink to="/sessions" end className="wb-menu-item" title="Sessions">
+          <i className="bi bi-chat-dots wb-icon" /> <span>Sessions</span>
         </NavLink>
-        <NavLink to="/tasks" end className="wb-menu-item">
-          <i className="bi bi-check2-square wb-icon" /> Tâches
+        <NavLink to="/tasks" end className="wb-menu-item" title="Tâches">
+          <i className="bi bi-check2-square wb-icon" /> <span>Tâches</span>
         </NavLink>
-        <NavLink to="/requests" className="wb-menu-item">
-          <i className="bi bi-bell wb-icon" /> Demandes
+        <NavLink to="/shared" end className="wb-menu-item" title="Pages partagées">
+          <i className="bi bi-file-earmark-richtext wb-icon" /> <span>Pages</span>
+        </NavLink>
+        <NavLink to="/vault" end className="wb-menu-item" title="Coffre">
+          <i className="bi bi-shield-lock wb-icon" /> <span>Coffre</span>
+        </NavLink>
+        <NavLink to="/agents" end className="wb-menu-item" title="Agents : configurations réutilisables, planifiables">
+          <i className="bi bi-robot wb-icon" /> <span>Agents</span>
+        </NavLink>
+        <NavLink to="/workflows" end className="wb-menu-item" title="Workflows : enchaînements d'agents, de sessions et de tâches">
+          <i className="bi bi-diagram-3 wb-icon" /> <span>Workflows</span>
+        </NavLink>
+        <NavLink to="/requests" className="wb-menu-item" title="Demandes">
+          <i className="bi bi-bell wb-icon" /> <span>Demandes</span>
           {pending > 0 && (
             <span className="wb-badge" title="Un agent attend votre réponse">
               {pending}
@@ -374,29 +460,37 @@ export default function Sidebar() {
 
       <div className="wb-section-title">
         <span>Projets</span>
-        <Link to="/projects/new" className="wb-section-action" title="Créer un projet">
-          <i className="bi bi-plus-lg" />
-        </Link>
+        <button
+          type="button"
+          className="wb-section-action wb-filter"
+          title={filter === 'mine' ? 'Mes sessions seulement : cliquer pour voir celles de tout le monde' : 'Sessions de tout le monde : cliquer pour ne voir que les miennes'}
+          onClick={() => setFilterPersist(filter === 'mine' ? 'all' : 'mine')}
+        >
+          <i className={`bi ${filter === 'mine' ? 'bi-person' : 'bi-people'}`} /> {filter === 'mine' ? 'Les miennes' : 'Tout le monde'}
+        </button>
       </div>
 
-      <div className="wb-explorer">
+      <div className="wb-explorer" ref={explorerRef}>
         {!data && (
           <div className="wb-row wb-empty">
             <Spinner animation="border" size="sm" className="me-2" /> chargement des projets…
           </div>
         )}
         {(data?.projects ?? []).map((p) => {
-          const open = !collapsed[p.id];
-          const empty = p.sessions.length === 0 && p.terminals.length === 0 && p.worktrees.length === 0;
+          const open = expanded[p.id] ?? projectDefaultOpen(p);
+          const list = workspaces.ofProject(p.id);
+          const collapsedPending = !open ? p.sessions.filter((s) => participates(s, userId)).reduce((n, s) => n + s.pendingRequestCount, 0) : 0;
           return (
             <div key={p.id} className="wb-project">
               <div className={`wb-row wb-project-row${p.id === activeProjectId ? ' active' : ''}`}>
-                <button type="button" className="wb-chevron" onClick={() => toggle(p.id)} title={open ? 'Replier' : 'Déplier'}>
+                <button type="button" className="wb-chevron" onClick={() => toggle(p.id, projectDefaultOpen(p))} title={open ? 'Replier' : 'Déplier'}>
                   <i className={`bi bi-chevron-${open ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
                 </button>
                 <Link to={`/projects/${p.id}`} className="wb-row-label" title="Ouvrir le projet">
                   <i className="bi bi-folder2 wb-icon" /> {p.name}
                 </Link>
+                {!p.isMember && <i className="bi bi-shield-lock wb-icon" title="Vous n'êtes pas membre de ce projet : il apparaît parce qu'un de vos onglets y est ouvert (super administrateur)" />}
+                {collapsedPending > 0 && <span className="wb-badge">{collapsedPending}</span>}
                 <span className={`wb-row-actions${menuFor === p.id ? ' open' : ''}`}>
                   <button
                     type="button"
@@ -407,81 +501,42 @@ export default function Sidebar() {
                       setMenuFor(menuFor === p.id ? null : p.id);
                     }}
                   >
-                    <i className="bi bi-plus-lg" />
+                    <i className="bi bi-three-dots" />
                   </button>
                   {menuFor === p.id && <AddMenu projectId={p.id} canWorktree={Boolean(p.gitUrl)} onClose={() => setMenuFor(null)} />}
                 </span>
               </div>
-              {open && (
-                <SessionRows
-                  sessions={p.sessions.filter((s) => !s.worktree)}
-                  terminals={p.terminals.filter((t) => !t.worktree)}
-                  activeSessionId={activeSessionId}
-                  activeTerminalId={activeTerminalId}
-                  indent={30}
-                />
-              )}
               {open &&
-                p.worktrees.map((w) => {
-                  const wOpen = !collapsed[w.id];
-                  return (
-                    <div key={w.id}>
-                      <div
-                        className="wb-row wb-worktree-row"
-                        title={w.exists ? `Worktree · branche ${w.branch}` : 'Worktree absent du disque'}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setMenuFor(w.id);
-                        }}
-                      >
-                        <button type="button" className="wb-chevron" onClick={() => toggle(w.id)}>
-                          <i className={`bi bi-chevron-${wOpen ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
-                        </button>
-                        <span className="wb-row-label">
-                          <i className={`bi bi-diagram-2 wb-icon${w.exists ? '' : ' text-danger'}`} /> {w.branch}
-                        </span>
-                        <span className={`wb-row-actions${menuFor === w.id ? ' open' : ''}`}>
-                          <button
-                            type="button"
-                            className="wb-plus"
-                            title="Actions du worktree"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setMenuFor(menuFor === w.id ? null : w.id);
-                            }}
-                          >
-                            <i className="bi bi-three-dots" />
-                          </button>
-                          {menuFor === w.id && <AddMenu projectId={p.id} worktree={w} canWorktree={false} onClose={() => setMenuFor(null)} />}
-                        </span>
-                      </div>
-                      {wOpen && <SessionRows sessions={w.sessions} terminals={w.terminals} worktreeId={w.id} activeSessionId={activeSessionId} activeTerminalId={activeTerminalId} indent={48} />}
-                      {wOpen && w.sessions.length === 0 && w.terminals.length === 0 && (
-                        <div className="wb-row wb-empty" style={{ paddingLeft: 48 }}>
-                          rien dans ce worktree
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              {open && empty && <div className="wb-row wb-empty" style={{ paddingLeft: 30 }}>aucune session pour l'instant</div>}
+                list.map((ws) => (
+                  <WorkspaceCard
+                    key={ws.key}
+                    ws={ws}
+                    pr={ws.worktreeId ? prByWorktree.get(ws.worktreeId) : null}
+                    expanded={expanded[ws.key] ?? false}
+                    onToggle={() => toggle(ws.key, false)}
+                    tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
+                    filterMine={filter === 'mine'}
+                  />
+                ))}
             </div>
           );
         })}
         {data && data.projects.length === 0 && (
           <div className="wb-row wb-empty">
-            Aucun projet. <Link to="/projects/new">Créer le premier</Link>
+            Aucun projet. <Link to="/projects">Créer le premier</Link>
           </div>
         )}
       </div>
       <nav className="wb-menu wb-menu-bottom">
         <InstallButton />
         {user?.isAdmin && (
-          <NavLink to="/settings" className="wb-menu-item">
-            <i className="bi bi-gear wb-icon" /> Paramètres
+          <NavLink to="/users" className="wb-menu-item" title="Utilisateurs">
+            <i className="bi bi-people wb-icon" /> <span>Utilisateurs</span>
           </NavLink>
         )}
+        <NavLink to="/settings" className="wb-menu-item" title="Paramètres">
+          <i className="bi bi-gear wb-icon" /> <span>Paramètres</span>
+        </NavLink>
         <UserBlock />
       </nav>
     </aside>

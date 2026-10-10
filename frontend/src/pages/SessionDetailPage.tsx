@@ -9,6 +9,9 @@ import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
 import { useDeletions } from '../workbench/useDeletions';
+import RelaunchModal from '../components/RelaunchModal';
+import { ARCHIVE_SESSION, UNARCHIVE_SESSION } from '../graphql/sessions';
+import { useAuth } from '../auth/AuthContext';
 
 import { bypassConnectionsWarning, permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
@@ -42,6 +45,22 @@ import {
 type SessionWithRequests = Session & { requests: HumanRequest[] };
 
 const TECH_KEY = 'skipper.session.technical';
+const draftKey = (id: string) => `skipper.session.draft.${id}`;
+const readDraft = (id: string) => {
+  try {
+    return localStorage.getItem(draftKey(id)) ?? '';
+  } catch {
+    return '';
+  }
+};
+const writeDraft = (id: string, value: string) => {
+  try {
+    if (value) localStorage.setItem(draftKey(id), value);
+    else localStorage.removeItem(draftKey(id));
+  } catch {
+    /* ignore */
+  }
+};
 const TAB_KEY = 'skipper.session.tab';
 type PageTab = 'conversation' | 'changes';
 
@@ -62,8 +81,17 @@ export default function SessionDetailPage() {
   const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
   const [scheduling, setScheduling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [relaunching, setRelaunching] = useState(false);
+  const { user } = useAuth();
+  const [archiveSession, { error: archiveError }] = useMutation(ARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
+  const [unarchiveSession, { error: unarchiveError }] = useMutation(UNARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
 
-  const [text, setText] = useState('');
+  // Brouillon conservé par session dans ce navigateur : fermer l'onglet ne perd pas une instruction en cours de rédaction.
+  const [text, setTextState] = useState(() => readDraft(id));
+  const setText = (value: string) => {
+    setTextState(value);
+    writeDraft(id, value);
+  };
   const [encoding, setEncoding] = useState(false);
   const attachments = usePendingAttachments();
   const [technical, setTechnical] = useState<boolean>(() => {
@@ -128,7 +156,8 @@ export default function SessionDetailPage() {
   const session = data?.session;
   const cachedName = useCachedName(SESSION_NAME, 'Session', id);
   useTabTitle(session?.name ?? cachedName);
-  useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.branch}` : session.project.name } : null);
+  useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
+  const archived = Boolean(session?.archivedAt);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
@@ -162,7 +191,7 @@ export default function SessionDetailPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [busy, pending.length, id, interruptSession]);
 
-  const canSend = Boolean(text.trim() || attachments.items.length) && !sending && !encoding;
+  const canSend = Boolean(text.trim() || attachments.items.length) && !sending && !encoding && !archived;
   const submit = async () => {
     if (!canSend) return;
     const value = text.trim();
@@ -199,7 +228,7 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError;
+  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? archiveError ?? unarchiveError;
   const schedule = session.schedule;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
@@ -227,7 +256,9 @@ export default function SessionDetailPage() {
       ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
       : running
         ? "⏵ L'agent attend vos instructions"
-        : session.status === 'QUEUED'
+        : archived
+          ? "■ Session archivée — restaurez-la pour reprendre la conversation, ou relancez-en une nouvelle"
+          : session.status === 'QUEUED'
           ? `⧗ En file d'attente${session.queuePosition ? ` (rang ${session.queuePosition})` : ''} — la limite de sessions simultanées est atteinte, l'agent démarrera dès qu'une place se libère`
           : session.status === 'PENDING'
           ? "■ Pas encore démarrée — écrivez la première instruction pour lancer l'agent"
@@ -244,15 +275,46 @@ export default function SessionDetailPage() {
             {session.worktree && (
               <>
                 {' '}
-                · <i className="bi bi-diagram-2" /> {session.worktree.branch}
+                · <i className="bi bi-diagram-2" /> {session.worktree.label}
               </>
             )}
+            {session.owner && (
+              <>
+                {' '}
+                · <i className="bi bi-person" /> {session.owner.id === user?.id ? 'moi' : session.owner.name}
+              </>
+            )}
+            {session.task && (
+              <>
+                {' '}
+                · <Link to={`/tasks/${session.task.id}`} className="cc-meta" title="Tâche liée"><i className="bi bi-check2-square" /> {session.task.title}</Link>
+              </>
+            )}
+            {archived && <> · <span className="cc-yellow">archivée</span></>}
             {session.parentSession && (
               <>
                 {' '}
                 · lancée par{' '}
                 <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title="Session d'agent qui a lancé celle-ci">
                   <i className="bi bi-robot" /> {session.parentSession.name}
+                </Link>
+              </>
+            )}
+            {session.agent && (
+              <>
+                {' '}
+                · exécution de l'agent{' '}
+                <Link to={`/agents/${session.agent.id}${session.agentRun ? `?run=${session.agentRun.id}` : ''}`} className="cc-meta" title="Agent dont une exécution a ouvert cette session">
+                  <i className="bi bi-robot" /> {session.agent.name}
+                </Link>
+              </>
+            )}
+            {session.workflowRun && (
+              <>
+                {' '}
+                · workflow{' '}
+                <Link to={`/workflows/${session.workflowRun.workflow.id}/runs/${session.workflowRun.id}`} className="cc-meta" title="Exécution de workflow qui a ouvert cette session">
+                  <i className="bi bi-diagram-3" /> {session.workflowRun.workflow.name}
                 </Link>
               </>
             )}
@@ -318,15 +380,29 @@ export default function SessionDetailPage() {
               Arrêter
             </button>
           )}
-          <button
-            type="button"
-            className="cc-btn danger"
-            onClick={async () => {
-              await deleteSession({ id, name: session.name, worktreeId: session.worktree?.id ?? null });
-            }}
-          >
-            Supprimer
+          <button type="button" className="cc-btn" title="Repart d'une nouvelle session avec un résumé de celle-ci" onClick={() => setRelaunching(true)}>
+            <i className="bi bi-arrow-repeat" /> Relancer
           </button>
+          {archived ? (
+            <>
+              <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
+                Restaurer
+              </button>
+              <button
+                type="button"
+                className="cc-btn danger"
+                onClick={async () => {
+                  await deleteSession({ id, name: session.name, worktreeId: session.worktree?.id ?? null });
+                }}
+              >
+                Supprimer
+              </button>
+            </>
+          ) : (
+            <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ variables: { id } }).catch(() => undefined)}>
+              <i className="bi bi-archive" /> Archiver
+            </button>
+          )}
         </div>
       </div>
 
@@ -368,6 +444,7 @@ export default function SessionDetailPage() {
       )}
       {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
       {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
+      {relaunching && <RelaunchModal session={session} projectName={session.project.name} worktrees={session.worktree ? [{ id: session.worktree.id, label: session.worktree.label }] : []} onClose={() => setRelaunching(false)} />}
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />
@@ -428,6 +505,7 @@ export default function SessionDetailPage() {
         </span>
       </div>
 
+      {!archived && (
       <div className="cc-input" onClick={() => inputRef.current?.focus()} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
         <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={sending || encoding} showButton={false} error={attachments.error} />
         <div className="cc-input-row">
@@ -487,6 +565,7 @@ export default function SessionDetailPage() {
           </button>
         </div>
       </div>
+      )}
       {technical && (
         <div className="cc-hint justify-content-end">
           <span title="Dossier de travail de la session">{session.worktree?.path ?? session.project.workspacePath}</span>

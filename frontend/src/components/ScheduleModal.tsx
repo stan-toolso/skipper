@@ -2,64 +2,7 @@ import { useLazyQuery, useMutation } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Modal } from 'react-bootstrap';
 import { CLEAR_SESSION_SCHEDULE, SCHEDULE_NEXT_RUNS, SET_SESSION_SCHEDULE, type Session } from '../graphql/operations';
-
-/** Fréquences proposées ; « custom » laisse saisir l'expression cron. */
-type Preset = 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom';
-
-const presetLabels: Record<Preset, string> = {
-  hourly: 'Toutes les heures',
-  daily: 'Tous les jours',
-  weekdays: 'Du lundi au vendredi',
-  weekly: 'Toutes les semaines',
-  monthly: 'Tous les mois',
-  custom: 'Expression cron…',
-};
-
-const weekdayLabels = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
-
-function buildCron(preset: Preset, time: string, weekday: number, monthDay: number, custom: string): string {
-  const [h, m] = time.split(':').map((v) => Number(v));
-  const hour = Number.isFinite(h) ? h : 9;
-  const minute = Number.isFinite(m) ? m : 0;
-  switch (preset) {
-    case 'hourly':
-      return `${minute} * * * *`;
-    case 'daily':
-      return `${minute} ${hour} * * *`;
-    case 'weekdays':
-      return `${minute} ${hour} * * 1-5`;
-    case 'weekly':
-      return `${minute} ${hour} * * ${weekday}`;
-    case 'monthly':
-      return `${minute} ${hour} ${monthDay} * *`;
-    default:
-      return custom.trim();
-  }
-}
-
-/** Retrouve, si possible, la fréquence simple correspondant à une expression enregistrée. */
-function detectPreset(cron: string): { preset: Preset; time: string; weekday: number; monthDay: number } {
-  const pad = (n: string) => n.padStart(2, '0');
-  const f = cron.trim().split(/\s+/);
-  const fallback = { preset: 'custom' as Preset, time: '09:00', weekday: 1, monthDay: 1 };
-  if (f.length !== 5 || !/^\d+$/.test(f[0])) return fallback;
-  if (f[1] === '*' && f[2] === '*' && f[3] === '*' && f[4] === '*') return { ...fallback, preset: 'hourly', time: `00:${pad(f[0])}` };
-  if (!/^\d+$/.test(f[1])) return fallback;
-  const time = `${pad(f[1])}:${pad(f[0])}`;
-  if (f[2] === '*' && f[3] === '*' && f[4] === '*') return { ...fallback, preset: 'daily', time };
-  if (f[2] === '*' && f[3] === '*' && f[4] === '1-5') return { ...fallback, preset: 'weekdays', time };
-  if (f[2] === '*' && f[3] === '*' && /^[0-7]$/.test(f[4])) return { ...fallback, preset: 'weekly', time, weekday: Number(f[4]) % 7 };
-  if (/^\d+$/.test(f[2]) && f[3] === '*' && f[4] === '*') return { ...fallback, preset: 'monthly', time, monthDay: Number(f[2]) };
-  return fallback;
-}
-
-const browserTimeZone = () => {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {
-    return 'UTC';
-  }
-};
+import { browserTimeZone, buildCron, cronPresetLabels as presetLabels, detectCronPreset as detectPreset, weekdayLabels, type CronPreset as Preset } from '../lib/cron';
 
 /** Modale de planification d'une session : fréquence, instruction envoyée à chaque exécution, aperçu des prochaines échéances. */
 export default function ScheduleModal({ session, onClose }: { session: Session; onClose: () => void }) {

@@ -1,5 +1,6 @@
 import { gql } from '@apollo/client';
 import type { AttachmentRef } from '../lib/attachments';
+import type { ClaudeRateLimits } from './settings';
 
 export type SessionStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | 'INTERRUPTED';
 export type RequestStatus = 'PENDING' | 'ANSWERED' | 'CANCELLED' | 'EXPIRED';
@@ -52,6 +53,7 @@ export interface User {
   name: string;
   avatarUrl: string | null;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   createdAt: string;
   lastLoginAt: string | null;
 }
@@ -100,8 +102,10 @@ export interface Project {
   runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean; maxSessions?: number };
   /** Mode d'autorisation des nouvelles sessions : default, acceptEdits, bypassPermissions ou plan. */
   defaultPermissionMode: string;
-  /** Connexions soumises à approbation (requête PROJECT seulement). */
+  /** Éléments du coffre soumis à approbation (requête PROJECT seulement). */
   approvalConnections?: string[];
+  /** Faux quand le projet est atteint en tant que super administrateur sans en être membre. */
+  isMember: boolean;
   runnerStatus: RunnerStatus;
   workspacePath: string;
   workspaceExists: boolean;
@@ -138,9 +142,19 @@ export interface Session {
   startedAt: string | null;
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath' | 'approvalConnections'>;
-  worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'path'> | null;
+  worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
   parentSession: { id: string; name: string } | null;
+  /** Agent (configuration) et exécution qui ont ouvert la session ; null pour une session lancée à la main. */
+  agent: { id: string; name: string } | null;
+  agentRun: { id: string } | null;
+  workflowRun: { id: string; workflow: { id: string; name: string } } | null;
+  /** Utilisateur qui a lancé la session (null : session d'avant cette version). */
+  owner: Pick<User, 'id' | 'name' | 'email' | 'avatarUrl'> | null;
+  /** Archivée : consultable en lecture seule, relançable. */
+  archivedAt: string | null;
+  /** Tâche dont la session est en charge. */
+  task: { id: string; title: string; status: TaskStatus } | null;
   /** Planification (null si la session n'est pas planifiée). */
   schedule: SessionSchedule | null;
 }
@@ -203,11 +217,34 @@ export interface Terminal {
   createdAt: string;
   closedAt: string | null;
   project: { id: string; name: string; workspacePath: string };
-  worktree: { id: string; name: string; branch: string; path: string } | null;
+  worktree: { id: string; name: string; branch: string; label: string; path: string } | null;
 }
 
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+
+export interface TaskField {
+  key: string;
+  value: string;
+}
+
+export interface TaskPerson {
+  name: string | null;
+  email: string | null;
+}
+
+export interface TaskComment {
+  id: string;
+  authorType: 'human' | 'agent';
+  authorName: string;
+  author: { id: string; name: string } | null;
+  authorSession: { id: string; name: string } | null;
+  body: string;
+  editable: boolean;
+  deletable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Task {
   id: string;
@@ -220,11 +257,15 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  customFields: TaskField[];
+  assignee: TaskPerson | null;
+  reporter: TaskPerson | null;
+  commentCount: number;
+  branch: string | null;
   project: { id: string; name: string };
-  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worktree: { id: string; branch: string } | null } | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worktree: { id: string; branch: string; label: string } | null } | null;
   createdBySession: { id: string; name: string } | null;
-  /** Présents seulement dans la query TASKS. */
-  branch?: string | null;
+  /** Présent seulement dans la query TASKS. */
   pullRequest?: PullRequestSummary | null;
 }
 
@@ -239,13 +280,31 @@ export interface AppNotification {
   project: { id: string; name: string } | null;
 }
 
+export interface SearchHit {
+  kind: 'PROJECT' | 'WORKTREE' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
+  id: string;
+  title: string;
+  detail: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  outsideProjects: boolean;
+  worktreeBranch: string | null;
+  status: string | null;
+  activity: string | null;
+  updatedAt: string;
+}
+
 export interface Worktree {
   id: string;
   name: string;
   branch: string;
+  /** Libellé affiché : le libellé choisi, sinon la branche. */
+  label: string;
+  customLabel: string | null;
   path: string;
   exists: boolean;
   git: { branch: string; commit: string } | null;
+  archivedAt: string | null;
   createdAt: string;
 }
 
@@ -340,6 +399,7 @@ export const PROJECT_FIELDS = gql`
       commit
     }
     myRole
+    isMember
     createdAt
     updatedAt
   }
@@ -352,6 +412,7 @@ export const USER_FIELDS = gql`
     name
     avatarUrl
     isAdmin
+    isSuperAdmin
     createdAt
     lastLoginAt
   }
@@ -461,11 +522,38 @@ export const SESSION_FIELDS = gql`
       id
       name
       branch
+      label
       path
     }
     parentSession {
       id
       name
+    }
+    agent {
+      id
+      name
+    }
+    agentRun {
+      id
+    }
+    workflowRun {
+      id
+      workflow {
+        id
+        name
+      }
+    }
+    owner {
+      id
+      name
+      email
+      avatarUrl
+    }
+    archivedAt
+    task {
+      id
+      title
+      status
     }
     schedule {
       cron
@@ -530,8 +618,8 @@ export const PROVIDERS = gql`
 
 export const PROJECTS = gql`
   ${PROJECT_FIELDS}
-  query Projects {
-    projects {
+  query Projects($all: Boolean) {
+    projects(all: $all) {
       ...ProjectFields
     }
   }
@@ -613,8 +701,8 @@ export const DELETE_PROJECT = gql`
 
 export const SESSIONS = gql`
   ${SESSION_FIELDS}
-  query Sessions($projectId: ID, $status: SessionStatus, $provider: String) {
-    sessions(projectId: $projectId, status: $status, provider: $provider) {
+  query Sessions($projectId: ID, $status: SessionStatus, $provider: String, $ownerId: ID, $limit: Int) {
+    sessions(projectId: $projectId, status: $status, provider: $provider, ownerId: $ownerId, limit: $limit) {
       ...SessionFields
     }
   }
@@ -940,21 +1028,18 @@ export const RESTORE_CONTEXT_INSTRUCTION_VERSION = gql`
   }
 `;
 
-/** Explorateur de la sidebar : projets et leurs sessions. */
+/** Explorateur de la sidebar : projets, dossiers de travail (checkout principal et worktrees) et leur contenu. */
 export const SIDEBAR = gql`
-  query Sidebar {
-    projects {
+  query Sidebar($open: OpenItemsInput) {
+    projects: sidebarProjects(open: $open) {
       id
       name
       slug
       gitUrl
+      gitBranch
+      isMember
       sessions(limit: 50) {
-        id
-        name
-        status
-        activity
-        pendingRequestCount
-        browserActive
+        ...SidebarSession
         worktree {
           id
         }
@@ -971,19 +1056,52 @@ export const SIDEBAR = gql`
         id
         name
         branch
+        label
+        customLabel
         exists
-        sessions {
+        task {
           id
-          name
+          title
           status
-          activity
-          pendingRequestCount
-          browserActive
+        }
+        sessions {
+          ...SidebarSession
         }
         terminals {
           id
           name
           status
+        }
+      }
+    }
+  }
+  fragment SidebarSession on Session {
+    id
+    name
+    status
+    activity
+    pendingRequestCount
+    browserActive
+    owner {
+      id
+      name
+      avatarUrl
+    }
+  }
+`;
+
+/** Pull requests des worktrees (requête lente : GitHub), interrogée moins souvent que la sidebar. */
+export const SIDEBAR_WORKTREE_PULL_REQUESTS = gql`
+  query SidebarWorktreePullRequests($open: OpenItemsInput) {
+    projects: sidebarProjects(open: $open) {
+      id
+      worktrees {
+        id
+        pullRequest {
+          number
+          url
+          state
+          isDraft
         }
       }
     }
@@ -1021,8 +1139,11 @@ export const PROJECT_WORKTREES = gql`
         id
         name
         branch
+        label
+        customLabel
         path
         exists
+        archivedAt
         git {
           branch
           commit
@@ -1034,11 +1155,42 @@ export const PROJECT_WORKTREES = gql`
 `;
 
 export const CREATE_WORKTREE = gql`
-  mutation CreateWorktree($projectId: ID!, $branch: String!, $name: String, $baseRef: String) {
-    createWorktree(projectId: $projectId, branch: $branch, name: $name, baseRef: $baseRef) {
+  mutation CreateWorktree($projectId: ID!, $branch: String!, $name: String, $baseRef: String, $label: String) {
+    createWorktree(projectId: $projectId, branch: $branch, name: $name, baseRef: $baseRef, label: $label) {
       id
       name
       branch
+      label
+    }
+  }
+`;
+
+export const RENAME_WORKTREE = gql`
+  mutation RenameWorktree($id: ID!, $label: String, $name: String) {
+    renameWorktree(id: $id, label: $label, name: $name) {
+      id
+      name
+      branch
+      label
+      customLabel
+    }
+  }
+`;
+
+export const ARCHIVE_WORKTREE = gql`
+  mutation ArchiveWorktree($id: ID!) {
+    archiveWorktree(id: $id) {
+      id
+      archivedAt
+    }
+  }
+`;
+
+export const RESTORE_WORKTREE = gql`
+  mutation RestoreWorktree($id: ID!) {
+    restoreWorktree(id: $id) {
+      id
+      archivedAt
     }
   }
 `;
@@ -1055,6 +1207,7 @@ export const WORKTREE_CONTENTS = gql`
     worktree(id: $id) {
       id
       branch
+      label
       sessions {
         id
       }
@@ -1083,6 +1236,7 @@ export const TERMINAL = gql`
         id
         name
         branch
+        label
         path
       }
     }
@@ -1127,6 +1281,20 @@ export const TASK_FIELDS = gql`
     createdAt
     updatedAt
     completedAt
+    customFields {
+      key
+      value
+    }
+    assignee {
+      name
+      email
+    }
+    reporter {
+      name
+      email
+    }
+    commentCount
+    branch
     project {
       id
       name
@@ -1139,6 +1307,7 @@ export const TASK_FIELDS = gql`
       worktree {
         id
         branch
+        label
       }
     }
     createdBySession {
@@ -1150,10 +1319,9 @@ export const TASK_FIELDS = gql`
 
 export const TASKS = gql`
   ${TASK_FIELDS}
-  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority) {
-    tasks(projectId: $projectId, status: $status, priority: $priority) {
+  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $mine: Boolean) {
+    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, mine: $mine) {
       ...TaskFields
-      branch
       pullRequest {
         number
         title
@@ -1195,8 +1363,8 @@ export const DELETE_TASK = gql`
 `;
 
 export const START_TASK_SESSION = gql`
-  mutation StartTaskSession($id: ID!, $worktreeId: ID, $dedicatedWorktree: Boolean) {
-    startTaskSession(id: $id, worktreeId: $worktreeId, dedicatedWorktree: $dedicatedWorktree) {
+  mutation StartTaskSession($id: ID!, $worktreeId: ID, $dedicatedWorktree: Boolean, $provider: String, $config: JSON, $prompt: String) {
+    startTaskSession(id: $id, worktreeId: $worktreeId, dedicatedWorktree: $dedicatedWorktree, provider: $provider, config: $config, prompt: $prompt) {
       id
     }
   }
@@ -1208,9 +1376,12 @@ export const TASK_LAUNCH_TARGETS = gql`
     projects {
       id
       gitUrl
+      defaultPermissionMode
+      approvalConnections
       worktrees {
         id
         branch
+        label
         exists
       }
     }
@@ -1251,578 +1422,8 @@ export const MARK_ALL_NOTIFICATIONS_READ = gql`
   }
 `;
 
-// ---- Paramètres généraux ---------------------------------------------------------------------
-
-export type ClaudeAuthMode = 'server' | 'oauth' | 'api_key';
-
-export interface ClaudeModel {
-  value: string;
-  resolvedModel: string | null;
-  displayName: string;
-  description: string;
-}
-
-export interface ClaudeAccount {
-  email: string | null;
-  organization: string | null;
-  subscriptionType: string | null;
-  apiProvider: string | null;
-}
-
-export interface ClaudeVerification {
-  verifiedAt: string;
-  authMode: ClaudeAuthMode;
-  ok: boolean;
-  error: string | null;
-  account: ClaudeAccount | null;
-  models: ClaudeModel[];
-}
-
-export type ClaudeLoginKind = 'oauth' | 'server';
-
-export interface ServerAuthStatus {
-  loggedIn: boolean;
-  authMethod: string | null;
-  email: string | null;
-  organization: string | null;
-  subscriptionType: string | null;
-  error: string | null;
-}
-
-export interface ClaudeAuthStatus {
-  mode: ClaudeAuthMode;
-  server: ServerAuthStatus;
-  hasOauthToken: boolean;
-  oauthTokenSetAt: string | null;
-  hasApiKey: boolean;
-  apiKeyHint: string | null;
-  apiKeySetAt: string | null;
-  serverHasApiKey: boolean;
-  verification: ClaudeVerification | null;
-}
-
-export interface ClaudeSettings {
-  authMode: ClaudeAuthMode;
-  defaultModel: string | null;
-  allowedModels: string[];
-  fallbackModel: string | null;
-  monthlyBudgetUsd: number | null;
-  sessionBudgetUsd: number | null;
-  defaultMaxTurns: number | null;
-}
-
-export interface UsageSummary {
-  monthStart: string;
-  monthUsd: number;
-  totalUsd: number;
-  byModel: { model: string; usd: number }[];
-  bySession: { sessionId: string | null; sessionName: string | null; projectName: string | null; usd: number }[];
-}
-
-export interface GithubLogin {
-  id: string;
-  userCode: string;
-  verificationUri: string;
-  expiresAt: string;
-  intervalSeconds: number;
-  status: 'pending' | 'done' | 'failed' | 'expired' | 'cancelled';
-  error: string | null;
-  createdAt: string;
-}
-
-export interface GithubAuthStatus {
-  clientId: string | null;
-  clientIdSource: 'env' | 'settings' | null;
-  connected: boolean;
-  method: 'pat' | 'oauth' | null;
-  login: string | null;
-  avatarUrl: string | null;
-  scopes: string[];
-  tokenSetAt: string | null;
-  currentLogin: GithubLogin | null;
-}
-
-export interface GithubRepository {
-  fullName: string;
-  name: string;
-  owner: string;
-  description: string | null;
-  private: boolean;
-  defaultBranch: string;
-  cloneUrl: string;
-  htmlUrl: string;
-  pushedAt: string | null;
-}
-
-/** État du serveur (mode maintenance, sessions actives, reprise automatique). */
-export interface ServerState {
-  maintenance: boolean;
-  maintenanceSince: string | null;
-  maintenanceMessage: string | null;
-  activeSessions: number;
-  busySessions: number;
-  autoResumeInterrupted: boolean;
-  /** 0 : illimité. */
-  maxConcurrentSessions: number;
-  queuedSessions: number;
-  /** 0 : jamais. */
-  idleSessionTimeoutMinutes: number;
-  /** 0 : jamais. */
-  memoryAlertThresholdMb: number;
-}
-
-/** Santé du serveur (query serverHealth). */
-export interface ServerHealth {
-  checkedAt: string;
-  hostname: string;
-  uptimeSeconds: number;
-  cpuCount: number;
-  loadAverage: number[];
-  memory: { totalMb: number; availableMb: number; swapTotalMb: number; swapFreeMb: number };
-  sessions: { running: number; busy: number; idle: number; queued: number; maxConcurrent: number };
-  terminals: number;
-  claudeProcesses: { pid: number; rssMb: number; elapsedSeconds: number }[];
-  docker: {
-    available: boolean;
-    version: string | null;
-    error: string | null;
-    containers: { name: string; project: { id: string; name: string } | null; state: string; status: string; memoryUsage: string | null; memoryPercent: number | null; cpuPercent: number | null }[];
-  };
-  disk: {
-    path: string;
-    totalMb: number | null;
-    freeMb: number | null;
-    workspaces: { name: string; project: { id: string; name: string } | null; sizeMb: number }[];
-    workspacesMeasuredAt: string | null;
-  };
-}
-
-export const SERVER_HEALTH = gql`
-  query ServerHealth {
-    serverHealth {
-      checkedAt
-      hostname
-      uptimeSeconds
-      cpuCount
-      loadAverage
-      memory {
-        totalMb
-        availableMb
-        swapTotalMb
-        swapFreeMb
-      }
-      sessions {
-        running
-        busy
-        idle
-        queued
-        maxConcurrent
-      }
-      terminals
-      claudeProcesses {
-        pid
-        rssMb
-        elapsedSeconds
-      }
-      docker {
-        available
-        version
-        error
-        containers {
-          name
-          project {
-            id
-            name
-          }
-          state
-          status
-          memoryUsage
-          memoryPercent
-          cpuPercent
-        }
-      }
-      disk {
-        path
-        totalMb
-        freeMb
-        workspaces {
-          name
-          project {
-            id
-            name
-          }
-          sizeMb
-        }
-        workspacesMeasuredAt
-      }
-    }
-  }
-`;
-
-/** Fenêtre de limite d'utilisation de l'abonnement Claude. */
-export interface ClaudeRateLimitWindow {
-  type: string;
-  label: string;
-  utilization: number | null;
-  resetsAt: string | null;
-  observedAt: string;
-}
-
-/** Dernier état connu des limites d'utilisation de l'abonnement Claude. */
-export interface ClaudeRateLimits {
-  updatedAt: string;
-  status: 'allowed' | 'allowed_warning' | 'rejected' | string;
-  rateLimitType: string | null;
-  rateLimitLabel: string | null;
-  resetsAt: string | null;
-  overageStatus: string | null;
-  overageDisabledReason: string | null;
-  isUsingOverage: boolean;
-  windows: ClaudeRateLimitWindow[];
-}
-
-export interface AppSettings {
-  claude: ClaudeSettings;
-  rateLimits: ClaudeRateLimits | null;
-  server: ServerState;
-  claudeAuth: ClaudeAuthStatus;
-  github: GithubAuthStatus;
-  models: ClaudeModel[];
-  usage: UsageSummary;
-}
-
-export interface ClaudeLogin {
-  id: string;
-  kind: ClaudeLoginKind;
-  url: string;
-  status: 'starting' | 'awaiting_code' | 'exchanging' | 'done' | 'failed';
-  error: string | null;
-  createdAt: string;
-}
-
-export const APP_SETTINGS_FIELDS = gql`
-  fragment AppSettingsFields on AppSettings {
-    rateLimits {
-      updatedAt
-      status
-      rateLimitType
-      rateLimitLabel
-      resetsAt
-      overageStatus
-      overageDisabledReason
-      isUsingOverage
-      windows {
-        type
-        label
-        utilization
-        resetsAt
-        observedAt
-      }
-    }
-    server {
-      maintenance
-      maintenanceSince
-      maintenanceMessage
-      activeSessions
-      busySessions
-      autoResumeInterrupted
-      maxConcurrentSessions
-      queuedSessions
-      idleSessionTimeoutMinutes
-      memoryAlertThresholdMb
-    }
-    claude {
-      authMode
-      defaultModel
-      allowedModels
-      fallbackModel
-      monthlyBudgetUsd
-      sessionBudgetUsd
-      defaultMaxTurns
-    }
-    claudeAuth {
-      mode
-      server {
-        loggedIn
-        authMethod
-        email
-        organization
-        subscriptionType
-        error
-      }
-      hasOauthToken
-      oauthTokenSetAt
-      hasApiKey
-      apiKeyHint
-      apiKeySetAt
-      serverHasApiKey
-      verification {
-        verifiedAt
-        authMode
-        ok
-        error
-        account {
-          email
-          organization
-          subscriptionType
-          apiProvider
-        }
-        models {
-          value
-          resolvedModel
-          displayName
-          description
-        }
-      }
-    }
-    models {
-      value
-      resolvedModel
-      displayName
-      description
-    }
-    usage {
-      monthStart
-      monthUsd
-      totalUsd
-      byModel {
-        model
-        usd
-      }
-      bySession {
-        sessionId
-        sessionName
-        projectName
-        usd
-      }
-    }
-  }
-`;
-
-export const GITHUB_AUTH_FIELDS = gql`
-  fragment GithubAuthFields on GithubAuthStatus {
-    clientId
-    clientIdSource
-    connected
-    method
-    login
-    avatarUrl
-    scopes
-    tokenSetAt
-    currentLogin {
-      id
-      userCode
-      verificationUri
-      expiresAt
-      intervalSeconds
-      status
-      error
-      createdAt
-    }
-  }
-`;
-
-export const SETTINGS = gql`
-  ${APP_SETTINGS_FIELDS}
-  ${GITHUB_AUTH_FIELDS}
-  query Settings {
-    settings {
-      ...AppSettingsFields
-      github {
-        ...GithubAuthFields
-      }
-    }
-  }
-`;
-
-export const GITHUB_STATUS = gql`
-  ${GITHUB_AUTH_FIELDS}
-  query GithubStatus {
-    settings {
-      github {
-        ...GithubAuthFields
-      }
-    }
-  }
-`;
-
-export const GITHUB_REPOSITORIES = gql`
-  query GithubRepositories($query: String) {
-    githubRepositories(query: $query) {
-      fullName
-      name
-      owner
-      description
-      private
-      defaultBranch
-      cloneUrl
-      htmlUrl
-      pushedAt
-    }
-  }
-`;
-
-export const SET_GITHUB_CLIENT_ID = gql`
-  ${GITHUB_AUTH_FIELDS}
-  mutation SetGithubClientId($clientId: String) {
-    setGithubClientId(clientId: $clientId) {
-      github {
-        ...GithubAuthFields
-      }
-    }
-  }
-`;
-
-export const SET_GITHUB_PERSONAL_TOKEN = gql`
-  ${GITHUB_AUTH_FIELDS}
-  mutation SetGithubPersonalToken($token: String!) {
-    setGithubPersonalToken(token: $token) {
-      github {
-        ...GithubAuthFields
-      }
-    }
-  }
-`;
-
-export const START_GITHUB_LOGIN = gql`
-  mutation StartGithubLogin {
-    startGithubLogin {
-      id
-      userCode
-      verificationUri
-      expiresAt
-      intervalSeconds
-      status
-      error
-      createdAt
-    }
-  }
-`;
-
-export const CANCEL_GITHUB_LOGIN = gql`
-  ${GITHUB_AUTH_FIELDS}
-  mutation CancelGithubLogin {
-    cancelGithubLogin {
-      github {
-        ...GithubAuthFields
-      }
-    }
-  }
-`;
-
-export const DISCONNECT_GITHUB = gql`
-  ${GITHUB_AUTH_FIELDS}
-  mutation DisconnectGithub {
-    disconnectGithub {
-      github {
-        ...GithubAuthFields
-      }
-    }
-  }
-`;
-
-export const SET_MAINTENANCE_MODE = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation SetMaintenanceMode($enabled: Boolean!, $message: String) {
-    setMaintenanceMode(enabled: $enabled, message: $message) {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-export const UPDATE_SERVER_SETTINGS = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation UpdateServerSettings($autoResumeInterrupted: Boolean, $maxConcurrentSessions: Int, $idleSessionTimeoutMinutes: Int, $memoryAlertThresholdMb: Int) {
-    updateServerSettings(
-      autoResumeInterrupted: $autoResumeInterrupted
-      maxConcurrentSessions: $maxConcurrentSessions
-      idleSessionTimeoutMinutes: $idleSessionTimeoutMinutes
-      memoryAlertThresholdMb: $memoryAlertThresholdMb
-    ) {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-export const UPDATE_CLAUDE_SETTINGS = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation UpdateClaudeSettings($input: ClaudeSettingsInput!) {
-    updateClaudeSettings(input: $input) {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-export const SET_CLAUDE_API_KEY = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation SetClaudeApiKey($apiKey: String) {
-    setClaudeApiKey(apiKey: $apiKey) {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-export const CLEAR_CLAUDE_OAUTH_TOKEN = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation ClearClaudeOauthToken {
-    clearClaudeOauthToken {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-export const VERIFY_CLAUDE_AUTH = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation VerifyClaudeAuth($mode: ClaudeAuthMode) {
-    verifyClaudeAuth(mode: $mode) {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-const CLAUDE_LOGIN_FIELDS = gql`
-  fragment ClaudeLoginFields on ClaudeLogin {
-    id
-    kind
-    url
-    status
-    error
-    createdAt
-  }
-`;
-
-export const START_CLAUDE_LOGIN = gql`
-  ${CLAUDE_LOGIN_FIELDS}
-  mutation StartClaudeLogin($kind: ClaudeLoginKind) {
-    startClaudeLogin(kind: $kind) {
-      ...ClaudeLoginFields
-    }
-  }
-`;
-
-export const COMPLETE_CLAUDE_LOGIN = gql`
-  ${CLAUDE_LOGIN_FIELDS}
-  mutation CompleteClaudeLogin($id: ID!, $code: String!) {
-    completeClaudeLogin(id: $id, code: $code) {
-      ...ClaudeLoginFields
-    }
-  }
-`;
-
-export const LOGOUT_SERVER_CLAUDE = gql`
-  ${APP_SETTINGS_FIELDS}
-  mutation LogoutServerClaude {
-    logoutServerClaude {
-      ...AppSettingsFields
-    }
-  }
-`;
-
-export const CANCEL_CLAUDE_LOGIN = gql`
-  mutation CancelClaudeLogin($id: ID!) {
-    cancelClaudeLogin(id: $id)
-  }
-`;
+// ---- Paramètres (voir settings.ts, ré-exporté ici pour les importeurs existants) -------------
+export * from './settings';
 
 // ---- Explorateur de fichiers ---------------------------------------------------------------------
 
@@ -1849,8 +1450,10 @@ export const WORKTREE = gql`
       id
       name
       branch
+      label
       path
       exists
+      archivedAt
       project {
         id
         name
@@ -2195,265 +1798,6 @@ export const MERGE_PULL_REQUEST = gql`
       pullRequest {
         ...PullRequestFields
       }
-    }
-  }
-`;
-
-// ---- Connexions ---------------------------------------------------------------------------------
-
-export type ConnectionKind = 'ssh' | 'postgres' | 'website';
-
-/** Champ d'un site web ; `value` est null pour un secret, `variable` le nom sous lequel les agents le désignent. */
-export interface ConnectionField {
-  key: string;
-  label: string;
-  secret: boolean;
-  value: string | null;
-  variable: string;
-}
-
-export interface ConnectionFieldInput {
-  key: string;
-  label?: string | null;
-  secret?: boolean | null;
-  value?: string | null;
-}
-export type ConnectionExposure = 'mcp' | 'direct' | 'both';
-
-export interface Connection {
-  id: string;
-  name: string;
-  kind: ConnectionKind;
-  description: string;
-  host: string | null;
-  port: number | null;
-  username: string | null;
-  url: string | null;
-  fields: ConnectionField[];
-  database: string | null;
-  ssl: boolean | null;
-  viaConnection: { id: string; name: string } | null;
-  exposure: ConnectionExposure;
-  readOnly: boolean;
-  requireApproval: boolean;
-  commandAllowlist: string[];
-  publicKey: string | null;
-  hostFingerprint: string | null;
-  hostKeySeenAt: string | null;
-  hasSecret: boolean;
-  lastTestAt: string | null;
-  lastTestOk: boolean | null;
-  lastTestError: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ConnectionInput {
-  name?: string | null;
-  kind?: ConnectionKind | null;
-  description?: string | null;
-  host?: string | null;
-  port?: number | null;
-  username?: string | null;
-  database?: string | null;
-  ssl?: boolean | null;
-  viaConnectionId?: string | null;
-  exposure?: ConnectionExposure | null;
-  readOnly?: boolean | null;
-  requireApproval?: boolean | null;
-  commandAllowlist?: string[] | null;
-  privateKey?: string | null;
-  password?: string | null;
-  url?: string | null;
-  fields?: ConnectionFieldInput[] | null;
-}
-
-const CONNECTION_FIELDS = gql`
-  fragment ConnectionFields on Connection {
-    id
-    name
-    kind
-    description
-    host
-    port
-    username
-    url
-    fields {
-      key
-      label
-      secret
-      value
-      variable
-    }
-    database
-    ssl
-    viaConnection {
-      id
-      name
-    }
-    exposure
-    readOnly
-    requireApproval
-    commandAllowlist
-    publicKey
-    hostFingerprint
-    hostKeySeenAt
-    hasSecret
-    lastTestAt
-    lastTestOk
-    lastTestError
-    createdAt
-    updatedAt
-  }
-`;
-
-// ---- Comptes Google du projet --------------------------------------------------------------------
-
-export type GoogleAccess = 'NONE' | 'READ' | 'WRITE';
-
-export interface GoogleAccount {
-  id: string;
-  email: string;
-  name: string | null;
-  avatarUrl: string | null;
-  gmailAccess: GoogleAccess;
-  driveAccess: GoogleAccess;
-  scopes: string[];
-  connectedBy: { id: string; name: string; email: string } | null;
-  lastCheckAt: string | null;
-  lastCheckOk: boolean | null;
-  lastCheckError: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export const GOOGLE_ACCOUNT_FIELDS = gql`
-  fragment GoogleAccountFields on GoogleAccount {
-    id
-    email
-    name
-    avatarUrl
-    gmailAccess
-    driveAccess
-    scopes
-    connectedBy {
-      id
-      name
-      email
-    }
-    lastCheckAt
-    lastCheckOk
-    lastCheckError
-    createdAt
-    updatedAt
-  }
-`;
-
-export const PROJECT_GOOGLE_ACCOUNTS = gql`
-  ${GOOGLE_ACCOUNT_FIELDS}
-  query ProjectGoogleAccounts($id: ID!) {
-    project(id: $id) {
-      id
-      googleAccounts {
-        ...GoogleAccountFields
-      }
-    }
-  }
-`;
-
-export const CHECK_GOOGLE_ACCOUNT = gql`
-  ${GOOGLE_ACCOUNT_FIELDS}
-  mutation CheckGoogleAccount($id: ID!) {
-    checkGoogleAccount(id: $id) {
-      ok
-      error
-      detail
-      account {
-        ...GoogleAccountFields
-      }
-    }
-  }
-`;
-
-export const DISCONNECT_GOOGLE_ACCOUNT = gql`
-  mutation DisconnectGoogleAccount($id: ID!) {
-    disconnectGoogleAccount(id: $id) {
-      id
-      googleAccounts {
-        id
-      }
-    }
-  }
-`;
-
-export const PROJECT_CONNECTIONS = gql`
-  ${CONNECTION_FIELDS}
-  query ProjectConnections($id: ID!) {
-    project(id: $id) {
-      id
-      name
-      slug
-      runnerConfig
-      myRole
-      connections {
-        ...ConnectionFields
-      }
-    }
-  }
-`;
-
-export const CREATE_CONNECTION = gql`
-  ${CONNECTION_FIELDS}
-  mutation CreateConnection($projectId: ID!, $input: ConnectionInput!) {
-    createConnection(projectId: $projectId, input: $input) {
-      ...ConnectionFields
-    }
-  }
-`;
-
-export const UPDATE_CONNECTION = gql`
-  ${CONNECTION_FIELDS}
-  mutation UpdateConnection($id: ID!, $input: ConnectionInput!) {
-    updateConnection(id: $id, input: $input) {
-      ...ConnectionFields
-    }
-  }
-`;
-
-export const DELETE_CONNECTION = gql`
-  mutation DeleteConnection($id: ID!) {
-    deleteConnection(id: $id)
-  }
-`;
-
-export const TEST_CONNECTION = gql`
-  ${CONNECTION_FIELDS}
-  mutation TestConnection($id: ID!) {
-    testConnection(id: $id) {
-      ok
-      error
-      detail
-      connection {
-        ...ConnectionFields
-      }
-    }
-  }
-`;
-
-export const REGENERATE_CONNECTION_KEY = gql`
-  ${CONNECTION_FIELDS}
-  mutation RegenerateConnectionKey($id: ID!) {
-    regenerateConnectionKey(id: $id) {
-      ...ConnectionFields
-    }
-  }
-`;
-
-export const FORGET_CONNECTION_HOST_KEY = gql`
-  ${CONNECTION_FIELDS}
-  mutation ForgetConnectionHostKey($id: ID!) {
-    forgetConnectionHostKey(id: $id) {
-      ...ConnectionFields
     }
   }
 `;

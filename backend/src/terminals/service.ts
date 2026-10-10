@@ -5,6 +5,7 @@ import { projectService } from '../projects/service.js';
 import { runner } from '../runners/index.js';
 import { agentGitEnv } from '../git/agentEnv.js';
 import { worktreeService } from '../worktrees/service.js';
+import { TerminalHistory } from './history.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
 
@@ -18,6 +19,8 @@ interface LiveTerminal {
   /** Sortie récente, rejouée à chaque connexion (reconnexion, second onglet). */
   scrollback: string;
   clients: Set<WebSocket>;
+  /** Historique des commandes de l'utilisateur sur le projet, s'il a pu être chargé. */
+  history: TerminalHistory | null;
 }
 
 const SCROLLBACK_LIMIT = 200_000;
@@ -34,28 +37,30 @@ export const terminalService = {
     if (!t) throw new NotFoundError('Terminal introuvable');
     return t;
   },
-  listByProject: (projectId: string) => terminalRepository.listByProject(projectId),
+  listByProject: (projectId: string, userId?: string | null) => terminalRepository.listByProject(projectId, userId),
   isLive: (id: string) => live.has(id),
   /** Terminaux ouverts sur ce serveur (processus vivants). */
   liveCount: () => live.size,
 
-  /** Ouvre un shell de connexion dans le workspace du projet. */
-  async create(projectId: string, name?: string | null, worktreeId?: string | null): Promise<TerminalRecord> {
+  /** Ouvre un shell de connexion dans le workspace du projet, avec l'historique des commandes de l'utilisateur. */
+  async create(projectId: string, name?: string | null, worktreeId?: string | null, createdById: string | null = null): Promise<TerminalRecord> {
     const project = await projectService.get(projectId);
     const cwd = await worktreeService.resolveCwd(project, worktreeId);
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
-    const record = await terminalRepository.create(projectId, label, worktreeId ?? null);
+    const record = await terminalRepository.create(projectId, label, worktreeId ?? null, createdById);
 
-    const spec = await runner.terminalCommand(project, cwd);
+    const history = createdById ? await TerminalHistory.prepare(project, record.id, createdById) : null;
+    const spec = await runner.terminalCommand(project, cwd, history ? { rcfile: history.files.rcfile } : undefined);
     const proc = pty.spawn(spec.command, spec.args, {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd,
-      env: { ...process.env, ...(await agentGitEnv()), ...spec.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
+      env: { ...process.env, ...(await agentGitEnv(createdById ?? null, project.gitUrl, { projectId: project.id })), ...spec.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
     });
-    const t: LiveTerminal = { id: record.id, proc, scrollback: '', clients: new Set() };
+    const t: LiveTerminal = { id: record.id, proc, scrollback: '', clients: new Set(), history };
     live.set(record.id, t);
+    history?.start();
 
     proc.onData((data) => {
       t.scrollback = (t.scrollback + data).slice(-SCROLLBACK_LIMIT);
@@ -65,6 +70,7 @@ export const terminalService = {
       live.delete(record.id);
       broadcast(t, { type: 'exit', code: exitCode });
       for (const ws of t.clients) ws.close();
+      void history?.dispose();
       void terminalRepository.close(record.id, exitCode).catch((err) => console.error('[terminals] clôture', err));
     });
     return record;
@@ -115,6 +121,7 @@ export const terminalService = {
   recoverAfterRestart: () => terminalRepository.closeAllRunning(),
 
   async shutdown(): Promise<void> {
+    await Promise.all([...live.values()].map((t) => t.history?.flush()));
     for (const t of live.values()) t.proc.kill();
   },
 };

@@ -13,9 +13,9 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, slug: id, gitUrl: 'https://github.com/acme/app.git', gitBranch: 'main' }) } }));
-vi.mock('../projects/workspace.js', () => ({ git: m.git, workspacePath: () => '/ws/main' }));
+vi.mock('../projects/workspace.js', () => ({ git: m.git, workspacePath: () => '/ws/main', gitAuthFor: async () => [] }));
 vi.mock('../files/service.js', () => ({ resolveRoot: async () => '/ws/wt' }));
-vi.mock('../settings/github.js', () => ({ githubService: { token: async () => 'ghp_test' } }));
+vi.mock('../settings/github.js', () => ({ githubService: { token: async () => 'ghp_test' }, githubOwnerOf: () => 'acme' }));
 vi.mock('./service.js', () => ({ gitService: { push: vi.fn(async () => '') } }));
 vi.mock('../sessions/service.js', () => ({ sessionService: { list: async () => m.running, stop: m.stop } }));
 vi.mock('../terminals/service.js', () => ({ terminalService: { listByProject: async () => [], delete: vi.fn() } }));
@@ -98,7 +98,7 @@ describe('pullRequestService.merge', () => {
   });
 
   it('fusionne en squash puis supprime branche distante, worktree et termine la tâche', async () => {
-    const res = await pullRequestService.merge('p1', 7, 'SQUASH', { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
+    const res = await pullRequestService.merge('p1', 'u1', 7, 'SQUASH', { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
     const put = m.fetch.mock.calls.find(([, i]) => (i as RequestInit).method === 'PUT')!;
     expect(put[0]).toBe('https://api.github.com/repos/acme/app/pulls/7/merge');
     expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({ merge_method: 'squash' });
@@ -112,12 +112,12 @@ describe('pullRequestService.merge', () => {
 
   it('conserve le worktree si des sessions y tournent, sauf demande de les arrêter', async () => {
     m.running = [{ id: 's1' }];
-    const kept = await pullRequestService.merge('p1', 7, 'MERGE', { deleteWorktree: true });
+    const kept = await pullRequestService.merge('p1', 'u1', 7, 'MERGE', { deleteWorktree: true });
     expect(m.deleteWorktree).not.toHaveBeenCalled();
     expect(kept.warnings[0]).toMatch(/task-ma-tache conservé/);
     m.fetch.mockClear(); // la PR redevient ouverte pour la seconde fusion
 
-    const removed = await pullRequestService.merge('p1', 7, 'MERGE', { deleteWorktree: true, stopSessions: true });
+    const removed = await pullRequestService.merge('p1', 'u1', 7, 'MERGE', { deleteWorktree: true, stopSessions: true });
     expect(m.stop).toHaveBeenCalledWith('s1');
     expect(removed.deletedWorktreeIds).toEqual(['wt1']);
   });
@@ -126,6 +126,6 @@ describe('pullRequestService.merge', () => {
     m.fetch.mockImplementation(async (url: string, init: RequestInit) =>
       url.endsWith('/graphql') ? json({ data: { repository: { pullRequest: gqlPr() } } }) : init.method === 'PUT' ? json({ message: 'Pull Request is not mergeable' }, 405) : json({}, 500),
     );
-    await expect(pullRequestService.merge('p1', 7)).rejects.toThrow(/Fusion refusée par GitHub : Pull Request is not mergeable/);
+    await expect(pullRequestService.merge('p1', 'u1', 7)).rejects.toThrow(/Fusion refusée par GitHub : Pull Request is not mergeable/);
   });
 });

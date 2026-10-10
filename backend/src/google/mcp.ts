@@ -14,7 +14,7 @@ const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }],
 
 export interface GoogleMcpContext {
   project: Project;
-  /** Comptes Google reliés au projet (au moins un). */
+  /** Comptes Google de la portée de la session (au moins un). */
   accounts: GoogleAccount[];
   sessionId: string;
   /** Dossier de travail de la session : les fichiers téléchargés ou envoyés doivent s'y trouver. */
@@ -39,7 +39,7 @@ function localPath(cwd: string, p: string): string {
 export function createGoogleMcpServer(ctx: GoogleMcpContext): McpSdkServerConfigWithInstance {
   const { accounts } = ctx;
   const several = accounts.length > 1;
-  const describeAccount = (a: GoogleAccount) => `${a.email}${a.name ? ` (${a.name})` : ''} : Gmail ${accessLabels[a.gmailAccess]}, Drive ${accessLabels[a.driveAccess]}`;
+  const describeAccount = (a: GoogleAccount) => `${a.email}${a.displayName ? ` (${a.displayName})` : ''} (élément du coffre \`${a.name}\`) : Gmail ${accessLabels[a.gmailAccess]}, Drive ${accessLabels[a.driveAccess]}`;
 
   /** Paramètre `account` des outils : obligatoire dans les faits dès que plusieurs comptes ont l'accès voulu. */
   const accountParam = z

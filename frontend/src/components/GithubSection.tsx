@@ -1,216 +1,261 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useState } from 'react';
-import { Alert, Badge, Button, Card, Collapse, Form, InputGroup, Spinner } from 'react-bootstrap';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Badge, Button, Card, Form, Spinner, Table } from 'react-bootstrap';
+import { useDialogs } from './Dialogs';
 import {
-  CANCEL_GITHUB_LOGIN,
+  CONNECT_GITHUB_FROM_VAULT,
   DISCONNECT_GITHUB,
   GITHUB_REPOSITORIES,
   GITHUB_STATUS,
-  SET_GITHUB_CLIENT_ID,
-  SET_GITHUB_PERSONAL_TOKEN,
-  START_GITHUB_LOGIN,
+  POLL_GITHUB_DEVICE_LOGIN,
+  SET_DEFAULT_GITHUB_ACCOUNT,
+  START_GITHUB_DEVICE_LOGIN,
+  type GithubAccount,
   type GithubAuthStatus,
-  type GithubLogin,
+  type GithubDeviceLogin,
+  type GithubDevicePoll,
   type GithubRepository,
-} from '../graphql/operations';
+} from '../graphql/settings';
+import VaultTokenPicker from './settings/VaultTokenPicker';
+
+const REFETCH = ['GithubStatus', 'Settings'];
 
 function fmtDate(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : '';
 }
 
-/** Compte connecté : identité, portées, déconnexion. */
-function ConnectedCard({ status }: { status: GithubAuthStatus }) {
-  const [disconnect, { loading }] = useMutation(DISCONNECT_GITHUB, { refetchQueries: ['GithubStatus', 'Settings'] });
+function ErrorLine({ error }: { error: Error | undefined }) {
+  return error ? <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert> : null;
+}
+
+/** Comptes connectés : identité, méthode, organisations, compte par défaut, déconnexion. */
+function AccountsCard({ status }: { status: GithubAuthStatus }) {
+  const { confirm } = useDialogs();
+  const [setDefault, { loading: settingDefault, error: defaultError }] = useMutation(SET_DEFAULT_GITHUB_ACCOUNT, { refetchQueries: REFETCH });
+  const [disconnect, { loading: disconnecting, error: disconnectError }] = useMutation(DISCONNECT_GITHUB, { refetchQueries: REFETCH });
+  const remove = async (a: GithubAccount) => {
+    const ok = await confirm({
+      title: 'Déconnecter le compte',
+      message: `Les projets dont les dépôts appartiennent à « ${a.login} » (ou à ses organisations) ne seront plus atteints avec ce compte. Le jeton reste dans le coffre : supprimez-le là-bas pour le retirer tout à fait.`,
+      confirmLabel: 'Déconnecter',
+      danger: true,
+    });
+    if (ok) void disconnect({ variables: { accountId: a.id } }).catch(() => undefined);
+  };
   return (
     <Card className="mb-3">
-      <Card.Header>Compte GitHub</Card.Header>
+      <Card.Header>Vos comptes GitHub</Card.Header>
       <Card.Body>
-        <div className="d-flex align-items-center gap-3 mb-2">
-          {status.avatarUrl && <img src={status.avatarUrl} alt="" width={40} height={40} className="rounded-circle" />}
-          <div>
-            <div>
-              <i className="bi bi-check-circle text-success me-1" /> Connecté en tant que <strong>{status.login}</strong>
-              <Badge bg="secondary" className="ms-2">
-                {status.method === 'pat' ? 'jeton personnel' : 'OAuth'}
-              </Badge>
-            </div>
-            <div className="small text-secondary">
-              Depuis le {fmtDate(status.tokenSetAt)} · portées : {status.scopes.join(', ') || '—'}
-            </div>
-          </div>
-        </div>
         <p className="small text-secondary">
-          Les projets peuvent utiliser l'adresse https d'un dépôt privé : le jeton est injecté dans les commandes git sans être écrit sur disque. Il est stocké
-          chiffré en base et agit en votre nom.
+          Un dépôt est atteint avec le compte dont l'identifiant ou les organisations le possèdent, sinon avec le compte par défaut. Le jeton est injecté dans les commandes git de vos sessions et de vos actions sans être écrit sur disque ; il agit en votre nom.
         </p>
-        <Button size="sm" variant="outline-danger" disabled={loading} onClick={() => disconnect()}>
-          Se déconnecter
-        </Button>
-        <div className="small text-secondary mt-2">
-          Pour révoquer complètement l'accès, supprimez aussi le jeton côté GitHub (Settings → Developer settings → Personal access tokens, ou Applications pour
-          OAuth).
+        <Table size="sm" className="align-middle mb-2">
+          <thead>
+            <tr>
+              <th>Compte</th>
+              <th>Méthode</th>
+              <th>Organisations</th>
+              <th>Portées</th>
+              <th>Connecté le</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {status.accounts.map((a) => {
+              const expiry = a.tokenExpiresAt ? new Date(a.tokenExpiresAt) : null;
+              const expired = expiry ? expiry.getTime() < Date.now() : false;
+              return (
+                <tr key={a.id}>
+                  <td>
+                    <span className="d-inline-flex align-items-center gap-2">
+                      {a.avatarUrl && <img src={a.avatarUrl} alt="" width={24} height={24} className="rounded-circle" />}
+                      <strong>{a.login}</strong>
+                      {a.isDefault ? (
+                        <Badge bg="primary" title="Compte utilisé quand aucun autre ne possède le dépôt">
+                          <i className="bi bi-star-fill me-1" />
+                          par défaut
+                        </Badge>
+                      ) : (
+                        <Button size="sm" variant="link" className="p-0" disabled={settingDefault} onClick={() => void setDefault({ variables: { accountId: a.id } }).catch(() => undefined)}>
+                          Par défaut
+                        </Button>
+                      )}
+                    </span>
+                  </td>
+                  <td>
+                    <Badge bg="secondary">{a.method === 'PAT' ? 'jeton personnel' : 'OAuth'}</Badge>
+                    {expiry && (
+                      <div className={`small ${expired ? 'text-danger' : 'text-secondary'}`}>{expired ? 'jeton expiré' : `expire le ${fmtDate(a.tokenExpiresAt)}`}</div>
+                    )}
+                  </td>
+                  <td className="small">{a.organizations.join(', ') || '—'}</td>
+                  <td className="small text-secondary">{a.scopes.join(', ') || '—'}</td>
+                  <td className="small text-secondary text-nowrap">{fmtDate(a.connectedAt)}</td>
+                  <td className="text-end">
+                    <Button size="sm" variant="outline-danger" disabled={disconnecting} onClick={() => void remove(a)}>
+                      Déconnecter
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+        <div className="small text-secondary">
+          Pour révoquer complètement l'accès, supprimez aussi le jeton côté GitHub (Settings → Developer settings → Personal access tokens, ou Applications pour OAuth).
         </div>
+        <ErrorLine error={defaultError ?? disconnectError} />
       </Card.Body>
     </Card>
   );
 }
 
-/** Méthode simple : coller un jeton d'accès personnel. */
-function PersonalTokenCard() {
-  const [token, setToken] = useState('');
-  const [save, { loading, error }] = useMutation(SET_GITHUB_PERSONAL_TOKEN, { refetchQueries: ['GithubStatus', 'Settings'], onCompleted: () => setToken('') });
+/** Connexion par code (device flow) : GitHub affiche un code à saisir, puis on interroge jusqu'à la validation. */
+function DeviceLoginCard({ onConnected }: { onConnected: () => void }) {
+  const [login, setLogin] = useState<GithubDeviceLogin | null>(null);
+  const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
+  const [start, { loading: starting, error: startError }] = useMutation<{ startGithubDeviceLogin: GithubDeviceLogin }>(START_GITHUB_DEVICE_LOGIN, {
+    onCompleted: (res) => {
+      setOutcome(null);
+      setLogin(res.startGithubDeviceLogin);
+    },
+  });
+  const [poll] = useMutation<{ pollGithubDeviceLogin: GithubDevicePoll }>(POLL_GITHUB_DEVICE_LOGIN);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Interrogation périodique tant que GitHub répond « en attente » ; l'intervalle vient de la réponse.
+  useEffect(() => {
+    if (!login) return;
+    let cancelled = false;
+    const tick = async (delay: number) => {
+      timer.current = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          const res = await poll({ variables: { id: login.id } });
+          const r = res.data?.pollGithubDeviceLogin;
+          if (!r || cancelled) return;
+          if (r.status === 'PENDING') return void tick(Math.max(2, r.interval) * 1000);
+          setLogin(null);
+          if (r.status === 'CONNECTED') {
+            setOutcome({ ok: true, text: `Compte « ${r.account?.login ?? '?'} » connecté.` });
+            onConnected();
+          } else if (r.status === 'EXPIRED') setOutcome({ ok: false, text: 'Le code a expiré : recommencez.' });
+          else if (r.status === 'DENIED') setOutcome({ ok: false, text: "L'autorisation a été refusée sur GitHub." });
+          else setOutcome({ ok: false, text: `État inattendu : ${r.status}` });
+        } catch (err) {
+          if (cancelled) return;
+          setLogin(null);
+          setOutcome({ ok: false, text: (err as Error).message });
+        }
+      }, delay);
+    };
+    void tick(Math.max(2, login.interval) * 1000);
+    return () => {
+      cancelled = true;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [login, poll, onConnected]);
+
+  const remaining = login ? Math.max(0, Math.round((new Date(login.expiresAt).getTime() - Date.now()) / 60000)) : 0;
   return (
     <Card className="mb-3">
-      <Card.Header>Jeton d'accès personnel (le plus simple)</Card.Header>
+      <Card.Header>Se connecter avec GitHub (sans jeton à copier)</Card.Header>
+      <Card.Body>
+        {login ? (
+          <div className="border rounded p-3">
+            <ol className="mb-2 ps-3">
+              <li className="mb-2">
+                Ouvrez{' '}
+                <a href={login.verificationUri} target="_blank" rel="noreferrer">
+                  {login.verificationUri}
+                </a>{' '}
+                et saisissez ce code :
+                <div className="display-6 font-monospace my-2" style={{ letterSpacing: '0.15em' }}>
+                  {login.userCode}
+                </div>
+                <Button size="sm" variant="outline-secondary" onClick={() => navigator.clipboard?.writeText(login.userCode)}>
+                  <i className="bi bi-clipboard me-1" /> Copier le code
+                </Button>
+              </li>
+              <li>Autorisez l'application. Cette page se mettra à jour toute seule.</li>
+            </ol>
+            <div className="small text-secondary">
+              <Spinner size="sm" className="me-1" /> En attente de votre validation sur GitHub{remaining ? ` (code valable encore ${remaining} min)` : ''}.
+              <Button size="sm" variant="link" className="p-0 ms-2" onClick={() => setLogin(null)}>
+                Annuler
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="small text-secondary mb-2">
+              GitHub affiche un code à saisir sur son site ; une fois l'application autorisée, le jeton est rangé dans votre coffre (jeton applicatif « GitHub ») et renouvelé automatiquement.
+            </p>
+            {outcome && (
+              <Alert variant={outcome.ok ? 'success' : 'warning'} className="py-2">
+                {outcome.text}
+              </Alert>
+            )}
+            <Button size="sm" variant="outline-primary" onClick={() => void start().catch(() => undefined)} disabled={starting}>
+              {starting ? (
+                <>
+                  <Spinner size="sm" className="me-1" /> Préparation…
+                </>
+              ) : (
+                <>
+                  <i className="bi bi-github me-1" /> Se connecter avec GitHub
+                </>
+              )}
+            </Button>
+            <ErrorLine error={startError} />
+          </>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
+
+/** Jeton d'accès personnel : un jeton applicatif « GitHub » du coffre, vérifié auprès de GitHub puis enregistré comme compte. */
+function PersonalTokenCard() {
+  const [itemId, setItemId] = useState<string | null>(null);
+  const [connect, { loading, error }] = useMutation<{ connectGithubFromVault: GithubAccount }>(CONNECT_GITHUB_FROM_VAULT, { refetchQueries: REFETCH, onCompleted: () => setItemId(null) });
+  return (
+    <Card className="mb-3">
+      <Card.Header>Jeton d'accès personnel</Card.Header>
       <Card.Body>
         <ol className="small text-secondary ps-3">
           <li>
-            Sur GitHub : <strong>Settings → Developer settings → Personal access tokens</strong>. Un jeton « Fine-grained » limité aux dépôts voulus avec le droit{' '}
-            <em>Contents : Read and write</em> est idéal ; un jeton « classic » avec la portée <code>repo</code> fonctionne aussi.
+            Sur GitHub : <strong>Settings → Developer settings → Personal access tokens</strong>. Un jeton « Fine-grained » limité aux dépôts voulus avec le droit <em>Contents : Read and write</em> est idéal ; un jeton « classic » avec la portée <code>repo</code> fonctionne aussi.
           </li>
-          <li>Collez-le ici. Skipper le vérifie auprès de GitHub puis le stocke chiffré.</li>
+          <li>Rangez-le dans votre coffre comme jeton applicatif de service « GitHub », puis choisissez-le ici : Skipper le vérifie auprès de GitHub et l'enregistre comme compte.</li>
         </ol>
         <Form
           onSubmit={(e) => {
             e.preventDefault();
-            if (token.trim()) save({ variables: { token: token.trim() } });
+            if (itemId) void connect({ variables: { itemId } }).catch(() => undefined);
           }}
         >
-          <InputGroup style={{ maxWidth: 620 }}>
-            <Form.Control type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="ghp_… ou github_pat_…" autoComplete="off" />
-            <Button type="submit" disabled={loading || !token.trim()}>
-              {loading ? (
-                <>
-                  <Spinner size="sm" className="me-1" /> Vérification…
-                </>
-              ) : (
-                'Connecter'
-              )}
-            </Button>
-          </InputGroup>
-          {error && (
-            <Alert variant="danger" className="mt-2 mb-0 py-2">
-              {error.message}
-            </Alert>
-          )}
+          <div style={{ maxWidth: 520 }}>
+            <VaultTokenPicker service="github" value={itemId} onChange={setItemId} size="sm" noneLabel="Choisir un jeton du coffre…" />
+          </div>
+          <Button type="submit" size="sm" className="mt-2" disabled={loading || !itemId}>
+            {loading ? (
+              <>
+                <Spinner size="sm" className="me-1" /> Vérification…
+              </>
+            ) : (
+              'Connecter'
+            )}
+          </Button>
+          <ErrorLine error={error} />
         </Form>
       </Card.Body>
     </Card>
   );
 }
 
-/** Méthode alternative : OAuth App et device flow (pas de jeton à manipuler). */
-function OAuthCard({ status }: { status: GithubAuthStatus }) {
-  const [open, setOpen] = useState(Boolean(status.clientId) || Boolean(status.currentLogin));
-  const [clientId, setClientId] = useState(status.clientId ?? '');
-  const [saveClientId, { loading: savingId, error: idError }] = useMutation(SET_GITHUB_CLIENT_ID, { refetchQueries: ['GithubStatus', 'Settings'] });
-  const [login, setLogin] = useState<GithubLogin | null>(status.currentLogin);
-  const [start, { loading: starting, error: startError }] = useMutation<{ startGithubLogin: GithubLogin }>(START_GITHUB_LOGIN, { onCompleted: (res) => setLogin(res.startGithubLogin) });
-  const [cancel] = useMutation(CANCEL_GITHUB_LOGIN, { refetchQueries: ['GithubStatus', 'Settings'], onCompleted: () => setLogin(null) });
-  useEffect(() => setClientId(status.clientId ?? ''), [status.clientId]);
-  useEffect(() => {
-    if (status.currentLogin) setLogin(status.currentLogin);
-  }, [status.currentLogin]);
-  const fromEnv = status.clientIdSource === 'env';
-  const pending = login?.status === 'pending';
-  const remaining = login ? Math.max(0, Math.round((new Date(login.expiresAt).getTime() - Date.now()) / 60000)) : 0;
-
-  return (
-    <Card className="mb-3">
-      <Card.Header>
-        <Button variant="link" className="p-0 text-reset text-decoration-none" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <i className={`bi bi-chevron-${open ? 'down' : 'right'} me-1`} /> Alternative : connexion OAuth sans jeton à copier
-        </Button>
-      </Card.Header>
-      <Collapse in={open}>
-        <div>
-          <Card.Body>
-            <p className="small text-secondary">
-              Passe par une « OAuth App » GitHub à vous (Settings → Developer settings → OAuth Apps → New OAuth App, avec <strong>Enable Device Flow</strong> coché).
-              Seul son identifiant public est nécessaire.
-            </p>
-            <Form
-              className="mb-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveClientId({ variables: { clientId: clientId.trim() || null } });
-              }}
-            >
-              <Form.Label className="small mb-1">Client ID de l'OAuth App</Form.Label>
-              <InputGroup style={{ maxWidth: 520 }}>
-                <Form.Control value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Ov23li…" disabled={fromEnv} />
-                {!fromEnv && (
-                  <Button type="submit" variant="outline-primary" disabled={savingId || clientId.trim() === (status.clientId ?? '')}>
-                    Enregistrer
-                  </Button>
-                )}
-              </InputGroup>
-              {fromEnv && <Form.Text>Défini par la variable d'environnement GITHUB_CLIENT_ID du serveur.</Form.Text>}
-              {idError && (
-                <Alert variant="danger" className="mt-2 mb-0 py-2">
-                  {idError.message}
-                </Alert>
-              )}
-            </Form>
-            {pending && login ? (
-              <div className="border rounded p-3">
-                <ol className="mb-2 ps-3">
-                  <li className="mb-2">
-                    Ouvrez{' '}
-                    <a href={login.verificationUri} target="_blank" rel="noreferrer">
-                      {login.verificationUri}
-                    </a>{' '}
-                    et saisissez ce code :
-                    <div className="display-6 font-monospace my-2" style={{ letterSpacing: '0.15em' }}>
-                      {login.userCode}
-                    </div>
-                    <Button size="sm" variant="outline-secondary" onClick={() => navigator.clipboard?.writeText(login.userCode)}>
-                      <i className="bi bi-clipboard me-1" /> Copier le code
-                    </Button>
-                  </li>
-                  <li>Autorisez l'application. Cette page se mettra à jour toute seule.</li>
-                </ol>
-                <div className="small text-secondary">
-                  <Spinner size="sm" className="me-1" /> En attente de votre validation sur GitHub{remaining ? ` (code valable encore ${remaining} min)` : ''}.
-                  <Button size="sm" variant="link" className="p-0 ms-2" onClick={() => cancel()}>
-                    Annuler
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {login && login.status !== 'done' && login.status !== 'cancelled' && (
-                  <Alert variant="warning" className="py-2">
-                    {login.error ?? 'La connexion a échoué.'}
-                  </Alert>
-                )}
-                <Button size="sm" variant="outline-primary" onClick={() => start()} disabled={starting || !status.clientId}>
-                  {starting ? (
-                    <>
-                      <Spinner size="sm" className="me-1" /> Préparation…
-                    </>
-                  ) : (
-                    <>
-                      <i className="bi bi-github me-1" /> Se connecter avec GitHub
-                    </>
-                  )}
-                </Button>
-                {startError && (
-                  <Alert variant="danger" className="mt-2 mb-0 py-2">
-                    {startError.message}
-                  </Alert>
-                )}
-              </>
-            )}
-          </Card.Body>
-        </div>
-      </Collapse>
-    </Card>
-  );
-}
-
 /** Aperçu des dépôts accessibles, pour vérifier la connexion. */
-function RepositoriesCard() {
+function RepositoriesCard({ several }: { several: boolean }) {
   const [query, setQuery] = useState('');
   const { data, loading, error } = useQuery<{ githubRepositories: GithubRepository[] }>(GITHUB_REPOSITORIES, { variables: { query }, fetchPolicy: 'cache-and-network' });
   const repos = data?.githubRepositories ?? [];
@@ -223,7 +268,7 @@ function RepositoriesCard() {
         {loading && !data && <Spinner animation="border" size="sm" />}
         <div className="small" style={{ maxHeight: 280, overflow: 'auto' }}>
           {repos.slice(0, 50).map((r) => (
-            <div key={r.fullName} className="d-flex justify-content-between border-bottom py-1">
+            <div key={`${r.account}/${r.fullName}`} className="d-flex justify-content-between border-bottom py-1">
               <span>
                 <a href={r.htmlUrl} target="_blank" rel="noreferrer">
                   {r.fullName}
@@ -235,7 +280,10 @@ function RepositoriesCard() {
                 )}
                 {r.description && <span className="text-secondary"> — {r.description}</span>}
               </span>
-              <span className="text-secondary text-nowrap ms-2">{r.defaultBranch}</span>
+              <span className="text-secondary text-nowrap ms-2">
+                {several && <span className="me-2" title="Compte avec lequel le dépôt est listé">{r.account}</span>}
+                {r.defaultBranch}
+              </span>
             </div>
           ))}
           {data && repos.length === 0 && <div className="text-secondary">Aucun dépôt.</div>}
@@ -246,21 +294,42 @@ function RepositoriesCard() {
   );
 }
 
-/** Section GitHub des Paramètres : jeton personnel, ou OAuth App en alternative, puis dépôts accessibles. */
+/** Section GitHub des Paramètres : comptes connectés, ajout d'un compte (connexion par code ou jeton du coffre), dépôts accessibles. */
 export default function GithubSection() {
-  const { data, loading, error } = useQuery<{ settings: { github: GithubAuthStatus } }>(GITHUB_STATUS, { pollInterval: 3000 });
+  const { data, loading, error, refetch } = useQuery<{ settings: { github: GithubAuthStatus } }>(GITHUB_STATUS, { pollInterval: 15_000 });
+  const [adding, setAdding] = useState(false);
   if (loading && !data) return <Spinner animation="border" size="sm" />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   const status = data!.settings.github;
-  return status.connected ? (
+  const showAdd = !status.connected || adding;
+  return (
     <>
-      <ConnectedCard status={status} />
-      <RepositoriesCard />
-    </>
-  ) : (
-    <>
-      <PersonalTokenCard />
-      <OAuthCard status={status} />
+      {status.connected && <AccountsCard status={status} />}
+      {status.connected && !adding && (
+        <div className="mb-3">
+          <Button size="sm" variant="outline-primary" onClick={() => setAdding(true)}>
+            <i className="bi bi-plus-lg me-1" /> Ajouter un compte
+          </Button>
+        </div>
+      )}
+      {showAdd && (
+        <>
+          {status.deviceAvailable ? (
+            <DeviceLoginCard
+              onConnected={() => {
+                setAdding(false);
+                void refetch();
+              }}
+            />
+          ) : (
+            <Alert variant="light" className="py-2 small border">
+              La connexion par code n'est pas disponible sur ce serveur (variable GITHUB_CLIENT_ID absente ou désactivée) : utilisez un jeton d'accès personnel.
+            </Alert>
+          )}
+          <PersonalTokenCard />
+        </>
+      )}
+      {status.connected && <RepositoriesCard several={status.accounts.length > 1} />}
     </>
   );
 }

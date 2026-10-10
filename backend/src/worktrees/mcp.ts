@@ -53,7 +53,9 @@ export function createWorktreesMcpServer(project: Project, sessionId: string): M
         },
         async ({ branch, name, base_ref }) =>
           run(async () => {
-            const w = await worktreeService.create(project.id, { branch, name, baseRef: base_ref });
+            // Le dépôt distant est contacté avec le compte GitHub du propriétaire de la session.
+            const ownerId = (await sessionRepository.findById(sessionId))?.ownerId ?? null;
+            const w = await worktreeService.create(project.id, { branch, name, baseRef: base_ref }, ownerId);
             return `Worktree créé :\n${await describe(w)}`;
           }),
       ),

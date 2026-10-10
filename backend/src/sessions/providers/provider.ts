@@ -1,6 +1,14 @@
 import type { Project } from '../../projects/types.js';
 import type { CreateRequestInput } from '../../requests/types.js';
+import type { UserClaudeSettings } from '../../settings/claude.js';
+import type { UserOpencodeSettings } from '../../settings/opencode.js';
 import type { Attachment, Session, SessionActivity } from '../types.js';
+
+/** Réglages de la personne pour qui le formulaire est décrit (modèles autorisés, modèle par défaut) ; absents : description générique. */
+export interface DescribeContext {
+  claude?: UserClaudeSettings | null;
+  opencode?: UserOpencodeSettings | null;
+}
 
 /** Description d'un champ de configuration, exposée au front pour générer le formulaire. */
 export interface ConfigOption {
@@ -100,7 +108,8 @@ export interface RunningHandle {
  */
 export interface SessionProvider {
   readonly type: string;
-  describe(): ProviderDescription;
+  /** Description du type et de son formulaire, adaptée aux réglages de la personne quand ils sont fournis. */
+  describe(ctx?: DescribeContext): ProviderDescription;
   /** Valide la config avant création ; lève une erreur si invalide. */
   validateConfig?(config: Record<string, unknown>): void;
   start(ctx: RunContext): Promise<RunningHandle>;

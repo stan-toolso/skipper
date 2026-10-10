@@ -10,6 +10,16 @@ import { config } from '../config.js';
  */
 let cachedKey: Buffer | null = null;
 
+/** Clé maîtresse (32 octets), partagée avec le coffre (chiffrement par enveloppe). */
+export function loadMasterKey(): Buffer {
+  return loadKey();
+}
+
+/** Oublie la clé maîtresse en cache (tests de rotation uniquement). */
+export function resetMasterKeyForTests(): void {
+  cachedKey = null;
+}
+
 function loadKey(): Buffer {
   if (cachedKey) return cachedKey;
   const fromEnv = process.env.SKIPPER_SECRET_KEY;

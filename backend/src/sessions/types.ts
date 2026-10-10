@@ -38,8 +38,17 @@ export interface Session {
   id: string;
   projectId: string;
   worktreeId: string | null;
+  /** Utilisateur qui a lancé la session (hérité de la session parente pour une session lancée par un agent) ; null : ouverte à tous les membres. */
+  ownerId: string | null;
+  /** Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet. */
+  archivedAt: Date | null;
   /** Session d'agent qui a lancé celle-ci (outil `sessions.create`), null pour une session lancée par un humain. */
   parentSessionId: string | null;
+  /** Agent (configuration réutilisable) pour lequel la session tourne, et l'exécution qui l'a lancée ; null pour une session lancée à la main. */
+  agentId: string | null;
+  agentRunId: string | null;
+  /** Exécution de workflow qui a ouvert la session (nœud « tâche » ou « session »). */
+  workflowRunId: string | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -89,6 +98,11 @@ export interface CreateSessionInput {
   /** Crée d'abord ce worktree et y lance la session (exclusif avec worktreeId). */
   newWorktree?: NewWorktreeInput | null;
   parentSessionId?: string | null;
+  ownerId?: string | null;
+  /** Session lancée par une exécution d'agent ou de workflow. */
+  agentId?: string | null;
+  agentRunId?: string | null;
+  workflowRunId?: string | null;
   name: string;
   provider: string;
   prompt?: string | null;
@@ -103,8 +117,24 @@ export interface SessionFilter {
   projectIds?: string[];
   worktreeId?: string;
   parentSessionId?: string;
+  ownerId?: string;
+  /** Restreint à ces sessions (tâche ↔ sessions). */
+  ids?: string[];
   status?: SessionStatus;
   provider?: string;
+  /** Sessions archivées : exclues (défaut), seules, ou toutes. */
+  archived?: 'exclude' | 'only' | 'all';
+  /** Texte cherché dans le nom, la consigne et la conversation. */
+  search?: string;
   limit?: number;
   offset?: number;
+}
+
+/** Relance d'une session à partir de sa conversation. */
+export interface RelaunchInput {
+  worktreeId?: string | null;
+  newWorktree?: NewWorktreeInput | null;
+  name?: string | null;
+  instruction?: string | null;
+  ownerId?: string | null;
 }

@@ -24,6 +24,8 @@ function GithubRepoPicker({ onPick }: { onPick: (repo: GithubRepository) => void
     );
   }
   const repos = data?.githubRepositories ?? [];
+  // Plusieurs comptes connectés : on dit lequel voit chaque dépôt.
+  const several = (statusData?.settings.github.accounts.length ?? 0) > 1;
   return (
     <div className="border rounded p-2 mb-2">
       <div className="d-flex align-items-center gap-2 mb-2">
@@ -37,6 +39,7 @@ function GithubRepoPicker({ onPick }: { onPick: (repo: GithubRepository) => void
             {r.fullName}
             {r.private && <span className="text-secondary"> · privé</span>}
             <span className="text-secondary"> · {r.defaultBranch}</span>
+            {several && <span className="text-secondary"> · compte {r.account}</span>}
           </button>
         ))}
         {data && repos.length === 0 && <div className="text-secondary">Aucun dépôt ne correspond.</div>}

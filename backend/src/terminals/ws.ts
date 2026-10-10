@@ -19,6 +19,8 @@ export function terminalUpgradeHandler(): UpgradeHandler {
       if (!user) return rejectUpgrade(socket, 401, 'Unauthorized');
       const terminal = await terminalService.get(id);
       await requireProject(createAuthContext(user), terminal.projectId, 'member');
+      // Le shell porte les identifiants git de son ouvreur : lui seul s'y attache.
+      if (terminal.createdById && terminal.createdById !== user.id) return rejectUpgrade(socket, 403, 'Forbidden');
       wss.handleUpgrade(req, socket, head, (ws) => terminalService.attach(id, ws));
     })().catch((err) => {
       console.warn(`[terminals] connexion refusée sur ${id} : ${(err as Error).message}`);

@@ -37,7 +37,7 @@ export class ShellProvider implements SessionProvider {
     return spawnProcess({
       command: spec.command,
       args: spec.args,
-      env: { ...(await agentGitEnv()), ...spec.env },
+      env: { ...(await agentGitEnv(ctx.session.ownerId, ctx.project.gitUrl, { sessionId: ctx.session.id, projectId: ctx.project.id })), ...spec.env },
       cwd: ctx.cwd,
       interactive: true,
       // Une session shell relancée par un message reçoit ce message sur stdin.

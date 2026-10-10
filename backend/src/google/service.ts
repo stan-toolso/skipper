@@ -1,19 +1,20 @@
 import { config } from '../config.js';
 import { AppError, NotFoundError } from '../errors.js';
 import type { Project } from '../projects/types.js';
-import { decryptSecret, encryptSecret } from '../settings/crypto.js';
-import { googleAccountRepository } from './repository.js';
-import { GOOGLE_ACCESSES, type GoogleAccess, type GoogleAccessRequest, type GoogleAccount, type GoogleAccountCheckResult } from './types.js';
+import { sealSecrets } from '../vault/crypto.js';
+import { vaultRepository } from '../vault/repository.js';
+import { vaultService } from '../vault/service.js';
+import { GOOGLE_ACCESSES, type GoogleSettings, type VaultActor, type VaultItem } from '../vault/types.js';
+import type { GoogleAccess, GoogleAccessRequest, GoogleAccount } from './types.js';
 
 /**
- * Comptes Google reliés à un projet (plusieurs possibles) : flux OAuth « authorization code » avec accès hors ligne
- * (jeton de rafraîchissement), stockage chiffré, jetons d'accès renouvelés en mémoire, appels aux
- * API Google au nom du compte. Le service est le seul à voir les jetons en clair : les agents
- * passent par les outils MCP (`google/mcp.ts`).
+ * Comptes Google du coffre (éléments `google`, personnels ou d'un projet) : flux OAuth « authorization
+ * code » avec accès hors ligne (jeton de rafraîchissement, chiffré dans le coffre), jetons d'accès
+ * renouvelés en mémoire, appels aux API Google au nom du compte. Le service est le seul à voir les
+ * jetons en clair : les agents passent par les outils MCP (`google/mcp.ts`).
  *
  * Le même client OAuth que la connexion des utilisateurs est employé (GOOGLE_CLIENT_ID /
- * GOOGLE_CLIENT_SECRET) et le retour passe par le même callback `/auth/google/callback` : rien de
- * plus à déclarer dans la console Google Cloud, sinon activer les API Gmail et Drive.
+ * GOOGLE_CLIENT_SECRET) et le retour passe par le même callback `/auth/google/callback`.
  */
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -28,7 +29,6 @@ const DRIVE_FULL = 'https://www.googleapis.com/auth/drive';
 
 export const accessLabels: Record<GoogleAccess, string> = { none: 'aucun accès', read: 'lecture', write: 'lecture et écriture' };
 
-/** Portées OAuth à demander pour les accès voulus. */
 function scopesFor(req: GoogleAccessRequest): string[] {
   const scopes = ['openid', 'email', 'profile'];
   if (req.gmail !== 'none') scopes.push(GMAIL_READ);
@@ -61,7 +61,7 @@ interface TokenResponse {
   error_description?: string;
 }
 
-/** Jetons d'accès en cours de validité, par compte (jamais persistés). */
+/** Jetons d'accès en cours de validité, par élément (jamais persistés). */
 const accessTokens = new Map<string, { token: string; expiresAt: number }>();
 
 async function tokenRequest(params: Record<string, string>): Promise<TokenResponse> {
@@ -72,13 +72,11 @@ async function tokenRequest(params: Record<string, string>): Promise<TokenRespon
   });
   const body = (await res.json().catch(() => ({}))) as TokenResponse;
   if (!res.ok || !body.access_token) {
-    const err = new AppError(`Google : ${body.error_description ?? body.error ?? `réponse ${res.status}`}`, body.error === 'invalid_grant' ? 'GOOGLE_RECONNECT' : 'GOOGLE_ERROR');
-    throw err;
+    throw new AppError(`Google : ${body.error_description ?? body.error ?? `réponse ${res.status}`}`, body.error === 'invalid_grant' ? 'GOOGLE_RECONNECT' : 'GOOGLE_ERROR');
   }
   return body;
 }
 
-/** Message d'erreur lisible d'une réponse d'API Google. */
 async function apiError(res: Response): Promise<string> {
   const text = await res.text().catch(() => '');
   try {
@@ -91,6 +89,20 @@ async function apiError(res: Response): Promise<string> {
   return `${res.status} ${res.statusText}${text ? ` : ${text.slice(0, 200)}` : ''}`;
 }
 
+/** Vue « compte » d'un élément google du coffre. */
+export function accountOf(item: VaultItem): GoogleAccount {
+  const s = item.settings as GoogleSettings;
+  return { id: item.id, name: item.name, email: s.email, displayName: s.displayName ?? null, avatarUrl: s.avatarUrl ?? null, googleSub: s.googleSub, gmailAccess: s.gmailAccess ?? 'none', driveAccess: s.driveAccess ?? 'none', scopes: s.scopes ?? [], requireApproval: item.requireApproval };
+}
+
+/** Nom d'élément dérivé d'une adresse : google-<partie locale>, unique parmi les noms pris. */
+function googleItemName(email: string, taken: Set<string>): string {
+  const base = `google-${email.split('@')[0].toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/-+$/, '').slice(0, 33) || 'compte'}`;
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 100; i++) if (!taken.has(`${base}-${i}`)) return `${base}-${i}`;
+  return `google-${Math.random().toString(16).slice(2, 10)}`;
+}
+
 export const googleAccountService = {
   get configured(): boolean {
     return Boolean(config.googleClientId && config.googleClientSecret);
@@ -100,12 +112,25 @@ export const googleAccountService = {
     return `${config.apiUrl}/auth/google/callback`;
   },
 
-  list: (projectId: string) => googleAccountRepository.listByProject(projectId),
-
+  /** Élément google lu sans contrôle de droits (les outils l'ont résolu dans la portée de la session). */
   async get(id: string): Promise<GoogleAccount> {
-    const account = await googleAccountRepository.findById(id);
-    if (!account) throw new NotFoundError('Compte Google introuvable');
-    return account;
+    const item = await vaultRepository.findById(id);
+    if (!item || item.kind !== 'google') throw new NotFoundError('Compte Google introuvable');
+    return accountOf(item);
+  },
+
+  /** Comptes Google de la portée d'une session, dédoublonnés par compte Google (le premier dans l'ordre de la portée gagne). */
+  async accountsFor(projectId: string, ownerId: string | null): Promise<GoogleAccount[]> {
+    const seen = new Set<string>();
+    const out: GoogleAccount[] = [];
+    for (const item of await vaultService.agentItems(projectId, ownerId)) {
+      if (item.kind !== 'google') continue;
+      const a = accountOf(item);
+      if (seen.has(a.googleSub)) continue;
+      seen.add(a.googleSub);
+      out.push(a);
+    }
+    return out;
   },
 
   /** URL de l'écran de consentement Google, avec accès hors ligne (jeton de rafraîchissement). */
@@ -118,7 +143,6 @@ export const googleAccountService = {
       scope: scopesFor(req).join(' '),
       state,
       access_type: 'offline',
-      // `consent` garantit un jeton de rafraîchissement, même si le compte a déjà autorisé l'application.
       prompt: 'consent select_account',
       include_granted_scopes: 'false',
     });
@@ -126,13 +150,13 @@ export const googleAccountService = {
   },
 
   /**
-   * Retour du consentement : échange le code, lit le profil, enregistre le compte (chiffré). Un compte
-   * Google déjà relié au projet est mis à jour ; `replaceId` désigne le compte à remplacer (« changer de
-   * compte ») : s'il s'agit d'un autre compte Google, l'ancien est détaché.
+   * Retour du consentement : échange le code, lit le profil, enregistre le compte dans le coffre du projet
+   * ou le coffre personnel. Un même compte Google déjà présent dans ce coffre est mis à jour ; `replaceId`
+   * désigne l'élément à remplacer (« changer de compte ») : un autre compte Google le remplace.
    */
-  async connect(projectId: string, code: string, connectedById: string | null, replaceId?: string | null): Promise<GoogleAccount> {
-    const replaced = replaceId ? await googleAccountRepository.findById(replaceId) : null;
-    if (replaced && replaced.projectId !== projectId) throw new AppError('Compte Google à remplacer introuvable dans ce projet');
+  async connect(owner: { userId: string | null; projectId: string | null }, code: string, actor: VaultActor & { userId: string }, replaceId?: string | null): Promise<VaultItem> {
+    const replaced = replaceId ? await vaultRepository.findById(replaceId) : null;
+    if (replaceId && (!replaced || replaced.kind !== 'google' || replaced.ownerUserId !== owner.userId || replaced.ownerProjectId !== owner.projectId)) throw new AppError('Compte Google introuvable dans ce coffre', 'NOT_FOUND');
     const tokens = await tokenRequest({ code, redirect_uri: this.redirectUri, grant_type: 'authorization_code' });
     if (!tokens.refresh_token) throw new AppError("Google n'a pas fourni de jeton de rafraîchissement : recommencez la connexion", 'GOOGLE_ERROR');
     const scopes = (tokens.scope ?? '').split(/\s+/).filter(Boolean);
@@ -146,72 +170,100 @@ export const googleAccountService = {
     const info = (await infoRes.json()) as { sub?: string; email?: string; name?: string; picture?: string };
     if (!info.sub || !info.email) throw new AppError('Profil Google incomplet', 'GOOGLE_ERROR');
 
-    const account = await googleAccountRepository.upsert(projectId, {
-      email: info.email.toLowerCase(),
-      name: info.name ?? null,
-      avatarUrl: info.picture ?? null,
-      googleSub: info.sub,
-      gmailAccess: access.gmail,
-      driveAccess: access.drive,
-      scopes,
-      refreshToken: encryptSecret(tokens.refresh_token),
-      connectedById,
-    });
-    accessTokens.set(account.id, { token: tokens.access_token!, expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000 });
-    // Le compte remplacé (autre compte Google) est détaché, son jeton révoqué pour ne pas laisser d'accès dormant.
-    // Pour un même compte Google, l'ancien jeton n'est pas révoqué : la révocation emporterait l'autorisation qui vient d'être accordée.
-    if (replaced && replaced.id !== account.id) await this.disconnect(replaced.id);
-    console.log(`[google] compte ${account.email} relié au projet ${projectId} (gmail: ${access.gmail}, drive: ${access.drive})`);
-    return account;
+    const settings: GoogleSettings = { email: info.email.toLowerCase(), displayName: info.name ?? null, avatarUrl: info.picture ?? null, googleSub: info.sub, gmailAccess: access.gmail, driveAccess: access.drive, scopes };
+    const existing = await vaultRepository.findGoogleBySub(owner.userId, owner.projectId, info.sub);
+    let item: VaultItem;
+    if (existing) {
+      item = await vaultRepository.update(existing.id, { settings, ...sealSecrets(existing.id, 'google', { refreshToken: tokens.refresh_token }) });
+    } else {
+      const taken = new Set((owner.projectId ? await vaultRepository.listOwnedByProject(owner.projectId) : await vaultRepository.listOwnedByUser(owner.userId!)).map((i) => i.name));
+      const name = googleItemName(settings.email, taken);
+      if (owner.projectId) await vaultService.assertNameFree(owner.projectId, null, name, null);
+      const { randomUUID } = await import('node:crypto');
+      const id = randomUUID();
+      item = await vaultRepository.create({
+        id,
+        ownerUserId: owner.userId,
+        ownerProjectId: owner.projectId,
+        name,
+        kind: 'google',
+        description: '',
+        settings,
+        ...sealSecrets(id, 'google', { refreshToken: tokens.refresh_token }),
+        publicKey: null,
+        readOnly: false,
+        requireApproval: true,
+        commandAllowlist: [],
+        expiresAt: null,
+        createdById: actor.userId,
+      });
+    }
+    await vaultRepository.recordTest(item.id, true, null);
+    accessTokens.set(item.id, { token: tokens.access_token!, expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000 });
+    // Un autre compte Google remplacé : détaché, son jeton révoqué pour ne pas laisser d'accès dormant.
+    if (replaced && replaced.id !== item.id) {
+      await this.beforeDelete(replaced);
+      await vaultService.audit(replaced, 'deleted', actor, `remplacé par ${settings.email}`);
+      await vaultRepository.delete(replaced.id);
+    }
+    await vaultService.audit(item, 'connected', actor, `${settings.email} · Gmail ${access.gmail}, Drive ${access.drive}`);
+    console.log(`[google] compte ${settings.email} relié (${owner.projectId ? `projet ${owner.projectId}` : 'coffre personnel'}, gmail: ${access.gmail}, drive: ${access.drive})`);
+    return item;
   },
 
   /** Révocation côté Google (au mieux : un jeton déjà révoqué renvoie une erreur sans conséquence). */
-  async revoke(token: string, encrypted = false): Promise<void> {
+  async revoke(token: string): Promise<void> {
     try {
-      const plain = encrypted ? decryptSecret(token) : token;
-      await fetch(REVOKE_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: plain }) });
+      await fetch(REVOKE_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }) });
     } catch (err) {
       console.warn('[google] révocation impossible :', (err as Error).message);
     }
   },
 
-  async disconnect(id: string): Promise<boolean> {
-    const account = await googleAccountRepository.findById(id);
-    if (!account) return false;
-    // Le même compte Google relié à un autre projet partage l'autorisation accordée à Skipper : la révoquer le couperait aussi.
-    if ((await googleAccountRepository.countBySub(account.googleSub)) <= 1) await this.revoke(account.refreshToken, true);
-    accessTokens.delete(id);
-    return googleAccountRepository.delete(id);
+  /** Avant la suppression d'un élément google : révoque le jeton sauf si un autre élément porte le même compte. */
+  async beforeDelete(item: VaultItem): Promise<void> {
+    const s = item.settings as GoogleSettings;
+    if ((await vaultRepository.countGoogleBySub(s.googleSub)) <= 1) {
+      try {
+        const refreshToken = vaultService.secretsOf(item).refreshToken;
+        if (refreshToken) await this.revoke(refreshToken);
+      } catch (err) {
+        console.warn('[google] jeton illisible, révocation ignorée :', (err as Error).message);
+      }
+    }
+    accessTokens.delete(item.id);
   },
 
   /** Jeton d'accès valide pour le compte, renouvelé au besoin avec le jeton de rafraîchissement. */
-  async accessToken(accountId: string, force = false): Promise<string> {
-    const cached = accessTokens.get(accountId);
+  async accessToken(itemId: string, force = false): Promise<string> {
+    const cached = accessTokens.get(itemId);
     if (!force && cached && cached.expiresAt - Date.now() > 60_000) return cached.token;
-    const account = await this.get(accountId);
-    let refreshToken: string;
+    const item = await vaultService.getInternal(itemId);
+    if (item.kind !== 'google') throw new NotFoundError('Compte Google introuvable');
+    let refreshToken: string | undefined;
     try {
-      refreshToken = decryptSecret(account.refreshToken);
+      refreshToken = vaultService.secretsOf(item).refreshToken;
     } catch {
       throw new AppError('Jeton Google illisible (clé de chiffrement changée ?) : reconnectez le compte', 'GOOGLE_RECONNECT');
     }
+    if (!refreshToken) throw new AppError('Compte Google sans jeton : reconnectez-le', 'GOOGLE_RECONNECT');
     try {
       const tokens = await tokenRequest({ refresh_token: refreshToken, grant_type: 'refresh_token' });
-      accessTokens.set(accountId, { token: tokens.access_token!, expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000 });
+      accessTokens.set(itemId, { token: tokens.access_token!, expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000 });
       return tokens.access_token!;
     } catch (err) {
       if (err instanceof AppError && err.code === 'GOOGLE_RECONNECT') {
-        await googleAccountRepository.recordCheck(accountId, false, 'Accès révoqué ou expiré : reconnectez le compte');
-        throw new AppError(`Le compte Google ${account.email} n'a plus accès (jeton révoqué ou expiré) : reconnectez-le depuis la page du projet`, 'GOOGLE_RECONNECT');
+        await vaultRepository.recordTest(itemId, false, 'Accès révoqué ou expiré : reconnectez le compte');
+        throw new AppError(`Le compte Google ${(item.settings as GoogleSettings).email} n'a plus accès (jeton révoqué ou expiré) : reconnectez-le depuis le coffre`, 'GOOGLE_RECONNECT');
       }
       throw err;
     }
   },
 
   /** Appel d'API Google au nom du compte ; un 401 provoque un renouvellement du jeton et une nouvelle tentative. */
-  async fetch(accountId: string, url: string, init: RequestInit = {}): Promise<Response> {
+  async fetch(itemId: string, url: string, init: RequestInit = {}): Promise<Response> {
     const attempt = async (force: boolean) => {
-      const token = await this.accessToken(accountId, force);
+      const token = await this.accessToken(itemId, force);
       const headers = new Headers(init.headers);
       headers.set('authorization', `Bearer ${token}`);
       return fetch(url, { ...init, headers });
@@ -220,57 +272,47 @@ export const googleAccountService = {
     return res.status === 401 ? attempt(true) : res;
   },
 
-  /** Appel d'API renvoyant du JSON ; les erreurs Google deviennent des AppError lisibles. */
-  async json<T>(accountId: string, url: string, init: RequestInit = {}): Promise<T> {
-    const res = await this.fetch(accountId, url, init);
+  async json<T>(itemId: string, url: string, init: RequestInit = {}): Promise<T> {
+    const res = await this.fetch(itemId, url, init);
     if (!res.ok) throw new AppError(`Google : ${await apiError(res)}`, 'GOOGLE_ERROR');
     return (await res.json()) as T;
   },
 
-  /** Réponse brute (téléchargement) ; les erreurs Google deviennent des AppError lisibles. */
-  async raw(accountId: string, url: string, init: RequestInit = {}): Promise<Response> {
-    const res = await this.fetch(accountId, url, init);
+  async raw(itemId: string, url: string, init: RequestInit = {}): Promise<Response> {
+    const res = await this.fetch(itemId, url, init);
     if (!res.ok) throw new AppError(`Google : ${await apiError(res)}`, 'GOOGLE_ERROR');
     return res;
   },
 
-  /** Vérifie depuis l'interface que le compte répond encore, et avec quels droits. */
-  async check(id: string): Promise<{ account: GoogleAccount; result: GoogleAccountCheckResult }> {
-    const account = await this.get(id);
-    let result: GoogleAccountCheckResult;
-    try {
-      const details: string[] = [];
-      const info = await this.json<{ email?: string }>(id, USERINFO_URL);
-      details.push(info.email ?? account.email);
-      if (account.gmailAccess !== 'none') {
-        const p = await this.json<{ messagesTotal?: number; threadsTotal?: number }>(id, 'https://gmail.googleapis.com/gmail/v1/users/me/profile');
-        details.push(`Gmail : ${p.messagesTotal ?? '?'} messages`);
-      }
-      if (account.driveAccess !== 'none') {
-        const a = await this.json<{ storageQuota?: { usage?: string; limit?: string } }>(id, 'https://www.googleapis.com/drive/v3/about?fields=storageQuota');
-        const gb = (v?: string) => (v ? `${(Number(v) / 1e9).toFixed(1)} Go` : '?');
-        details.push(`Drive : ${gb(a.storageQuota?.usage)} utilisés${a.storageQuota?.limit ? ` sur ${gb(a.storageQuota.limit)}` : ''}`);
-      }
-      result = { ok: true, error: null, detail: details.join(' · ') };
-    } catch (err) {
-      result = { ok: false, error: (err as Error).message, detail: null };
+  /** Test d'un élément google : profil, Gmail et Drive selon les accès. */
+  async probe(item: VaultItem): Promise<string> {
+    const a = accountOf(item);
+    const details: string[] = [];
+    const info = await this.json<{ email?: string }>(item.id, USERINFO_URL);
+    details.push(info.email ?? a.email);
+    if (a.gmailAccess !== 'none') {
+      const p = await this.json<{ messagesTotal?: number }>(item.id, 'https://gmail.googleapis.com/gmail/v1/users/me/profile');
+      details.push(`Gmail : ${p.messagesTotal ?? '?'} messages`);
     }
-    await googleAccountRepository.recordCheck(id, result.ok, result.error);
-    return { account: await this.get(id), result };
+    if (a.driveAccess !== 'none') {
+      const d = await this.json<{ storageQuota?: { usage?: string; limit?: string } }>(item.id, 'https://www.googleapis.com/drive/v3/about?fields=storageQuota');
+      const gb = (v?: string) => (v ? `${(Number(v) / 1e9).toFixed(1)} Go` : '?');
+      details.push(`Drive : ${gb(d.storageQuota?.usage)} utilisés${d.storageQuota?.limit ? ` sur ${gb(d.storageQuota.limit)}` : ''}`);
+    }
+    return details.join(' · ');
   },
 
   /** Description des comptes pour le prompt système d'une session ; vide si aucun compte. */
-  async promptSummary(project: Pick<Project, 'id'>): Promise<string> {
-    const accounts = await googleAccountRepository.listByProject(project.id);
+  promptSummary(accounts: GoogleAccount[], _project?: Pick<Project, 'id'>): string {
     if (!accounts.length) return '';
     const several = accounts.length > 1;
     const lines = [
       several
-        ? `Le projet est relié à ${accounts.length} comptes Google par les outils du serveur MCP \`google\` (le serveur détient les jetons : tu n'as pas à les connaître). Chaque outil prend un paramètre \`account\` : l'adresse du compte à utiliser. Les lectures sont libres ; les écritures (envoi de mail, dépôt sur le Drive) sont soumises à l'approbation d'un humain.`
-        : `Le projet est relié au compte Google \`${accounts[0].email}\` par les outils du serveur MCP \`google\` (le serveur détient les jetons : tu n'as pas à les connaître). Les lectures sont libres ; les écritures (envoi de mail, dépôt sur le Drive) sont soumises à l'approbation d'un humain.`,
+        ? `La session dispose de ${accounts.length} comptes Google par les outils du serveur MCP \`google\` (le serveur détient les jetons : tu n'as pas à les connaître). Chaque outil prend un paramètre \`account\` : l'adresse du compte à utiliser. Les lectures sont libres ; les écritures (envoi de mail, dépôt sur le Drive) sont soumises à l'approbation d'un humain.`
+        : `La session dispose du compte Google \`${accounts[0].email}\` par les outils du serveur MCP \`google\` (le serveur détient les jetons : tu n'as pas à les connaître). Les lectures sont libres ; les écritures (envoi de mail, dépôt sur le Drive) sont soumises à l'approbation d'un humain.`,
     ];
     for (const account of accounts) {
-      if (several) lines.push(`Compte \`${account.email}\`${account.name ? ` (${account.name})` : ''} :`);
+      if (several) lines.push(`Compte \`${account.email}\`${account.displayName ? ` (${account.displayName})` : ''} :`);
       const indent = several ? '  ' : '';
       if (account.gmailAccess !== 'none') {
         lines.push(`${indent}- Messagerie Gmail (${accessLabels[account.gmailAccess]}) : \`gmail_search\` (requête au format de la recherche Gmail, ex. \`from:x newer_than:7d\`), \`gmail_read\`${account.gmailAccess === 'write' ? ', `gmail_send` (envoi ou réponse, au nom de ce compte)' : ''}.`);
@@ -282,6 +324,9 @@ export const googleAccountService = {
     return lines.join('\n');
   },
 };
+
+vaultService.onBeforeDelete('google', (item) => googleAccountService.beforeDelete(item));
+vaultService.probers.set('google', (item) => googleAccountService.probe(item));
 
 /** Outils du serveur `google` accessibles sans approbation (lectures), d'après les accès de l'ensemble des comptes. */
 export function googleReadTools(accounts: GoogleAccount[]): string[] {

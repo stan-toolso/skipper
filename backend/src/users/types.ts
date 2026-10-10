@@ -9,8 +9,10 @@ export interface User {
   name: string;
   avatarUrl: string | null;
   googleSub: string | null;
-  /** Administrateur de l'application : paramètres généraux. Les droits sur les projets restent par projet. */
+  /** Administrateur de l'application : paramètres généraux, utilisateurs. Les droits sur les projets restent par projet. */
   isAdmin: boolean;
+  /** Super administrateur : administrateur de l'application qui administre aussi tous les projets, membre ou non. */
+  isSuperAdmin: boolean;
   createdAt: Date;
   lastLoginAt: Date | null;
 }
@@ -30,4 +32,13 @@ export interface GoogleProfile {
   emailVerified: boolean;
   name: string | null;
   picture: string | null;
+}
+
+/** Éléments ouverts dans les onglets d'une personne, par type (sidebar d'un super administrateur). */
+export interface OpenItems {
+  projectIds?: string[] | null;
+  worktreeIds?: string[] | null;
+  sessionIds?: string[] | null;
+  terminalIds?: string[] | null;
+  taskIds?: string[] | null;
 }

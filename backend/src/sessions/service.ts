@@ -8,12 +8,13 @@ import { requestService } from '../requests/service.js';
 import { removeSessionAttachments, storeAttachments } from './attachments.js';
 import { sessionRepository } from './repository.js';
 import { scheduledRuns } from './scheduledRuns.js';
+import { relaunchPrompt } from './history.js';
 import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
 import { headCommitOf } from '../git/service.js';
 import type { Project } from '../projects/types.js';
-import type { Attachment, AttachmentInput, CreateSessionInput, Session, SessionFilter, SessionStatus } from './types.js';
+import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
 const ATTACHMENTS_ONLY_TEXT = 'Voir les fichiers joints.';
@@ -155,6 +156,11 @@ async function persistConfig(id: string, changes: Record<string, unknown>, appli
   return updated;
 }
 
+/** Une session archivée ne démarre plus : il faut la restaurer ou en relancer une nouvelle. */
+function assertNotArchived(session: Session): void {
+  if (session.archivedAt) throw new AppError("Cette session est archivée : restaurez-la d'abord, ou relancez une nouvelle session depuis son historique", 'ARCHIVED');
+}
+
 /** Instruction refusée à une session en file d'attente. */
 const queuedError = () =>
   new AppError(
@@ -238,13 +244,16 @@ export const sessionService = {
     }
     provider.validateConfig?.(input.config ?? {});
     if (input.worktreeId && input.newWorktree) throw new AppError('Choisissez un worktree existant ou un nouveau worktree, pas les deux');
-    if (input.worktreeId) await worktreeService.resolveCwd(project, input.worktreeId); // vérifie l'appartenance et l'existence
+    if (input.worktreeId) await worktreeService.assertUsable(project, input.worktreeId); // vérifie l'appartenance et l'archivage
 
     let parentSessionId: string | null = null;
+    let ownerId = input.ownerId ?? null;
     if (actor.type === 'agent' && actor.sessionId) {
       const parent = await sessionRepository.findById(actor.sessionId);
       if (!parent) throw new NotFoundError('Session parente introuvable');
       if (parent.projectId !== project.id) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
+      // La session lancée par un agent appartient à la personne qui pilote la session parente.
+      ownerId = parent.ownerId;
       if ((await depthOf(parent.id)) >= MAX_AGENT_DEPTH) throw new AppError(`Imbrication maximale atteinte : une session lancée par un agent lancé par un agent ne peut pas en lancer d'autres`);
       const children = [
         ...(await sessionRepository.list({ parentSessionId: parent.id, status: 'running', limit: MAX_RUNNING_CHILDREN + 1 })),
@@ -259,13 +268,13 @@ export const sessionService = {
     let worktreeId = input.worktreeId ?? null;
     let createdWorktreeId: string | null = null;
     if (input.newWorktree) {
-      const worktree = await worktreeService.create(project.id, input.newWorktree);
+      const worktree = await worktreeService.create(project.id, input.newWorktree, ownerId);
       worktreeId = createdWorktreeId = worktree.id;
     }
     let session: Session;
     try {
       const prompt = input.prompt?.trim() || (input.attachments?.length ? ATTACHMENTS_ONLY_TEXT : input.prompt);
-      session = await sessionRepository.create({ ...input, prompt, worktreeId, parentSessionId });
+      session = await sessionRepository.create({ ...input, prompt, worktreeId, parentSessionId, ownerId });
     } catch (err) {
       if (createdWorktreeId) await worktreeService.delete(createdWorktreeId, true).catch(() => undefined);
       throw err;
@@ -340,6 +349,7 @@ export const sessionService = {
   async start(id: string, initialMessage?: string, attachments: Attachment[] = [], opts: { fromQueue?: boolean } = {}): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
+    assertNotArchived(session);
     if (session.status === 'running') throw new AppError('La session est déjà en cours');
     if (session.status === 'queued' && !opts.fromQueue) throw queuedError();
     if (opts.fromQueue && session.status !== 'queued') return session;
@@ -479,6 +489,7 @@ export const sessionService = {
     if (!trimmed) throw new AppError('Le message est vide');
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
+    assertNotArchived(session);
     if (session.status === 'queued') throw queuedError();
     const handle = running.get(id);
     if (handle && !handle.sendMessage) throw new AppError("Ce type de session n'accepte pas d'instructions en cours d'exécution");
@@ -551,6 +562,49 @@ export const sessionService = {
     return publishSession(await sessionRepository.findById(id));
   },
 
+  /**
+   * Archive la session : arrêtée si elle tourne, demandes annulées, cachée des listes actives. Tout son
+   * historique est conservé ; elle se consulte et se relance depuis l'historique du projet.
+   */
+  async archive(id: string): Promise<Session> {
+    const session = await sessionRepository.findById(id);
+    if (!session) throw new NotFoundError('Session introuvable');
+    if (session.archivedAt) return session;
+    if (session.status === 'running' || session.status === 'queued') await this.stop(id);
+    await finishing.get(id);
+    await requestService.cancelAllForSession(id);
+    return publishSession(await sessionRepository.update(id, { archivedAt: new Date() }));
+  },
+
+  /** Restaure une session archivée, sauf si son worktree est lui-même archivé. */
+  async unarchive(id: string): Promise<Session> {
+    const session = await sessionRepository.findById(id);
+    if (!session) throw new NotFoundError('Session introuvable');
+    if (!session.archivedAt) return session;
+    if (session.worktreeId) {
+      const wt = await worktreeService.get(session.worktreeId);
+      if (wt.archivedAt) throw new AppError(`Son worktree « ${wt.label ?? wt.branch} » est archivé : restaurez le worktree (avec ses sessions) depuis l'historique du projet`);
+    }
+    return publishSession(await sessionRepository.update(id, { archivedAt: null }));
+  },
+
+  /** Nouvelle session qui reprend la conversation d'une session (archivée ou non) comme contexte. */
+  async relaunch(id: string, input: RelaunchInput): Promise<Session> {
+    const source = await sessionRepository.findById(id);
+    if (!source) throw new NotFoundError('Session introuvable');
+    const prompt = await relaunchPrompt(source, input.instruction);
+    return this.create({
+      projectId: source.projectId,
+      worktreeId: input.newWorktree ? null : input.worktreeId ?? null,
+      newWorktree: input.newWorktree ?? null,
+      ownerId: input.ownerId ?? null,
+      name: input.name?.trim() || source.name,
+      provider: source.provider,
+      prompt,
+      config: source.config,
+    });
+  },
+
   async delete(id: string): Promise<boolean> {
     if (running.has(id)) await this.stop(id);
     // La mise à jour finale du statut (tâche de fond) doit être terminée avant de supprimer la ligne.
@@ -590,6 +644,7 @@ export const sessionService = {
   async resume(id: string): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
+    assertNotArchived(session);
     if (session.status !== 'interrupted') throw new AppError("Seule une session interrompue par un redémarrage peut être reprise ainsi : envoyez-lui un message");
     const midTurn = session.activity === 'busy';
     await emitEvent(id, 'system', { message: 'Reprise après le redémarrage du serveur', notice: true, reason: 'manual_resume', activity: session.activity });

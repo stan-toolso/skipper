@@ -12,6 +12,7 @@ interface Row {
   session_id: string | null;
   payload: Record<string, unknown>;
   admins_only: boolean;
+  user_id: string | null;
   read_at: Date | null;
   created_at: Date;
 }
@@ -26,16 +27,31 @@ const toNotification = (r: Row): Notification => ({
   sessionId: r.session_id,
   payload: r.payload ?? {},
   adminsOnly: Boolean(r.admins_only),
+  userId: r.user_id ?? null,
   readAt: r.read_at,
   createdAt: r.created_at,
 });
 
+/**
+ * Périmètre d'une personne : les notifications qui lui sont adressées, et parmi les autres (non adressées) celles
+ * de ses projets (ou sans projet), réservées aux administrateurs seulement si elle l'est.
+ */
+function scopeWhere(scope: NotificationScope): { where: string[]; params: unknown[] } {
+  const params: unknown[] = [];
+  const general: string[] = ['user_id IS NULL'];
+  if (scope.projectIds) general.push(`(project_id IS NULL OR project_id = ANY($${params.push(scope.projectIds)}::uuid[]))`);
+  if (!scope.admin) general.push('NOT admins_only');
+  const clauses = [`(${general.join(' AND ')})`];
+  if (scope.userId) clauses.push(`user_id = $${params.push(scope.userId)}`);
+  return { where: [`(${clauses.join(' OR ')})`], params };
+}
+
 export const notificationRepository = {
   async create(input: NotifyInput): Promise<Notification> {
     const { rows } = await pool.query<Row>(
-      `INSERT INTO notifications (type, title, message, link, project_id, session_id, payload, admins_only)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [input.type, input.title, input.message ?? null, input.link ?? null, input.projectId ?? null, input.sessionId ?? null, toJson(input.payload ?? {}), input.adminsOnly ?? false],
+      `INSERT INTO notifications (type, title, message, link, project_id, session_id, payload, admins_only, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [input.type, input.title, input.message ?? null, input.link ?? null, input.projectId ?? null, input.sessionId ?? null, toJson(input.payload ?? {}), input.adminsOnly ?? false, input.userId ?? null],
     );
     return toNotification(rows[0]);
   },
@@ -44,21 +60,16 @@ export const notificationRepository = {
     return rows[0] ? toNotification(rows[0]) : null;
   },
   async list(opts: { unreadOnly?: boolean; limit?: number } & NotificationScope = {}): Promise<Notification[]> {
-    const where = [
-      ...(opts.unreadOnly ? ['read_at IS NULL'] : []),
-      ...(opts.projectIds ? ['(project_id IS NULL OR project_id = ANY($2::uuid[]))'] : []),
-      ...(opts.admin ? [] : ['NOT admins_only']),
-    ];
-    const params: unknown[] = [Math.min(opts.limit ?? 50, 200)];
-    if (opts.projectIds) params.push(opts.projectIds);
-    const { rows } = await pool.query<Row>(`SELECT * FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $1`, params);
+    const { where, params } = scopeWhere(opts);
+    if (opts.unreadOnly) where.push('read_at IS NULL');
+    params.push(Math.min(opts.limit ?? 50, 200));
+    const { rows } = await pool.query<Row>(`SELECT * FROM notifications ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $${params.length}`, params);
     return rows.map(toNotification);
   },
-  async countUnread({ projectIds, admin }: NotificationScope = {}): Promise<number> {
-    const { rows } = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM notifications WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''} ${admin ? '' : 'AND NOT admins_only'}`,
-      projectIds ? [projectIds] : [],
-    );
+  async countUnread(scope: NotificationScope = {}): Promise<number> {
+    const { where, params } = scopeWhere(scope);
+    where.push('read_at IS NULL');
+    const { rows } = await pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM notifications WHERE ${where.join(' AND ')}`, params);
     return Number(rows[0].n);
   },
   async markRead(id: string): Promise<Notification | null> {
@@ -84,11 +95,10 @@ export const notificationRepository = {
     );
     return rowCount ?? 0;
   },
-  async markAllRead({ projectIds, admin }: NotificationScope = {}): Promise<number> {
-    const { rowCount } = await pool.query(
-      `UPDATE notifications SET read_at = now() WHERE read_at IS NULL ${projectIds ? 'AND (project_id IS NULL OR project_id = ANY($1::uuid[]))' : ''} ${admin ? '' : 'AND NOT admins_only'}`,
-      projectIds ? [projectIds] : [],
-    );
+  async markAllRead(scope: NotificationScope = {}): Promise<number> {
+    const { where, params } = scopeWhere(scope);
+    where.push('read_at IS NULL');
+    const { rowCount } = await pool.query(`UPDATE notifications SET read_at = now() WHERE ${where.join(' AND ')}`, params);
     return rowCount ?? 0;
   },
 };
