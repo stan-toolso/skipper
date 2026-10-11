@@ -26,7 +26,7 @@ function processActivity(p: ContainerProcess): { label: string; className: strin
 
 /** Mémoire, CPU et processus Claude du conteneur en marche, relevés toutes les 10 secondes. */
 function ContainerUsage({ projectId }: { projectId: string }) {
-  const { data, error } = useQuery<{ project: { id: string; containerStats: ContainerStats | null } | null }>(PROJECT_CONTAINER_STATS, {
+  const { data, error } = usePollingQuery<{ project: { id: string; containerStats: ContainerStats | null } | null }>(PROJECT_CONTAINER_STATS, {
     variables: { id: projectId },
     pollInterval: 10_000,
     fetchPolicy: 'cache-and-network',
