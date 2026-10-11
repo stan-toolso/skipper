@@ -21,8 +21,22 @@ export interface ConfigField {
 /** Nettoyage automatique de l'historique d'une session. */
 export interface SessionCleanup {
   retentionDays: number | null;
-  contextAction: 'compact' | 'reset' | null;
+  /** compact / reset : au-delà de contextMaxTokens ; fresh : conversation neuve à chaque exécution planifiée. */
+  contextAction: 'compact' | 'reset' | 'fresh' | null;
   contextMaxTokens: number | null;
+}
+
+/** Taille du contexte de l'agent rapportée au modèle (jauge de l'en-tête, pastille de la sidebar, bandeau). */
+export interface SessionContextInfo {
+  tokens: number | null;
+  /** Seuil serveur au-delà duquel l'interface propose un nettoyage. */
+  warnTokens: number;
+  overThreshold: boolean;
+  model: string | null;
+  windowTokens: number;
+  share: number | null;
+  /** Coût approximatif (dollars) de la relecture du contexte à froid au prochain tour. */
+  coldTurnUsd: number | null;
 }
 
 export interface SessionSchedule {
@@ -131,6 +145,7 @@ export interface Session {
   cleanup: SessionCleanup;
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
+  context: SessionContextInfo;
   pendingRequestCount: number;
   /** Navigateur headless ouvert et utilisé par l'agent : vue en direct disponible. */
   browserActive: boolean;
@@ -505,6 +520,15 @@ export const SESSION_FIELDS = gql`
       contextMaxTokens
     }
     contextTokens
+    context {
+      tokens
+      warnTokens
+      overThreshold
+      model
+      windowTokens
+      share
+      coldTurnUsd
+    }
     pendingRequestCount
     queuedAt
     queuePosition
@@ -864,6 +888,24 @@ export const APPLY_SESSION_CLEANUP = gql`
   }
 `;
 
+export const COMPACT_SESSION_CONTEXT = gql`
+  ${SESSION_FIELDS}
+  mutation CompactSessionContext($id: ID!) {
+    compactSessionContext(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const RESET_SESSION_CONTEXT = gql`
+  ${SESSION_FIELDS}
+  mutation ResetSessionContext($id: ID!, $keepSummary: Boolean) {
+    resetSessionContext(id: $id, keepSummary: $keepSummary) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const SCHEDULE_NEXT_RUNS = gql`
   query ScheduleNextRuns($cron: String!, $timezone: String, $count: Int) {
     scheduleNextRuns(cron: $cron, timezone: $timezone, count: $count)
@@ -1083,6 +1125,10 @@ export const SIDEBAR = gql`
     activity
     pendingRequestCount
     browserActive
+    context {
+      tokens
+      overThreshold
+    }
     owner {
       id
       name

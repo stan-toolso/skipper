@@ -1,3 +1,5 @@
+import type { SessionCleanup } from '../sessions/types.js';
+
 /** Planification d'une session : l'instruction est envoyée à chaque échéance de l'expression cron. */
 export interface SessionSchedule {
   sessionId: string;
@@ -24,4 +26,6 @@ export interface SessionScheduleInput {
   prompt: string;
   enabled?: boolean | null;
   endAfterRun?: boolean | null;
+  /** Réglage de nettoyage de la session, enregistré en même temps (null ou absent : inchangé). */
+  cleanup?: SessionCleanup | null;
 }

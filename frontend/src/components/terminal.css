@@ -276,6 +276,9 @@
   .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; }
   .cc-header { padding: 8px 10px; gap: 6px; }
   .cc-actions { width: 100%; flex-wrap: wrap; }
+  .cc-context-banner { padding: 6px 10px; }
+  .cc-context-banner-actions { width: 100%; }
+  .cc-context-banner-actions .cc-btn { flex: 1 1 auto; text-align: center; }
   .cc-actions .cc-btn { flex: 1 1 auto; text-align: center; padding: 5px 8px; }
   .cc-transcript { padding: 10px 10px; }
   .cc-toggle { padding: 4px 10px 0; }
@@ -327,3 +330,31 @@
 /* Lien discret dans l'en-tête (planification) */
 .cc-link { background: none; border: none; padding: 0; color: var(--cc-dim); cursor: pointer; font: inherit; }
 .cc-link:hover { color: var(--cc-fg); text-decoration: underline; }
+
+/* Jauge de contexte de l'en-tête : tokens, barre (part de la fenêtre du modèle), coût d'un tour à froid */
+.cc-gauge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.cc-gauge:hover { text-decoration: none; }
+.cc-gauge-bar { display: inline-block; width: 48px; height: 6px; border-radius: 3px; background: var(--cc-border); overflow: hidden; vertical-align: middle; }
+.cc-gauge-bar > span { display: block; height: 100%; background: var(--cc-green); }
+.cc-gauge.warn, .cc-gauge.warn:hover { color: var(--cc-yellow); }
+.cc-gauge.warn .cc-gauge-bar > span { background: var(--cc-yellow); }
+.cc-gauge.danger, .cc-gauge.danger:hover { color: var(--cc-red); }
+.cc-gauge.danger .cc-gauge-bar > span { background: var(--cc-red); }
+
+/* Bandeau au-delà du seuil : compacter, repartir d'une conversation neuve ou ignorer */
+.cc-context-banner {
+  font-family: var(--bs-font-sans-serif);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--cc-border);
+  color: var(--cc-fg);
+  border-left: 3px solid var(--cc-yellow);
+}
+.cc-context-banner.danger { border-left-color: var(--cc-red); }
+.cc-context-banner > i { color: var(--cc-yellow); }
+.cc-context-banner.danger > i { color: var(--cc-red); }
+.cc-context-banner-text { flex: 1 1 320px; font-size: 13px; }
+.cc-context-banner-actions { display: flex; gap: 6px; flex-wrap: wrap; }

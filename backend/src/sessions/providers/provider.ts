@@ -47,6 +47,11 @@ export interface RunContext {
   cwd: string;
   /** Première instruction à traiter : le prompt de la session, ou le message qui a relancé une session terminée. */
   initialMessage: string | null;
+  /**
+   * Texte placé devant la première instruction pour le modèle seulement (absent du transcript) : résumé de la
+   * conversation précédente après une remise à zéro « en gardant un résumé ».
+   */
+  initialPreamble?: string | null;
   /** Fichiers joints à la première instruction (chemins sur disque ; images et PDF peuvent aussi être transmis au modèle). */
   initialAttachments: Attachment[];
   /** Signale si l'agent travaille ou attend des instructions. */

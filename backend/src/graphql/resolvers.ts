@@ -55,6 +55,7 @@ import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { scheduleService } from '../schedules/service.js';
 import { cleanupService } from '../sessions/cleanup.js';
+import { CONTEXT_WARN_TOKENS, contextEstimate, contextModel } from '../sessions/context.js';
 import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreePath, worktreeService } from '../worktrees/service.js';
@@ -88,6 +89,13 @@ const loadSession = async (id: string) => {
   return session;
 };
 const guardSession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfSession(id), min);
+
+/** Parent des champs de `SessionContext` : la session, et le modèle résolu paresseusement (une requête au plus). */
+interface ContextParent {
+  session: Session;
+  model?: Promise<string | null>;
+}
+const modelOfContext = (p: ContextParent) => (p.model ??= contextModel(p.session).catch(() => null));
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
@@ -501,12 +509,25 @@ export const resolvers = {
     queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),
+    context: (session: Session): ContextParent => ({ session }),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
   },
 
   SessionChanges: {
     mode: (c: SessionChanges) => c.mode.toUpperCase(),
+  },
+
+  // Les champs qui ne dépendent pas du modèle sont gratuits (sidebar) ; le modèle n'est cherché (relevé de
+  // consommation) que si un champ qui en dépend est demandé, une seule fois par session.
+  SessionContext: {
+    tokens: (p: ContextParent) => p.session.contextTokens,
+    warnTokens: () => CONTEXT_WARN_TOKENS,
+    overThreshold: (p: ContextParent) => contextEstimate(p.session.contextTokens, null).overThreshold,
+    model: (p: ContextParent) => modelOfContext(p),
+    windowTokens: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).windowTokens,
+    share: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).share,
+    coldTurnUsd: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).coldTurnUsd,
   },
 
   Query: {
@@ -1153,6 +1174,14 @@ export const resolvers = {
     applySessionCleanup: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return cleanupService.applyNow(args.id);
+    },
+    compactSessionContext: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.compactNow(args.id);
+    },
+    resetSessionContext: async (_: unknown, args: { id: string; keepSummary?: boolean | null }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.resetNow(args.id, args.keepSummary ?? true);
     },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');

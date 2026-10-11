@@ -13,6 +13,8 @@ export interface SidebarSession {
   activity: SessionActivity | null;
   pendingRequestCount: number;
   browserActive: boolean;
+  /** Contexte de l'agent : au-delà du seuil serveur, une pastille invite à le nettoyer. */
+  context: { tokens: number | null; overThreshold: boolean };
   owner: { id: string; name: string; avatarUrl: string | null } | null;
   worktree?: { id: string } | null;
 }
