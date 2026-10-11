@@ -13,6 +13,7 @@ import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
 import { headCommitOf } from '../git/service.js';
+import { containerMonitor } from '../runners/monitor.js';
 import type { Project } from '../projects/types.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
 
@@ -463,7 +464,16 @@ export const sessionService = {
       // Si `stop()` a déjà posé le statut "stopped", on le conserve.
       const status: SessionStatus =
         current?.status === 'stopped' || result.closedByServer ? 'stopped' : result.error || result.exitCode !== 0 ? 'failed' : 'completed';
-      const error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
+      let error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
+      // Processus tué faute de mémoire dans le conteneur : message explicite plutôt que « exited with code 137 ».
+      if (status === 'failed') {
+        // Borné : un Docker qui ne répond pas ne doit pas retarder la fin de la session.
+        const oom = await Promise.race([
+          containerMonitor.explainFailure(project, result).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000).unref()),
+        ]);
+        if (oom) error = `${oom} (détail : ${error})`;
+      }
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
       // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.

@@ -120,7 +120,7 @@ export default function TaskPage() {
                           <Link to={`/sessions/${s.id}`}>{s.name}</Link>
                           {s.id === task.session?.id && <Badge bg="primary" className="ms-2">en charge</Badge>}
                           {s.id === task.createdBySession?.id && <Badge bg="secondary" className="ms-2">l'a créée</Badge>}
-                          {s.archivedAt && <Badge bg="dark" className="ms-2">archivée</Badge>}
+                          {s.archivedAt && <Badge bg="secondary" className="ms-2">archivée</Badge>}
                           <span className="text-secondary ms-2">{s.provider}</span>
                         </td>
                         <td>

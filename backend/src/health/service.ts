@@ -10,6 +10,9 @@ import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import { serverSettings } from '../settings/server.js';
 import { terminalService } from '../terminals/service.js';
+import { parseClaudeProcesses, type ClaudeProcess } from './processes.js';
+
+export { parseClaudeProcesses, type ClaudeProcess };
 
 const execFileAsync = promisify(execFile);
 const MB = 1024 * 1024;
@@ -20,13 +23,6 @@ export interface MemoryHealth {
   availableMb: number;
   swapTotalMb: number;
   swapFreeMb: number;
-}
-
-export interface ClaudeProcess {
-  pid: number;
-  rssMb: number;
-  /** Durée de vie du processus, en secondes. */
-  elapsedSeconds: number;
 }
 
 export interface ContainerHealth {
@@ -95,26 +91,6 @@ export async function readMemory(): Promise<MemoryHealth> {
     // Pas de /proc (macOS en développement) : repli ci-dessous.
   }
   return { totalMb: Math.round(os.totalmem() / MB), availableMb: Math.round(os.freemem() / MB), swapTotalMb: 0, swapFreeMb: 0 };
-}
-
-/**
- * Processus du CLI Claude Code (ceux des conteneurs sont visibles depuis l'hôte). Les relais
- * `docker exec … claude` et le CLI de connexion du compte sont exclus : seul le processus de l'agent compte.
- */
-export function parseClaudeProcesses(psOutput: string): ClaudeProcess[] {
-  const result: ClaudeProcess[] = [];
-  for (const raw of psOutput.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(raw);
-    if (!m) continue;
-    const args = m[4];
-    const [argv0 = '', argv1 = ''] = args.split(/\s+/);
-    if (/(^|\/)(docker|sudo|bash|sh|dash)$/.test(argv0) || args.includes('/.runners/')) continue;
-    // Binaire `claude` (natif, ou script lancé par node), ou CLI JavaScript du SDK.
-    const isClaude = [argv0, argv1].some((t) => /(^|\/)claude(\.exe)?$/.test(t) || /claude-(code|agent-sdk)\/(cli\.js|bin\/claude)/.test(t));
-    if (!isClaude || /\sauth\s/.test(` ${args} `)) continue;
-    result.push({ pid: Number(m[1]), rssMb: Math.round(Number(m[2]) / 1024), elapsedSeconds: Number(m[3]) });
-  }
-  return result;
 }
 
 async function readClaudeProcesses(): Promise<ClaudeProcess[]> {

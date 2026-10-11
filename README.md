@@ -461,6 +461,22 @@ conteneur de l'agent.
   clic « Recréer ». La carte compte aussi les processus zombies du conteneur (`docker top`), à titre de
   diagnostic : un conteneur recréé avec `--init` n'en a pas.
 
+- **Mémoire et CPU des conteneurs** (`runners/stats.ts`, `runners/monitor.ts`) : `Project.containerStats`
+  lit le cgroup v2 du conteneur par un `docker exec` (`memory.current` moins `inactive_file`, comme
+  `docker stats` ; `memory.max`, swap, `cpu.max`, deux lectures de `cpu.stat` à 0,5 s d'écart,
+  compteur `oom_kill` de `memory.events`) et liste les processus `claude` avec leur mémoire. Chaque CLI
+  de session reçoit `SKIPPER_SESSION_ID` (transmis par le script de relais) : un processus est ainsi
+  relié à sa session, et les commandes qu'il lance (même variable héritée) sont comptées avec elle. Mesure
+  en cache 4 s. La carte « Environnement d'exécution » de la page projet l'affiche toutes les 10 s
+  (jauges, processus par session avec leur activité, processus orphelins) ; un administrateur y
+  modifie les limites, appliquées à chaud par `docker update` (swap = 2 × mémoire, comme `docker run`)
+  comme depuis le formulaire du projet. Toutes les 30 s, la surveillance mesure chaque conteneur : au-delà
+  de 90 % de la limite pendant plus d'une minute, notification `container.memory_high` au projet
+  (réarmée sous 80 %). À la fin d'une session en erreur, `containerMonitor.explainFailure` regarde le
+  code 137 (SIGKILL), la hausse de `oom_kill` depuis la dernière mesure et `State.OOMKilled` : l'erreur
+  du transcript et de la notification devient « le conteneur du projet a dépassé sa limite mémoire… »,
+  suivie du détail d'origine.
+
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : au début de chaque session, Skipper lance un Chromium sans fenêtre dans
   le conteneur (`docker exec -d`, profil jetable dans `/tmp/skipper-session-<id>-browser/`, port CDP
@@ -609,8 +625,14 @@ réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Upda
 pour les lectures et recherches, diff numéroté pour les modifications, début de la sortie pour les
 commandes. Les chemins sont relatifs au dossier de travail ; les messages internes des sous-agents
 sont résumés sur l'appel qui les lance ; les autorisations accordées ne laissent pas de trace (un
-refus apparaît comme l'erreur de l'outil). « Afficher les détails techniques » ajoute les lignes de
-service : démarrage, demandes d'autorisation, audit des connexions, erreurs brutes. Les événements
+refus apparaît comme l'erreur de l'outil). Pour rester lisible, les étapes d'un tour sont **repliées
+en une ligne** (`⏺ 12 étapes · Read ×4 · Bash ×5`, dépliée au clic) : seuls le dernier message de
+l'agent et ses questions restent en vue ; pendant un tour, la ligne nomme l'étape en cours. Une
+commande sortie en code non nul avec une sortie est un avertissement (code en jaune), pas une erreur.
+Côté serveur, `sessions/providers/claudeNoise.ts` n'enregistre pas les messages du SDK sans intérêt
+pour l'historique (progression des outils, compteurs). « Afficher les détails techniques » montre
+chaque étape et ajoute les lignes de service : démarrage, demandes d'autorisation, audit des
+connexions, erreurs brutes. Les événements
 sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
 seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée

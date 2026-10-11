@@ -42,6 +42,7 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
+import { SESSION_ENV } from '../../runners/stats.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -168,7 +169,7 @@ export class ClaudeProvider implements SessionProvider {
     let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     owner.assertModelAllowed(model);
     const actor = { sessionId: ctx.session.id, projectId: ctx.project.id };
-    const env = { ...(await owner.credentialEnv(general.authMode, actor)), ...(await agentGitEnv(ownerId, ctx.project.gitUrl, actor)) };
+    const env = { ...(await owner.credentialEnv(general.authMode, actor)), ...(await agentGitEnv(ownerId, ctx.project.gitUrl, actor)), [SESSION_ENV]: ctx.session.id };
     // Script de relais qui exécute le CLI dans le conteneur du projet (avant le navigateur : rien à nettoyer s'il échoue).
     const claudeExecutable = await runner.claudeExecutable(ctx.project);
 

@@ -23,6 +23,7 @@ import { projectService } from './projects/service.js';
 import { runner } from './runners/index.js';
 import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
+import { containerMonitor } from './runners/monitor.js';
 import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
 import { migrateLegacyCredentials } from './settings/legacy.js';
@@ -118,6 +119,7 @@ async function main() {
     // des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur), elles-mêmes soumises à la limite.
     sessionService.startHousekeeping();
     healthService.startMonitor();
+    containerMonitor.start();
     sessionService
       .drainQueue()
       .then(() => sessionService.resumeInterruptedAfterRestart())
@@ -138,6 +140,7 @@ async function main() {
     scheduleService.stop();
     automationScheduler.stop();
     healthService.stopMonitor();
+    containerMonitor.stop();
     loginService.shutdown();
     const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
     if (interrupted) console.log(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);
