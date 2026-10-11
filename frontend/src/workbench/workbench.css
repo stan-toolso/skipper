@@ -41,7 +41,8 @@
 .wb-menu-item.active { color: var(--cc-fg); background: var(--cc-bg-hover); box-shadow: inset 2px 0 0 var(--cc-accent); }
 .wb-icon { width: 1.3em; text-align: center; color: var(--cc-dim); }
 .wb-menu-item.active .wb-icon { color: var(--cc-accent); }
-.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; }
+/* La phrase d'état se tronque avant le nom : une ligne indentée (session lancée par un agent) garde un nom lisible. */
+.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-row.active .wb-state, .wb-row:hover .wb-state { color: var(--cc-dim); }
 
 .wb-section-title {
@@ -69,7 +70,7 @@
 }
 .wb-row:hover { background: var(--cc-bg-hover); color: var(--cc-fg); }
 .wb-row.active { background: var(--cc-bg-hover); color: var(--cc-fg); box-shadow: inset 2px 0 0 var(--cc-accent); }
-.wb-row-label { flex: 1; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
+.wb-row-label { flex: 1; min-width: 40%; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
 .wb-project-row { color: var(--cc-fg); }
 .wb-session-row { padding-left: 30px; }
 .wb-worktree-row { padding-left: 22px; color: var(--cc-dim); }
@@ -116,6 +117,9 @@
 }
 .wb-pop-item:hover { background: var(--cc-bg-hover); color: var(--cc-accent); }
 .wb-term-icon { color: var(--cc-dimmer); font-size: 11px; width: 14px; }
+/* Session lancée par un agent (sessions.create) : robot devant le nom, dans la sidebar comme dans la sous-barre d'un dossier. */
+.wb-robot { color: var(--cc-dimmer); font-size: 11px; flex: 0 0 auto; }
+.wb-row.active .wb-robot, .wb-row:hover .wb-robot, .wb-chip.active .wb-robot, .wb-ws-tab.active .wb-robot { color: var(--cc-dim); }
 .wb-term-icon.live { color: var(--cc-green); }
 .wb-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--cc-dimmer); }
 .wb-dot.busy { background: var(--cc-accent); animation: wb-pulse 1.2s ease-in-out infinite; }

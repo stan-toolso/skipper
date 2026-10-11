@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionEvent } from '../graphql/operations';
-import Transcript, { nonZeroExit } from './Transcript';
+import Transcript, { linkSessionIds, nonZeroExit } from './Transcript';
 
 // Le module des adresses de l'API lit window au chargement ; sans navigateur, on le remplace.
 vi.mock('../apollo', () => ({ apiBaseUrl: '' }));
@@ -24,7 +25,13 @@ const turn = [
   text('Le bug est corrigé.'),
   ev('claude.result', { duration_ms: 1000 }),
 ];
-const html = (events: SessionEvent[], technical = false) => renderToStaticMarkup(<Transcript events={events} technical={technical} autoScroll={false} />);
+// Les identifiants de session des outils `sessions` sont des liens : il faut un routeur.
+const html = (events: SessionEvent[], technical = false) =>
+  renderToStaticMarkup(
+    <MemoryRouter>
+      <Transcript events={events} technical={technical} autoScroll={false} />
+    </MemoryRouter>,
+  );
 
 describe('Transcript', () => {
   it('replie les étapes d’un tour et garde son dernier message en vue', () => {
@@ -51,6 +58,25 @@ describe('Transcript', () => {
   it('nomme la dernière étape d’un tour en cours', () => {
     const out = html([ev('instruction', { text: 'Go' }), tool('t1', 'Read', { file_path: '/w/a.ts' }), result('t1', 'x'), tool('t2', 'Bash', { command: 'npm test' })]);
     expect(out).toContain('Bash(npm test)…');
+  });
+
+  it('rend cliquables les identifiants de session renvoyés par les outils sessions', () => {
+    const id = '3ce26c7f-ec00-4d0b-83c2-5a2a47297ee1';
+    const out = html(
+      [
+        ev('instruction', { text: 'Go' }),
+        tool('t1', 'mcp__sessions__create', { prompt: 'Fais X' }),
+        result('t1', `Session lancée :\n- ${id} · Fais X · en cours, travaille · lancée par cette session\nUtilise sessions.wait avec cet id pour obtenir sa réponse.`),
+        tool('t2', 'mcp__sessions__wait', { id }),
+        result('t2', `- ${id} · Fais X · terminée`),
+        tool('t3', 'mcp__tasks__get', { id }),
+        result('t3', `Tâche ${id}`),
+      ],
+      true,
+    );
+    expect(out.split(`href="/sessions/${id}"`).length - 1).toBe(3); // résultat de create, argument et résultat de wait
+    expect(out).toContain(`Tâche ${id}`);
+    expect(renderToStaticMarkup(<MemoryRouter>{linkSessionIds('rien à lier')}</MemoryRouter>)).toBe('rien à lier');
   });
 
   it('signale une commande sortie en code non nul comme un avertissement, pas une erreur', () => {

@@ -13,7 +13,8 @@ import RelaunchModal from '../components/RelaunchModal';
 import { ARCHIVE_SESSION, UNARCHIVE_SESSION } from '../graphql/sessions';
 import { useAuth } from '../auth/AuthContext';
 
-import { bypassConnectionsWarning, permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
+import { bypassConnectionsWarning, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
+import { sessionDotClass } from '../workbench/WorkspaceTabs';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
@@ -35,6 +36,7 @@ import {
   SESSION_NAME,
   STOP_SESSION,
   UPDATE_SESSION_CONFIG,
+  type ChildSession,
   type ConfigField,
   type HumanRequest,
   type Provider,
@@ -42,7 +44,7 @@ import {
   type SessionChanges as SessionChangesData,
 } from '../graphql/operations';
 
-type SessionWithRequests = Session & { requests: HumanRequest[] };
+type SessionWithRequests = Session & { requests: HumanRequest[]; childSessions: ChildSession[] };
 
 const TECH_KEY = 'skipper.session.technical';
 const draftKey = (id: string) => `skipper.session.draft.${id}`;
@@ -405,6 +407,36 @@ export default function SessionDetailPage() {
           )}
         </div>
       </div>
+
+      {session.childSessions.length > 0 && (
+        <div className="cc-children" title="Sessions lancées par l'agent de cette session (outil sessions.create)">
+          <span className="cc-children-title">
+            <i className="bi bi-robot" /> Sessions lancées
+          </span>
+          {session.childSessions.map((c) => {
+            const hint = sessionStateHint(c.status, c.activity, c.pendingRequestCount) ?? (c.archivedAt ? 'archivée' : sessionStatusLabels[c.status]?.toLowerCase());
+            return (
+              <span key={c.id} className="cc-child">
+                <span className={`wb-dot ${sessionDotClass(c)}`} />
+                <Link to={`/sessions/${c.id}`} className="cc-child-name" title={`Ouvrir « ${c.name} »`}>
+                  {c.name}
+                </Link>
+                {hint && <span className="cc-dimmer">{hint}</span>}
+                {c.status === 'RUNNING' && (
+                  <button type="button" className="cc-link" title="L'agent de cette session finit ce qu'il fait, puis elle se termine" onClick={() => void endSession({ variables: { id: c.id } }).catch(() => undefined)}>
+                    terminer
+                  </button>
+                )}
+                {c.status === 'QUEUED' && (
+                  <button type="button" className="cc-link" title="La session ne démarrera pas" onClick={() => void stopSession({ variables: { id: c.id } }).catch(() => undefined)}>
+                    retirer de la file
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       <div className="cc-toggle">
         <div className="cc-tabs" role="tablist">

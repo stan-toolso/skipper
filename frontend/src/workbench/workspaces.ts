@@ -14,6 +14,8 @@ export interface SidebarSession {
   pendingRequestCount: number;
   browserActive: boolean;
   owner: { id: string; name: string; avatarUrl: string | null } | null;
+  /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain. */
+  parentSession: { id: string } | null;
   worktree?: { id: string } | null;
 }
 
@@ -91,6 +93,44 @@ export function mineFirst<T extends { owner: { id: string } | null }>(sessions: 
 }
 
 export const participates = (s: { owner: { id: string } | null }, userId: string | null) => !s.owner || s.owner.id === userId;
+
+/** Une session dans l'arborescence d'un dossier : sa profondeur sous sa session parente, et le nom de celle-ci si elle est dans la même liste. */
+export interface SessionNode<T> {
+  session: T;
+  /** 0 : session de premier niveau ; 1, 2… : lancée par la session qui la précède dans la liste. */
+  depth: number;
+  /** Lancée par un agent (parentSession non null), que la parente soit listée ici ou non. */
+  byAgent: boolean;
+  /** Nom de la session parente quand elle est dans la liste. */
+  parentName: string | null;
+}
+
+/**
+ * Sessions d'un dossier rangées en arbre : chaque session lancée par un agent suit sa session parente, indentée,
+ * dans l'ordre de la liste. Une session dont la parente n'est pas dans la liste (autre worktree, archivée,
+ * masquée par le filtre) reste au premier niveau, marquée « lancée par un agent ». Les cycles ne sont pas
+ * possibles en base ; si une parente manque, on ne boucle pas.
+ */
+export function sessionTree<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[]): SessionNode<T>[] {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const children = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const s of sessions) {
+    const parentId = s.parentSession?.id;
+    if (parentId && parentId !== s.id && byId.has(parentId)) children.set(parentId, [...(children.get(parentId) ?? []), s]);
+    else roots.push(s);
+  }
+  const out: SessionNode<T>[] = [];
+  const seen = new Set<string>();
+  const visit = (s: T, depth: number, parentName: string | null) => {
+    if (seen.has(s.id)) return;
+    seen.add(s.id);
+    out.push({ session: s, depth, byAgent: Boolean(s.parentSession), parentName });
+    for (const c of children.get(s.id) ?? []) visit(c, depth + 1, s.name);
+  };
+  for (const r of roots) visit(r, 0, null);
+  return out;
+}
 
 /** Index des dossiers de travail construit à partir de la requête Sidebar. */
 export class WorkspaceIndex {
