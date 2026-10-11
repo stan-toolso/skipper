@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { ProjectPageLoading } from '../components/PageLoading';
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -107,7 +108,7 @@ function ruleUsage(r: PermissionRule): string {
 
 /** Autorisations d'outils mémorisées pour le projet (réponse « ne plus demander dans ce projet »), avec ajout et retrait. */
 function PermissionRulesCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
-  const { data } = useQuery<{ project: { permissionRules: PermissionRule[] } | null }>(PROJECT_PERMISSION_RULES, { variables: { id: projectId }, pollInterval: 10000 });
+  const { data } = usePollingQuery<{ project: { permissionRules: PermissionRule[] } | null }>(PROJECT_PERMISSION_RULES, { variables: { id: projectId }, pollInterval: 10000 });
   const refetch = { refetchQueries: ['ProjectPermissionRules'] };
   const [addRule, { loading: adding, error: addError }] = useMutation(ADD_PROJECT_PERMISSION_RULE, refetch);
   const [deleteRule, { error: deleteError }] = useMutation(DELETE_PROJECT_PERMISSION_RULE, refetch);
@@ -257,7 +258,7 @@ const ROLES: ProjectRole[] = ['ADMIN', 'MEMBER', 'VIEWER'];
 /** Membres du projet : liste avec rôle, invitation par e-mail et retrait (administrateurs du projet). */
 function MembersCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
   const { user: me } = useAuth();
-  const { data } = useQuery<{ project: { members: ProjectMember[] } | null }>(PROJECT_MEMBERS, { variables: { id: projectId }, pollInterval: 10000 });
+  const { data } = usePollingQuery<{ project: { members: ProjectMember[] } | null }>(PROJECT_MEMBERS, { variables: { id: projectId }, pollInterval: 10000 });
   const refetch = { refetchQueries: ['ProjectMembers'] };
   const [invite, { loading: inviting, error: inviteError }] = useMutation(INVITE_PROJECT_MEMBER, refetch);
   const [setRole, { error: roleError }] = useMutation(UPDATE_PROJECT_MEMBER_ROLE, refetch);
@@ -356,7 +357,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
 
 /** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
-  const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
+  const { data } = usePollingQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
   const { deleteWorktree, archiveWorktree } = useDeletions();
   const { openRenameWorktree } = useRenameWorktree();
   const { openNewSession, openNewWorktree } = useSessionLauncher();
@@ -493,7 +494,7 @@ export default function ProjectDetailPage() {
   const { openNewSession } = useSessionLauncher();
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error } = useQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
+  const { data, loading, error } = usePollingQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
   useTabTitle(data?.project?.name);
   useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);

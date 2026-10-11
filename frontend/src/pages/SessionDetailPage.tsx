@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useSessionEvents } from '../lib/sessionEvents';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
@@ -67,7 +68,7 @@ type PageTab = 'conversation' | 'changes';
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
   const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
