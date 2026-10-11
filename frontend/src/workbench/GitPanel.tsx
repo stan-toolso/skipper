@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@apollo/client';
+import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -31,6 +31,16 @@ import { GIT_BRANCH_CHANGES, GIT_BRANCH_FILE_DIFF, type GitBranchChanges } from 
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitPanel } from './GitTargetContext';
 import TaskPanel from './TaskPanel';
+
+/** Dépôt du projet : sans `gitUrl`, pas de branche de base ni de pull requests à interroger. */
+const GIT_PANEL_PROJECT = gql`
+  query GitPanelProject($id: ID!) {
+    project(id: $id) {
+      id
+      gitUrl
+    }
+  }
+`;
 
 const statusLabels: Record<string, { label: string; cls: string }> = {
   M: { label: 'M', cls: 'git-m' },
@@ -185,9 +195,9 @@ function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number
 
 /** Modifications de la branche depuis son point de divergence avec sa base (commits et travail non validé). */
 function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worktreeId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
-  const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
+  const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges | null }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
   const [review, setReview] = useState(false);
-  const changes = q.data?.gitBranchChanges;
+  const changes = q.data?.gitBranchChanges ?? undefined;
   return (
     <Section
       title={changes ? `Branche vs ${changes.baseBranch}` : 'Branche vs base'}
@@ -207,6 +217,7 @@ function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; work
       }
     >
       {q.error && <div className="git-empty">{q.error.message}</div>}
+      {q.data && !changes && <div className="git-empty">Aucune branche de base à comparer.</div>}
       {changes && (
         <>
           <div className="git-subhead" title={`Point de divergence : ${changes.mergeBase.slice(0, 7)}`}>
@@ -322,6 +333,9 @@ export default function GitPanel() {
   const [newBranch, setNewBranch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const gitVisible = Boolean(vars) && open && tab === 'git';
+  const projectQ = useQuery<{ project: { id: string; gitUrl: string | null } | null }>(GIT_PANEL_PROJECT, { variables: { id: target?.projectId ?? '' }, skip: !target });
+  // Projet sans dépôt git : pas de comparaison à une base ni de pull requests (requêtes inutiles, erreurs côté serveur).
+  const hasRepo = Boolean(projectQ.data?.project?.gitUrl);
 
   const statusQ = usePollingQuery<{ gitStatus: GitStatus }>(GIT_STATUS, { variables: vars ?? undefined, skip: !gitVisible, pollInterval: 5000 });
   const branchesQ = usePollingQuery<{ gitBranches: GitBranch[] }>(GIT_BRANCHES, { variables: vars ?? undefined, skip: !gitVisible, pollInterval: 15000 });
@@ -495,8 +509,8 @@ export default function GitPanel() {
           </div>
         </div>
 
-        {vars && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
-        <PullRequestsSection projectId={target.projectId} worktreeId={target.worktreeId} branch={status && !status.detached ? status.branch : null} />
+        {vars && hasRepo && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
+        {hasRepo && <PullRequestsSection projectId={target.projectId} worktreeId={target.worktreeId} branch={status && !status.detached ? status.branch : null} />}
 
         <Section title="Branches" count={local.length} defaultOpen={false}>
           <Form

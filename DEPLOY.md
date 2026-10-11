@@ -249,6 +249,39 @@ curl -s -X POST https://skipper.toolso.io/graphql \
 curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 ```
 
+## Journaux
+
+Le backend écrit une ligne par message : horodatage ISO, niveau (`DEBUG`, `INFO`, `WARN`, `ERROR`) puis
+le message avec son préfixe de module (`[sessions]`, `[graphql]`…). `info` et `debug` vont sur la
+sortie standard (`~/.pm2/logs/skipper-out.log`), `warn` et `error` sur la sortie d'erreur
+(`~/.pm2/logs/skipper-error.log`). Le niveau minimal se règle avec `LOG_LEVEL` dans le `.env`
+(défaut `info` ; `pm2 restart skipper --update-env` après modification).
+
+Une erreur métier renvoyée au client (`AppError` : refus, ressource introuvable, dépôt sans branche de
+base…) tient sur une ligne `WARN [graphql] <opération> · <champ> · <utilisateur> : <message>`. Seules les
+erreurs inattendues sortent en `ERROR` avec leur trace : le journal d'erreurs ne devrait contenir que de
+vraies anomalies. Les avertissements de Node attendus par conception (le SDK Claude signalant que
+`canUseTool` n'est pas consulté pour les serveurs MCP internes, code `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`)
+sont journalisés une seule fois, en `INFO`.
+
+**Rotation** : pm2 ne fait pas tourner ses fichiers de journal (le journal d'erreurs dépassait
+10 000 lignes en octobre 2026). Installer une fois le module `pm2-logrotate` :
+
+```bash
+export NVM_DIR=$HOME/.nvm; . $NVM_DIR/nvm.sh
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M          # rotation dès qu'un fichier dépasse 10 Mo
+pm2 set pm2-logrotate:retain 14             # 14 fichiers tournés conservés par journal
+pm2 set pm2-logrotate:compress true         # fichiers tournés compressés en gzip
+pm2 set pm2-logrotate:rotateInterval '0 0 * * *'   # et une rotation quotidienne à minuit
+pm2 set pm2-logrotate:workerInterval 60     # vérification de la taille toutes les 60 s
+pm2 conf pm2-logrotate                      # relire les réglages
+pm2 flush skipper                           # (optionnel) vider les journaux courants, une fois
+```
+
+Le module est lui-même un processus pm2 (`pm2 list` l'affiche), sauvegardé avec `pm2 save` et relancé
+au démarrage par le service systemd.
+
 ## Bon à savoir
 
 - **Mémoire** : 3,7 Go de RAM pour tout le serveur, partagés avec l'API et le job Curso (≈ 400 Mo),
