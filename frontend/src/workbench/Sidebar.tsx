@@ -188,7 +188,7 @@ function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId
  * Carte d'un dossier de travail (checkout principal ou worktree) : état, nom, puces de ce qui y est ouvert,
  * et lignes détaillées quand on la déplie.
  */
-function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean }) {
+function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWorktree }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; canWorktree: boolean }) {
   const location = useLocation();
   const { user } = useAuth();
   const { activeKey } = useTabs();
@@ -209,8 +209,8 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
   const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
   const icon = worktreeIcon(ws, pr);
   const chips = [
-    ...visibleSessions.map((s) => ({ key: `s:${s.id}`, to: `/sessions/${s.id}`, active: isCurrent(`/sessions/${s.id}`), title: `${s.name} · ${statusTitle(s)}${s.owner ? ` · ${s.owner.name}` : ''}`, node: <span className={`wb-dot ${sessionDotClass(s)}`} />, owner: s.owner && !participates(s, userId) ? s.owner : null })),
-    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
+    ...visibleSessions.map((s) => ({ key: `s:${s.id}`, to: `/sessions/${s.id}`, active: isCurrent(`/sessions/${s.id}`), label: s.name, title: `${s.name} · ${statusTitle(s)}${s.owner ? ` · ${s.owner.name}` : ''}`, node: <span className={`wb-dot ${sessionDotClass(s)}`} />, owner: s.owner && !participates(s, userId) ? s.owner : null })),
+    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
   ];
   const activeIndex = chips.findIndex((c) => c.active);
   const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
@@ -241,7 +241,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
           <button
             type="button"
             className="wb-plus"
-            title="Ouvrir quelque chose ici, ou gérer le worktree"
+            title={ws.primary ? 'Ouvrir quelque chose dans le dossier principal' : 'Ouvrir quelque chose ici, ou gérer le worktree'}
             onClick={(e) => {
               e.stopPropagation();
               setMenu((v) => !v);
@@ -249,7 +249,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
           >
             <i className="bi bi-three-dots" />
           </button>
-          {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={false} onClose={() => setMenu(false)} />}
+          {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={canWorktree && ws.primary} onClose={() => setMenu(false)} />}
         </span>
       </div>
       <div className="wb-ws-items">
@@ -261,6 +261,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
         {shown.map((c) => (
           <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
             {c.node}
+            <span className="wb-chip-label">{c.label}</span>
             {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
           </Link>
         ))}
@@ -468,6 +469,9 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
         >
           <i className={`bi ${filter === 'mine' ? 'bi-person' : 'bi-people'}`} /> {filter === 'mine' ? 'Les miennes' : 'Tout le monde'}
         </button>
+        <Link to="/projects/new" className="wb-section-action" title="Nouveau projet">
+          <i className="bi bi-plus-lg" />
+        </Link>
       </div>
 
       <div className="wb-explorer" ref={explorerRef}>
@@ -495,7 +499,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   <button
                     type="button"
                     className="wb-plus"
-                    title="Nouvelle session, terminal ou worktree"
+                    title="Actions du projet : nouvelle session, terminal, worktree, agent, workflow ; pages ; modification, suppression"
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuFor(menuFor === p.id ? null : p.id);
@@ -503,7 +507,14 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   >
                     <i className="bi bi-three-dots" />
                   </button>
-                  {menuFor === p.id && <AddMenu projectId={p.id} canWorktree={Boolean(p.gitUrl)} onClose={() => setMenuFor(null)} />}
+                  {menuFor === p.id && (
+                    <AddMenu
+                      projectId={p.id}
+                      project={{ id: p.id, name: p.name, canManage: p.myRole === 'ADMIN', paths: [...p.sessions.map((s) => `/sessions/${s.id}`), ...p.terminals.map((t) => `/terminals/${t.id}`), ...p.worktrees.map((w) => `/worktrees/${w.id}`)] }}
+                      canWorktree={Boolean(p.gitUrl)}
+                      onClose={() => setMenuFor(null)}
+                    />
+                  )}
                 </span>
               </div>
               {open &&
@@ -516,6 +527,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                     onToggle={() => toggle(ws.key, false)}
                     tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
                     filterMine={filter === 'mine'}
+                    canWorktree={Boolean(p.gitUrl)}
                   />
                 ))}
             </div>
