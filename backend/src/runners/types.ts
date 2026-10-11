@@ -29,6 +29,12 @@ export interface RunnerStatus {
   cpus: string | null;
   startedAt: Date | null;
   error: string | null;
+  /** Le conteneur existe mais a été créé avec une autre configuration ou une autre image : à recréer. */
+  outdated: boolean;
+  /** Raisons lisibles de `outdated` (« option --init ajoutée », « image reconstruite le … »). */
+  outdatedReasons: string[];
+  /** Processus zombies (terminés, non récoltés) dans le conteneur ; null s'il ne tourne pas ou si le comptage a échoué. */
+  zombies: number | null;
 }
 
 export interface SpawnSpec {
@@ -45,8 +51,15 @@ export interface SpawnSpec {
 export interface Runner {
   readonly kind: RunnerKind;
   status(project: Project): Promise<RunnerStatus>;
-  /** Prépare l'environnement (démarre le conteneur si besoin). */
+  /**
+   * Prépare l'environnement (démarre le conteneur si besoin). Un conteneur obsolète (`outdated`) est
+   * recréé au passage si le projet est inactif selon `setIdleCheck`.
+   */
   ensureReady(project: Project): Promise<RunnerStatus>;
+  /** Déclare comment savoir qu'aucun processus du projet ne tourne (sessions, terminaux) : condition de la recréation automatique. */
+  setIdleCheck(check: (project: Project) => Promise<boolean>): void;
+  /** Au démarrage du serveur : supprime les conteneurs obsolètes de ces projets (rien ne tourne encore) ; ils seront recréés à la demande. */
+  recreateOutdated(projects: Project[]): Promise<string[]>;
   stop(project: Project): Promise<RunnerStatus>;
   /** Supprime l'environnement (conteneur) ; les fichiers du projet ne sont pas touchés. */
   remove(project: Project): Promise<void>;

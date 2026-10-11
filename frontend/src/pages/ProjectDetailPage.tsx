@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { ProjectPageLoading } from '../components/PageLoading';
-import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -33,6 +33,11 @@ function RunnerCard({ project }: { project: Project }) {
             <code>{s.containerName}</code>{' '}
             <span className={s.ready ? 'text-success' : s.state === 'unavailable' ? 'text-danger' : 'text-warning'}>· {stateLabels[s.state] ?? s.state}</span>
             {s.startedAt && <span className="text-secondary"> depuis le {new Date(s.startedAt).toLocaleString()}</span>}
+            {s.outdated && (
+              <Badge bg="warning" text="dark" className="ms-2" title={s.outdatedReasons.join(' ; ')}>
+                à recréer
+              </Badge>
+            )}
           </dd>
           <dt className="col-3">Image</dt>
           <dd className="col-9">
@@ -42,8 +47,33 @@ function RunnerCard({ project }: { project: Project }) {
           <dd className="col-9">
             mémoire {s.memory} · CPU {s.cpus}
           </dd>
+          {s.zombies !== null && (
+            <>
+              <dt className="col-3">Processus</dt>
+              <dd className="col-9">
+                {s.zombies === 0 ? (
+                  <span className="text-secondary">aucun zombie</span>
+                ) : (
+                  <span className="text-warning" title="Processus terminés mais jamais récoltés : le conteneur a été créé sans processus init (--init). Recréez-le.">
+                    {s.zombies} processus zombie{s.zombies > 1 ? 's' : ''}
+                  </span>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
         {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
+        {s.outdated && (
+          <Alert variant="warning" className="py-2">
+            <div>Le conteneur ne correspond plus à la configuration actuelle :</div>
+            <ul className="mb-1">
+              {s.outdatedReasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+            <div className="text-secondary">Il sera recréé de lui-même dès qu'aucune session ni terminal du projet ne tournera, ou tout de suite avec « Recréer ».</div>
+          </Alert>
+        )}
         <div className="d-flex gap-2">
           {!s.ready && s.state !== 'unavailable' && (
             <Button size="sm" disabled={busy} onClick={() => start({ variables: { id: project.id } })}>
@@ -58,7 +88,7 @@ function RunnerCard({ project }: { project: Project }) {
           {s.state !== 'absent' && s.state !== 'unavailable' && (
             <Button
               size="sm"
-              variant="outline-secondary"
+              variant={s.outdated ? 'warning' : 'outline-secondary'}
               disabled={busy}
               title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
               onClick={async () => {

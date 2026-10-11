@@ -437,7 +437,7 @@ conteneur de l'agent.
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
   worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
   de l'utilisateur de Skipper, donc aucune traduction de chemin. Le dossier personnel est un tmpfs
-  inscriptible (512 Mo) dans lequel `~/.claude`, `~/.claude.json` et `~/.gitconfig` de l'hôte sont
+  inscriptible (512 Mo) dans lequel `~/.claude` (propre au projet) et `~/.gitconfig` de l'hôte sont
   montés : Chromium (rapports de plantage, profil) et npm (cache) exigent un dossier personnel
   inscriptible. Le SDK reste dans le backend : il
   reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
@@ -448,7 +448,18 @@ conteneur de l'agent.
   ses conversations survivent à la recréation) et seul `~/.gitconfig` vient de l'hôte. Le
   conteneur joint le serveur Skipper par `host.docker.internal` (ponts MCP des sessions OpenCode). Le
   terminal web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
-  page du projet (démarrer, arrêter, recréer).
+  page du projet (démarrer, arrêter, recréer). Il est lancé avec `--init` (processus init en PID 1, sinon
+  `sleep infinity` laisse s'accumuler des processus zombies à chaque commande d'agent ou lancement de
+  Chromium) et porte un label `skipper.spec` : le JSON de sa configuration de création (image et
+  identifiant de l'image, `--init`, limites, utilisateur, montages, tmpfs, commande ; `runners/spec.ts`).
+  `runnerStatus` compare ce label à la configuration attendue aujourd'hui et à l'image locale :
+  `outdated` et `outdatedReasons` (« option --init ajoutée », « image reconstruite le … », « montage
+  ~/.claude ajouté », « conteneur créé avant le suivi de sa configuration »…) ; la page du projet affiche
+  alors un badge « à recréer » avec les raisons. Un conteneur obsolète est **recréé de lui-même** : au
+  démarrage du backend (rien n'y tourne encore), puis par `ensureReady` dès que le projet est inactif
+  (aucune session dont le processus tourne, aucun terminal ouvert) ; sinon il reste signalé jusqu'au
+  clic « Recréer ». La carte compte aussi les processus zombies du conteneur (`docker top`), à titre de
+  diagnostic : un conteneur recréé avec `--init` n'en a pas.
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : au début de chaque session, Skipper lance un Chromium sans fenêtre dans

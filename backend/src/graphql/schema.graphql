@@ -798,6 +798,12 @@ type RunnerStatus {
   cpus: String
   startedAt: DateTime
   error: String
+  "Le conteneur existe mais a été créé avec une autre configuration ou une image depuis reconstruite : à recréer (fait automatiquement dès que rien ne tourne dans le projet)."
+  outdated: Boolean!
+  "Raisons lisibles de `outdated` : « option --init ajoutée », « image reconstruite le … », « montage ~/.claude ajouté »…"
+  outdatedReasons: [String!]!
+  "Processus zombies (terminés mais non récoltés) dans le conteneur ; null s'il ne tourne pas."
+  zombies: Int
 }
 
 type WorkspaceGit {

@@ -229,6 +229,10 @@ export const sessionService = {
   get: (id: string) => sessionRepository.findById(id),
   events: (sessionId: string, opts?: { after?: string; limit?: number }) => sessionRepository.listEvents(sessionId, opts),
   isRunning: (id: string) => running.has(id),
+  /** Sessions du projet dont le processus tourne sur ce serveur. */
+  runningCountByProject: (projectId: string) => [...running.keys()].filter((id) => slots.get(id) === projectId).length,
+  /** Places occupées dans le projet : sessions en cours ou en train de démarrer (voir `slots`). */
+  slotsOfProject,
 
   /**
    * Crée une session, éventuellement dans un worktree créé pour l'occasion (`newWorktree`).
