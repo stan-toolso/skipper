@@ -124,6 +124,7 @@
 .wb-dot.failed { background: var(--cc-red); }
 .wb-dot.stopped { background: var(--cc-dot-stopped); }
 @keyframes wb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.wb-ctx { color: var(--cc-yellow); font-size: 11px; flex: 0 0 auto; }
 .wb-badge {
   background: var(--cc-yellow);
   color: var(--cc-bg);

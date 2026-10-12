@@ -23,8 +23,11 @@ export interface AttachmentInput {
 export interface SessionCleanup {
   /** Les événements du transcript plus vieux que N jours sont supprimés (null : jamais). */
   retentionDays?: number | null;
-  /** Quand le contexte de l'agent dépasse contextMaxTokens : compacter la conversation ou repartir d'une conversation neuve. */
-  contextAction?: 'compact' | 'reset' | null;
+  /**
+   * Conversation de l'agent avant une exécution planifiée : « compact » (compacter) ou « reset » (repartir d'une
+   * conversation neuve) quand le contexte dépasse contextMaxTokens ; « fresh » : conversation neuve à chaque exécution.
+   */
+  contextAction?: 'compact' | 'reset' | 'fresh' | null;
   contextMaxTokens?: number | null;
 }
 
@@ -63,6 +66,11 @@ export interface Session {
   cleanup: SessionCleanup;
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
+  /**
+   * Après une remise à zéro « en gardant un résumé » : derniers échanges de la conversation précédente, transmis
+   * au modèle avec la première instruction de la conversation neuve (hors transcript), puis effacés.
+   */
+  resumeDigest: string | null;
   /** Coût estimé cumulé (USD, tarif API), d'après le SDK. */
   costUsd: number;
   /** Commit HEAD du dossier de travail au premier démarrage (référence de l'onglet « Modifications »), null sans git. */

@@ -195,6 +195,12 @@ export function formatCost(usd: number): string {
   return `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
 }
 
+/** Nombre de tokens en milliers (« 208 k »), ou en millions au-delà (« 1,2 M »). */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace('.', ',')} M`;
+  return `${Math.round(n / 1000)} k`;
+}
+
 export const sessionStatusLabels: Record<string, string> = {
   PENDING: 'Pas encore démarrée',
   QUEUED: "En file d'attente",

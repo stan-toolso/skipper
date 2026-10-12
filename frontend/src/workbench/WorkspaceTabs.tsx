@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { formatTokens } from '../lib/humanize';
 import AddMenu from './AddMenu';
 import { useTabs } from './TabsContext';
 import { mineFirst, type SidebarSession } from './workspaces';
@@ -12,6 +13,15 @@ export function sessionDotClass(s: Pick<SidebarSession, 'status' | 'activity' | 
   if (s.status === 'FAILED') return 'failed';
   if (s.status === 'COMPLETED') return 'done';
   return 'stopped';
+}
+
+/** Pastille « contexte lourd » d'une session dont le contexte dépasse le seuil serveur : la page propose de le nettoyer. */
+export function ContextDot({ context }: { context: { tokens: number | null } }) {
+  return (
+    <span className="wb-ctx" title={`Contexte de l'agent : ${formatTokens(context.tokens ?? 0)} tokens. Ouvrez la session pour compacter ou repartir d'une conversation neuve.`}>
+      <i className="bi bi-speedometer2" />
+    </span>
+  );
 }
 
 /** Initiales d'un nom (deux lettres). */
@@ -73,6 +83,7 @@ export default function WorkspaceTabs() {
                 <>
                   <span className={`wb-dot ${sessionDotClass(s)}`} />
                   <span className="wb-ws-label">{s.name}</span>
+                  {s.context.overThreshold && <ContextDot context={s.context} />}
                   {s.owner && !mine ? <span className="wb-owner" title={`Session de ${s.owner.name}`}>{initialsOf(s.owner.name)}</span> : null}
                   {s.pendingRequestCount > 0 && <span className="wb-badge">{s.pendingRequestCount}</span>}
                 </>
