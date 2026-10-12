@@ -1860,8 +1860,8 @@ type Query {
   sessionOwners(projectId: ID): [User!]!
   "Sessions archivées d'un projet, les plus récemment archivées d'abord ; search cherche dans le nom, la consigne et la conversation."
   archivedSessions(projectId: ID!, worktreeId: ID, search: String, limit: Int, offset: Int): [Session!]!
-  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base."
-  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges!
+  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base ; null : aucune branche de base à comparer (dépôt sans remote ni main/master)."
+  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges
   gitBranchFileDiff(projectId: ID!, worktreeId: ID, path: String!, origPath: String): GitDiff!
   "Éléments du coffre visibles par l'utilisateur connecté (siens, partagés, de ses projets, reliés à ses projets)."
   vaultItems(kind: VaultItemKind): [VaultItem!]!

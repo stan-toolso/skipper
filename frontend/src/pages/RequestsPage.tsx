@@ -1,4 +1,4 @@
-import { useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useState } from 'react';
 import { Alert, Badge, Form, Nav, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -39,8 +39,8 @@ export default function RequestsPage() {
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [filter, setFilter] = useState<RequestStatus | ''>('');
 
-  const pending = useQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 2000 });
-  const history = useQuery<{ requests: HumanRequest[] }>(REQUESTS, {
+  const pending = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 2000 });
+  const history = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, {
     variables: { status: filter || null, limit: 200, newestFirst: true },
     pollInterval: 5000,
     skip: tab !== 'history',

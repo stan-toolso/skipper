@@ -1,4 +1,5 @@
-import { useMutation, useQuery } from '@apollo/client';
+import { useMutation } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Form, InputGroup, Nav, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -665,7 +666,7 @@ export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requested = searchParams.get('section') as SettingsSection | null;
   const section: SettingsSection = requested && (requested !== 'server' || isAdmin) ? requested : 'claude';
-  const { data, loading, error } = useQuery<{ settings: AppSettings }>(SETTINGS, { pollInterval: 15_000 });
+  const { data, loading, error } = usePollingQuery<{ settings: AppSettings }>(SETTINGS, { pollInterval: 15_000 });
   if (loading && !data) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!data) return null;

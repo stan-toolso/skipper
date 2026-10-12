@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Base, git et GitHub sont simulés : on vérifie l'enchaînement fusion → nettoyage.
 const m = vi.hoisted(() => ({
@@ -10,9 +10,10 @@ const m = vi.hoisted(() => ({
   deleteWorktree: vi.fn(async () => true),
   updateTask: vi.fn(async () => undefined),
   fetch: vi.fn(),
+  gitUrl: 'https://github.com/acme/app.git' as string | null,
 }));
 
-vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, slug: id, gitUrl: 'https://github.com/acme/app.git', gitBranch: 'main' }) } }));
+vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, slug: id, gitUrl: m.gitUrl, gitBranch: 'main' }) } }));
 vi.mock('../projects/workspace.js', () => ({ git: m.git, workspacePath: () => '/ws/main', gitAuthFor: async () => [] }));
 vi.mock('../files/service.js', () => ({ resolveRoot: async () => '/ws/wt' }));
 vi.mock('../settings/github.js', () => ({ githubService: { token: async () => 'ghp_test' }, githubOwnerOf: () => 'acme' }));
@@ -76,6 +77,24 @@ describe('buildDraftText', () => {
   it('sans tâche : commit unique, sinon nom de branche', () => {
     expect(buildDraftText('feat/a', [{ subject: 'Ajoute A' }]).title).toBe('Ajoute A');
     expect(buildDraftText('task/pull-requests-github', [{ subject: 'a' }, { subject: 'b' }]).title).toBe('Pull requests github');
+  });
+});
+
+describe('pullRequestService.list', () => {
+  beforeEach(() => m.fetch.mockReset());
+  afterEach(() => {
+    m.gitUrl = 'https://github.com/acme/app.git';
+  });
+
+  it("renvoie une liste vide, sans erreur ni appel à GitHub, pour un projet sans dépôt git", async () => {
+    m.gitUrl = null;
+    await expect(pullRequestService.list('p1', 'u1')).resolves.toEqual([]);
+    expect(m.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuse un dépôt qui n'est pas sur GitHub", async () => {
+    m.gitUrl = 'https://gitlab.com/acme/app.git';
+    await expect(pullRequestService.list('p1', 'u1')).rejects.toThrow(/pas hébergé sur GitHub/);
   });
 });
 
