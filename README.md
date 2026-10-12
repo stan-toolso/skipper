@@ -740,8 +740,13 @@ prompt système :
 Garde-fous (`backend/src/sessions/service.ts`) : une session lancée par un agent reste dans le projet de
 l'agent, l'imbrication est limitée à deux niveaux (humain → agent → agent → stop), et au plus trois
 sessions lancées par une même session tournent en même temps. Une session lancée par un agent déclenche
-une notification `session.created` ; sa page indique « lancée par » avec un lien vers la session parente
-(`Session.parentSession`, `Session.childSessions`).
+une notification `session.created`. Parente et filles sont identifiables d'un coup d'œil : la sidebar (et
+la sous-barre d'un dossier) marque une session lancée par un agent d'un robot et l'indente sous sa session
+parente quand elle est dans le même dossier ; la page de la fille indique « lancée par » avec un lien vers la
+parente, celle de la parente liste ses « Sessions lancées » avec leur état, un lien et de quoi les terminer
+(`Session.parentSession`, `Session.childSessions`) ; dans le transcript, les identifiants de session cités
+par les outils `sessions` (dont celui renvoyé par `create`) sont des liens. Rien ne change pour les sessions
+lancées par un humain.
 
 ## Sessions planifiées
 

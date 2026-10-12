@@ -79,9 +79,10 @@ export default function WorkspaceTabs() {
           const mine = !s.owner || s.owner.id === user?.id;
           return (
             <span key={s.id} className="wb-ws-group">
-              {link(`/sessions/${s.id}`, location.pathname === `/sessions/${s.id}`, `${s.name}${s.owner && !mine ? ` · session de ${s.owner.name}` : ''}`, (
+              {link(`/sessions/${s.id}`, location.pathname === `/sessions/${s.id}`, `${s.name}${s.parentSession ? ' · lancée par un agent' : ''}${s.owner && !mine ? ` · session de ${s.owner.name}` : ''}`, (
                 <>
                   <span className={`wb-dot ${sessionDotClass(s)}`} />
+                  {s.parentSession && <i className="bi bi-robot wb-robot" aria-label="Lancée par un agent" />}
                   <span className="wb-ws-label">{s.name}</span>
                   {s.context.overThreshold && <ContextDot context={s.context} />}
                   {s.owner && !mine ? <span className="wb-owner" title={`Session de ${s.owner.name}`}>{initialsOf(s.owner.name)}</span> : null}

@@ -165,6 +165,8 @@ export interface Session {
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
   parentSession: { id: string; name: string } | null;
+  /** Sessions lancées par l'agent de cette session (requête Session seulement). */
+  childSessions?: ChildSession[];
   /** Agent (configuration) et exécution qui ont ouvert la session ; null pour une session lancée à la main. */
   agent: { id: string; name: string } | null;
   agentRun: { id: string } | null;
@@ -177,6 +179,16 @@ export interface Session {
   task: { id: string; title: string; status: TaskStatus } | null;
   /** Planification (null si la session n'est pas planifiée). */
   schedule: SessionSchedule | null;
+}
+
+/** Session lancée par l'agent d'une autre session, telle que la page de la session parente la liste. */
+export interface ChildSession {
+  id: string;
+  name: string;
+  status: SessionStatus;
+  activity: SessionActivity | null;
+  pendingRequestCount: number;
+  archivedAt: string | null;
 }
 
 export interface ContextFolder {
@@ -753,6 +765,14 @@ export const SESSION = gql`
       requests(status: PENDING) {
         ...RequestFields
       }
+      childSessions {
+        id
+        name
+        status
+        activity
+        pendingRequestCount
+        archivedAt
+      }
     }
   }
 `;
@@ -1141,6 +1161,9 @@ export const SIDEBAR = gql`
       id
       name
       avatarUrl
+    }
+    parentSession {
+      id
     }
   }
 `;

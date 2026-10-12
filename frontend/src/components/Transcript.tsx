@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { SessionEvent } from '../graphql/operations';
 import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
 import { clockTime, dayLabel, describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
@@ -121,14 +122,37 @@ function toolHeader(name: string, input: Input, rel: (path: string) => string): 
   }
 }
 
-/** Texte tronqué à `limit` lignes, suivi de « … +N lignes » tant qu'il n'est pas déplié. */
-function Output({ text, limit, expanded }: { text: string; limit: number; expanded: boolean }) {
+/** Outils du serveur MCP `sessions` (list, get, create, wait, send, end) : leurs arguments et résultats citent des sessions par identifiant. */
+const SESSIONS_TOOL = /^mcp__sessions__/;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** Texte dont chaque identifiant de session (UUID) devient un lien vers la page de cette session. */
+export function linkSessionIds(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(UUID)) {
+    const start = m.index ?? 0;
+    if (start > last) parts.push(text.slice(last, start));
+    parts.push(
+      <Link key={`${start}`} to={`/sessions/${m[0].toLowerCase()}`} className="cc-session-link" title="Ouvrir cette session" onClick={(e) => e.stopPropagation()}>
+        {m[0]}
+      </Link>,
+    );
+    last = start + m[0].length;
+  }
+  if (!parts.length) return text;
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** Texte tronqué à `limit` lignes, suivi de « … +N lignes » tant qu'il n'est pas déplié. `links` : identifiants de session cliquables. */
+function Output({ text, limit, expanded, links = false }: { text: string; limit: number; expanded: boolean; links?: boolean }) {
   const lines = text.replace(/\n+$/, '').split('\n');
   const shown = expanded ? lines : lines.slice(0, limit);
   const hidden = lines.length - shown.length;
   return (
     <>
-      {shown.join('\n')}
+      {links ? linkSessionIds(shown.join('\n')) : shown.join('\n')}
       {hidden > 0 && <span className="cc-more">{`\n… +${plural(hidden, 'ligne', 'lignes')} (cliquer pour déplier)`}</span>}
     </>
   );
@@ -229,7 +253,7 @@ function toolBody({ name, input, result, subCalls, expanded, rel }: { name: stri
   }
   if (result.isError) {
     const text = result.text.replace(/<\/?tool_use_error>/g, '').trim();
-    return <Output text={text || 'Erreur'} limit={OUTPUT_LINES} expanded={expanded} />;
+    return <Output text={text || 'Erreur'} limit={OUTPUT_LINES} expanded={expanded} links={SESSIONS_TOOL.test(name)} />;
   }
   const hunks = Array.isArray(data.structuredPatch) ? (data.structuredPatch as Hunk[]) : [];
   switch (name) {
@@ -303,7 +327,8 @@ function toolBody({ name, input, result, subCalls, expanded, rel }: { name: stri
       break;
     }
   }
-  return result.text.trim() ? <Output text={result.text} limit={OUTPUT_LINES} expanded={expanded} /> : <>(aucune sortie)</>;
+  // Outils `sessions` : l'id renvoyé par create (et repris par wait, send, end) ouvre la session lancée.
+  return result.text.trim() ? <Output text={result.text} limit={OUTPUT_LINES} expanded={expanded} links={SESSIONS_TOOL.test(name)} /> : <>(aucune sortie)</>;
 }
 
 /**
@@ -345,7 +370,7 @@ function ToolCall({ name, input, result, subCalls, rel }: { name: string; input:
         <span className={`cc-dot ${severity}`}>⏺</span>
         <span>
           <span className="cc-name">{header.name}</span>
-          {args && <span className="cc-args">({args})</span>}
+          {args && <span className="cc-args">({SESSIONS_TOOL.test(name) ? linkSessionIds(args) : args})</span>}
         </span>
       </div>
       {body && (
