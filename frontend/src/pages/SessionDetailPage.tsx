@@ -234,6 +234,7 @@ export default function SessionDetailPage() {
 
   const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? archiveError ?? unarchiveError;
   const schedule = session.schedule;
+  const parentHint = session.parentSession ? (sessionStateHint(session.parentSession.status, session.parentSession.activity, 0) ?? sessionStatusLabels[session.parentSession.status]?.toLowerCase() ?? null) : null;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
   // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
@@ -299,15 +300,6 @@ export default function SessionDetailPage() {
               <>
                 {' '}
                 · <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
-              </>
-            )}
-            {session.parentSession && (
-              <>
-                {' '}
-                · lancée par{' '}
-                <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title="Session d'agent qui a lancé celle-ci">
-                  <i className="bi bi-robot" /> {session.parentSession.name}
-                </Link>
               </>
             )}
             {session.agent && (
@@ -416,10 +408,23 @@ export default function SessionDetailPage() {
         </div>
       </div>
 
+      {session.parentSession && (
+        <div className="cc-subagent">
+          <i className="bi bi-robot cc-subagent-icon" />
+          <span className="cc-subagent-text">
+            <strong>Sous-agent</strong> · cette session a été lancée par l'agent de la session{' '}
+            <Link to={`/sessions/${session.parentSession.id}`}>« {session.parentSession.name} »</Link>
+            {parentHint && <span className="cc-dim"> ({parentHint})</span>}, pas par une personne.
+          </span>
+          <Link to={`/sessions/${session.parentSession.id}`} className="cc-btn" title="Ouvrir la session parente">
+            <i className="bi bi-box-arrow-up-left" /> Session parente
+          </Link>
+        </div>
+      )}
       {session.childSessions.length > 0 && (
-        <div className="cc-children" title="Sessions lancées par l'agent de cette session (outil sessions.create)">
+        <div className="cc-children" title="Sous-agents : sessions lancées par l'agent de cette session (outil sessions.create)">
           <span className="cc-children-title">
-            <i className="bi bi-robot" /> Sessions lancées
+            <i className="bi bi-robot" /> {session.childSessions.length > 1 ? `${session.childSessions.length} sous-agents` : '1 sous-agent'}
           </span>
           {session.childSessions.map((c) => {
             const hint = sessionStateHint(c.status, c.activity, c.pendingRequestCount) ?? (c.archivedAt ? 'archivée' : sessionStatusLabels[c.status]?.toLowerCase());

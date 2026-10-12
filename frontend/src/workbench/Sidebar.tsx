@@ -15,8 +15,8 @@ import { displayComboText } from '../lib/shortcuts';
 import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
-import { ContextDot, initialsOf, sessionDotClass } from './WorkspaceTabs';
-import { mineFirst, openItemsOf, participates, sessionTree, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
+import { ContextDot, SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
+import { mineFirst, openItemsOf, participates, sessionGroups, subagentsSummary, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
 const FILTER_KEY = 'skipper.workbench.sessionFilter';
@@ -31,11 +31,29 @@ interface PullRequestRef {
   isDraft: boolean;
 }
 
-/** « lancée par « Nom » » ou « lancée par un agent » pour une session fille (sessions.create). */
-const byAgentTitle = (n: Pick<SessionNode<unknown>, 'byAgent' | 'parentName'>) => (n.byAgent ? ` · lancée par ${n.parentName ? `« ${n.parentName} »` : 'un agent'}` : '');
+/** « sous-agent de « Nom » » ou « sous-agent (lancé par un agent) » pour une session lancée par l'agent d'une autre session (sessions.create). */
+const byAgentTitle = (n: Pick<SessionNode<unknown>, 'byAgent' | 'parentName'>) => (n.byAgent ? ` · sous-agent${n.parentName ? ` de « ${n.parentName} »` : ' (lancé par un agent)'}` : '');
 
-/** Pictogramme d'une session lancée par un agent, devant son nom. */
-const RobotIcon = () => <i className="bi bi-robot wb-robot" aria-label="Lancée par un agent" />;
+/** Pictogramme d'un sous-agent (session lancée par un agent), devant son nom. */
+const RobotIcon = () => <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />;
+
+/**
+ * Ligne « N sous-agents » sous une session parente : repliée par défaut (un clic la déplie), dépliée d'office quand la
+ * page courante est l'un des sous-agents ou que l'un d'eux attend une réponse.
+ */
+function SubagentsRow({ children, indent, expanded, onToggle }: { children: SidebarSession[]; indent: number; expanded: boolean; onToggle: () => void }) {
+  const sum = subagentsSummary(children);
+  return (
+    <button type="button" className={`wb-row wb-session-row wb-row-btn wb-subagents${expanded ? ' open' : ''}`} style={{ paddingLeft: indent }} title={`${sum.label} lancé${children.length > 1 ? 's' : ''} par l'agent de cette session · cliquer pour ${expanded ? 'replier' : 'déplier'}`} onClick={onToggle}>
+      <span className="wb-tree">└</span>
+      <span className={`wb-dot ${sum.state === 'ask' ? 'ask' : sum.state === 'busy' ? 'busy' : sum.state === 'idle' ? 'idle' : 'done'}`} />
+      <i className="bi bi-robot wb-robot" />
+      <span className="wb-row-label">{sum.label}</span>
+      {sum.pending > 0 ? <span className="wb-badge">{sum.pending}</span> : sum.hint && <span className="wb-state">{sum.hint}</span>}
+      <i className={`bi bi-chevron-${expanded ? 'down' : 'right'} wb-subagents-chevron`} />
+    </button>
+  );
+}
 
 function statusTitle(s: SidebarSession): string {
   if (s.status === 'RUNNING') return s.activity === 'BUSY' ? "L'agent travaille" : "L'agent attend vos instructions";
@@ -138,9 +156,15 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
   );
 }
 
-/** Ligne d'une session ; une session lancée par un agent est indentée sous sa parente (`depth`) et marquée d'un robot. */
-function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentName = null }: { s: SidebarSession; worktreeId: string | null; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null }) {
+/**
+ * Ligne d'une session. Ses sous-agents (`children`, sessions lancées par son agent) sont repliés derrière une ligne
+ * « N sous-agents » ; dépliés, ils apparaissent indentés (`depth`), reliés par └ et marqués d'un robot.
+ */
+function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentName = null, children = [] }: { s: SidebarSession; worktreeId: string | null; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<SidebarSession>[] }) {
   const location = useLocation();
+  const [open, setOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
+  const childActive = children.some((c) => location.pathname.startsWith(`/sessions/${c.session.id}`));
+  const expanded = open ?? (childActive || children.some((c) => c.session.pendingRequestCount > 0));
   const { user } = useAuth();
   const { showError } = useDialogs();
   const { archiveSession } = useDeletions();
@@ -157,8 +181,9 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
   return (
     <>
       <RowWithMenu to={`/sessions/${s.id}`} active={location.pathname === `/sessions/${s.id}`} indent={left} title={`${statusTitle(s)}${byAgentTitle({ byAgent, parentName })}`} items={items}>
+        {depth > 0 && <span className="wb-tree">└</span>}
         <span className={`wb-dot ${sessionDotClass(s)}`} />
-        {byAgent && <RobotIcon />}
+        {byAgent && depth === 0 && <RobotIcon />}
         <span className="wb-row-label">{s.name}</span>
         {s.context.overThreshold && <ContextDot context={s.context} />}
         {s.owner && !mine && (
@@ -166,7 +191,7 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
             {initialsOf(s.owner.name)}
           </span>
         )}
-        {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
+        {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && depth === 0 && <span className="wb-state">{hint}</span>}
       </RowWithMenu>
       {s.browserActive && (
         <Link to={browserPath} className={`wb-row wb-session-row wb-browser-row${location.pathname === browserPath ? ' active' : ''}`} style={{ paddingLeft: left + 16 }} title="Voir en direct la page ouverte par l'agent">
@@ -174,6 +199,8 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
           <span className="wb-row-label">Navigateur</span>
         </Link>
       )}
+      {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
+      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worktreeId={worktreeId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} />)}
     </>
   );
 }
@@ -216,33 +243,37 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
     // La session affichée reste listée même si elle est à quelqu'un d'autre.
     return all.filter((s) => participates(s, userId) || isCurrent(`/sessions/${s.id}`));
   }, [ws.sessions, userId, filterMine, showOthers, current]);
-  // Les sessions lancées par un agent suivent leur session parente (indentées) ; une fille dont la parente est ailleurs garde son robot.
-  const tree = useMemo(() => sessionTree(visibleSessions), [visibleSessions]);
+  // Les sous-agents (sessions lancées par un agent) sont regroupés derrière leur session parente ; un sous-agent dont la parente est ailleurs reste au premier niveau avec son robot.
+  const groups = useMemo(() => sessionGroups(visibleSessions), [visibleSessions]);
   const hiddenOthers = ws.sessions.length - visibleSessions.length;
   const state = workspaceState(ws.sessions);
   const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
   const icon = worktreeIcon(ws, pr);
   const chips = [
-    ...tree.map(({ session: s, ...n }) => ({
-      key: `s:${s.id}`,
-      to: `/sessions/${s.id}`,
-      active: isCurrent(`/sessions/${s.id}`),
-      label: s.name,
-      title: `${s.name} · ${statusTitle(s)}${byAgentTitle(n)}${s.owner ? ` · ${s.owner.name}` : ''}`,
-      node: (
-        <>
-          <span className={`wb-dot ${sessionDotClass(s)}`} />
-          {n.byAgent && <RobotIcon />}
-        </>
-      ),
-      owner: s.owner && !participates(s, userId) ? s.owner : null,
-    })),
-    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
+    // Une puce par session de premier niveau, avec le compte de ses sous-agents ; un sous-agent n'a sa propre puce que s'il est la page courante ou attend une réponse.
+    ...groups.flatMap(({ root, children }) =>
+      [root, ...children.filter((c) => isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, ...n }) => ({
+        key: `s:${s.id}`,
+        to: `/sessions/${s.id}`,
+        active: isCurrent(`/sessions/${s.id}`),
+        label: s.name,
+        title: `${s.name} · ${statusTitle(s)}${byAgentTitle(n)}${s.owner ? ` · ${s.owner.name}` : ''}`,
+        node: (
+          <>
+            <span className={`wb-dot ${sessionDotClass(s)}`} />
+            {n.byAgent && <RobotIcon />}
+          </>
+        ),
+        extra: n.depth === 0 && children.length ? <SubagentsCount children={children.map((c) => c.session)} /> : null,
+        owner: s.owner && !participates(s, userId) ? s.owner : null,
+      })),
+    ),
+    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, extra: null, owner: null })),
   ];
   const activeIndex = chips.findIndex((c) => c.active);
   const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
   // Clic sur la tête : la première session du worktree, sinon la page où l'onglet du dossier en était, sinon les fichiers.
-  const headTo = !ws.primary && visibleSessions.length ? `/sessions/${visibleSessions[0].id}` : tabUrl ?? ws.key;
+  const headTo = !ws.primary && groups.length ? `/sessions/${groups[0].root.session.id}` : tabUrl ?? ws.key;
   const name = ws.task && !ws.worktree?.customLabel ? ws.task.title : ws.name;
   const title = ws.primary ? `Dossier principal · ${ws.name}` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()} · ` : ''}${icon.title}`;
   return (
@@ -289,6 +320,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
           <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
             {c.node}
             <span className="wb-chip-label">{c.label}</span>
+            {c.extra}
             {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
           </Link>
         ))}
@@ -309,8 +341,8 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
       </div>
       {expanded && (
         <div className="wb-ws-rows">
-          {tree.map(({ session: s, depth, byAgent, parentName }) => (
-            <SessionRow key={s.id} s={s} worktreeId={ws.worktreeId} indent={30} depth={depth} byAgent={byAgent} parentName={parentName} />
+          {groups.map(({ root, children }) => (
+            <SessionRow key={root.session.id} s={root.session} worktreeId={ws.worktreeId} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} />
           ))}
           {ws.terminals.map((t) => (
             <TerminalRow key={t.id} t={t} worktreeId={ws.worktreeId} indent={30} />

@@ -740,13 +740,16 @@ prompt système :
 Garde-fous (`backend/src/sessions/service.ts`) : une session lancée par un agent reste dans le projet de
 l'agent, l'imbrication est limitée à deux niveaux (humain → agent → agent → stop), et au plus trois
 sessions lancées par une même session tournent en même temps. Une session lancée par un agent déclenche
-une notification `session.created`. Parente et filles sont identifiables d'un coup d'œil : la sidebar (et
-la sous-barre d'un dossier) marque une session lancée par un agent d'un robot et l'indente sous sa session
-parente quand elle est dans le même dossier ; la page de la fille indique « lancée par » avec un lien vers la
-parente, celle de la parente liste ses « Sessions lancées » avec leur état, un lien et de quoi les terminer
-(`Session.parentSession`, `Session.childSessions`) ; dans le transcript, les identifiants de session cités
-par les outils `sessions` (dont celui renvoyé par `create`) sont des liens. Rien ne change pour les sessions
-lancées par un humain.
+une notification `session.created`. Dans l'interface ces sessions sont des **sous-agents**, identifiables d'un
+coup d'œil : dans la sidebar (et la sous-barre d'un dossier), une session parente porte un compteur
+« robot N » et ses sous-agents sont repliés derrière une ligne « N sous-agents » (dépliée d'office quand on
+est sur l'un d'eux ou qu'un sous-agent attend une réponse) ; dépliés, ils apparaissent indentés, reliés par
+└ et marqués d'un robot ; un sous-agent dont la parente est dans un autre dossier reste au premier niveau avec
+son robot. La page d'un sous-agent s'ouvre par un bandeau « Sous-agent · lancée par l'agent de la session
+« … » » avec l'état de la parente et un bouton vers elle ; celle de la parente liste ses sous-agents avec leur
+état, un lien et de quoi les terminer (`Session.parentSession`, `Session.childSessions`). Dans le transcript,
+les identifiants de session cités par les outils `sessions` (dont celui renvoyé par `create`) sont des liens.
+Rien ne change pour les sessions lancées par un humain.
 
 ## Sessions planifiées
 

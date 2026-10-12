@@ -164,7 +164,7 @@ export interface Session {
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath' | 'approvalConnections'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
-  parentSession: { id: string; name: string } | null;
+  parentSession: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null } | null;
   /** Sessions lancées par l'agent de cette session (requête Session seulement). */
   childSessions?: ChildSession[];
   /** Agent (configuration) et exécution qui ont ouvert la session ; null pour une session lancée à la main. */
@@ -572,6 +572,8 @@ export const SESSION_FIELDS = gql`
     parentSession {
       id
       name
+      status
+      activity
     }
     agent {
       id
