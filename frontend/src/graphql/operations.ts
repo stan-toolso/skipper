@@ -103,6 +103,11 @@ export interface RunnerStatus {
   cpus: string | null;
   startedAt: string | null;
   error: string | null;
+  /** Créé avec une autre configuration ou une image depuis reconstruite : à recréer. */
+  outdated: boolean;
+  outdatedReasons: string[];
+  /** Processus zombies dans le conteneur (null s'il ne tourne pas). */
+  zombies: number | null;
 }
 
 export interface Project {
@@ -406,6 +411,9 @@ export const PROJECT_FIELDS = gql`
       cpus
       startedAt
       error
+      outdated
+      outdatedReasons
+      zombies
     }
     workspacePath
     workspaceExists

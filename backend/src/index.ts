@@ -19,6 +19,8 @@ import { appErrorLogPlugin, maskGraphQLError, yogaLogger } from './graphql/loggi
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
+import { projectService } from './projects/service.js';
+import { runner } from './runners/index.js';
 import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { containerMonitor } from './runners/monitor.js';
@@ -57,6 +59,12 @@ async function main() {
   registerWorkflowTriggers();
   const closedTerminals = await terminalService.recoverAfterRestart();
   if (closedTerminals) log.info(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
+  // Conteneurs créés avec d'anciens paramètres (ou une image depuis reconstruite) : supprimés maintenant que rien n'y
+  // tourne, recréés à la première session. Plus tard, `ensureReady` recrée un conteneur obsolète si le projet est inactif :
+  // aucun processus de session (la session qui démarre occupe sa place mais n'a encore rien lancé), aucun terminal ouvert.
+  runner.setIdleCheck(async (project) => sessionService.runningCountByProject(project.id) === 0 && sessionService.slotsOfProject(project.id) <= 1 && terminalService.liveCountByProject(project.id) === 0);
+  const recreated = await runner.recreateOutdated(await projectService.list());
+  if (recreated.length) log.info(`[runner] conteneur(s) obsolète(s) supprimé(s), recréé(s) à la demande : ${recreated.join(", ")}`);
   const missedRuns = await scheduleService.start();
   if (missedRuns) log.info(`[schedules] ${missedRuns} échéance(s) manquée(s) pendant l'arrêt, non rattrapée(s)`);
   automationScheduler.start();
