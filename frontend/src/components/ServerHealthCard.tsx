@@ -1,4 +1,4 @@
-import { useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import type { ReactNode } from 'react';
 import { Alert, Badge, Card, Col, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -45,7 +45,7 @@ function Stat({ value, label, hint }: { value: ReactNode; label: string; hint?: 
 
 /** Bloc « Santé » des paramètres du serveur : mémoire, charge, sessions, processus, Docker et disque. */
 export default function ServerHealthCard({ memoryAlertThresholdMb }: { memoryAlertThresholdMb: number }) {
-  const { data, loading, error } = useQuery<{ serverHealth: ServerHealth }>(SERVER_HEALTH, { pollInterval: 15_000, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error } = usePollingQuery<{ serverHealth: ServerHealth }>(SERVER_HEALTH, { pollInterval: 15_000, fetchPolicy: 'cache-and-network' });
   const h = data?.serverHealth;
 
   return (

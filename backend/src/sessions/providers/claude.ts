@@ -285,7 +285,7 @@ export class ClaudeProvider implements SessionProvider {
     });
 
     const queue = new MessageQueue();
-    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments));
+    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments, ctx.initialPreamble));
     // Un tour est en cours entre l'envoi d'une instruction et le message `result` qui le clôt.
     let turnInProgress = true;
     await ctx.setActivity('busy');
@@ -522,11 +522,12 @@ export class ClaudeProvider implements SessionProvider {
     return null;
   }
 
-  private async instruction(ctx: RunContext, text: string, attachments: Attachment[]): Promise<SDKUserMessage['message']['content']> {
-    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
-    if (!attachments.length) return text;
+  private async instruction(ctx: RunContext, text: string, attachments: Attachment[], preamble?: string | null): Promise<SDKUserMessage['message']['content']> {
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}), ...(preamble ? { preamble: true } : {}) });
+    const body = preamble ? `${preamble}\n\n${text}` : text;
+    if (!attachments.length) return body;
     const note = attachmentsNote(attachments);
-    return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
+    return [{ type: 'text', text: `${body}\n\n${note}` }, ...(await inlineBlocks(attachments))];
   }
 
   /**

@@ -310,12 +310,13 @@ const repoKey = (repo: GithubRepoRef, suffix: string) => `${repo.owner}/${repo.n
 
 // --- Service -------------------------------------------------------------------
 
-async function projectRepo(projectId: string): Promise<GithubRepoRef> {
-  const project = await projectService.get(projectId);
+function repoOf(project: { gitUrl: string | null }): GithubRepoRef {
   const repo = parseGithubRepo(project.gitUrl);
   if (!repo) throw new AppError(project.gitUrl ? "Le dépôt de ce projet n'est pas hébergé sur GitHub" : "Ce projet n'est pas relié à un dépôt git");
   return repo;
 }
+
+const projectRepo = async (projectId: string): Promise<GithubRepoRef> => repoOf(await projectService.get(projectId));
 
 async function defaultBranch(repo: GithubRepoRef, token: string): Promise<string> {
   return cached(repoKey(repo, 'default'), async () => {
@@ -341,7 +342,10 @@ export const pullRequestService = {
   /** PR du dépôt du projet, les plus récemment mises à jour d'abord. */
   /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt. */
   async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50): Promise<PullRequest[]> {
-    const repo = await projectRepo(projectId);
+    const project = await projectService.get(projectId);
+    // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
+    if (!project.gitUrl) return [];
+    const repo = repoOf(project);
     const token = await requireToken(projectId, userId);
     const states = filter === 'ALL' ? ['OPEN', 'CLOSED', 'MERGED'] : [filter];
     const first = Math.min(Math.max(limit, 1), 100);

@@ -15,7 +15,7 @@ import { displayComboText } from '../lib/shortcuts';
 import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
-import { initialsOf, sessionDotClass } from './WorkspaceTabs';
+import { ContextDot, initialsOf, sessionDotClass } from './WorkspaceTabs';
 import { mineFirst, openItemsOf, participates, sessionTree, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
@@ -160,6 +160,7 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
         <span className={`wb-dot ${sessionDotClass(s)}`} />
         {byAgent && <RobotIcon />}
         <span className="wb-row-label">{s.name}</span>
+        {s.context.overThreshold && <ContextDot context={s.context} />}
         {s.owner && !mine && (
           <span className="wb-owner" title={`Session de ${s.owner.name}`}>
             {initialsOf(s.owner.name)}

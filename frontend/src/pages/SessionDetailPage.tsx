@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useSessionEvents } from '../lib/sessionEvents';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
@@ -19,6 +20,7 @@ import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
 import SessionSettingsModal from '../components/SessionSettingsModal';
+import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript from '../components/Transcript';
 import SessionChanges from '../components/SessionChanges';
 import { fileToolResultCount } from '../lib/sessionChanges';
@@ -69,7 +71,7 @@ type PageTab = 'conversation' | 'changes';
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
   const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
@@ -293,6 +295,12 @@ export default function SessionDetailPage() {
               </>
             )}
             {archived && <> · <span className="cc-yellow">archivée</span></>}
+            {session.context.tokens !== null && (
+              <>
+                {' '}
+                · <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
+              </>
+            )}
             {session.parentSession && (
               <>
                 {' '}
@@ -437,6 +445,8 @@ export default function SessionDetailPage() {
           })}
         </div>
       )}
+
+      <ContextBanner session={session} busy={Boolean(busy)} />
 
       <div className="cc-toggle">
         <div className="cc-tabs" role="tablist">

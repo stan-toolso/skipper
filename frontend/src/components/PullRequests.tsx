@@ -12,6 +12,7 @@ import {
   type PullRequestSummary,
 } from '../graphql/operations';
 import Markdown from './Markdown';
+import { usePollingQuery } from '../lib/usePollingQuery';
 
 /** Requêtes à rafraîchir après une création ou une fusion (panneau git, tâches, sidebar). */
 const PR_REFETCH = ['GithubPullRequests', 'Tasks', 'Sidebar', 'GitStatus', 'GitBranches', 'GitLog'];
@@ -102,7 +103,7 @@ function DetailsLine({ pr }: { pr: PullRequest }) {
  * nettoyage du worktree, des branches et des tâches liées.
  */
 export function PullRequestModal({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose: () => void; onMerged?: (deletedWorktreeIds: string[]) => void }) {
-  const q = useQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
+  const q = usePollingQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
   const pr = q.data?.githubPullRequest;
   const [method, setMethod] = useState<PullRequestMergeMethod>('SQUASH');
   const [deleteRemoteBranch, setDeleteRemoteBranch] = useState(true);

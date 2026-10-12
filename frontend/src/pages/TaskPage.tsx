@@ -102,14 +102,14 @@ export default function TaskPage() {
               {task.sessions.length === 0 ? (
                 <div className="p-3 text-secondary fst-italic">Aucune session n'a encore travaillé sur cette tâche. « Confier à un agent » en lance une.</div>
               ) : (
-                <Table size="sm" hover className="mb-0">
+                <Table size="sm" hover responsive className="mb-0">
                   <thead>
                     <tr>
                       <th>Session</th>
                       <th>État</th>
-                      <th>Worktree</th>
-                      <th>Par</th>
-                      <th>Démarrée</th>
+                      <th className="d-none d-md-table-cell">Worktree</th>
+                      <th className="d-none d-md-table-cell">Par</th>
+                      <th className="d-none d-md-table-cell">Démarrée</th>
                       <th className="text-end">Coût</th>
                     </tr>
                   </thead>
@@ -127,9 +127,9 @@ export default function TaskPage() {
                           <StatusBadge status={s.status} />
                           {s.pendingRequestCount > 0 && <Badge bg="warning" text="dark" className="ms-1">{s.pendingRequestCount}</Badge>}
                         </td>
-                        <td>{s.worktree ? <Link to={`/worktrees/${s.worktree.id}/files`}>{s.worktree.label}</Link> : <span className="text-secondary">dossier principal</span>}</td>
-                        <td>{s.owner?.name ?? <span className="text-secondary">—</span>}</td>
-                        <td title={s.startedAt ? fmt(s.startedAt) : ''}>
+                        <td className="d-none d-md-table-cell">{s.worktree ? <Link to={`/worktrees/${s.worktree.id}/files`}>{s.worktree.label}</Link> : <span className="text-secondary">dossier principal</span>}</td>
+                        <td className="d-none d-md-table-cell">{s.owner?.name ?? <span className="text-secondary">—</span>}</td>
+                        <td className="d-none d-md-table-cell" title={s.startedAt ? fmt(s.startedAt) : ''}>
                           {s.startedAt ? timeAgo(s.startedAt) : '—'}
                           {s.endedAt && <span className="text-secondary"> · fin {timeAgo(s.endedAt)}</span>}
                         </td>

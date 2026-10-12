@@ -13,6 +13,8 @@ export interface SidebarSession {
   activity: SessionActivity | null;
   pendingRequestCount: number;
   browserActive: boolean;
+  /** Contexte de l'agent : au-delà du seuil serveur, une pastille invite à le nettoyer. */
+  context: { tokens: number | null; overThreshold: boolean };
   owner: { id: string; name: string; avatarUrl: string | null } | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain. */
   parentSession: { id: string } | null;

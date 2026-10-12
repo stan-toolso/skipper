@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { ProjectPageLoading } from '../components/PageLoading';
-import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -25,7 +26,7 @@ function processActivity(p: ContainerProcess): { label: string; className: strin
 
 /** Mémoire, CPU et processus Claude du conteneur en marche, relevés toutes les 10 secondes. */
 function ContainerUsage({ projectId }: { projectId: string }) {
-  const { data, error } = useQuery<{ project: { id: string; containerStats: ContainerStats | null } | null }>(PROJECT_CONTAINER_STATS, {
+  const { data, error } = usePollingQuery<{ project: { id: string; containerStats: ContainerStats | null } | null }>(PROJECT_CONTAINER_STATS, {
     variables: { id: projectId },
     pollInterval: 10_000,
     fetchPolicy: 'cache-and-network',
@@ -167,6 +168,11 @@ function RunnerCard({ project }: { project: Project }) {
                 depuis {formatSeconds((Date.now() - new Date(s.startedAt).getTime()) / 1000)}
               </span>
             )}
+            {s.outdated && (
+              <Badge bg="warning" text="dark" className="ms-2" title={s.outdatedReasons.join(' ; ')}>
+                à recréer
+              </Badge>
+            )}
           </dd>
           <dt className="col-3">Image</dt>
           <dd className="col-9">
@@ -181,10 +187,35 @@ function RunnerCard({ project }: { project: Project }) {
               </Button>
             )}
           </dd>
+          {s.zombies !== null && (
+            <>
+              <dt className="col-3">Processus</dt>
+              <dd className="col-9">
+                {s.zombies === 0 ? (
+                  <span className="text-secondary">aucun zombie</span>
+                ) : (
+                  <span className="text-warning" title="Processus terminés mais jamais récoltés : le conteneur a été créé sans processus init (--init). Recréez-le.">
+                    {s.zombies} processus zombie{s.zombies > 1 ? 's' : ''}
+                  </span>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
         {editingLimits && <RunnerLimitsForm project={project} onDone={() => setEditingLimits(false)} />}
         {s.ready && <ContainerUsage projectId={project.id} />}
         {s.error && <Alert variant="danger" className="py-2">{s.error}</Alert>}
+        {s.outdated && (
+          <Alert variant="warning" className="py-2">
+            <div>Le conteneur ne correspond plus à la configuration actuelle :</div>
+            <ul className="mb-1">
+              {s.outdatedReasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+            <div className="text-secondary">Il sera recréé de lui-même dès qu'aucune session ni terminal du projet ne tournera, ou tout de suite avec « Recréer ».</div>
+          </Alert>
+        )}
         <div className="d-flex gap-2">
           {!s.ready && s.state !== 'unavailable' && (
             <Button size="sm" disabled={busy} onClick={() => start({ variables: { id: project.id } })}>
@@ -199,7 +230,7 @@ function RunnerCard({ project }: { project: Project }) {
           {s.state !== 'absent' && s.state !== 'unavailable' && (
             <Button
               size="sm"
-              variant="outline-secondary"
+              variant={s.outdated ? 'warning' : 'outline-secondary'}
               disabled={busy}
               title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
               onClick={async () => {
@@ -252,7 +283,7 @@ function ruleUsage(r: PermissionRule): string {
 
 /** Autorisations d'outils mémorisées pour le projet (réponse « ne plus demander dans ce projet »), avec ajout et retrait. */
 function PermissionRulesCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
-  const { data } = useQuery<{ project: { permissionRules: PermissionRule[] } | null }>(PROJECT_PERMISSION_RULES, { variables: { id: projectId }, pollInterval: 10000 });
+  const { data } = usePollingQuery<{ project: { permissionRules: PermissionRule[] } | null }>(PROJECT_PERMISSION_RULES, { variables: { id: projectId }, pollInterval: 10000 });
   const refetch = { refetchQueries: ['ProjectPermissionRules'] };
   const [addRule, { loading: adding, error: addError }] = useMutation(ADD_PROJECT_PERMISSION_RULE, refetch);
   const [deleteRule, { error: deleteError }] = useMutation(DELETE_PROJECT_PERMISSION_RULE, refetch);
@@ -300,7 +331,7 @@ function PermissionRulesCard({ projectId, canManage }: { projectId: string; canM
           Quand un agent demande une autorisation, « ne plus demander dans ce projet » enregistre la règle ici : toutes les sessions du projet l'appliquent sans redemander. Modifier ou retirer une
           règle ne concerne que les prochaines sessions. Une règle Bash en <code>préfixe *</code> (ex. <code>git checkout *</code>) couvre toutes les commandes qui commencent ainsi.
         </p>
-        <Table size="sm" className="mb-3 align-middle">
+        <Table size="sm" className="mb-3 align-middle table-stack">
           <tbody>
             {rules.length === 0 && (
               <tr>
@@ -402,7 +433,7 @@ const ROLES: ProjectRole[] = ['ADMIN', 'MEMBER', 'VIEWER'];
 /** Membres du projet : liste avec rôle, invitation par e-mail et retrait (administrateurs du projet). */
 function MembersCard({ projectId, canManage }: { projectId: string; canManage: boolean }) {
   const { user: me } = useAuth();
-  const { data } = useQuery<{ project: { members: ProjectMember[] } | null }>(PROJECT_MEMBERS, { variables: { id: projectId }, pollInterval: 10000 });
+  const { data } = usePollingQuery<{ project: { members: ProjectMember[] } | null }>(PROJECT_MEMBERS, { variables: { id: projectId }, pollInterval: 10000 });
   const refetch = { refetchQueries: ['ProjectMembers'] };
   const [invite, { loading: inviting, error: inviteError }] = useMutation(INVITE_PROJECT_MEMBER, refetch);
   const [setRole, { error: roleError }] = useMutation(UPDATE_PROJECT_MEMBER_ROLE, refetch);
@@ -416,7 +447,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
     <Card className="mt-3">
       <Card.Header>Membres</Card.Header>
       <Card.Body className="small">
-        <Table size="sm" className="mb-3 align-middle">
+        <Table size="sm" className="mb-3 align-middle table-stack">
           <tbody>
             {members.map((m) => (
               <tr key={m.user.id}>
@@ -501,7 +532,7 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
 
 /** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
 function WorktreesCard({ projectId }: { projectId: string }) {
-  const { data } = useQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
+  const { data } = usePollingQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
   const { deleteWorktree, archiveWorktree } = useDeletions();
   const { openRenameWorktree } = useRenameWorktree();
   const { openNewSession, openNewWorktree } = useSessionLauncher();
@@ -515,7 +546,7 @@ function WorktreesCard({ projectId }: { projectId: string }) {
           Le dossier principal suit la branche <code>{project.git?.branch ?? 'par défaut'}</code>. Un worktree extrait une autre branche dans son propre dossier : les agents y travaillent sans gêner le
           dossier principal. Un worktree archivé garde son dossier et ses sessions : voyez l'<Link to={`/projects/${projectId}/history`}>historique</Link>.
         </p>
-        <Table size="sm" className="mb-3">
+        <Table size="sm" className="mb-3 table-stack">
           <tbody>
             {project.worktrees.length === 0 && (
               <tr>
@@ -587,7 +618,7 @@ function ApiKeysCard({ projectId }: { projectId: string }) {
           </Alert>
         )}
         {keys.length > 0 && (
-          <Table size="sm" className="mb-2">
+          <Table size="sm" className="mb-2 table-stack">
             <tbody>
               {keys.map((k) => (
                 <tr key={k.id}>
@@ -638,7 +669,7 @@ export default function ProjectDetailPage() {
   const { openNewSession } = useSessionLauncher();
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error } = useQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
+  const { data, loading, error } = usePollingQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
   useTabTitle(data?.project?.name);
   useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
@@ -789,9 +820,9 @@ export default function ProjectDetailPage() {
         <thead>
           <tr>
             <th>Nom</th>
-            <th>Type</th>
+            <th className="d-none d-md-table-cell">Type</th>
             <th>Statut</th>
-            <th>Branche</th>
+            <th className="d-none d-md-table-cell">Branche</th>
             <th>Créée</th>
           </tr>
         </thead>
@@ -808,13 +839,13 @@ export default function ProjectDetailPage() {
               <td>
                 <Link to={`/sessions/${s.id}`}>{s.name}</Link>
               </td>
-              <td>
+              <td className="d-none d-md-table-cell">
                 <code>{s.provider}</code>
               </td>
               <td>
                 <StatusBadge status={s.status} pendingRequests={s.pendingRequestCount} />
               </td>
-              <td className="text-secondary small">{s.worktree ? s.worktree.label : '—'}</td>
+              <td className="text-secondary small d-none d-md-table-cell">{s.worktree ? s.worktree.label : '—'}</td>
               <td className="text-secondary small">{new Date(s.createdAt).toLocaleString()}</td>
             </tr>
           ))}

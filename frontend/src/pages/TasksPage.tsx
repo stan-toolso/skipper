@@ -144,19 +144,19 @@ function TaskTable({ tasks, showProject, onEdit, targets }: { tasks: Task[]; sho
     </th>
   );
   return (
-    <Table hover size="sm" className="task-table">
+    <Table hover responsive size="sm" className="task-table">
       <thead>
         <tr>
           {header('title', 'Titre')}
           {showProject && header('project', 'Projet')}
           {header('status', 'Statut')}
           {header('priority', 'Priorité')}
-          {header('assignee', 'Responsable')}
-          {header('reporter', 'Rapporteur')}
-          {header('dueDate', 'Échéance')}
-          {header('comments', 'Comm.', 'text-end')}
-          {header('createdAt', 'Créée')}
-          {header('updatedAt', 'Mise à jour')}
+          {header('assignee', 'Responsable', 'd-none d-md-table-cell')}
+          {header('reporter', 'Rapporteur', 'd-none d-md-table-cell')}
+          {header('dueDate', 'Échéance', 'd-none d-md-table-cell')}
+          {header('comments', 'Comm.', 'text-end d-none d-md-table-cell')}
+          {header('createdAt', 'Créée', 'd-none d-md-table-cell')}
+          {header('updatedAt', 'Mise à jour', 'd-none d-md-table-cell')}
           <th />
         </tr>
       </thead>
@@ -189,12 +189,12 @@ function TaskTable({ tasks, showProject, onEdit, targets }: { tasks: Task[]; sho
             <td>
               <TaskPriorityBadge priority={t.priority} />
             </td>
-            <td title={formatPerson(t.assignee)}>{t.assignee?.name ?? t.assignee?.email ?? ''}</td>
-            <td title={formatPerson(t.reporter)}>{t.reporter?.name ?? t.reporter?.email ?? ''}</td>
-            <td className={isOverdue(t) ? 'text-danger' : ''}>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : ''}</td>
-            <td className="text-end">{t.commentCount || ''}</td>
-            <td title={new Date(t.createdAt).toLocaleString()}>{timeAgo(t.createdAt)}</td>
-            <td title={new Date(t.updatedAt).toLocaleString()}>{timeAgo(t.updatedAt)}</td>
+            <td className="d-none d-md-table-cell" title={formatPerson(t.assignee)}>{t.assignee?.name ?? t.assignee?.email ?? ''}</td>
+            <td className="d-none d-md-table-cell" title={formatPerson(t.reporter)}>{t.reporter?.name ?? t.reporter?.email ?? ''}</td>
+            <td className={`d-none d-md-table-cell${isOverdue(t) ? ' text-danger' : ''}`}>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : ''}</td>
+            <td className="text-end d-none d-md-table-cell">{t.commentCount || ''}</td>
+            <td className="d-none d-md-table-cell" title={new Date(t.createdAt).toLocaleString()}>{timeAgo(t.createdAt)}</td>
+            <td className="d-none d-md-table-cell" title={new Date(t.updatedAt).toLocaleString()}>{timeAgo(t.updatedAt)}</td>
             <td style={{ minWidth: 260 }}>
               <TaskActions task={t} target={targets.get(t.project.id)} onEdit={() => onEdit(t)} />
             </td>

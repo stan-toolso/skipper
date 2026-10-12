@@ -15,6 +15,7 @@ type ServerMessage = { type: 'data'; data: string } | { type: 'exit'; code: numb
 
 interface LiveTerminal {
   id: string;
+  projectId: string;
   proc: pty.IPty;
   /** Sortie récente, rejouée à chaque connexion (reconnexion, second onglet). */
   scrollback: string;
@@ -41,6 +42,8 @@ export const terminalService = {
   isLive: (id: string) => live.has(id),
   /** Terminaux ouverts sur ce serveur (processus vivants). */
   liveCount: () => live.size,
+  /** Terminaux ouverts (processus vivants) dans le conteneur de ce projet. */
+  liveCountByProject: (projectId: string) => [...live.values()].filter((t) => t.projectId === projectId).length,
 
   /** Ouvre un shell de connexion dans le workspace du projet, avec l'historique des commandes de l'utilisateur. */
   async create(projectId: string, name?: string | null, worktreeId?: string | null, createdById: string | null = null): Promise<TerminalRecord> {
@@ -58,7 +61,7 @@ export const terminalService = {
       cwd,
       env: { ...process.env, ...(await agentGitEnv(createdById ?? null, project.gitUrl, { projectId: project.id })), ...spec.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
     });
-    const t: LiveTerminal = { id: record.id, proc, scrollback: '', clients: new Set(), history };
+    const t: LiveTerminal = { id: record.id, projectId: project.id, proc, scrollback: '', clients: new Set(), history };
     live.set(record.id, t);
     history?.start();
 

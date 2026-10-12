@@ -128,6 +128,7 @@
 .wb-dot.failed { background: var(--cc-red); }
 .wb-dot.stopped { background: var(--cc-dot-stopped); }
 @keyframes wb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.wb-ctx { color: var(--cc-yellow); font-size: 11px; flex: 0 0 auto; }
 .wb-badge {
   background: var(--cc-yellow);
   color: var(--cc-bg);
@@ -474,8 +475,22 @@
   .fx-header { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
   .fx-header-actions .btn { flex: 1; }
   .fe-header { flex-wrap: wrap; padding: 6px 10px; }
-  .fe-meta { margin-left: auto; }
+  /* Barre d'actions de l'éditeur sur sa propre ligne, boutons qui passent à la ligne au lieu d'être coupés à droite. */
+  .fe-meta { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: 0; }
   .fe-meta .fx-muted { display: none; }
+  .fx-header-actions .btn { white-space: nowrap; }
+  /* Tableaux « contenu + actions » (worktrees, membres, règles, comptes…) : chaque ligne devient un bloc et les
+     actions passent sous le contenu plutôt que d'être repoussées hors de l'écran. */
+  .table-stack thead { display: none; }
+  .table-stack tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--cc-border); }
+  .table-stack tr:last-child { border-bottom: 0; }
+  .table-stack td { display: block; width: auto !important; max-width: none !important; border: 0; padding: 2px 0; }
+  .table-stack td:empty { display: none; }
+  .table-stack td.text-end { text-align: left !important; }
+  .table-stack td.text-nowrap { white-space: normal !important; }
+  .table-stack td .btn { margin-bottom: 4px; }
+  /* Sélecteurs et champs à largeur fixe : jamais plus larges que l'écran. */
+  .wb-content .form-select, .wb-content .form-control { max-width: 100%; }
 }
 @media (max-width: 767.98px) {
   /* En-têtes de page (titre à gauche, actions à droite) : passent à la ligne au lieu de déborder. */
@@ -619,6 +634,12 @@
 .git-collapsed-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 8px; height: 100%; }
 .git-collapsed-rail .bi { font-size: 14px; }
 .git-collapsed-rail .git-count { margin: 0; }
+/* Mobile : pas de bande repliée à droite du contenu ; un bouton de la barre du haut ouvre le panneau. */
+.wb-git-btn { display: none; }
+@media (max-width: 767.98px) {
+  .git-collapsed-rail { display: none; }
+  .wb-git-btn { display: inline-flex; }
+}
 
 /* ---- Tâches : badges, panneau latéral, commentaires, tableau de bord ------------------------- */
 .task-status { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; white-space: nowrap; }
@@ -695,6 +716,7 @@
 
 /* ---- Coffre ----------------------------------------------------------------------------------- */
 .vault-row { cursor: pointer; }
+.vault-desc { max-width: 320px; }
 .vault-row.open td { border-bottom-color: transparent; }
 .vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); }
 .vault-item-details { padding: 6px 4px 10px; }
@@ -716,6 +738,8 @@
 @media (max-width: 767.98px) {
   .vault-field-row { grid-template-columns: 1fr 1fr; }
   .vault-table .small.font-monospace { max-width: 160px; }
+  /* La description tronquée fixe la largeur minimale de la colonne : plus courte pour que le tableau tienne dans l'écran. */
+  .vault-desc { max-width: 170px; }
 }
 
 /* ---- Petits écrans en hauteur : menu de la sidebar en grille d'icônes ------------------------ */

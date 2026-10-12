@@ -24,6 +24,7 @@ interface SessionRow {
   error: string | null;
   cleanup: SessionCleanup | null;
   context_tokens: number | null;
+  resume_digest: string | null;
   cost_usd: string | number | null;
   base_commit: string | null;
   queued_at: Date | null;
@@ -65,6 +66,7 @@ function toSession(row: SessionRow): Session {
     error: row.error,
     cleanup: row.cleanup ?? {},
     contextTokens: row.context_tokens,
+    resumeDigest: row.resume_digest ?? null,
     costUsd: Number(row.cost_usd ?? 0),
     baseCommit: row.base_commit ?? null,
     queuedAt: row.queued_at ?? null,
@@ -93,6 +95,7 @@ export interface SessionPatch {
   ownerId?: string | null;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
+  resumeDigest?: string | null;
   baseCommit?: string | null;
   promptAttachments?: Attachment[];
   config?: Record<string, unknown>;
@@ -113,6 +116,7 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   ownerId: 'owner_id',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
+  resumeDigest: 'resume_digest',
   baseCommit: 'base_commit',
   promptAttachments: 'prompt_attachments',
   config: 'config',
