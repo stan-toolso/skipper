@@ -1038,6 +1038,7 @@ export const SIDEBAR = gql`
       gitUrl
       gitBranch
       isMember
+      myRole
       sessions(limit: 50) {
         ...SidebarSession
         worktree {
@@ -2081,5 +2082,62 @@ export const TERMINAL_NAME = gql`
 export const PROJECT_NAME = gql`
   fragment CachedProjectName on Project {
     name
+  }
+`;
+
+export interface ContainerProcess {
+  pid: number;
+  rssMb: number;
+  elapsedSeconds: number;
+  sessionId: string | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; updatedAt: string } | null;
+  childrenRssMb: number;
+  cwd: string | null;
+}
+
+export interface ContainerStats {
+  sampledAt: string;
+  memoryUsedMb: number;
+  memoryLimitMb: number | null;
+  memoryPercent: number | null;
+  swapUsedMb: number | null;
+  cpuPercent: number | null;
+  cpuLimit: number | null;
+  oomKills: number;
+  memoryHighSince: string | null;
+  claudeProcesses: ContainerProcess[];
+}
+
+export const PROJECT_CONTAINER_STATS = gql`
+  query ProjectContainerStats($id: ID!) {
+    project(id: $id) {
+      id
+      containerStats {
+        sampledAt
+        memoryUsedMb
+        memoryLimitMb
+        memoryPercent
+        swapUsedMb
+        cpuPercent
+        cpuLimit
+        oomKills
+        memoryHighSince
+        claudeProcesses {
+          pid
+          rssMb
+          elapsedSeconds
+          sessionId
+          childrenRssMb
+          cwd
+          session {
+            id
+            name
+            status
+            activity
+            updatedAt
+          }
+        }
+      }
+    }
   }
 `;

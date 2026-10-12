@@ -85,7 +85,16 @@
 .cc-tool .cc-dot.pending { color: var(--cc-dim); }
 .cc-tool .cc-dot.ok { color: var(--cc-green); }
 .cc-tool .cc-dot.error { color: var(--cc-red); }
+.cc-tool .cc-dot.warn { color: var(--cc-yellow); }
+/* Code de sortie d'une commande qui a tourné mais s'est terminée en non nul : seule cette ligne ressort. */
+.cc-exit { color: var(--cc-yellow); }
 .cc-tool .cc-name { font-weight: 600; }
+/* Étapes de l'agent repliées en une ligne (détail technique masqué), dépliées au clic.
+   Une seule ligne, coupée par des points de suspension : la dernière étape qui change ne fait pas sauter le fil. */
+.cc-group .cc-group-summary { color: var(--cc-dim); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-group .cc-group-caret { color: var(--cc-dimmer); }
+.cc-group .cc-group-running { color: var(--cc-fg); }
+.cc-group .cc-group-body { margin: 4px 0 0 6px; padding-left: 12px; border-left: 1px solid var(--cc-dimmer); }
 .cc-result { display: flex; gap: 8px; margin-left: 18px; color: var(--cc-dim); }
 .cc-tool .cc-result { cursor: pointer; }
 .cc-result .cc-elbow { flex: 0 0 auto; color: var(--cc-dimmer); }
