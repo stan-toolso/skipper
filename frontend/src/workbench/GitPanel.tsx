@@ -378,6 +378,9 @@ export default function GitPanel() {
 
   const headTitle = target.label ?? (status ? (status.detached ? 'HEAD détaché' : status.branch ?? 'Git') : 'Git');
   return (
+    <>
+    {/* Mobile : le panneau recouvre le contenu, toucher à côté le referme (invisible sur bureau). */}
+    <div className="wb-backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
     <aside className="git-panel">
       <div className="git-head">
         {taskId ? (
@@ -567,5 +570,6 @@ export default function GitPanel() {
       )}
       {diffReq && vars && <DiffModal req={diffReq} vars={vars} onClose={() => setDiffReq(null)} />}
     </aside>
+    </>
   );
 }
