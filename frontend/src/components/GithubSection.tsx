@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Form, Spinner, Table } from 'react-bootstrap';
 import { useDialogs } from './Dialogs';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import {
   CONNECT_GITHUB_FROM_VAULT,
   DISCONNECT_GITHUB,
@@ -296,7 +297,7 @@ function RepositoriesCard({ several }: { several: boolean }) {
 
 /** Section GitHub des Paramètres : comptes connectés, ajout d'un compte (connexion par code ou jeton du coffre), dépôts accessibles. */
 export default function GithubSection() {
-  const { data, loading, error, refetch } = useQuery<{ settings: { github: GithubAuthStatus } }>(GITHUB_STATUS, { pollInterval: 15_000 });
+  const { data, loading, error, refetch } = usePollingQuery<{ settings: { github: GithubAuthStatus } }>(GITHUB_STATUS, { pollInterval: 15_000 });
   const [adding, setAdding] = useState(false);
   if (loading && !data) return <Spinner animation="border" size="sm" />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;

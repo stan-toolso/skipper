@@ -247,7 +247,7 @@ function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; work
 
 /** Pull requests GitHub : celle de la branche courante (ou bouton de création), puis les autres PR ouvertes du dépôt. */
 function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: string; worktreeId: string | null; branch: string | null }) {
-  const q = useQuery<{ githubPullRequests: PullRequest[] }>(GITHUB_PULL_REQUESTS, { variables: { projectId, state: 'OPEN', limit: 50 }, pollInterval: 30000 });
+  const q = usePollingQuery<{ githubPullRequests: PullRequest[] }>(GITHUB_PULL_REQUESTS, { variables: { projectId, state: 'OPEN', limit: 50 }, pollInterval: 30000 });
   const [creating, setCreating] = useState(false);
   const [openNumber, setOpenNumber] = useState<number | null>(null);
   const navigate = useNavigate();
