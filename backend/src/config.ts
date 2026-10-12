@@ -9,6 +9,17 @@ function env(name: string, fallback?: string): string {
   return value;
 }
 
+const logLevels = ['debug', 'info', 'warn', 'error'] as const;
+export type LogLevel = (typeof logLevels)[number];
+
+function logLevel(): LogLevel {
+  const value = (process.env.LOG_LEVEL || 'info').trim().toLowerCase();
+  if (!(logLevels as readonly string[]).includes(value)) {
+    throw new Error(`LOG_LEVEL invalide : ${value} (attendu : ${logLevels.join(', ')})`);
+  }
+  return value as LogLevel;
+}
+
 export const config = {
   port: Number(env('PORT', '4000')),
   databaseUrl: env('DATABASE_URL', 'postgres://skipper:skipper@localhost:5432/skipper'),
@@ -27,4 +38,6 @@ export const config = {
   /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+  /** Niveau minimal du journal (debug, info, warn, error). */
+  logLevel: logLevel(),
 };
