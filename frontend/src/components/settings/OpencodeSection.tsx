@@ -75,7 +75,7 @@ function KeysCard({ settings }: { settings: AppSettings }) {
         <p className="text-secondary small">
           Choisissez, pour chaque fournisseur, le jeton applicatif du coffre qui porte votre clé d'API. Les clés sont remises au serveur OpenCode de la session seul, jamais à l'agent. OpenCode Zen propose des modèles gratuits utilisables sans clé.
         </p>
-        <Table size="sm" className="align-middle mb-0">
+        <Table size="sm" className="align-middle mb-0 table-stack">
           <thead>
             <tr>
               <th style={{ width: '30%' }}>Fournisseur</th>

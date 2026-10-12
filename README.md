@@ -783,17 +783,32 @@ planifiée qui tourne tous les jours. Deux réglages indépendants (`Session.cle
 - **Purge du transcript** : les événements de plus de N jours sont supprimés (`retentionDays`). La consommation
   enregistrée (`usage_ledger`) n'est pas touchée. Appliquée avant chaque exécution planifiée et par un balayage
   toutes les heures (`cleanupService.sweep`, lancé par l'ordonnanceur).
-- **Conversation de l'agent** : quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter**
-  (`contextAction: compact` : la commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la
-  fin du tour), soit **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain
-  lancement ne reprend plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution
-  planifiée ; une session en cours de travail est laissée tranquille (le nettoyage est reporté).
+- **Conversation de l'agent** : **repartir d'une conversation neuve à chaque exécution planifiée**
+  (`contextAction: fresh`, réglage par défaut d'une nouvelle planification : le contexte reste stable d'un jour à
+  l'autre), ou, quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter** (`compact` : la
+  commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la fin du tour), soit
+  **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain lancement ne reprend
+  plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution planifiée ; une
+  session qui attend des instructions est d'abord terminée, une session au travail est laissée tranquille (le
+  nettoyage est reporté).
+
+La modale de planification porte le même réglage (`SessionScheduleInput.cleanup`) : une nouvelle planification
+part sur « nouvelle conversation à chaque exécution », une planification existante sans nettoyage affiche un
+avertissement et un bouton « Activer le nettoyage par défaut » (rien n'est modifié sans l'accord de l'utilisateur ;
+la migration `034` ne touche pas aux planifications existantes).
 
 La taille du contexte (`Session.contextTokens`) est relevée par le provider Claude sur les messages assistant
 (tokens d'entrée, cache compris, du dernier appel au modèle) et sur les frontières de compaction
-(`compact_boundary`, `post_tokens`). « Nettoyer maintenant » applique les réglages sans attendre
-(`applySessionCleanup`) ; `updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les
-événements `cleanup` (purge, compaction, remise à zéro, report) apparaissent dans le transcript.
+(`compact_boundary`, `post_tokens`). Elle est **visible sans ouvrir les réglages** : jauge dans l'en-tête de la
+page de session (`Session.context` : tokens, part de la fenêtre du modèle, coût approximatif de la relecture du
+contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans la sidebar et les
+onglets au-delà du seuil serveur (`CONTEXT_WARN_TOKENS`, 150 000 tokens). Au-delà de ce seuil, un bandeau propose
+« Compacter » (`compactSessionContext`), « Repartir d'une conversation neuve » (`resetSessionContext`, avec ou
+sans résumé des derniers échanges, transmis au modèle avec la prochaine instruction via `sessions.resume_digest`)
+ou « Ignorer » (jusqu'à 50 000 tokens de plus) ; rien n'est fait automatiquement pour une session manuelle.
+« Nettoyer maintenant » applique les réglages sans attendre (`applySessionCleanup`) ;
+`updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les événements `cleanup` (purge,
+compaction, remise à zéro, report) apparaissent dans le transcript.
 
 ## Explorateur de fichiers et éditeur
 

@@ -379,7 +379,7 @@ export const sessionService = {
         await emit('system', { message: `Place libérée : la session démarre après ${formatWait(Date.now() - (session.queuedAt?.getTime() ?? Date.now()))} d'attente`, notice: true, reason: 'queue_start' });
       }
       started = await publishSession(
-        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null }),
+        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null, resumeDigest: null }),
       );
     } catch (err) {
       slots.delete(id);
@@ -402,6 +402,8 @@ export const sessionService = {
         cwd,
         initialMessage: initialMessage ?? session.prompt,
         initialAttachments: initialMessage === undefined ? session.promptAttachments : attachments,
+        // Conversation remise à zéro « en gardant un résumé » : le résumé accompagne la première instruction (une seule fois).
+        initialPreamble: session.externalId ? null : session.resumeDigest,
         emit,
         setExternalId: async (externalId) => {
           await publishSession(await sessionRepository.update(id, { externalId }));

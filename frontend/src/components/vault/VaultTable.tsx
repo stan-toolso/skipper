@@ -95,16 +95,16 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
   };
 
   return (
-    <Table hover size="sm" className="align-middle vault-table">
+    <Table hover responsive size="sm" className="align-middle vault-table">
       <thead>
         <tr>
           <th style={{ width: 24 }} />
           <th>Nom</th>
           <th>Type</th>
-          <th>Cible</th>
-          {projectPage ? <th>Accès</th> : <th>Propriétaire</th>}
-          <th>Règles</th>
-          <th>Dernier test</th>
+          <th className="d-none d-md-table-cell">Cible</th>
+          {projectPage ? <th className="d-none d-md-table-cell">Accès</th> : <th className="d-none d-md-table-cell">Propriétaire</th>}
+          <th className="d-none d-md-table-cell">Règles</th>
+          <th className="d-none d-md-table-cell">Dernier test</th>
           <th />
         </tr>
       </thead>
@@ -131,20 +131,20 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
                   <strong>{item.name}</strong>
                   {days !== null && days < 0 && <Badge bg="danger" className="ms-2">expiré</Badge>}
                   {days !== null && days >= 0 && days < 30 && <Badge bg="warning" text="dark" className="ms-2">expire dans {days} j</Badge>}
-                  {item.description && <div className="small text-secondary text-truncate" style={{ maxWidth: 320 }}>{item.description}</div>}
+                  {item.description && <div className="small text-secondary text-truncate vault-desc">{item.description}</div>}
                 </td>
                 <td className="text-nowrap">
-                  <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} />
-                  {KINDS[item.kind].label}
+                  <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} title={KINDS[item.kind].label} />
+                  <span className="d-none d-md-inline">{KINDS[item.kind].label}</span>
                 </td>
-                <td className="small font-monospace text-break" style={{ maxWidth: 320 }}>
+                <td className="small font-monospace text-break d-none d-md-table-cell" style={{ maxWidth: 320 }}>
                   {targetOf(item)}
                 </td>
-                <td className="small">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>
-                <td>
+                <td className="small d-none d-md-table-cell">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>
+                <td className="d-none d-md-table-cell">
                   <PolicyBadges item={item} />
                 </td>
-                <td className="small text-nowrap">
+                <td className="small text-nowrap d-none d-md-table-cell">
                   {item.lastTestAt ? (
                     <>
                       {item.lastTestOk ? <Badge bg="success">OK</Badge> : <Badge bg="danger">échec</Badge>} <span className="text-secondary">{fmtDate(item.lastTestAt)}</span>

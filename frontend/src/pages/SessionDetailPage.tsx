@@ -19,6 +19,7 @@ import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
 import SessionSettingsModal from '../components/SessionSettingsModal';
+import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript from '../components/Transcript';
 import SessionChanges from '../components/SessionChanges';
 import { fileToolResultCount } from '../lib/sessionChanges';
@@ -292,6 +293,12 @@ export default function SessionDetailPage() {
               </>
             )}
             {archived && <> · <span className="cc-yellow">archivée</span></>}
+            {session.context.tokens !== null && (
+              <>
+                {' '}
+                · <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
+              </>
+            )}
             {session.parentSession && (
               <>
                 {' '}
@@ -406,6 +413,8 @@ export default function SessionDetailPage() {
           )}
         </div>
       </div>
+
+      <ContextBanner session={session} busy={Boolean(busy)} />
 
       <div className="cc-toggle">
         <div className="cc-tabs" role="tablist">

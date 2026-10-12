@@ -306,7 +306,7 @@ function SharesTab({ item, shares }: { item: VaultItem; shares: VaultShare[] }) 
         {(item.ownerProject || item.ownerProjectName) && " Les administrateurs du projet propriétaire le gèrent ; ses autres membres l'utilisent."}
       </p>
       {shares.length > 0 && (
-        <Table size="sm" className="mb-2">
+        <Table size="sm" className="mb-2 table-stack">
           <tbody>
             {shares.map((s) => (
               <tr key={s.user.id}>
@@ -424,7 +424,7 @@ function AgentLinksTab({ item, links, projects }: { item: VaultItem; links: Vaul
     <div className="small">
       <p className="text-secondary mb-2">Ouvrir un élément à un projet permet à ses agents de l'utiliser : soit pour toutes les sessions du projet, soit seulement pour celles que vous lancez. L'élément reste dans son coffre d'origine.</p>
       {links.length > 0 && (
-        <Table size="sm" className="mb-2">
+        <Table size="sm" className="mb-2 table-stack">
           <tbody>
             {links.map((l) => (
               <tr key={l.id}>
@@ -536,7 +536,7 @@ function AuditTab({ events, onMore, canMore }: { events: VaultAuditEvent[]; onMo
     <div className="small">
       {events.length === 0 && <div className="text-secondary">Aucun événement.</div>}
       {events.length > 0 && (
-        <Table size="sm" className="mb-1">
+        <Table size="sm" responsive className="mb-1">
           <tbody>
             {events.map((e) => (
               <tr key={e.id} className={e.ok ? '' : 'text-danger'}>

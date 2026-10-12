@@ -75,12 +75,12 @@ export default function SessionHistoryPage() {
         <>
           <h2 className="h5">Worktrees archivés</h2>
           <p className="small text-secondary">Un worktree archivé garde son dossier (commits, modifications non validées) et ses sessions. Le restaurer ramène ses sessions ; son dossier est recréé au besoin à la prochaine utilisation.</p>
-          <Table size="sm" hover className="mb-4">
+          <Table size="sm" hover responsive className="mb-4">
             <thead>
               <tr>
                 <th>Worktree</th>
-                <th>Branche</th>
-                <th>Commit</th>
+                <th className="d-none d-md-table-cell">Branche</th>
+                <th className="d-none d-md-table-cell">Commit</th>
                 <th>Archivé</th>
                 <th />
               </tr>
@@ -93,8 +93,8 @@ export default function SessionHistoryPage() {
                     {w.label}
                     {w.label !== w.name && <span className="text-secondary ms-2 small">{w.name}</span>}
                   </td>
-                  <td className="font-monospace">{w.branch}</td>
-                  <td className="font-monospace">{w.git?.commit ?? '—'}</td>
+                  <td className="font-monospace d-none d-md-table-cell">{w.branch}</td>
+                  <td className="font-monospace d-none d-md-table-cell">{w.git?.commit ?? '—'}</td>
                   <td title={fmt(w.archivedAt)}>{timeAgo(w.archivedAt)}</td>
                   <td className="text-end">
                     <Button size="sm" variant="link" className="p-0 px-1" onClick={() => setWorktreeId(worktreeId === w.id ? null : w.id)}>
@@ -142,15 +142,15 @@ export default function SessionHistoryPage() {
       </h2>
       <p className="small text-secondary">Une session archivée garde toute sa conversation. Rouvrez-la pour la lire, restaurez-la parmi les sessions actives, ou relancez une nouvelle session à partir d'elle.</p>
       {sessionsQ.error && <Alert variant="danger">{sessionsQ.error.message}</Alert>}
-      <Table size="sm" hover>
+      <Table size="sm" hover responsive>
         <thead>
           <tr>
             <th>Nom</th>
             <th>État</th>
-            <th>Worktree</th>
-            <th>Par</th>
-            <th>Créée</th>
-            <th>Archivée</th>
+            <th className="d-none d-md-table-cell">Worktree</th>
+            <th className="d-none d-md-table-cell">Par</th>
+            <th className="d-none d-md-table-cell">Créée</th>
+            <th className="d-none d-md-table-cell">Archivée</th>
             <th />
           </tr>
         </thead>
@@ -164,10 +164,10 @@ export default function SessionHistoryPage() {
               <td>
                 <StatusBadge status={s.status} />
               </td>
-              <td>{s.worktree?.label ?? '—'}</td>
-              <td>{s.owner?.name ?? '—'}</td>
-              <td title={fmt(s.createdAt)}>{timeAgo(s.createdAt)}</td>
-              <td title={s.archivedAt ? fmt(s.archivedAt) : ''}>{s.archivedAt ? timeAgo(s.archivedAt) : ''}</td>
+              <td className="d-none d-md-table-cell">{s.worktree?.label ?? '—'}</td>
+              <td className="d-none d-md-table-cell">{s.owner?.name ?? '—'}</td>
+              <td className="d-none d-md-table-cell" title={fmt(s.createdAt)}>{timeAgo(s.createdAt)}</td>
+              <td className="d-none d-md-table-cell" title={s.archivedAt ? fmt(s.archivedAt) : ''}>{s.archivedAt ? timeAgo(s.archivedAt) : ''}</td>
               <td className="text-end text-nowrap">
                 <Button size="sm" variant="link" className="p-0 px-1" onClick={() => setRelaunch(s)}>
                   Relancer

@@ -2281,6 +2281,8 @@ input SessionScheduleInput {
   enabled: Boolean
   "Défaut : true."
   endAfterRun: Boolean
+  "Réglage de nettoyage de la session, enregistré en même temps que la planification (absent : inchangé). Proposé par défaut : « fresh »."
+  cleanup: SessionCleanupInput
 }
 
 extend type Session {
@@ -2307,9 +2309,30 @@ extend type Mutation {
 type SessionCleanup {
   "Les événements du transcript plus vieux que N jours sont supprimés (null : jamais)."
   retentionDays: Int
-  "Quand le contexte de l'agent dépasse contextMaxTokens : « compact » (compacter la conversation) ou « reset » (repartir d'une conversation neuve). Null : rien."
+  "Conversation de l'agent avant une exécution planifiée : « compact » (compacter) ou « reset » (repartir d'une conversation neuve) quand le contexte dépasse contextMaxTokens ; « fresh » : conversation neuve à chaque exécution. Null : rien."
   contextAction: String
   contextMaxTokens: Int
+}
+
+"Taille du contexte de l'agent et ce qu'elle implique (jauge de l'en-tête, pastille de la sidebar, bandeau de nettoyage)."
+type SessionContext {
+  "Tokens du contexte au dernier tour (null : inconnu)."
+  tokens: Int
+  "Seuil (constante du serveur) au-delà duquel l'interface propose de compacter ou de repartir d'une conversation neuve ; aucune action automatique."
+  warnTokens: Int!
+  overThreshold: Boolean!
+  "Modèle retenu pour l'estimation : dernier modèle facturé, sinon celui de la configuration."
+  model: String
+  "Fenêtre de contexte du modèle (tokens)."
+  windowTokens: Int!
+  "Part de la fenêtre occupée (0 à 1), null si la taille est inconnue."
+  share: Float
+  "Coût approximatif de la relecture du contexte à froid (cache expiré) au prochain tour, en dollars."
+  coldTurnUsd: Float
+}
+
+extend type Session {
+  context: SessionContext!
 }
 
 input SessionCleanupInput {
@@ -2335,4 +2358,8 @@ extend type Mutation {
   updateSession(id: ID!, input: UpdateSessionInput!): Session!
   "Applique tout de suite le nettoyage configuré : purge du transcript, puis compaction ou remise à zéro de la conversation si elle dépasse le seuil."
   applySessionCleanup(id: ID!): Session!
+  "Compacte tout de suite la conversation de l'agent (/compact), quel que soit le réglage de nettoyage. Erreur si l'agent travaille."
+  compactSessionContext(id: ID!): Session!
+  "Repart tout de suite d'une conversation neuve (la session en attente est d'abord terminée) ; avec `keepSummary`, les derniers échanges accompagnent la prochaine instruction. Le transcript affiché est conservé."
+  resetSessionContext(id: ID!, keepSummary: Boolean = true): Session!
 }

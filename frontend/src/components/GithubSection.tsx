@@ -50,7 +50,7 @@ function AccountsCard({ status }: { status: GithubAuthStatus }) {
         <p className="small text-secondary">
           Un dépôt est atteint avec le compte dont l'identifiant ou les organisations le possèdent, sinon avec le compte par défaut. Le jeton est injecté dans les commandes git de vos sessions et de vos actions sans être écrit sur disque ; il agit en votre nom.
         </p>
-        <Table size="sm" className="align-middle mb-2">
+        <Table size="sm" className="align-middle mb-2 table-stack">
           <thead>
             <tr>
               <th>Compte</th>

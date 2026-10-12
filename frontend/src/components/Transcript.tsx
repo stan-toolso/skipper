@@ -542,6 +542,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
           <div key={e.id} className="cc-user">
             {stamp(true)}
             <span className="cc-user-text">{String(p.text ?? '')}</span>
+            {p.preamble === true && <span className="cc-note"> (précédée, pour le modèle, du résumé de la conversation précédente)</span>}
             {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
           </div>,
         );
@@ -611,7 +612,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
               : action === 'compacted'
                 ? `Conversation compactée : ${k(p.before)} → ${k(p.after)}`
                 : action === 'reset'
-                  ? `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)}) : la conversation repart de zéro au prochain lancement`
+                  ? `${p.reason === 'fresh' ? 'Exécution planifiée' : p.manual ? 'À la demande' : `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)})`} : la conversation repart de zéro${p.manual ? '' : ' au prochain lancement'}${p.summary ? ', avec un résumé des derniers échanges' : ''}${p.reason === 'fresh' && typeof p.before === 'number' ? ` (${k(p.before)} oubliés)` : ''}`
                   : action === 'skipped'
                     ? `Nettoyage de la conversation reporté : ${String(p.reason ?? '')}`
                     : action === 'failed'
