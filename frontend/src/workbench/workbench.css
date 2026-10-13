@@ -132,6 +132,9 @@
 .wb-chip-sub.busy { color: var(--cc-accent); }
 .wb-chip-sub.ask { color: var(--cc-yellow); }
 .wb-chip-sub.idle { color: var(--cc-green); }
+/* Sous-agent lancé dans un autre dossier : étiquette du dossier, qui se tronque pour laisser le nom lisible. */
+.wb-session-row .wb-tag { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-session-row .wb-tag .bi { font-size: 9px; }
 .wb-term-icon.live { color: var(--cc-green); }
 .wb-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--cc-dimmer); }
 .wb-dot.busy { background: var(--cc-accent); animation: wb-pulse 1.2s ease-in-out infinite; }
