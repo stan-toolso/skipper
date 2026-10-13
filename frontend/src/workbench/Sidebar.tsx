@@ -16,7 +16,7 @@ import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
 import { ContextDot, SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
-import { mineFirst, openItemsOf, participates, sessionGroups, subagentsSummary, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
+import { attachedElsewhere, mineFirst, openItemsOf, participates, sessionGroups, subagentsSummary, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
 const FILTER_KEY = 'skipper.workbench.sessionFilter';
@@ -25,7 +25,23 @@ const MAX_CHIPS = 6;
 const CHILD_INDENT = 14;
 
 /** Session annotée de son dossier (toutes celles d'un projet forment le « pool » où l'on cherche les sous-agents d'une parente). */
-type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsWorktreeId: string | null };
+type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsWorktreeId: string | null; /** Rangée dans le dossier principal parce que son worktree a été supprimé. */ wsDeleted: boolean };
+
+/** Note d'un dossier dont les seules sessions sont des sous-agents rangés sous leur parente, ailleurs : « 4 sous-agents de « Session » ». */
+function ElsewhereNote({ subs, poolById, row }: { subs: PoolSession[]; poolById: Map<string, PoolSession>; row?: boolean }) {
+  const parents = [...new Set(subs.map((s) => s.parentSession?.id).filter((id): id is string => Boolean(id)))];
+  return (
+    <span className={row ? 'wb-row wb-empty' : 'wb-ws-empty'} style={row ? { paddingLeft: 30 } : undefined} title="Ces sessions sont listées sous la session qui les a lancées">
+      <i className="bi bi-robot" /> {subs.length} sous-agent{subs.length > 1 ? 's' : ''} de{' '}
+      {parents.map((id, i) => (
+        <span key={id}>
+          {i > 0 && ', '}
+          <Link to={`/sessions/${id}`} className="wb-empty-link">« {poolById.get(id)?.name ?? 'session'} »</Link>
+        </span>
+      ))}
+    </span>
+  );
+}
 
 interface PullRequestRef {
   number: number;
@@ -208,7 +224,7 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
         </Link>
       )}
       {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
-      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worktreeId={c.session.wsWorktreeId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? c.session.wsName : null} />)}
+      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worktreeId={c.session.wsWorktreeId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'worktree supprimé' : c.session.wsName) : null} />)}
     </>
   );
 }
@@ -246,23 +262,31 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   const current = location.pathname;
   const isCurrent = (path: string) => current === path || current === `${path}/browser`;
   // Toutes les sessions du projet, annotées de leur dossier : les sous-agents lancés dans un autre worktree se rangent sous leur parente.
-  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsWorktreeId: w.worktreeId }))), [workspaces, ws.projectId]);
+  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsWorktreeId: w.worktreeId, wsDeleted: Boolean(w.primary && s.worktree) }))), [workspaces, ws.projectId]);
+  const poolById = useMemo(() => new Map(pool.map((s) => [s.id, s])), [pool]);
+  // Les sous-agents (sessions lancées par un agent) sont rangés sous leur session parente, même lancés dans un autre worktree :
+  // ceux dont la parente est dans un autre dossier ne sont pas listés ici (`elsewhereSubs`, juste une note). Un sous-agent dont
+  // la parente a disparu du projet reste au premier niveau, avec son robot.
+  const { local, elsewhereSubs } = useMemo(() => {
+    const mine = pool.filter((s) => s.wsKey === ws.key);
+    const here = new Set(mine.map((s) => s.id));
+    return { local: mine.filter((s) => !attachedElsewhere(s, here, poolById)), elsewhereSubs: mine.filter((s) => attachedElsewhere(s, here, poolById)) };
+  }, [pool, poolById, ws.key]);
   const visibleSessions = useMemo(() => {
-    const all = mineFirst(pool.filter((s) => s.wsKey === ws.key), userId);
+    const all = mineFirst(local, userId);
     if (!filterMine || showOthers) return all;
     // La session affichée reste listée même si elle est à quelqu'un d'autre.
     return all.filter((s) => participates(s, userId) || isCurrent(`/sessions/${s.id}`));
-  }, [pool, ws.key, userId, filterMine, showOthers, current]);
-  // Les sous-agents (sessions lancées par un agent) sont regroupés derrière leur session parente, même lancés dans un autre worktree ; un sous-agent dont la parente est ailleurs reste au premier niveau ici, avec son robot.
+  }, [local, userId, filterMine, showOthers, current]);
   const groups = useMemo(() => sessionGroups(visibleSessions, pool), [visibleSessions, pool]);
-  const hiddenOthers = ws.sessions.length - visibleSessions.length;
+  const hiddenOthers = local.length - visibleSessions.length;
   const state = workspaceState(ws.sessions);
   const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
   const icon = worktreeIcon(ws, pr);
   const chips = [
     // Une puce par session de premier niveau, avec le compte de ses sous-agents ; un sous-agent n'a sa propre puce que s'il est la page courante ou attend une réponse.
     ...groups.flatMap(({ root, children }) =>
-      [root, ...children.filter((c) => c.session.wsKey === ws.key && (isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0))].map(({ session: s, ...n }) => ({
+      [root, ...children.filter((c) => isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, ...n }) => ({
         key: `s:${s.id}`,
         to: `/sessions/${s.id}`,
         active: isCurrent(`/sessions/${s.id}`),
@@ -344,7 +368,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
             <i className="bi bi-people" /> {hiddenOthers}
           </button>
         )}
-        {chips.length === 0 && hiddenOthers === 0 && <span className="wb-ws-empty">rien d'ouvert</span>}
+        {chips.length === 0 && hiddenOthers === 0 && (elsewhereSubs.length ? <ElsewhereNote subs={elsewhereSubs} poolById={poolById} /> : <span className="wb-ws-empty">rien d'ouvert</span>)}
         <button type="button" className="wb-chevron wb-ws-chevron" title={expanded ? 'Replier' : 'Détailler'} onClick={onToggle}>
           <i className={`bi bi-chevron-${expanded ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
         </button>
@@ -362,7 +386,8 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
               + {hiddenOthers} session(s) d'autres personnes
             </button>
           )}
-          {visibleSessions.length === 0 && ws.terminals.length === 0 && hiddenOthers === 0 && (
+          {elsewhereSubs.length > 0 && <ElsewhereNote subs={elsewhereSubs} poolById={poolById} row />}
+          {visibleSessions.length === 0 && ws.terminals.length === 0 && hiddenOthers === 0 && elsewhereSubs.length === 0 && (
             <div className="wb-row wb-empty" style={{ paddingLeft: 30 }}>
               rien d'ouvert dans ce dossier
             </div>
