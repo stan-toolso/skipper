@@ -134,6 +134,42 @@ export function sessionTree<T extends { id: string; name: string; parentSession:
   return out;
 }
 
+/** Une session de premier niveau et, à plat, tous ses sous-agents (sessions lancées par son agent, et par les leurs). */
+export interface SessionGroup<T> {
+  root: SessionNode<T>;
+  children: SessionNode<T>[];
+}
+
+/** `sessionTree` regroupé : chaque session de premier niveau avec ses descendants, dans l'ordre de l'arbre. */
+export function sessionGroups<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[]): SessionGroup<T>[] {
+  const groups: SessionGroup<T>[] = [];
+  for (const node of sessionTree(sessions)) {
+    if (node.depth === 0 || !groups.length) groups.push({ root: node, children: [] });
+    else groups[groups.length - 1].children.push(node);
+  }
+  return groups;
+}
+
+/** Résumé d'un lot de sous-agents pour une ligne repliée : « 2 sous-agents », état dominant, demandes en attente. */
+export function subagentsSummary(children: Pick<SidebarSession, 'status' | 'activity' | 'pendingRequestCount'>[]): { label: string; state: WorkspaceState; pending: number; hint: string | null } {
+  const pending = children.reduce((n, s) => n + s.pendingRequestCount, 0);
+  const working = children.filter((s) => s.status === 'RUNNING' && s.activity === 'BUSY').length;
+  const idle = children.filter((s) => s.status === 'RUNNING' && s.activity !== 'BUSY').length;
+  const queued = children.filter((s) => s.status === 'QUEUED').length;
+  const one = children.length === 1;
+  const label = `${children.length} sous-agent${one ? '' : 's'}`;
+  const hint = pending
+    ? null
+    : working
+      ? one ? 'travaille' : `${working} au travail`
+      : idle
+        ? one ? 'attend des instructions' : `${idle} en attente`
+        : queued
+          ? one ? "en file d'attente" : `${queued} en file`
+          : one ? 'terminé' : 'terminés';
+  return { label, state: workspaceState(children), pending, hint };
+}
+
 /** Index des dossiers de travail construit à partir de la requête Sidebar. */
 export class WorkspaceIndex {
   private readonly byKey = new Map<string, Workspace>();

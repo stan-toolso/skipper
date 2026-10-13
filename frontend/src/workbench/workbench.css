@@ -117,9 +117,21 @@
 }
 .wb-pop-item:hover { background: var(--cc-bg-hover); color: var(--cc-accent); }
 .wb-term-icon { color: var(--cc-dimmer); font-size: 11px; width: 14px; }
-/* Session lancée par un agent (sessions.create) : robot devant le nom, dans la sidebar comme dans la sous-barre d'un dossier. */
+/* Sous-agents (sessions lancées par l'agent d'une autre session, sessions.create) : robot devant le nom, connecteur └,
+   ligne « N sous-agents » repliable sous la parente, compteur sur la puce ou l'onglet de la parente. */
 .wb-robot { color: var(--cc-dimmer); font-size: 11px; flex: 0 0 auto; }
 .wb-row.active .wb-robot, .wb-row:hover .wb-robot, .wb-chip.active .wb-robot, .wb-ws-tab.active .wb-robot { color: var(--cc-dim); }
+.wb-tree { color: var(--cc-dimmer); font-size: 11px; line-height: 1; flex: 0 0 auto; margin-right: -2px; }
+.wb-subagents { color: var(--cc-dimmer); font-size: 12px; }
+.wb-subagents .wb-row-label { flex: 0 0 auto; }
+.wb-subagents .wb-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-subagents:hover, .wb-subagents.open { color: var(--cc-dim); }
+.wb-subagents-chevron { font-size: 9px; margin-left: auto; }
+.wb-chip-sub { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; padding: 0 5px; border-radius: 8px; font-size: 10px; line-height: 15px; background: var(--cc-border); color: var(--cc-dim); }
+.wb-chip-sub .bi { font-size: 10px; }
+.wb-chip-sub.busy { color: var(--cc-accent); }
+.wb-chip-sub.ask { color: var(--cc-yellow); }
+.wb-chip-sub.idle { color: var(--cc-green); }
 .wb-term-icon.live { color: var(--cc-green); }
 .wb-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--cc-dimmer); }
 .wb-dot.busy { background: var(--cc-accent); animation: wb-pulse 1.2s ease-in-out infinite; }

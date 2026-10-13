@@ -26,7 +26,13 @@
 .cc-header .cc-meta { color: var(--cc-dim); }
 .cc-header .cc-meta code { color: var(--cc-dim); background: none; padding: 0; font-size: inherit; }
 .cc-actions { display: flex; gap: 6px; }
-/* Sessions lancées par l'agent de cette session : une ligne sous l'en-tête, une puce par session fille. */
+/* Sous-agent : bandeau sous l'en-tête d'une session lancée par l'agent d'une autre session. */
+.cc-subagent { font-family: var(--bs-font-sans-serif); font-size: 12.5px; padding: 6px 14px; border-bottom: 1px solid var(--cc-border); background: var(--cc-bg-user); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cc-subagent-icon { color: var(--cc-accent); font-size: 15px; }
+.cc-subagent-text { flex: 1 1 240px; min-width: 0; }
+.cc-subagent-text a { color: var(--cc-fg); }
+.cc-subagent .cc-btn { text-decoration: none; font-size: 12px; white-space: nowrap; }
+/* Sous-agents de cette session : une ligne sous l'en-tête, une puce par sous-agent. */
 .cc-children { font-family: var(--bs-font-sans-serif); font-size: 12px; padding: 5px 14px; border-bottom: 1px solid var(--cc-border); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; color: var(--cc-dim); }
 .cc-children-title { color: var(--cc-dimmer); }
 .cc-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
@@ -286,6 +292,7 @@
   .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; }
   .cc-header { padding: 8px 10px; gap: 6px; }
   .cc-children { padding: 5px 10px; }
+  .cc-subagent { padding: 6px 10px; }
   .cc-actions { width: 100%; flex-wrap: wrap; }
   .cc-context-banner { padding: 6px 10px; }
   .cc-context-banner-actions { width: 100%; }
