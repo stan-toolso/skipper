@@ -164,7 +164,7 @@ export default function SessionHistoryPage() {
               <td>
                 <StatusBadge status={s.status} />
               </td>
-              <td className="d-none d-md-table-cell">{s.worktree?.label ?? '—'}</td>
+              <td className="d-none d-md-table-cell">{s.worktree?.label ?? (s.formerWorktree ? <span className="text-secondary" title="Worktree supprimé">{s.formerWorktree.label} <i className="bi bi-trash3" /></span> : '—')}</td>
               <td className="d-none d-md-table-cell">{s.owner?.name ?? '—'}</td>
               <td className="d-none d-md-table-cell" title={fmt(s.createdAt)}>{timeAgo(s.createdAt)}</td>
               <td className="d-none d-md-table-cell" title={s.archivedAt ? fmt(s.archivedAt) : ''}>{s.archivedAt ? timeAgo(s.archivedAt) : ''}</td>

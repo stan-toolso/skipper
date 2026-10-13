@@ -22,6 +22,8 @@ vi.mock('../sessions/service.js', () => ({ sessionService: { list: async () => m
 vi.mock('../terminals/service.js', () => ({ terminalService: { listByProject: async () => [], delete: vi.fn() } }));
 vi.mock('../worktrees/repository.js', () => ({ worktreeRepository: { listByProject: async () => m.worktrees } }));
 vi.mock('../worktrees/service.js', () => ({ worktreeService: { delete: m.deleteWorktree } }));
+// La suppression du worktree passe par le nettoyage (sessions archivées avec le souvenir du worktree) : ici on vérifie seulement qu'il est appelé avec la branche à supprimer.
+vi.mock('../projects/cleanup.js', () => ({ removeWorktreeKeepingSessions: async (id: string, opts: { deleteBranch?: boolean }) => { await m.deleteWorktree(id, opts.deleteBranch ?? false); return { archivedSessionIds: [] }; } }));
 vi.mock('../tasks/repository.js', () => ({ taskRepository: { list: async () => m.tasks } }));
 vi.mock('../tasks/service.js', () => ({ taskService: { update: m.updateTask } }));
 vi.stubGlobal('fetch', m.fetch);

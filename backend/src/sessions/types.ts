@@ -37,6 +37,13 @@ export interface QueuedStart {
   attachments: Attachment[];
 }
 
+/** Souvenir d'un worktree supprimé, gardé par ses sessions archivées. */
+export interface FormerWorktree {
+  name: string;
+  branch: string;
+  label: string;
+}
+
 export interface Session {
   id: string;
   projectId: string;
@@ -45,6 +52,8 @@ export interface Session {
   ownerId: string | null;
   /** Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet. */
   archivedAt: Date | null;
+  /** Worktree supprimé dans lequel la session a travaillé (nom, branche, libellé) ; null si elle n'en a pas perdu. */
+  formerWorktree: FormerWorktree | null;
   /** Session d'agent qui a lancé celle-ci (outil `sessions.create`), null pour une session lancée par un humain. */
   parentSessionId: string | null;
   /** Agent (configuration réutilisable) pour lequel la session tourne, et l'exécution qui l'a lancée ; null pour une session lancée à la main. */

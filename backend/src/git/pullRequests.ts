@@ -1,14 +1,13 @@
 import { AppError } from '../errors.js';
 import { resolveRoot, type WorkspaceRef } from '../files/service.js';
+import { removeWorktreeKeepingSessions } from '../projects/cleanup.js';
 import { projectService } from '../projects/service.js';
 import { git, gitAuthFor, workspacePath } from '../projects/workspace.js';
 import { sessionService } from '../sessions/service.js';
 import { githubOwnerOf, githubService } from '../settings/github.js';
 import { taskRepository } from '../tasks/repository.js';
 import { taskService } from '../tasks/service.js';
-import { terminalService } from '../terminals/service.js';
 import { worktreeRepository } from '../worktrees/repository.js';
-import { worktreeService } from '../worktrees/service.js';
 import { gitService } from './service.js';
 
 /**
@@ -488,9 +487,8 @@ export const pullRequestService = {
             warnings.push(`Worktree ${wt.name} conservé : ${running.length} session(s) y tournent encore`);
             continue;
           }
-          // Les sessions sont conservées (historique de la tâche) ; les terminaux du worktree sont fermés.
-          for (const t of (await terminalService.listByProject(projectId)).filter((t) => t.worktreeId === wt.id)) await terminalService.delete(t.id);
-          await worktreeService.delete(wt.id, true);
+          // Les sessions sont archivées avec le souvenir du worktree (historique de la tâche) ; ses terminaux sont fermés.
+          await removeWorktreeKeepingSessions(wt.id, { deleteBranch: true, stopSessions: Boolean(cleanup.stopSessions) });
           deletedWorktreeIds.push(wt.id);
         } catch (err) {
           warnings.push(`Worktree ${wt.name} conservé : ${(err as Error).message}`);

@@ -496,7 +496,7 @@ export const resolvers = {
     owner: (session: Session) => userOrNull(session.ownerId),
     task: (session: Session) => taskService.forSession(session.id),
     parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
-    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
+    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, archived: 'all', limit: 50 }),
     agent: (session: Session) => (session.agentId ? agentService.find(session.agentId) : null),
     agentRun: (session: Session) => (session.agentRunId ? agentRepository.findRun(session.agentRunId) : null),
     workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
@@ -1258,9 +1258,9 @@ export const resolvers = {
       await guardWorktree(ctx, args.id, 'member');
       return restoreWorktreeCascade(args.id);
     },
-    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
+    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null; deleteSessions?: boolean | null }, ctx: Ctx) => {
       await guardWorktree(ctx, args.id, 'member');
-      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false);
+      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false, { deleteSessions: args.deleteSessions ?? false });
     },
     // Coffre : les droits sont vérifiés par le service (use / read / manage) ; un projet propriétaire exige un administrateur.
     createVaultItem: async (_: unknown, args: { projectId?: string | null; input: VaultItemInput }, ctx: Ctx) => {
