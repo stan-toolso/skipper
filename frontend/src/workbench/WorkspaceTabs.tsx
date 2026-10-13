@@ -64,6 +64,9 @@ export default function WorkspaceTabs() {
 
   if (!ws) return null;
   const sessions = mineFirst(ws.sessions, user?.id ?? null);
+  // Sous-agents cherchés dans tout le projet : un sous-agent lancé dans un autre worktree compte pour sa parente.
+  const pool = workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s) => ({ ...s, wsKey: w.key })));
+  const here = new Set(ws.sessions.map((s) => s.id));
   const filesActive = location.pathname.startsWith(ws.key);
   const link = (to: string, active: boolean, title: string, children: React.ReactNode) => (
     <Link key={to} to={to} className={`wb-ws-tab${active ? ' active' : ''}`} title={title}>
@@ -86,9 +89,9 @@ export default function WorkspaceTabs() {
             <i className="bi bi-folder2-open" /> Fichiers
           </>
         ))}
-        {sessionGroups(sessions).flatMap(({ root, children }) =>
-          // Un onglet par session de premier niveau (avec le compte de ses sous-agents) ; un sous-agent n'a le sien que s'il est la page courante ou attend une réponse.
-          [root, ...children.filter((c) => location.pathname.startsWith(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, depth, byAgent, parentName }) => {
+        {sessionGroups(sessions.map((s) => ({ ...s, wsKey: ws.key })), pool).flatMap(({ root, children }) =>
+          // Un onglet par session de premier niveau (avec le compte de ses sous-agents) ; un sous-agent de ce dossier n'a le sien que s'il est la page courante ou attend une réponse.
+          [root, ...children.filter((c) => here.has(c.session.id) && (location.pathname.startsWith(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0))].map(({ session: s, depth, byAgent, parentName }) => {
           const mine = !s.owner || s.owner.id === user?.id;
           return (
             <span key={s.id} className="wb-ws-group">

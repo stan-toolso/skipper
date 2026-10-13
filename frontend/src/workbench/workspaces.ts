@@ -140,12 +140,22 @@ export interface SessionGroup<T> {
   children: SessionNode<T>[];
 }
 
-/** `sessionTree` regroupé : chaque session de premier niveau avec ses descendants, dans l'ordre de l'arbre. */
-export function sessionGroups<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[]): SessionGroup<T>[] {
+/**
+ * Sessions de premier niveau d'une liste (celles d'un dossier), chacune avec ses descendants cherchés dans `pool`
+ * (toutes les sessions du projet) : un sous-agent lancé dans un autre worktree se range ainsi sous sa parente, et une
+ * session dont la parente est dans un autre dossier reste de premier niveau ici, avec le nom de sa parente.
+ */
+export function sessionGroups<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[], pool: T[] = sessions): SessionGroup<T>[] {
+  const poolNodes = sessionTree(pool);
+  const index = new Map(poolNodes.map((n, i) => [n.session.id, i]));
   const groups: SessionGroup<T>[] = [];
   for (const node of sessionTree(sessions)) {
-    if (node.depth === 0 || !groups.length) groups.push({ root: node, children: [] });
-    else groups[groups.length - 1].children.push(node);
+    if (node.depth > 0) continue; // ses descendants sont ceux du pool, rangés sous leur parente
+    const i = index.get(node.session.id);
+    const self = i === undefined ? node : poolNodes[i];
+    const children: SessionNode<T>[] = [];
+    if (i !== undefined) for (let j = i + 1; j < poolNodes.length && poolNodes[j].depth > self.depth; j++) children.push({ ...poolNodes[j], depth: poolNodes[j].depth - self.depth });
+    groups.push({ root: { ...node, parentName: node.parentName ?? self.parentName }, children });
   }
   return groups;
 }

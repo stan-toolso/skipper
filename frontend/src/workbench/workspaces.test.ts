@@ -44,6 +44,21 @@ describe('sessionGroups', () => {
     ]);
     expect(groups[2].root.byAgent).toBe(true);
   });
+
+  it('cherche les descendants dans le pool du projet : un sous-agent d’un autre dossier se range sous sa parente', () => {
+    const pool = [s('p'), s('c-here', 'p'), s('c-there', 'p'), s('gc-there', 'c-there'), s('x')];
+    const here = sessionGroups([s('p'), s('c-here', 'p'), s('x')], pool);
+    expect(here.map((g) => [g.root.session.id, g.children.map((c) => [c.session.id, c.depth])])).toEqual([
+      ['p', [['c-here', 1], ['c-there', 1], ['gc-there', 2]]],
+      ['x', []],
+    ]);
+    // Dans l'autre dossier, c-there est de premier niveau, marquée sous-agent de « p », avec son propre descendant.
+    const there = sessionGroups([s('c-there', 'p'), s('gc-there', 'c-there')], pool);
+    expect(there).toHaveLength(1);
+    expect(there[0].root.byAgent).toBe(true);
+    expect(there[0].root.parentName).toBe('Session p');
+    expect(there[0].children.map((c) => [c.session.id, c.depth])).toEqual([['gc-there', 1]]);
+  });
 });
 
 describe('subagentsSummary', () => {
