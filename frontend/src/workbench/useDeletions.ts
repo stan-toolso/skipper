@@ -161,7 +161,7 @@ export function useDeletions() {
   const removeWorktree = async (worktree: DeletableWorktree) => {
     const res = await confirm({
       title: 'Supprimer le worktree',
-      message: `Supprimer le worktree « ${worktree.label} » ? Ses sessions actives (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus. Préférez l'archivage pour garder une trace.`,
+      message: `Supprimer le worktree « ${worktree.label} » ? Son dossier est supprimé (les fichiers non validés sont perdus) et ses terminaux fermés. Ses sessions sont conservées : arrêtées si elles tournent, puis archivées avec leur transcript, leur coût et leur planification, consultables dans l'historique du projet. Pour pouvoir le restaurer tel quel, préférez l'archivage.`,
       confirmLabel: 'Supprimer',
       danger: true,
       checkbox: { label: 'Supprimer aussi la branche locale' },

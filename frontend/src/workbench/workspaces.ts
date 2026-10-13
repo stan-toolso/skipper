@@ -160,6 +160,22 @@ export function sessionGroups<T extends { id: string; name: string; parentSessio
   return groups;
 }
 
+/**
+ * Vrai pour un sous-agent dont la parente (ou une aïeule) est dans un autre dossier du projet : il n'est listé que
+ * sous elle, pas comme session à part dans le dossier où il travaille. `here` : identifiants des sessions du dossier ;
+ * `pool` : toutes les sessions du projet par identifiant.
+ */
+export function attachedElsewhere(s: { parentSession: { id: string } | null }, here: Set<string>, pool: Map<string, { parentSession: { id: string } | null }>): boolean {
+  const seen = new Set<string>();
+  let current = s;
+  while (current.parentSession && pool.has(current.parentSession.id) && !seen.has(current.parentSession.id)) {
+    if (!here.has(current.parentSession.id)) return true;
+    seen.add(current.parentSession.id);
+    current = pool.get(current.parentSession.id)!;
+  }
+  return false;
+}
+
 /** Résumé d'un lot de sous-agents pour une ligne repliée : « 2 sous-agents », état dominant, demandes en attente. */
 export function subagentsSummary(children: Pick<SidebarSession, 'status' | 'activity' | 'pendingRequestCount'>[]): { label: string; state: WorkspaceState; pending: number; hint: string | null } {
   const pending = children.reduce((n, s) => n + s.pendingRequestCount, 0);

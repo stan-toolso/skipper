@@ -122,6 +122,7 @@ export default function SessionsPage() {
                 <td>
                   <Link to={`/sessions/${s.id}`}>{s.name}</Link>
                   {s.worktree && <span className="text-secondary small ms-2"><i className="bi bi-diagram-2" /> {s.worktree.label}</span>}
+                  {!s.worktree && s.formerWorktree && <span className="text-secondary small ms-2" title="Worktree supprimé"><i className="bi bi-diagram-2" /> {s.formerWorktree.label} <i className="bi bi-trash3" /></span>}
                   {s.schedule?.enabled && <i className="bi bi-alarm ms-2 text-secondary" title={`Planifiée : ${s.schedule.cron}${s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : ''}`} />}
                 </td>
                 <td>

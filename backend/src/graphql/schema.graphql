@@ -960,6 +960,13 @@ input MergePullRequestCleanup {
   completeTasks: Boolean = true
 }
 
+"Souvenir d'un worktree supprimé, gardé par les sessions archivées avec lui."
+type FormerWorktree {
+  name: String!
+  branch: String!
+  label: String!
+}
+
 type Session {
   id: ID!
   project: Project!
@@ -969,6 +976,8 @@ type Session {
   owner: User
   "Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet."
   archivedAt: DateTime
+  "Worktree supprimé dans lequel la session a travaillé (elle a été archivée avec lui) ; null sinon."
+  formerWorktree: FormerWorktree
   "Tâche dont la session est en charge."
   task: Task
   "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
@@ -2188,8 +2197,8 @@ type Mutation {
   archiveWorktree(id: ID!): Worktree!
   "Restaure un worktree archivé et les sessions archivées avec lui."
   restoreWorktree(id: ID!): Worktree!
-  "Supprime le worktree et tout ce qui y est rattaché (sessions actives arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
-  deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
+  "Supprime le worktree (dossier, terminaux fermés) ; ses sessions sont arrêtées si elles tournent puis archivées avec son souvenir, sauf deleteSessions (suppression définitive, historique compris). La branche est conservée sauf deleteBranch."
+  deleteWorktree(id: ID!, deleteBranch: Boolean = false, deleteSessions: Boolean = false): Boolean!
   "Crée un élément dans le coffre du projet (administrateurs) ou, sans projectId, dans le coffre personnel."
   createVaultItem(projectId: ID, input: VaultItemInput!): VaultItem!
   "Met à jour un élément (permission MANAGE ; les champs absents sont inchangés)."

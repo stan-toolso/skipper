@@ -283,6 +283,12 @@ export default function SessionDetailPage() {
                 · <i className="bi bi-diagram-2" /> {session.worktree.label}
               </>
             )}
+            {!session.worktree && session.formerWorktree && (
+              <>
+                {' '}
+                · <span title={`La session a travaillé dans le worktree ${session.formerWorktree.name} (branche ${session.formerWorktree.branch}), supprimé depuis`}><i className="bi bi-diagram-2" /> {session.formerWorktree.label} <span className="cc-dimmer">(worktree supprimé)</span></span>
+              </>
+            )}
             {session.owner && (
               <>
                 {' '}

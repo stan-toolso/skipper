@@ -175,6 +175,8 @@ export interface Session {
   owner: Pick<User, 'id' | 'name' | 'email' | 'avatarUrl'> | null;
   /** Archivée : consultable en lecture seule, relançable. */
   archivedAt: string | null;
+  /** Worktree supprimé dans lequel la session a travaillé (archivée avec lui) ; null sinon. */
+  formerWorktree: { name: string; branch: string; label: string } | null;
   /** Tâche dont la session est en charge. */
   task: { id: string; title: string; status: TaskStatus } | null;
   /** Planification (null si la session n'est pas planifiée). */
@@ -596,6 +598,11 @@ export const SESSION_FIELDS = gql`
       avatarUrl
     }
     archivedAt
+    formerWorktree {
+      name
+      branch
+      label
+    }
     task {
       id
       title

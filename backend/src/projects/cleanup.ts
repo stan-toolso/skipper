@@ -1,13 +1,14 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
+import { AppError } from '../errors.js';
 import { contextPluginDir } from '../context/skills.js';
 import { runner } from '../runners/index.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreeService, worktreesRoot } from '../worktrees/service.js';
-import type { Worktree } from '../worktrees/types.js';
+import { worktreeLabel, type Worktree } from '../worktrees/types.js';
 import { projectService } from './service.js';
 import { workspacePath } from './workspace.js';
 
@@ -30,10 +31,32 @@ async function deleteTerminals(projectId: string, worktreeId: string): Promise<v
 }
 
 /**
- * Supprime un worktree avec tout ce qui y est rattaché : sessions actives (arrêtées), terminaux (fermés),
- * dossier. Les sessions déjà archivées restent dans l'historique, sans leur worktree.
+ * Retire un worktree en gardant l'historique : ses sessions sont archivées (transcript, coût, planification et lien
+ * de tâche conservés), détachées du worktree dont elles gardent le nom (`formerWorktree`), ses terminaux sont fermés,
+ * son dossier et son enregistrement supprimés. Une session qui tourne encore est arrêtée si `stopSessions`, sinon
+ * la suppression est refusée avant d'avoir touché à quoi que ce soit.
  */
-export async function deleteWorktreeCascade(id: string, deleteBranch = false): Promise<boolean> {
+export async function removeWorktreeKeepingSessions(id: string, opts: { deleteBranch?: boolean; stopSessions?: boolean } = {}): Promise<{ archivedSessionIds: string[] }> {
+  const wt = await worktreeService.get(id);
+  const live = (await sessionService.list({ worktreeId: id, archived: 'all', limit: 500 })).filter((s) => s.status === 'running' || s.status === 'queued');
+  if (live.length && !opts.stopSessions) throw new AppError(`Des sessions tournent encore dans ce worktree (${live.length}) : arrêtez-les d'abord`);
+  for (const s of live) await sessionService.stop(s.id).catch(() => undefined);
+  const archivedSessionIds = await sessionRepository.detachWorktree(id, new Date(), { name: wt.name, branch: wt.branch, label: worktreeLabel(wt) });
+  await deleteTerminals(wt.projectId, id);
+  await worktreeService.delete(id, opts.deleteBranch ?? false);
+  return { archivedSessionIds };
+}
+
+/**
+ * Supprime un worktree (interface) : ses sessions sont arrêtées si elles tournent puis archivées avec le souvenir du
+ * worktree (voir `removeWorktreeKeepingSessions`) ; avec `deleteSessions`, elles sont supprimées définitivement,
+ * historique compris (les sessions déjà archivées restent). Terminaux fermés, dossier supprimé.
+ */
+export async function deleteWorktreeCascade(id: string, deleteBranch = false, opts: { deleteSessions?: boolean } = {}): Promise<boolean> {
+  if (!opts.deleteSessions) {
+    await removeWorktreeKeepingSessions(id, { deleteBranch, stopSessions: true });
+    return true;
+  }
   const wt = await worktreeService.get(id);
   await deleteSessions({ worktreeId: id, archived: 'exclude' });
   await deleteTerminals(wt.projectId, id);

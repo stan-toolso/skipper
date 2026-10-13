@@ -18,7 +18,11 @@ Trois notions :
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
   défaut d'y lancer aussitôt une session d'agent ; supprimer la dernière session ou le dernier terminal
-  d'un worktree propose (case à cocher) de supprimer aussi le worktree, qui resterait vide.
+  d'un worktree propose (case à cocher) d'archiver aussi le worktree, qui resterait vide. Supprimer un worktree
+  (interface, fusion d'une PR depuis le panneau git, outil MCP `worktrees.delete`) n'efface jamais ses sessions :
+  elles sont archivées avec leur transcript, leur coût, leur planification et leur lien de tâche, et gardent le nom
+  du worktree disparu (`Session.formerWorktree`) ; seule la mutation `deleteWorktree(deleteSessions: true)` les
+  supprime définitivement.
 - **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
   workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). La consigne de départ est
   facultative : sans consigne, la session est créée sans démarrer et la première instruction envoyée

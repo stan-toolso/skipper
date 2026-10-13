@@ -565,6 +565,8 @@
 .wb-tag.missing { color: var(--cc-yellow); border-color: var(--cc-yellow); }
 .wb-ws-items { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 6px 6px 21px; }
 .wb-ws-empty { font-size: 11px; color: var(--cc-dimmer); font-style: italic; }
+.wb-empty-link { color: var(--cc-dim); text-decoration: none; }
+.wb-empty-link:hover { color: var(--cc-fg); text-decoration: underline; }
 .wb-ws-chevron { margin-left: auto; }
 .wb-ws-rows { padding-bottom: 4px; }
 .wb-row-btn { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
