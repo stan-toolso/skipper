@@ -7,7 +7,7 @@ const m = vi.hoisted(() => ({
   running: [] as Array<{ id: string }>,
   tasks: [] as Array<{ id: string; projectId: string; title: string; status: string; branch: string | null }>,
   stop: vi.fn(async () => undefined),
-  deleteWorktree: vi.fn(async () => true),
+  deleteWorktree: vi.fn(async (_id: string, _deleteBranch?: boolean) => true),
   updateTask: vi.fn(async () => undefined),
   fetch: vi.fn(),
   gitUrl: 'https://github.com/acme/app.git' as string | null,
