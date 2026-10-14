@@ -199,7 +199,7 @@ backend/
       mcp.ts                   # serveur MCP `vault` (list, ssh_exec, ssh_upload, ssh_download, sql_query, sql_schema, http_request, browser_fill)
     google/
       service.ts               # comptes Google du coffre : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
-      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     sharedPages/               # pages partagées : publication, versions, membres, route de lecture en bac à sable, MCP `pages`
@@ -302,7 +302,9 @@ demande l'accord s'il le faut, puis tape la valeur par CDP ; les outils qui lira
 (`browser_evaluate`, `browser_run_code`) sont retirés quand le coffre a tapé quelque chose. Secret : des
 champs sans site, chaque saisie est soumise à accord avec la page affichée. Google : connecté par OAuth
 (`GET /auth/google/connect?projectId=…|personal=1&gmail=…&drive=…`), accès lecture ou écriture pour Gmail et
-Drive, même serveur MCP `google` qu'auparavant (`account` = nom de l'élément).
+Drive, même serveur MCP `google` qu'auparavant (`account` = nom de l'élément) : `gmail_search`, `gmail_read`,
+`gmail_attachment` (pièce jointe d'un mail téléchargée dans le dossier de travail), `gmail_send`, `drive_search`,
+`drive_read`, `drive_download`, `drive_upload`, `drive_write`.
 
 **Réservés à Skipper.** Un **jeton applicatif** (`backend/src/vault/tokens.ts`) est un identifiant
 que Skipper utilise pour le compte d'une personne : jeton d'abonnement Claude (`claude`, obtenu par

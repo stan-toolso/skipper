@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { AppError } from '../errors.js';
 import { googleAccountService } from './service.js';
 
@@ -39,12 +41,26 @@ export interface MessageSummary {
   unread: boolean;
 }
 
+/** Pièce jointe telle que listée à l'agent : numérotée à partir de 1 pour la désigner à gmail_attachment. */
+export interface AttachmentInfo {
+  index: number;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+/** Pièce jointe avec de quoi récupérer son contenu : identifiant Gmail (partie séparée) ou données en ligne. */
+interface AttachmentPart extends AttachmentInfo {
+  attachmentId?: string;
+  data?: string;
+}
+
 export interface MessageContent extends MessageSummary {
   cc: string;
   messageId: string;
   body: string;
   bodyTruncated: boolean;
-  attachments: Array<{ filename: string; mimeType: string; size: number }>;
+  attachments: AttachmentInfo[];
 }
 
 const header = (headers: Header[] | undefined, name: string): string => headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
@@ -82,13 +98,23 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-/** Parcourt les parties MIME : texte brut de préférence, sinon HTML converti ; pièces jointes listées. */
-function extract(payload: Part | undefined): { text: string; html: string; attachments: MessageContent['attachments'] } {
-  const out = { text: '', html: '', attachments: [] as MessageContent['attachments'] };
+/**
+ * Parcourt les parties MIME : texte brut de préférence, sinon HTML converti ; pièces jointes listées (parties
+ * nommées, qu'elles soient stockées à part par Gmail ou incluses en ligne quand elles sont petites).
+ */
+function extract(payload: Part | undefined): { text: string; html: string; attachments: AttachmentPart[] } {
+  const out = { text: '', html: '', attachments: [] as AttachmentPart[] };
   const walk = (p: Part | undefined) => {
     if (!p) return;
-    if (p.filename && p.body?.attachmentId) {
-      out.attachments.push({ filename: p.filename, mimeType: p.mimeType ?? 'application/octet-stream', size: p.body.size ?? 0 });
+    if (p.filename && (p.body?.attachmentId || p.body?.data)) {
+      out.attachments.push({
+        index: out.attachments.length + 1,
+        filename: p.filename,
+        mimeType: p.mimeType ?? 'application/octet-stream',
+        size: p.body.size ?? 0,
+        attachmentId: p.body.attachmentId,
+        data: p.body.attachmentId ? undefined : p.body.data,
+      });
     } else if (p.mimeType === 'text/plain' && p.body?.data) {
       out.text += decodeBody(p.body.data);
     } else if (p.mimeType === 'text/html' && p.body?.data) {
@@ -137,8 +163,56 @@ export async function read(accountId: string, messageId: string): Promise<Messag
     messageId: header(m.payload?.headers, 'Message-ID'),
     body: full.slice(0, MAX_BODY_CHARS),
     bodyTruncated: full.length > MAX_BODY_CHARS,
-    attachments,
+    attachments: attachments.map(({ index, filename, mimeType, size }) => ({ index, filename, mimeType, size })),
   };
+}
+
+/** Nom de fichier sûr pour le disque : sans chemin ni caractère de contrôle, jamais vide. */
+function safeFilename(raw: string): string {
+  const base = path.basename(raw.replace(/\\/g, '/')).replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/^\.+/, '');
+  return base || 'piece-jointe';
+}
+
+/**
+ * Télécharge une pièce jointe d'un message dans le dossier de travail. `which` la désigne par son numéro dans la
+ * liste de `read` (à partir de 1) ou par son nom de fichier ; `resolveTarget` reçoit le nom de fichier sûr et
+ * renvoie le chemin local (déjà contrôlé) où écrire.
+ */
+export async function downloadAttachment(
+  accountId: string,
+  messageId: string,
+  which: string,
+  resolveTarget: (filename: string) => string,
+): Promise<{ filename: string; mimeType: string; bytes: number; localPath: string }> {
+  const m = await googleAccountService.json<Message>(accountId, `${BASE}/messages/${encodeURIComponent(messageId)}?format=full`);
+  const { attachments } = extract(m.payload);
+  if (!attachments.length) throw new AppError('Ce message n\'a pas de pièce jointe');
+  const wanted = which.trim();
+  const describe = () => attachments.map((a) => `${a.index}. ${a.filename}`).join(' ; ');
+  let part: AttachmentPart | undefined;
+  if (/^\d+$/.test(wanted)) {
+    part = attachments.find((a) => a.index === Number(wanted));
+    if (!part) throw new AppError(`Pas de pièce jointe numéro ${wanted} (pièces jointes : ${describe()})`);
+  } else {
+    const matches = attachments.filter((a) => a.filename.toLowerCase() === wanted.toLowerCase());
+    if (!matches.length) throw new AppError(`Pas de pièce jointe nommée « ${wanted} » (pièces jointes : ${describe()})`);
+    if (matches.length > 1) throw new AppError(`Plusieurs pièces jointes s'appellent « ${wanted} » : désigne-la par son numéro (${describe()})`);
+    part = matches[0];
+  }
+  let data = part.data;
+  if (part.attachmentId) {
+    const body = await googleAccountService.json<{ size?: number; data?: string }>(
+      accountId,
+      `${BASE}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(part.attachmentId)}`,
+    );
+    data = body.data;
+  }
+  if (!data) throw new AppError(`Contenu de « ${part.filename} » indisponible`);
+  const bytes = Buffer.from(data, 'base64url');
+  const localPath = resolveTarget(safeFilename(part.filename));
+  await mkdir(path.dirname(localPath), { recursive: true });
+  await writeFile(localPath, bytes);
+  return { filename: part.filename, mimeType: part.mimeType, bytes: bytes.length, localPath };
 }
 
 export interface SendInput {
@@ -214,7 +288,7 @@ export function renderMessage(m: MessageContent): string {
     m.cc ? `Cc : ${m.cc}` : '',
     `Sujet : ${m.subject}`,
     m.labels.length ? `Libellés : ${m.labels.join(', ')}` : '',
-    m.attachments.length ? `Pièces jointes : ${m.attachments.map((a) => `${a.filename} (${a.mimeType}, ${a.size} octets)`).join(' ; ')}` : '',
+    m.attachments.length ? `Pièces jointes (gmail_attachment pour en télécharger une) : ${m.attachments.map((a) => `${a.index}. ${a.filename} (${a.mimeType}, ${a.size} octets)`).join(' ; ')}` : '',
   ].filter(Boolean);
   return `${head.join('\n')}\n\n${m.body || '(corps vide)'}${m.bodyTruncated ? '\n\n[corps tronqué]' : ''}`;
 }
