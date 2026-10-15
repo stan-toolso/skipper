@@ -1,7 +1,7 @@
 import { gql } from '@apollo/client';
 import type { User } from './operations';
 
-export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'token' | 'litellm' | 'langfuse';
+export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'token' | 'litellm' | 'langfuse';
 /** Types réservés à Skipper (jetons applicatifs, LiteLLM, Langfuse) : jamais offerts aux agents, ni reliés à un projet. */
 export const SKIPPER_KINDS: VaultItemKind[] = ['token', 'litellm', 'langfuse'];
 
@@ -21,6 +21,60 @@ export interface VaultTokenInfo {
   account: string | null;
   tokenExpiresAt: string | null;
 }
+export type AwsAuth = 'sso' | 'keys';
+
+/** Compte AWS : mode et identité ; les clés et jetons ne sont jamais renvoyés. */
+export interface VaultAwsInfo {
+  auth: AwsAuth;
+  region: string;
+  startUrl: string | null;
+  ssoRegion: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  roleName: string | null;
+  accessKeyId: string | null;
+  roleArn: string | null;
+  connected: boolean;
+  tokenExpiresAt: string | null;
+  identity: string | null;
+}
+
+export interface VaultAwsInput {
+  auth?: AwsAuth | null;
+  region?: string | null;
+  startUrl?: string | null;
+  ssoRegion?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  roleName?: string | null;
+  accessKeyId?: string | null;
+  secretAccessKey?: string | null;
+  roleArn?: string | null;
+}
+
+/** Connexion AWS par code en cours (mutation startAwsLogin). */
+export interface AwsLogin {
+  id: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresAt: string;
+  interval: number;
+}
+
+export interface AwsLoginPoll {
+  status: 'PENDING' | 'CONNECTED' | 'EXPIRED' | 'DENIED';
+  interval: number;
+  item: VaultItem | null;
+}
+
+export interface VaultAwsAccount {
+  accountId: string;
+  accountName: string;
+  email: string | null;
+  roles: string[];
+}
+
 export type VaultPermission = 'USE' | 'READ' | 'MANAGE';
 export type VaultLinkScope = 'PROJECT' | 'PERSONAL';
 export type VaultApiAuth = 'bearer' | 'header' | 'basic' | 'query';
@@ -90,6 +144,7 @@ export interface VaultItem {
   /** Jeton applicatif : service et provenance. */
   token: VaultTokenInfo | null;
   google: { email: string; name: string | null; avatarUrl: string | null; gmailAccess: GoogleAccess; driveAccess: GoogleAccess; scopes: string[] } | null;
+  aws: VaultAwsInfo | null;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string[];
@@ -149,6 +204,8 @@ export interface VaultItemInput {
   service?: string | null;
   /** langfuse : clé publique. */
   publicKey?: string | null;
+  /** aws : mode, région, portail, compte et rôle, clés. */
+  aws?: VaultAwsInput | null;
 }
 
 export const VAULT_ITEM_FIELDS = gql`
@@ -206,6 +263,20 @@ export const VAULT_ITEM_FIELDS = gql`
       gmailAccess
       driveAccess
       scopes
+    }
+    aws {
+      auth
+      region
+      startUrl
+      ssoRegion
+      accountId
+      accountName
+      roleName
+      accessKeyId
+      roleArn
+      connected
+      tokenExpiresAt
+      identity
     }
     readOnly
     requireApproval
@@ -437,6 +508,43 @@ export const COPY_VAULT_ITEM = gql`
   mutation CopyVaultItem($id: ID!, $projectId: ID!, $name: String) {
     copyVaultItem(id: $id, projectId: $projectId, name: $name) {
       ...VaultItemFields
+    }
+  }
+`;
+
+export const START_AWS_LOGIN = gql`
+  mutation StartAwsLogin($id: ID!) {
+    startAwsLogin(id: $id) {
+      id
+      userCode
+      verificationUri
+      verificationUriComplete
+      expiresAt
+      interval
+    }
+  }
+`;
+
+export const POLL_AWS_LOGIN = gql`
+  ${VAULT_ITEM_FIELDS}
+  mutation PollAwsLogin($id: ID!) {
+    pollAwsLogin(id: $id) {
+      status
+      interval
+      item {
+        ...VaultItemFields
+      }
+    }
+  }
+`;
+
+export const VAULT_AWS_ACCOUNTS = gql`
+  query VaultAwsAccounts($id: ID!) {
+    vaultAwsAccounts(id: $id) {
+      accountId
+      accountName
+      email
+      roles
     }
   }
 `;

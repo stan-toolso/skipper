@@ -1,18 +1,18 @@
 /**
- * Coffre : éléments d'identification (serveur SSH, base PostgreSQL, API HTTP, site web, secret, compte Google)
+ * Coffre : éléments d'identification (serveur SSH, base PostgreSQL, API HTTP, site web, secret, compte Google, compte AWS)
  * appartenant à un utilisateur (coffre personnel) ou à un projet, partagés avec des personnes, reliés à des
  * projets et utilisés par les agents à travers des outils (le serveur détient les secrets).
  */
 import type { TokenService } from './tokens.js';
 
-export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'token' | 'litellm' | 'langfuse';
-export const VAULT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'token', 'litellm', 'langfuse'];
+export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'token' | 'litellm' | 'langfuse';
+export const VAULT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws', 'token', 'litellm', 'langfuse'];
 /** Types utilisables par les agents des sessions ; les jetons applicatifs, LiteLLM et Langfuse servent Skipper seul (vault/tokens.ts, vault/llm.ts). */
-export const AGENT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret'];
+export const AGENT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws'];
 /** Types réservés à Skipper lui-même : jamais reliés à un projet, sans outil MCP ni variable de navigateur. */
 export const SKIPPER_KINDS: VaultItemKind[] = ['token', 'litellm', 'langfuse'];
 /** Types dotés d'outils MCP soumis à approbation (hors navigateur et Google, qui ont leur propre politique). */
-export const TOOL_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'api'];
+export const TOOL_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'api', 'aws'];
 
 export const kindLabels: Record<VaultItemKind, string> = {
   ssh: 'Serveur SSH',
@@ -21,6 +21,7 @@ export const kindLabels: Record<VaultItemKind, string> = {
   google: 'Compte Google',
   api: 'API HTTP',
   secret: 'Secret',
+  aws: 'Compte AWS',
   token: 'Jeton applicatif',
   litellm: 'Proxy LiteLLM',
   langfuse: 'Langfuse',
@@ -96,6 +97,37 @@ export interface GoogleSettings {
   scopes: string[];
 }
 
+export type AwsAuth = 'sso' | 'keys';
+export const AWS_AUTHS: AwsAuth[] = ['sso', 'keys'];
+
+/**
+ * Compte AWS : connexion par code à IAM Identity Center (`sso`, jetons renouvelés par Skipper, secrets
+ * `accessToken`, `refreshToken`, `clientId`, `clientSecret`) ou clés d'accès (`keys`, secret
+ * `secretAccessKey`). Les agents n'exécutent le CLI AWS qu'à travers l'outil `aws_run` (vault/aws.ts) : les
+ * identifiants, temporaires, ne quittent pas le conteneur jetable où le serveur lance la commande.
+ */
+export interface AwsSettings {
+  auth: AwsAuth;
+  /** Région par défaut des commandes (AWS_DEFAULT_REGION), ex. eu-west-3. */
+  region: string;
+  /** sso : adresse du portail d'accès (https://xxx.awsapps.com/start) et région d'IAM Identity Center. */
+  startUrl: string | null;
+  ssoRegion: string | null;
+  /** sso : compte et rôle (jeu d'autorisations) choisis après la connexion. */
+  accountId: string | null;
+  accountName: string | null;
+  roleName: string | null;
+  /** keys : identifiant de la clé d'accès (public) ; rôle à endosser avec ces clés (optionnel). */
+  accessKeyId: string | null;
+  roleArn: string | null;
+  /** sso : expiration du jeton d'accès (ISO) ; null tant que le compte n'est pas connecté ou quand la connexion a expiré. */
+  tokenExpiresAt: string | null;
+  /** sso : expiration de l'enregistrement du client OIDC (ISO), au-delà de laquelle il faut se reconnecter. */
+  clientExpiresAt: string | null;
+  /** Identité (ARN) constatée au dernier test réussi. */
+  identity: string | null;
+}
+
 /**
  * Jeton applicatif (vault/tokens.ts) : un identifiant que Skipper utilise pour une personne (Claude,
  * fournisseur OpenCode, GitHub). Saisi à la main (`manual`, révélable avec READ) ou obtenu par un parcours
@@ -125,7 +157,7 @@ export interface LangfuseSettings {
   publicKey: string;
 }
 
-export type VaultSettings = SshSettings | PostgresSettings | ApiSettings | WebsiteSettings | SecretSettings | GoogleSettings | TokenSettings | LitellmSettings | LangfuseSettings;
+export type VaultSettings = SshSettings | PostgresSettings | ApiSettings | WebsiteSettings | SecretSettings | GoogleSettings | AwsSettings | TokenSettings | LitellmSettings | LangfuseSettings;
 
 export interface VaultItem {
   id: string;
@@ -245,6 +277,25 @@ export interface VaultItemInput {
   service?: string | null;
   /** langfuse : clé publique (pk-lf-...). */
   publicKey?: string | null;
+  /** aws : mode d'authentification, région, portail Identity Center, compte et rôle, clés d'accès. */
+  aws?: VaultAwsInput | null;
+}
+
+/** Entrée d'un compte AWS (les champs absents sont inchangés ; le mode est fixé à la création). */
+export interface VaultAwsInput {
+  auth?: AwsAuth | null;
+  region?: string | null;
+  startUrl?: string | null;
+  ssoRegion?: string | null;
+  accountId?: string | null;
+  /** sso : libellé du compte (affichage), tel que le portail le donne. */
+  accountName?: string | null;
+  roleName?: string | null;
+  accessKeyId?: string | null;
+  /** keys : clé d'accès secrète (absente = inchangée). */
+  secretAccessKey?: string | null;
+  /** keys : rôle à endosser ; chaîne vide pour retirer. */
+  roleArn?: string | null;
 }
 
 export interface VaultTestResult {
@@ -276,6 +327,16 @@ export interface PostgresCredentials {
 
 export interface ApiCredentials extends ApiSettings {
   token: string;
+}
+
+/** Identifiants AWS temporaires ou permanents, en mémoire le temps d'une commande. */
+export interface AwsCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken: string | null;
+  region: string;
+  /** Expiration des identifiants temporaires (ms epoch) ; null pour des clés permanentes. */
+  expiresAt: number | null;
 }
 
 /** Champs d'un site web ou d'un secret, valeurs déchiffrées. */

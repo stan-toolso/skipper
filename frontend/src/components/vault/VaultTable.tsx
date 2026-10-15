@@ -30,8 +30,9 @@ interface Props {
 
 function PolicyBadges({ item }: { item: VaultItem }) {
   const badges: React.ReactNode[] = [];
-  if (item.kind === 'postgres' || item.kind === 'api') badges.push(item.readOnly ? <Badge key="ro" bg="success">lecture seule</Badge> : <Badge key="rw" bg="warning" text="dark">écriture</Badge>);
-  if (item.kind === 'ssh' || item.kind === 'postgres' || item.kind === 'api') badges.push(item.requireApproval ? <Badge key="ap" bg="primary">avec accord</Badge> : <Badge key="nap" bg="secondary">sans accord</Badge>);
+  if (item.kind === 'postgres' || item.kind === 'api' || item.kind === 'aws') badges.push(item.readOnly ? <Badge key="ro" bg="success">lecture seule</Badge> : <Badge key="rw" bg="warning" text="dark">écriture</Badge>);
+  if (item.kind === 'ssh' || item.kind === 'postgres' || item.kind === 'api' || item.kind === 'aws') badges.push(item.requireApproval ? <Badge key="ap" bg="primary">avec accord</Badge> : <Badge key="nap" bg="secondary">sans accord</Badge>);
+  if (item.kind === 'aws' && item.aws?.auth === 'sso') badges.push(item.aws.connected ? <Badge key="cx" bg="info" text="dark">connecté</Badge> : <Badge key="ncx" bg="danger">à connecter</Badge>);
   if (isSkipperKind(item.kind)) badges.push(<Badge key="sk" bg="secondary" title="Jamais offert aux agents : utilisé par Skipper pour vos réglages">réservé à Skipper</Badge>);
   if (isOauthToken(item)) badges.push(<Badge key="oa" bg="info" text="dark">connexion</Badge>);
   if (item.kind === 'google' && item.google) {

@@ -9,6 +9,7 @@ import type { Project } from '../projects/types.js';
 // du 10/10/2026 : `z.record` de zod 4 n'est pas accepté par le convertisseur du SDK, aucun outil `vault`).
 // Services voisins simulés : seule la déclaration des outils est exercée, sans base ni réseau.
 vi.mock('./service.js', () => ({ vaultService: {} }));
+vi.mock('./awsService.js', () => ({ awsService: {} }));
 vi.mock('./ssh.js', () => ({}));
 vi.mock('./postgres.js', () => ({}));
 vi.mock('../browser/fill.js', () => ({ browserFill: vi.fn() }));
@@ -40,7 +41,7 @@ describe('serveur MCP vault', () => {
     });
     const tools = await listTools(server);
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['browser_fill', 'http_request', 'list', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
+    expect(names).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
     const http = tools.find((t) => t.name === 'http_request')!;
     const props = http.inputSchema.properties as Record<string, { type?: string; additionalProperties?: unknown }>;
     expect(props.query.type).toBe('object');

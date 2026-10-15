@@ -11,7 +11,8 @@ import type { SharedPage, SharedPageMember, SharedPageVersion } from '../sharedP
 import { readRawFile } from '../files/service.js';
 import { fingerprint } from '../vault/ssh.js';
 import { isOauthToken, vaultService, type VaultItemWithPermission } from '../vault/service.js';
-import type { ApiSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
+import { awsService } from '../vault/awsService.js';
+import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
 import { variableName } from '../vault/website.js';
 import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
@@ -301,6 +302,11 @@ export const resolvers = {
     },
     authScheme: (i: VaultItem) => (i.kind === 'api' ? (i.settings as ApiSettings).authScheme : null),
     authName: (i: VaultItem) => (i.kind === 'api' ? (i.settings as ApiSettings).authName : null),
+    aws: (i: VaultItem) => {
+      if (i.kind !== 'aws') return null;
+      const s = i.settings as AwsSettings;
+      return { ...s, connected: awsService.connected(i) };
+    },
     google: (i: VaultItem) => {
       if (i.kind !== 'google') return null;
       const a = accountOf(i);
@@ -634,6 +640,7 @@ export const resolvers = {
       return pushService.publicKey();
     },
     settings: (_: unknown, __: unknown, ctx: Ctx) => appSettings(ctx),
+    vaultAwsAccounts: (_: unknown, args: { id: string }, ctx: Ctx) => awsService.accounts(vaultActor(ctx), args.id),
     vaultTokenServices: (_: unknown, __: unknown, ctx: Ctx) => {
       requireUser(ctx);
       return TOKEN_SERVICE_IDS.map((id) => ({ id, label: TOKEN_SERVICES[id].label, prefix: TOKEN_SERVICES[id].prefix, opencode: Boolean((TOKEN_SERVICES[id] as { opencode?: boolean }).opencode) }));
@@ -925,6 +932,11 @@ export const resolvers = {
     refreshOpencodeModels: async (_: unknown, __: unknown, ctx: Ctx) => {
       await (await opencodeSettings.forUser(requireUser(ctx).id)).listModels();
       return appSettings(ctx);
+    },
+    startAwsLogin: (_: unknown, args: { id: string }, ctx: Ctx) => awsService.startLogin(vaultActor(ctx), args.id),
+    pollAwsLogin: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const r = await awsService.pollLogin(vaultActor(ctx), args.id);
+      return { ...r, status: r.status.toUpperCase(), item: r.item ? { ...r.item, permission: 'manage' } : null };
     },
     startGithubDeviceLogin: (_: unknown, __: unknown, ctx: Ctx) => githubDeviceService.start(requireUser(ctx).id),
     pollGithubDeviceLogin: (_: unknown, args: { id: string }, ctx: Ctx) => githubDeviceService.poll(requireUser(ctx).id, args.id),
