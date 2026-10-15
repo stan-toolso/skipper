@@ -224,10 +224,14 @@ prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 ## Image du runner Docker
 
 Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, CLI OpenCode pour les
-sessions OpenCode, Playwright/Chromium pour l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
+sessions OpenCode, Playwright/Chromium pour l'option « navigateur headless », CLI AWS pour les comptes
+AWS du coffre) : `docker build -t skipper-runner deploy/runner` sur le serveur
 (≈ 1 Go, l'ARM64 télécharge son propre Chromium), puis « Recréer » le conteneur sur la page de
 chaque projet concerné. Une session avec navigateur prend 300 à 500 Mo de plus : prévoir au moins
-1,5 Go pour le conteneur du projet.
+1,5 Go pour le conteneur du projet. Les comptes AWS du coffre (outil `aws_run`) exigent une image
+reconstruite avec le CLI AWS v2 (≈ 250 Mo de plus) : sans lui, l'outil répond « “aws” est absent de l'image » ;
+chaque commande tourne dans un conteneur jetable `skipper-run-*` (512 Mo au plus, supprimé à la fin), hors du
+conteneur du projet, qui n'a donc pas besoin d'être recréé.
 
 La vue en direct du navigateur passe par le WebSocket `/browsers/<session>` : reporter le bloc
 `location /browsers/` de `deploy/nginx-skipper.conf` dans `/etc/nginx/sites-available/skipper`, puis

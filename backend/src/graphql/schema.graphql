@@ -411,6 +411,8 @@ enum VaultItemKind {
   google
   api
   secret
+  "Compte AWS : connexion par code à IAM Identity Center ou clés d'accès ; les agents exécutent le CLI aws par l'outil aws_run, sans jamais voir les identifiants."
+  aws
   "Jeton applicatif : identifiant que Skipper utilise pour la personne (Claude, fournisseur OpenCode, GitHub), référencé par ses réglages ; jamais offert aux agents."
   token
   "Proxy LiteLLM : adresse et clé d'API, identifiants des appels de modèle de Skipper (agents automatisés) ; jamais offert aux agents des sessions."
@@ -485,6 +487,56 @@ type VaultField {
   value: String
   "Nom de variable historique du champ (ex. ADMIN_SITE_PASSWORD), pour l'affichage."
   variable: String!
+}
+
+"Compte AWS : mode d'authentification et identité ; les clés et jetons ne sont jamais renvoyés."
+type VaultAwsInfo {
+  "sso : IAM Identity Center (connexion par code, jetons renouvelés par Skipper) ; keys : clés d'accès."
+  auth: String!
+  "Région par défaut des commandes."
+  region: String!
+  "sso : adresse du portail d'accès et région d'IAM Identity Center."
+  startUrl: String
+  ssoRegion: String
+  "sso : compte et rôle (jeu d'autorisations) choisis après la connexion."
+  accountId: String
+  accountName: String
+  roleName: String
+  "keys : identifiant de la clé d'accès ; rôle endossé avec ces clés, le cas échéant."
+  accessKeyId: String
+  roleArn: String
+  "sso : la connexion est en cours de validité (jeton de renouvellement ou jeton d'accès valable)."
+  connected: Boolean!
+  "sso : expiration du jeton d'accès courant."
+  tokenExpiresAt: DateTime
+  "Identité (ARN) constatée au dernier test réussi."
+  identity: String
+}
+
+"Connexion AWS par code en cours : ouvrir verificationUriComplete (ou saisir userCode sur verificationUri), autoriser, puis interroger pollAwsLogin."
+type AwsLogin {
+  id: ID!
+  userCode: String!
+  verificationUri: String!
+  verificationUriComplete: String!
+  expiresAt: DateTime!
+  "Secondes à attendre entre deux interrogations."
+  interval: Int!
+}
+
+"Résultat d'une interrogation : PENDING (attendre `interval` secondes), CONNECTED (jetons enregistrés, `item` à jour), EXPIRED ou DENIED."
+type AwsLoginPoll {
+  status: String!
+  interval: Int!
+  item: VaultItem
+}
+
+"Compte AWS accessible avec la connexion Identity Center, et les rôles de la personne sur ce compte."
+type VaultAwsAccount {
+  accountId: String!
+  accountName: String!
+  email: String
+  roles: [String!]!
 }
 
 type VaultGoogleAccount {
@@ -569,11 +621,12 @@ type VaultItem {
   "api : nom de l'en-tête ou du paramètre qui porte le jeton."
   authName: String
   google: VaultGoogleAccount
-  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement."
+  aws: VaultAwsInfo
+  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement ; aws : opérations de consultation seulement."
   readOnly: Boolean!
   "Chaque usage par un agent est soumis à l'approbation d'un humain, même en mode « tout autoriser »."
   requireApproval: Boolean!
-  "ssh : préfixes de commandes autorisés (vide = tout ; non vide : ni enchaînement ni transfert de fichiers)."
+  "ssh, aws : préfixes de commandes autorisés (vide = tout ; ssh : ni enchaînement ni transfert de fichiers avec une liste)."
   commandAllowlist: [String!]!
   "ssh : clé publique à ajouter dans authorized_keys du serveur."
   publicKey: String
@@ -653,6 +706,29 @@ input VaultItemInput {
   service: String
   "langfuse : clé publique (pk-lf-...) ; la clé secrète (sk-lf-...) passe par `password`."
   publicKey: String
+  "aws : mode, région, portail Identity Center, compte et rôle, clés d'accès."
+  aws: VaultAwsInput
+}
+
+"Compte AWS (les champs absents sont inchangés ; le mode est fixé à la création)."
+input VaultAwsInput {
+  "sso (IAM Identity Center, connexion par code) ou keys (clés d'accès)."
+  auth: String
+  "Région par défaut des commandes (ex. eu-west-3)."
+  region: String
+  "sso : adresse du portail d'accès (https://xxx.awsapps.com/start) et région d'Identity Center."
+  startUrl: String
+  ssoRegion: String
+  "sso : compte (12 chiffres) et rôle, choisis après la connexion (vaultAwsAccounts) ; chaîne vide pour retirer les deux."
+  accountId: String
+  "sso : libellé du compte (affichage)."
+  accountName: String
+  roleName: String
+  "keys : identifiant de la clé d'accès et clé secrète (absente = inchangée)."
+  accessKeyId: String
+  secretAccessKey: String
+  "keys : ARN d'un rôle à endosser avec ces clés ; chaîne vide pour retirer."
+  roleArn: String
 }
 
 type VaultTest {
@@ -1879,6 +1955,8 @@ type Query {
   vaultShareCandidates: [User!]!
   "La connexion d'un compte Google est configurée sur le serveur."
   vaultGoogleAvailable: Boolean!
+  "aws (sso) : comptes et rôles accessibles avec la connexion en cours (permission MANAGE)."
+  vaultAwsAccounts(id: ID!): [VaultAwsAccount!]!
   "Instruction qu'un agent recevrait pour la tâche (pré-remplit le formulaire « Confier à un agent »)."
   taskPrompt(id: ID!): String!
   "Personnes déjà désignées sur les tâches (suggestions)."
@@ -2068,6 +2146,10 @@ type Mutation {
   pollGithubDeviceLogin(id: ID!): GithubDevicePoll!
   "GitHub : connecte un compte avec un jeton personnel du coffre (vérifié auprès de GitHub)."
   connectGithubFromVault(itemId: ID!): GithubAccount!
+  "Coffre, compte AWS (sso) : démarre la connexion par code à IAM Identity Center (permission MANAGE)."
+  startAwsLogin(id: ID!): AwsLogin!
+  "Coffre, compte AWS (sso) : une interrogation de la connexion par code ; les jetons sont enregistrés quand l'autorisation est donnée."
+  pollAwsLogin(id: ID!): AwsLoginPoll!
   setDefaultGithubAccount(accountId: ID!): AppSettings!
   "GitHub : oublie un compte (tous sans accountId)."
   disconnectGithub(accountId: ID): AppSettings!

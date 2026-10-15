@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { access, chmod, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +11,7 @@ import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { attachmentsRoot } from '../sessions/attachments.js';
 import { worktreesRoot } from '../worktrees/service.js';
-import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
+import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type IsolatedCommand, type IsolatedResult, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { containerDrift, countZombies, SPEC_LABEL, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
@@ -368,6 +369,71 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   async opencodeCommand(project: Project, cwd: string, envKeys: string[]): Promise<SpawnSpec> {
     await this.ensureReady(project);
     return { command: 'docker', args: ['exec', '-i', '-w', cwd, ...[...PASSTHROUGH_ENV, ...envKeys].flatMap((v) => ['-e', v]), this.containerName(project), 'opencode'] };
+  }
+
+  /**
+   * Conteneur jetable (`docker run --rm`) de l'image du projet : même uid que l'hôte, dossier personnel en tmpfs,
+   * `cwd` seul monté. Les variables de la commande sont passées par l'environnement du client `docker` (`-e NOM`
+   * sans valeur), jamais sur sa ligne de commande (visible de tout utilisateur du serveur par `ps`). Au-delà du
+   * délai, le conteneur est supprimé de force (un signal ne suffit pas toujours à un processus qui l'ignore).
+   */
+  async runIsolated(project: Project | null, cmd: IsolatedCommand): Promise<IsolatedResult> {
+    const s = project ? this.settings(project) : { image: config.runnerImage, memory: config.runnerMemory, cpus: config.runnerCpus };
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
+    const gid = typeof process.getgid === 'function' ? process.getgid() : 1000;
+    const name = `skipper-run-${randomBytes(6).toString('hex')}`;
+    const home = '/tmp/home';
+    const args = [
+      'run', '--rm', '-i', '--name', name, '--memory', cmd.memory ?? '512m', '--cpus', s.cpus, '--init',
+      '--user', `${uid}:${gid}`, '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
+      '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0700,size=64m`,
+      '-v', `${cmd.cwd}:${cmd.cwd}`, '-w', cmd.cwd,
+      '--label', 'skipper.ephemeral=1', '-e', `HOME=${home}`,
+      ...Object.keys(cmd.env).flatMap((k) => ['-e', k]),
+      s.image, ...cmd.command,
+    ];
+    const maxBytes = cmd.maxBytes ?? 64 * 1024;
+    const started = Date.now();
+    return new Promise<IsolatedResult>((resolve, reject) => {
+      const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...cmd.env } });
+      let stdout = '';
+      let stderr = '';
+      let truncated = false;
+      const append = (current: string, chunk: Buffer) => {
+        if (current.length >= maxBytes) {
+          truncated = true;
+          return current;
+        }
+        const next = current + chunk.toString('utf8');
+        if (next.length > maxBytes) {
+          truncated = true;
+          return next.slice(0, maxBytes);
+        }
+        return next;
+      };
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void docker(['rm', '-f', name], { allowFail: true }).catch(() => undefined);
+        child.kill('SIGKILL');
+      }, cmd.timeoutMs);
+      child.stdout.on('data', (chunk: Buffer) => (stdout = append(stdout, chunk)));
+      child.stderr.on('data', (chunk: Buffer) => (stderr = append(stderr, chunk)));
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject((err as NodeJS.ErrnoException).code === 'ENOENT' ? new AppError("Docker n'est pas installé sur le serveur (commande docker introuvable)") : err);
+      });
+      child.on('close', (code, signal) => {
+        clearTimeout(timer);
+        if (timedOut) return reject(new AppError(`Commande interrompue après ${Math.round(cmd.timeoutMs / 1000)} s`, 'TIMEOUT'));
+        // Codes du démon ou du client docker (pas de la commande) : image absente, programme introuvable dans l'image.
+        if (code === 125) return reject(new AppError(`docker run a échoué : ${stderr.trim().split('\n').slice(-2).join(' ')}`));
+        if (code === 127 && /executable file not found|no such file or directory/i.test(stderr)) {
+          return reject(new AppError(`« ${cmd.command[0]} » est absent de l'image ${s.image} : reconstruisez l'image du runner (deploy/runner/Dockerfile)`));
+        }
+        resolve({ stdout, stderr, exitCode: code ?? null, signal: signal ?? null, truncated, durationMs: Date.now() - started });
+      });
+    });
   }
 
   /** `host.docker.internal` quand le conteneur le résout (Docker Desktop, ou `--add-host` sous Linux), sinon la passerelle du réseau. */

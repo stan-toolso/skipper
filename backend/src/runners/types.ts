@@ -44,6 +44,31 @@ export interface SpawnSpec {
   env?: Record<string, string>;
 }
 
+/** Commande exécutée dans un conteneur jetable (`runIsolated`). */
+export interface IsolatedCommand {
+  /** Dossier de l'hôte monté (lecture et écriture) et dossier courant de la commande ; seul chemin du projet visible. */
+  cwd: string;
+  /** Programme et arguments, exécutés sans shell. */
+  command: string[];
+  /** Variables d'environnement de la commande (jamais sur la ligne de commande de `docker` : transmises par l'environnement). */
+  env: Record<string, string>;
+  /** Délai au-delà duquel le conteneur est supprimé et la commande échoue. */
+  timeoutMs: number;
+  /** Taille maximale conservée par flux (stdout, stderr) ; défaut 64 Ko. */
+  maxBytes?: number;
+  /** Limite mémoire du conteneur (défaut 512m). */
+  memory?: string;
+}
+
+export interface IsolatedResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  truncated: boolean;
+  durationMs: number;
+}
+
 /**
  * Le runner sait où et comment exécuter les processus d'un projet : CLI Claude Code des sessions,
  * shell des terminaux, commandes du provider shell. Le code du projet est monté dans le conteneur au
@@ -97,6 +122,12 @@ export interface Runner {
   opencodeCommand(project: Project, cwd: string, envKeys: string[]): Promise<SpawnSpec>;
   /** Adresse à laquelle un processus de l'environnement joint le serveur Skipper (ponts MCP d'OpenCode). */
   hostAddress(project: Project): Promise<string>;
+  /**
+   * Exécute une commande dans un conteneur jetable de l'image du projet (ou de l'image par défaut sans projet), hors du conteneur du projet : seul
+   * `cwd` y est monté, et l'environnement de la commande (identifiants du coffre) n'est jamais visible des
+   * processus du projet. Sert aux outils du coffre qui lancent un CLI (AWS). Rien n'est lancé sur le serveur.
+   */
+  runIsolated(project: Project | null, cmd: IsolatedCommand): Promise<IsolatedResult>;
 }
 
 export interface BrowserMcpOptions {

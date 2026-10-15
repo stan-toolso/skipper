@@ -45,7 +45,7 @@ Trois notions :
   qui attend encore. Réservées aux administrateurs de l'application : les limites d'utilisation de
   l'abonnement Claude (fenêtre à 75 % puis 90 %, tours refusés). Notifications natives du navigateur
   activables en option.
-- **Coffre** : serveurs SSH, bases PostgreSQL, API HTTP, sites web, secrets et comptes Google que les
+- **Coffre** : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS, sites web, secrets et comptes Google que les
   agents utilisent sans jamais voir les identifiants : le serveur agit pour eux (outils MCP, saisie dans le
   navigateur headless). Un élément appartient à une personne (coffre personnel, partageable et ouvrable à
   des projets) ou à un projet. Le coffre garde aussi ce que Skipper utilise **lui-même** pour une
@@ -196,7 +196,9 @@ backend/
       website.ts               # sites web et secrets : champs, appartenance d'une page au site
       tokens.ts                # jetons applicatifs : services (claude, anthropic, github, openai…), forme des jetons
       llm.ts                   # proxy LiteLLM et projet Langfuse : adresses, clés, vérification
-      mcp.ts                   # serveur MCP `vault` (list, ssh_exec, ssh_upload, ssh_download, sql_query, sql_schema, http_request, browser_fill)
+      aws.ts                   # comptes AWS : réglages, découpage et politique des commandes, OIDC et portail Identity Center, CLI en conteneur jetable
+      awsService.ts            # comptes AWS : connexion par code, renouvellement des jetons, identifiants temporaires (cache), test
+      mcp.ts                   # serveur MCP `vault` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema, http_request, aws_run, browser_fill)
     google/
       service.ts               # comptes Google du coffre : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
       gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
@@ -267,8 +269,8 @@ frontend/
 
 Page « Coffre » (`/vault`, menu de la sidebar) : tout ce que l'utilisateur peut voir ; page « Coffre » d'un
 projet (`/projects/:id/vault`, bouton sur la fiche du projet) : ce que les agents de ce projet peuvent
-utiliser. Six types offerts aux agents : **serveur SSH**, **base PostgreSQL** (éventuellement via un
-serveur SSH du même coffre, en tunnel), **API HTTP**, **site web**, **secret** et **compte Google** ;
+utiliser. Sept types offerts aux agents : **serveur SSH**, **base PostgreSQL** (éventuellement via un
+serveur SSH du même coffre, en tunnel), **API HTTP**, **compte AWS**, **site web**, **secret** et **compte Google** ;
 trois types **réservés à Skipper** : **jeton applicatif**, **proxy LiteLLM** et **projet Langfuse**.
 Chaque élément a un nom court (`prod`, `rds-prod`, `stripe`, `admin-site`) que les agents emploient.
 
@@ -320,8 +322,25 @@ jeton (permission `utiliser`) permet à un collègue de le choisir dans ses rég
 test d'un élément vérifie le jeton auprès du service (Anthropic, GitHub, LiteLLM `/v1/models`,
 Langfuse `/api/public/projects`).
 
-**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_exec`, `ssh_upload`, `ssh_download`,
-`sql_query`, `sql_schema`, `http_request`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
+**AWS.** Deux modes : **IAM Identity Center** (`sso` : adresse du portail d'accès et région ; connexion par
+code depuis les détails de l'élément, flux OAuth « device » de l'API OIDC, jetons d'accès et de renouvellement
+chiffrés dans l'élément et renouvelés par Skipper, puis choix du compte et du rôle parmi ceux de la personne)
+ou **clés d'accès** (`keys` : identifiant et clé secrète d'un utilisateur IAM, rôle à endosser optionnel par
+`sts assume-role`). L'agent dispose de l'outil `aws_run(item, command)` : la commande du CLI sans `aws`,
+découpée sans shell (guillemets acceptés, ni tube ni substitution), refusée si elle use d'un profil local, du
+mode `--debug`, de `configure`/`sso`/`login` ou d'une session interactive (`ssm start-session`), limitée
+aux opérations de consultation (`describe-*`, `get-*`, `list-*`, `s3 ls`…) quand l'élément est en
+« lecture seule » (défaut), et aux préfixes autorisés s'il en a. Le serveur obtient des identifiants
+temporaires (rôle Identity Center par le portail d'accès, ou rôle endossé ; les clés seules sinon), gardés en
+mémoire jusqu'à cinq minutes avant leur expiration, puis lance `aws …` dans un **conteneur jetable** de l'image
+du runner (`runner.runIsolated`, `vault/aws.ts`) : même uid que l'hôte, dossier personnel en tmpfs, seul le
+dossier de travail de la session monté (chemins relatifs des commandes `s3 cp`, `lambda update-function-code`…),
+identifiants transmis par l'environnement du client `docker` (jamais sur sa ligne de commande), conteneur
+supprimé à la fin ou au délai. Rien ne transite par le conteneur du projet : l'agent n'y voit ni clé ni jeton.
+Le test de l'élément exécute `sts get-caller-identity` et mémorise l'identité (ARN) constatée.
+
+**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`,
+`sql_query`, `sql_schema`, `http_request`, `aws_run`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
@@ -340,7 +359,7 @@ conteneur de l'agent.
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
 - **VaultItem** : `ownerUserId` ou `ownerProjectId` (exactement l'un des deux), `name`, `kind` (ssh,
-  postgres, api, website, secret, google, token, litellm, langfuse), `settings` (champs publics du type), secrets chiffrés par
+  postgres, api, aws, website, secret, google, token, litellm, langfuse), `settings` (champs publics du type), secrets chiffrés par
   enveloppe (`secretCiphertext`, `wrappedKey`), `publicKey`, `hostKey`, `readOnly`, `requireApproval`,
   `commandAllowlist`, `expiresAt` (rappel de rotation), dernier test ; tables `vault_item_shares`,
   `vault_item_links` (portée `project` ou `personal`), `vault_audit_events`.

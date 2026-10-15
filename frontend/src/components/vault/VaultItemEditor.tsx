@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Col, Form, Modal, Row } from 'react-bootstrap';
 import { googleConnectUrl } from '../../apollo';
-import { CREATE_VAULT_ITEM, SKIPPER_KINDS, UPDATE_VAULT_ITEM, VAULT_TOKEN_SERVICES, type GoogleAccess, type VaultApiAuth, type VaultFieldInput, type VaultItem, type VaultItemInput, type VaultItemKind, type VaultTokenService } from '../../graphql/vault';
+import { CREATE_VAULT_ITEM, SKIPPER_KINDS, UPDATE_VAULT_ITEM, VAULT_TOKEN_SERVICES, type AwsAuth, type GoogleAccess, type VaultApiAuth, type VaultAwsInput, type VaultFieldInput, type VaultItem, type VaultItemInput, type VaultItemKind, type VaultTokenService } from '../../graphql/vault';
 import { AGENT_KINDS, DEFAULT_PORTS, FIELD_KEY_PATTERN, isOauthToken, isSkipperKind, KINDS, NAME_PATTERN, variableOf } from './kinds';
 
 /** Coffre destinataire d'un nouvel élément : personnel (projectId null) ou projet administré. */
@@ -84,6 +84,13 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
   const [expiresAt, setExpiresAt] = useState(item?.expiresAt ? item.expiresAt.slice(0, 10) : '');
   const [service, setService] = useState(item?.token?.service ?? '');
   const [publicKey, setPublicKey] = useState(item?.langfusePublicKey ?? '');
+  const [awsAuth, setAwsAuth] = useState<AwsAuth>(item?.aws?.auth ?? 'sso');
+  const [region, setRegion] = useState(item?.aws?.region ?? 'eu-west-3');
+  const [startUrl, setStartUrl] = useState(item?.aws?.startUrl ?? '');
+  const [ssoRegion, setSsoRegion] = useState(item?.aws?.ssoRegion ?? 'eu-west-1');
+  const [accessKeyId, setAccessKeyId] = useState(item?.aws?.accessKeyId ?? '');
+  const [secretAccessKey, setSecretAccessKey] = useState('');
+  const [roleArn, setRoleArn] = useState(item?.aws?.roleArn ?? '');
   const { data: servicesData } = useQuery<{ vaultTokenServices: VaultTokenService[] }>(VAULT_TOKEN_SERVICES, { skip: kind !== 'token' });
   const services = servicesData?.vaultTokenServices ?? [];
   const serviceInfo = services.find((t) => t.id === service);
@@ -139,7 +146,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
     const input: VaultItemInput = { name: cleanName, description: description.trim(), expiresAt: expiresAt || null };
     if (!editing) input.kind = kind;
     if (kind !== 'google') {
-      if (kind === 'ssh' || kind === 'postgres' || kind === 'api') input.requireApproval = requireApproval;
+      if (kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws') input.requireApproval = requireApproval;
     } else {
       input.requireApproval = requireApproval;
     }
@@ -192,6 +199,25 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
       input.publicKey = publicKey.trim();
       if (password) input.password = password;
       else if (!editing) return setError('La clé secrète est obligatoire');
+    }
+    if (kind === 'aws') {
+      const a: VaultAwsInput = { region: region.trim() };
+      if (!editing) a.auth = awsAuth;
+      if (awsAuth === 'sso') {
+        a.startUrl = startUrl.trim();
+        a.ssoRegion = ssoRegion.trim();
+      } else {
+        a.accessKeyId = accessKeyId.trim();
+        a.roleArn = roleArn.trim();
+        if (secretAccessKey) a.secretAccessKey = secretAccessKey;
+        else if (!editing) return setError("La clé d'accès secrète est obligatoire");
+      }
+      input.aws = a;
+      input.readOnly = readOnly;
+      input.commandAllowlist = allowlist
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
     if (kind === 'website' || kind === 'secret') {
       if (kind === 'website') input.url = url.trim();
@@ -534,6 +560,75 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
                 </>
               )}
 
+              {kind === 'aws' && (
+                <>
+                  <Row className="g-3 mt-0">
+                    <Col md={7}>
+                      <Form.Group>
+                        <Form.Label>Authentification</Form.Label>
+                        <Form.Select value={awsAuth} onChange={(e) => setAwsAuth(e.target.value as AwsAuth)} disabled={editing}>
+                          <option value="sso">IAM Identity Center (connexion par code, recommandé)</option>
+                          <option value="keys">Clés d'accès (utilisateur IAM)</option>
+                        </Form.Select>
+                        <Form.Text className="text-secondary">{editing ? "Le mode ne change pas : créez un autre élément." : awsAuth === 'sso' ? 'Après la création, connectez-vous par code depuis les détails de l’élément, puis choisissez le compte et le rôle. Les jetons sont renouvelés par Skipper.' : 'Utilisez de préférence un utilisateur IAM dédié aux agents, aux droits limités.'}</Form.Text>
+                      </Form.Group>
+                    </Col>
+                    <Col md={5}>
+                      <Form.Group>
+                        <Form.Label>Région par défaut</Form.Label>
+                        <Form.Control value={region} onChange={(e) => setRegion(e.target.value)} required placeholder="eu-west-3" pattern="[a-z]{2}(-[a-z]+)+-[0-9]" />
+                        <Form.Text className="text-secondary">Les commandes peuvent en indiquer une autre (--region).</Form.Text>
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                  {awsAuth === 'sso' ? (
+                    <Row className="g-3 mt-0">
+                      <Col md={8}>
+                        <Form.Group>
+                          <Form.Label>Portail d'accès</Form.Label>
+                          <Form.Control type="url" value={startUrl} onChange={(e) => setStartUrl(e.target.value)} required placeholder="https://mon-org.awsapps.com/start" />
+                          <Form.Text className="text-secondary">L'adresse de connexion d'IAM Identity Center (celle de « aws configure sso »).</Form.Text>
+                        </Form.Group>
+                      </Col>
+                      <Col md={4}>
+                        <Form.Group>
+                          <Form.Label>Région d'Identity Center</Form.Label>
+                          <Form.Control value={ssoRegion} onChange={(e) => setSsoRegion(e.target.value)} required placeholder="eu-west-1" pattern="[a-z]{2}(-[a-z]+)+-[0-9]" />
+                        </Form.Group>
+                      </Col>
+                    </Row>
+                  ) : (
+                    <>
+                      <Row className="g-3 mt-0">
+                        <Col md={5}>
+                          <Form.Group>
+                            <Form.Label>Identifiant de la clé d'accès</Form.Label>
+                            <Form.Control value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} required placeholder="AKIA…" className="font-monospace" />
+                          </Form.Group>
+                        </Col>
+                        <Col md={7}>
+                          <Form.Group>
+                            <Form.Label>Clé d'accès secrète</Form.Label>
+                            <Form.Control type="password" autoComplete="new-password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} placeholder={item?.hasSecret ? '(inchangée)' : ''} required={!editing} />
+                          </Form.Group>
+                        </Col>
+                      </Row>
+                      <Form.Group className="mt-3">
+                        <Form.Label>Rôle à endosser (optionnel)</Form.Label>
+                        <Form.Control value={roleArn} onChange={(e) => setRoleArn(e.target.value)} placeholder="arn:aws:iam::123456789012:role/agents" className="font-monospace" />
+                        <Form.Text className="text-secondary">Les commandes s'exécutent alors avec les identifiants temporaires de ce rôle (sts assume-role), pas avec les clés elles-mêmes.</Form.Text>
+                      </Form.Group>
+                    </>
+                  )}
+                  <Form.Check className="mt-3" type="checkbox" id="vault-aws-ro" label="Lecture seule (opérations describe-*, get-*, list-*, s3 ls… seulement)" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+                  <Form.Group className="mt-3">
+                    <Form.Label>Commandes autorisées par l'outil (optionnel)</Form.Label>
+                    <Form.Control as="textarea" rows={2} className="font-monospace small" value={allowlist} onChange={(e) => setAllowlist(e.target.value)} placeholder={'s3 ls\nec2 describe-instances'} />
+                    <Form.Text className="text-secondary">Un préfixe par ligne, sans « aws » ; vide = tout (dans la limite de la lecture seule).</Form.Text>
+                  </Form.Group>
+                </>
+              )}
+
               {kind === 'website' && (
                 <Form.Group className="mt-3">
                   <Form.Label>Adresse du site</Form.Label>
@@ -575,7 +670,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
               )}
 
               <hr />
-              {(kind === 'ssh' || kind === 'postgres' || kind === 'api') && (
+              {(kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws') && (
                 <Form.Check type="checkbox" id="vault-approval" label="Demander votre accord avant chaque usage par un agent — sinon les outils s'exécutent sans confirmation." checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
               )}
               {(kind === 'website' || kind === 'secret') && <div className="text-secondary small">Les actions dans le navigateur passent par les demandes d'autorisation de la session ; un secret sans site est toujours soumis à votre accord.</div>}
