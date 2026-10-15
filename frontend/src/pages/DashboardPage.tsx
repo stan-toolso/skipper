@@ -272,8 +272,8 @@ function DailyChart({ days }: { days: { day: string; usd: number }[] }) {
         const y = height - padBottom - h;
         return (
           <g key={d.day}>
-            <rect x={x} y={y} width={barW} height={h} rx={Math.min(4, barW / 2)} className={d === today ? 'today' : undefined} />
-            <rect x={i * slot} y={0} width={slot} height={height} fill="transparent">
+            <rect x={x} y={y} width={barW} height={h} rx={Math.min(4, barW / 2)} className={d === today ? 'bar today' : 'bar'} />
+            <rect x={i * slot} y={0} width={slot} height={height} className="hit">
               <title>{`${label(d.day)} : ${formatCost(d.usd)}`}</title>
             </rect>
             {d === peak && d.usd > 0 && (
