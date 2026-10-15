@@ -19,6 +19,7 @@ interface State {
 
 const Ctx = createContext<State | null>(null);
 const OPEN_KEY = 'skipper.workbench.gitPanel';
+const isMobile = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767.98px)').matches;
 
 const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worktreeId === b!.worktreeId && a!.label === b!.label && (a!.taskId ?? null) === (b!.taskId ?? null));
 
@@ -28,13 +29,18 @@ export function GitTargetProvider({ children }: { children: ReactNode }) {
   // la fait tomber, sans la vider par un effet (une page dont les données sont déjà en cache déclare dans le même
   // rendu que la navigation et serait écrasée).
   const [declared, setDeclared] = useState<{ path: string; target: GitTarget } | null>(null);
+  // Sur mobile le panneau recouvre le contenu : il s'ouvre à la demande et se referme à chaque navigation.
   const [open, setOpenState] = useState<boolean>(() => {
+    if (isMobile()) return false;
     try {
       return localStorage.getItem(OPEN_KEY) !== '0';
     } catch {
       return true;
     }
   });
+  useEffect(() => {
+    if (isMobile()) setOpenState(false);
+  }, [location.pathname]);
   const setTarget = useCallback(
     (t: GitTarget | null) => {
       const path = location.pathname;
@@ -44,6 +50,7 @@ export function GitTargetProvider({ children }: { children: ReactNode }) {
   );
   const setOpen = useCallback((v: boolean) => {
     setOpenState(v);
+    if (isMobile()) return;
     try {
       localStorage.setItem(OPEN_KEY, v ? '1' : '0');
     } catch {

@@ -13,6 +13,7 @@ import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
 import { headCommitOf } from '../git/service.js';
+import { containerMonitor } from '../runners/monitor.js';
 import type { Project } from '../projects/types.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
 
@@ -229,6 +230,10 @@ export const sessionService = {
   get: (id: string) => sessionRepository.findById(id),
   events: (sessionId: string, opts?: { after?: string; limit?: number }) => sessionRepository.listEvents(sessionId, opts),
   isRunning: (id: string) => running.has(id),
+  /** Sessions du projet dont le processus tourne sur ce serveur. */
+  runningCountByProject: (projectId: string) => [...running.keys()].filter((id) => slots.get(id) === projectId).length,
+  /** Places occupées dans le projet : sessions en cours ou en train de démarrer (voir `slots`). */
+  slotsOfProject,
 
   /**
    * Crée une session, éventuellement dans un worktree créé pour l'occasion (`newWorktree`).
@@ -374,7 +379,7 @@ export const sessionService = {
         await emit('system', { message: `Place libérée : la session démarre après ${formatWait(Date.now() - (session.queuedAt?.getTime() ?? Date.now()))} d'attente`, notice: true, reason: 'queue_start' });
       }
       started = await publishSession(
-        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null }),
+        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null, resumeDigest: null }),
       );
     } catch (err) {
       slots.delete(id);
@@ -397,6 +402,8 @@ export const sessionService = {
         cwd,
         initialMessage: initialMessage ?? session.prompt,
         initialAttachments: initialMessage === undefined ? session.promptAttachments : attachments,
+        // Conversation remise à zéro « en gardant un résumé » : le résumé accompagne la première instruction (une seule fois).
+        initialPreamble: session.externalId ? null : session.resumeDigest,
         emit,
         setExternalId: async (externalId) => {
           await publishSession(await sessionRepository.update(id, { externalId }));
@@ -459,7 +466,16 @@ export const sessionService = {
       // Si `stop()` a déjà posé le statut "stopped", on le conserve.
       const status: SessionStatus =
         current?.status === 'stopped' || result.closedByServer ? 'stopped' : result.error || result.exitCode !== 0 ? 'failed' : 'completed';
-      const error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
+      let error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
+      // Processus tué faute de mémoire dans le conteneur : message explicite plutôt que « exited with code 137 ».
+      if (status === 'failed') {
+        // Borné : un Docker qui ne répond pas ne doit pas retarder la fin de la session.
+        const oom = await Promise.race([
+          containerMonitor.explainFailure(project, result).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000).unref()),
+        ]);
+        if (oom) error = `${oom} (détail : ${error})`;
+      }
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
       // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.

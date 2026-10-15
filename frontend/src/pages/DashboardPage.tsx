@@ -1,4 +1,4 @@
-import { useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -19,7 +19,7 @@ import './dashboard.css';
 export default function DashboardPage() {
   const { openNewSession } = useSessionLauncher();
   useTabTitle('Tableau de bord');
-  const { data, loading, error, refetch } = useQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch } = usePollingQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
   const d = data?.dashboard;
 
   if (!d && loading) {

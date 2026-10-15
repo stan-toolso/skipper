@@ -1,6 +1,6 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { FormerWorktree, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
@@ -12,6 +12,7 @@ interface SessionRow {
   agent_run_id: string | null;
   workflow_run_id: string | null;
   archived_at: Date | null;
+  former_worktree: FormerWorktree | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -24,6 +25,7 @@ interface SessionRow {
   error: string | null;
   cleanup: SessionCleanup | null;
   context_tokens: number | null;
+  resume_digest: string | null;
   cost_usd: string | number | null;
   base_commit: string | null;
   queued_at: Date | null;
@@ -53,6 +55,7 @@ function toSession(row: SessionRow): Session {
     agentRunId: row.agent_run_id ?? null,
     workflowRunId: row.workflow_run_id ?? null,
     archivedAt: row.archived_at ?? null,
+    formerWorktree: row.former_worktree ?? null,
     name: row.name,
     provider: row.provider,
     status: row.status,
@@ -65,6 +68,7 @@ function toSession(row: SessionRow): Session {
     error: row.error,
     cleanup: row.cleanup ?? {},
     contextTokens: row.context_tokens,
+    resumeDigest: row.resume_digest ?? null,
     costUsd: Number(row.cost_usd ?? 0),
     baseCommit: row.base_commit ?? null,
     queuedAt: row.queued_at ?? null,
@@ -93,6 +97,7 @@ export interface SessionPatch {
   ownerId?: string | null;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
+  resumeDigest?: string | null;
   baseCommit?: string | null;
   promptAttachments?: Attachment[];
   config?: Record<string, unknown>;
@@ -113,6 +118,7 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   ownerId: 'owner_id',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
+  resumeDigest: 'resume_digest',
   baseCommit: 'base_commit',
   promptAttachments: 'prompt_attachments',
   config: 'config',
@@ -206,6 +212,18 @@ export const sessionRepository = {
   },
 
   /** Archive les sessions actives d'un worktree ; renvoie leurs identifiants. */
+  /**
+   * Avant la suppression d'un worktree : ses sessions sont archivées (celles qui l'étaient déjà gardent leur date),
+   * gardent le souvenir du worktree, et en sont détachées (la clé étrangère ferait de même, mais sans le souvenir).
+   */
+  async detachWorktree(worktreeId: string, at: Date, former: FormerWorktree): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(
+      `UPDATE sessions SET worktree_id = NULL, former_worktree = $3::jsonb, archived_at = COALESCE(archived_at, $2), updated_at = now() WHERE worktree_id = $1 RETURNING id`,
+      [worktreeId, at, JSON.stringify(former)],
+    );
+    return rows.map((r) => r.id);
+  },
+
   async archiveByWorktree(worktreeId: string, at: Date): Promise<string[]> {
     const { rows } = await pool.query<{ id: string }>(`UPDATE sessions SET archived_at = $2, updated_at = now() WHERE worktree_id = $1 AND archived_at IS NULL RETURNING id`, [worktreeId, at]);
     return rows.map((r) => r.id);

@@ -100,6 +100,8 @@ type Project {
   "Faux quand l'utilisateur atteint le projet en tant que super administrateur sans en être membre."
   isMember: Boolean!
   runnerStatus: RunnerStatus!
+  "Mémoire, CPU et processus Claude du conteneur (mesurés à la demande) ; null s'il n'est pas en marche."
+  containerStats: ContainerStats
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
   workspaceExists: Boolean!
@@ -798,6 +800,44 @@ type RunnerStatus {
   cpus: String
   startedAt: DateTime
   error: String
+  "Le conteneur existe mais a été créé avec une autre configuration ou une image depuis reconstruite : à recréer (fait automatiquement dès que rien ne tourne dans le projet)."
+  outdated: Boolean!
+  "Raisons lisibles de `outdated` : « option --init ajoutée », « image reconstruite le … », « montage ~/.claude ajouté »…"
+  outdatedReasons: [String!]!
+  "Processus zombies (terminés mais non récoltés) dans le conteneur ; null s'il ne tourne pas."
+  zombies: Int
+}
+
+"Mesure du conteneur d'un projet (cgroup v2, lu dans le conteneur)."
+type ContainerStats {
+  sampledAt: DateTime!
+  memoryUsedMb: Int!
+  "Limite mémoire du conteneur ; null si illimitée."
+  memoryLimitMb: Int
+  memoryPercent: Float
+  swapUsedMb: Int
+  "Utilisation CPU en pourcentage d'un cœur (200 = deux cœurs pleins)."
+  cpuPercent: Float
+  "Limite CPU en nombre de cœurs ; null si illimitée."
+  cpuLimit: Float
+  "Processus tués par le noyau faute de mémoire depuis la création du conteneur."
+  oomKills: Int!
+  "Depuis quand la mémoire dépasse 90 % de la limite (null : sous le seuil)."
+  memoryHighSince: DateTime
+  claudeProcesses: [ContainerProcess!]!
+}
+
+"Processus du CLI Claude Code dans le conteneur d'un projet."
+type ContainerProcess {
+  pid: Int!
+  rssMb: Int!
+  elapsedSeconds: Int!
+  "Session Skipper du processus ; null pour un CLI lancé à la main (terminal) ou une session supprimée."
+  session: Session
+  sessionId: ID
+  "Mémoire des autres processus de la session (commandes lancées par l'agent)."
+  childrenRssMb: Int!
+  cwd: String
 }
 
 type WorkspaceGit {
@@ -920,6 +960,13 @@ input MergePullRequestCleanup {
   completeTasks: Boolean = true
 }
 
+"Souvenir d'un worktree supprimé, gardé par les sessions archivées avec lui."
+type FormerWorktree {
+  name: String!
+  branch: String!
+  label: String!
+}
+
 type Session {
   id: ID!
   project: Project!
@@ -929,6 +976,8 @@ type Session {
   owner: User
   "Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet."
   archivedAt: DateTime
+  "Worktree supprimé dans lequel la session a travaillé (elle a été archivée avec lui) ; null sinon."
+  formerWorktree: FormerWorktree
   "Tâche dont la session est en charge."
   task: Task
   "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
@@ -1820,8 +1869,8 @@ type Query {
   sessionOwners(projectId: ID): [User!]!
   "Sessions archivées d'un projet, les plus récemment archivées d'abord ; search cherche dans le nom, la consigne et la conversation."
   archivedSessions(projectId: ID!, worktreeId: ID, search: String, limit: Int, offset: Int): [Session!]!
-  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base."
-  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges!
+  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base ; null : aucune branche de base à comparer (dépôt sans remote ni main/master)."
+  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges
   gitBranchFileDiff(projectId: ID!, worktreeId: ID, path: String!, origPath: String): GitDiff!
   "Éléments du coffre visibles par l'utilisateur connecté (siens, partagés, de ses projets, reliés à ses projets)."
   vaultItems(kind: VaultItemKind): [VaultItem!]!
@@ -2148,8 +2197,8 @@ type Mutation {
   archiveWorktree(id: ID!): Worktree!
   "Restaure un worktree archivé et les sessions archivées avec lui."
   restoreWorktree(id: ID!): Worktree!
-  "Supprime le worktree et tout ce qui y est rattaché (sessions actives arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
-  deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
+  "Supprime le worktree (dossier, terminaux fermés) ; ses sessions sont arrêtées si elles tournent puis archivées avec son souvenir, sauf deleteSessions (suppression définitive, historique compris). La branche est conservée sauf deleteBranch."
+  deleteWorktree(id: ID!, deleteBranch: Boolean = false, deleteSessions: Boolean = false): Boolean!
   "Crée un élément dans le coffre du projet (administrateurs) ou, sans projectId, dans le coffre personnel."
   createVaultItem(projectId: ID, input: VaultItemInput!): VaultItem!
   "Met à jour un élément (permission MANAGE ; les champs absents sont inchangés)."
@@ -2241,6 +2290,8 @@ input SessionScheduleInput {
   enabled: Boolean
   "Défaut : true."
   endAfterRun: Boolean
+  "Réglage de nettoyage de la session, enregistré en même temps que la planification (absent : inchangé). Proposé par défaut : « fresh »."
+  cleanup: SessionCleanupInput
 }
 
 extend type Session {
@@ -2267,9 +2318,30 @@ extend type Mutation {
 type SessionCleanup {
   "Les événements du transcript plus vieux que N jours sont supprimés (null : jamais)."
   retentionDays: Int
-  "Quand le contexte de l'agent dépasse contextMaxTokens : « compact » (compacter la conversation) ou « reset » (repartir d'une conversation neuve). Null : rien."
+  "Conversation de l'agent avant une exécution planifiée : « compact » (compacter) ou « reset » (repartir d'une conversation neuve) quand le contexte dépasse contextMaxTokens ; « fresh » : conversation neuve à chaque exécution. Null : rien."
   contextAction: String
   contextMaxTokens: Int
+}
+
+"Taille du contexte de l'agent et ce qu'elle implique (jauge de l'en-tête, pastille de la sidebar, bandeau de nettoyage)."
+type SessionContext {
+  "Tokens du contexte au dernier tour (null : inconnu)."
+  tokens: Int
+  "Seuil (constante du serveur) au-delà duquel l'interface propose de compacter ou de repartir d'une conversation neuve ; aucune action automatique."
+  warnTokens: Int!
+  overThreshold: Boolean!
+  "Modèle retenu pour l'estimation : dernier modèle facturé, sinon celui de la configuration."
+  model: String
+  "Fenêtre de contexte du modèle (tokens)."
+  windowTokens: Int!
+  "Part de la fenêtre occupée (0 à 1), null si la taille est inconnue."
+  share: Float
+  "Coût approximatif de la relecture du contexte à froid (cache expiré) au prochain tour, en dollars."
+  coldTurnUsd: Float
+}
+
+extend type Session {
+  context: SessionContext!
 }
 
 input SessionCleanupInput {
@@ -2295,4 +2367,8 @@ extend type Mutation {
   updateSession(id: ID!, input: UpdateSessionInput!): Session!
   "Applique tout de suite le nettoyage configuré : purge du transcript, puis compaction ou remise à zéro de la conversation si elle dépasse le seuil."
   applySessionCleanup(id: ID!): Session!
+  "Compacte tout de suite la conversation de l'agent (/compact), quel que soit le réglage de nettoyage. Erreur si l'agent travaille."
+  compactSessionContext(id: ID!): Session!
+  "Repart tout de suite d'une conversation neuve (la session en attente est d'abord terminée) ; avec `keepSummary`, les derniers échanges accompagnent la prochaine instruction. Le transcript affiché est conservé."
+  resetSessionContext(id: ID!, keepSummary: Boolean = true): Session!
 }

@@ -1,4 +1,4 @@
-import { useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import PageLoading from '../components/PageLoading';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-bootstrap';
@@ -18,7 +18,7 @@ const RECONNECT_MS = 3000;
  */
 export default function BrowserPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ session: Pick<Session, 'id' | 'name' | 'status' | 'browserActive'> & { project: { id: string; name: string } } | null }>(SESSION_BROWSER, {
+  const { data, loading, error } = usePollingQuery<{ session: Pick<Session, 'id' | 'name' | 'status' | 'browserActive'> & { project: { id: string; name: string } } | null }>(SESSION_BROWSER, {
     variables: { id },
     pollInterval: 5000,
   });

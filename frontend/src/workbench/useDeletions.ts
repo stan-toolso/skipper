@@ -1,7 +1,8 @@
 import { useApolloClient, type ApolloCache } from '@apollo/client';
 import { flushSync } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useDialogs } from '../components/Dialogs';
-import { ARCHIVE_WORKTREE, DELETE_SESSION, DELETE_TERMINAL, DELETE_WORKTREE, WORKTREE_CONTENTS } from '../graphql/operations';
+import { ARCHIVE_WORKTREE, DELETE_PROJECT, DELETE_SESSION, DELETE_TERMINAL, DELETE_WORKTREE, WORKTREE_CONTENTS } from '../graphql/operations';
 import { ARCHIVE_SESSION } from '../graphql/sessions';
 import { useTabs } from './TabsContext';
 
@@ -21,6 +22,13 @@ export interface DeletableWorktree {
   label: string;
 }
 
+export interface DeletableProject {
+  id: string;
+  name: string;
+  /** Chemins des onglets ouverts sur le projet (sessions, terminaux, worktrees) à fermer avec lui. */
+  paths: string[];
+}
+
 const typenames = { session: 'Session', terminal: 'Terminal' } as const;
 
 function evict(cache: ApolloCache<unknown>, __typename: string, id: string): void {
@@ -37,6 +45,8 @@ function evict(cache: ApolloCache<unknown>, __typename: string, id: string): voi
  */
 export function useDeletions() {
   const client = useApolloClient();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { confirm, alert, showError } = useDialogs();
   const { closeMatching } = useTabs();
 
@@ -151,7 +161,7 @@ export function useDeletions() {
   const removeWorktree = async (worktree: DeletableWorktree) => {
     const res = await confirm({
       title: 'Supprimer le worktree',
-      message: `Supprimer le worktree « ${worktree.label} » ? Ses sessions actives (arrêtées), ses terminaux et son dossier seront supprimés ; les fichiers non validés seront perdus. Préférez l'archivage pour garder une trace.`,
+      message: `Supprimer le worktree « ${worktree.label} » ? Son dossier est supprimé (les fichiers non validés sont perdus) et ses terminaux fermés. Ses sessions sont conservées : arrêtées si elles tournent, puis archivées avec leur transcript, leur coût et leur planification, consultables dans l'historique du projet. Pour pouvoir le restaurer tel quel, préférez l'archivage.`,
       confirmLabel: 'Supprimer',
       danger: true,
       checkbox: { label: 'Supprimer aussi la branche locale' },
@@ -165,7 +175,28 @@ export function useDeletions() {
     });
   };
 
+  /** Suppression d'un projet (administrateurs) : tout ce qu'il contient disparaît, les onglets se ferment, la page revient à la liste des projets. */
+  const deleteProject = async (project: DeletableProject) => {
+    const ok = await confirm({
+      title: 'Supprimer le projet',
+      message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, worktrees, agents, workflows, son conteneur et son dossier de travail seront supprimés. Irréversible.`,
+      confirmLabel: 'Supprimer définitivement',
+      danger: true,
+    });
+    if (!ok) return;
+    const prefixes = [`/projects/${project.id}`, ...project.paths];
+    const inside = (path: string) => prefixes.some((p) => path === p || path.startsWith(`${p}/`));
+    const layer = `delete:project:${project.id}`;
+    hide(layer, inside, [['Project', project.id]]);
+    if (inside(location.pathname)) navigate('/projects');
+    await finish(layer, async () => {
+      await client.mutate({ mutation: DELETE_PROJECT, variables: { id: project.id }, update: (cache) => evict(cache, 'Project', project.id) });
+      void client.refetchQueries({ include: ['Projects'] }).catch(() => undefined);
+    });
+  };
+
   return {
+    deleteProject,
     archiveSession,
     deleteSession: (session: DeletableItem) => removeItem('session', session),
     deleteTerminal: (terminal: DeletableItem) => removeItem('terminal', terminal),

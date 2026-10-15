@@ -270,7 +270,7 @@ class OpencodeRun {
       return this.finish({ exitCode: 1, error: `Le serveur OpenCode s'est arrêté (${signal ? `signal ${signal}` : `code ${code}`}) ; conteneur à court de mémoire ?` });
     });
     await Promise.race([this.connected, new Promise((resolve) => setTimeout(resolve, 10_000))]);
-    await this.prompt(ctx.initialMessage, ctx.initialAttachments);
+    await this.prompt(ctx.initialMessage, ctx.initialAttachments, ctx.initialPreamble);
     return this.handle();
   }
 
@@ -489,10 +489,10 @@ class OpencodeRun {
   // ---- Instructions ------------------------------------------------------------------------------
 
   /** Journalise l'instruction et l'envoie : texte, note des pièces jointes, images et PDF en parties fichier. */
-  private async prompt(text: string, attachments: Attachment[]): Promise<void> {
+  private async prompt(text: string, attachments: Attachment[], preamble?: string | null): Promise<void> {
     const { ctx } = this;
     this.beginTurn();
-    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}), ...(preamble ? { preamble: true } : {}) });
     await ctx.setActivity('busy');
     // Le nettoyage du contexte demande une compaction : OpenCode résume la conversation.
     if (text.trim() === '/compact' && !attachments.length) {
@@ -500,7 +500,8 @@ class OpencodeRun {
       if (res.error) throw new AppError(`Compaction OpenCode impossible : ${describeError(res.error)}`);
       return;
     }
-    const parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; filename: string; url: string }> = [{ type: 'text', text: attachments.length ? `${text}\n\n${attachmentsNote(attachments)}` : text }];
+    const body = preamble ? `${preamble}\n\n${text}` : text;
+    const parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; filename: string; url: string }> = [{ type: 'text', text: attachments.length ? `${body}\n\n${attachmentsNote(attachments)}` : body }];
     for (const a of attachments) {
       if (a.mediaType.startsWith('image/') || a.mediaType === 'application/pdf') parts.push({ type: 'file', mime: a.mediaType, filename: a.name, url: `file://${a.path}` });
     }

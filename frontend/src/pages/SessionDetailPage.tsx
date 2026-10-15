@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useSessionEvents } from '../lib/sessionEvents';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
@@ -13,11 +14,13 @@ import RelaunchModal from '../components/RelaunchModal';
 import { ARCHIVE_SESSION, UNARCHIVE_SESSION } from '../graphql/sessions';
 import { useAuth } from '../auth/AuthContext';
 
-import { bypassConnectionsWarning, permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
+import { bypassConnectionsWarning, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
+import { sessionDotClass } from '../workbench/WorkspaceTabs';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
 import ScheduleModal from '../components/ScheduleModal';
 import SessionSettingsModal from '../components/SessionSettingsModal';
+import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript from '../components/Transcript';
 import SessionChanges from '../components/SessionChanges';
 import { fileToolResultCount } from '../lib/sessionChanges';
@@ -35,6 +38,7 @@ import {
   SESSION_NAME,
   STOP_SESSION,
   UPDATE_SESSION_CONFIG,
+  type ChildSession,
   type ConfigField,
   type HumanRequest,
   type Provider,
@@ -42,7 +46,7 @@ import {
   type SessionChanges as SessionChangesData,
 } from '../graphql/operations';
 
-type SessionWithRequests = Session & { requests: HumanRequest[] };
+type SessionWithRequests = Session & { requests: HumanRequest[]; childSessions: ChildSession[] };
 
 const TECH_KEY = 'skipper.session.technical';
 const draftKey = (id: string) => `skipper.session.draft.${id}`;
@@ -67,7 +71,7 @@ type PageTab = 'conversation' | 'changes';
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
   const { events, loaded: eventsLoaded } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
@@ -230,6 +234,7 @@ export default function SessionDetailPage() {
 
   const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? archiveError ?? unarchiveError;
   const schedule = session.schedule;
+  const parentHint = session.parentSession ? (sessionStateHint(session.parentSession.status, session.parentSession.activity, 0) ?? sessionStatusLabels[session.parentSession.status]?.toLowerCase() ?? null) : null;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
   // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
@@ -278,6 +283,12 @@ export default function SessionDetailPage() {
                 · <i className="bi bi-diagram-2" /> {session.worktree.label}
               </>
             )}
+            {!session.worktree && session.formerWorktree && (
+              <>
+                {' '}
+                · <span title={`La session a travaillé dans le worktree ${session.formerWorktree.name} (branche ${session.formerWorktree.branch}), supprimé depuis`}><i className="bi bi-diagram-2" /> {session.formerWorktree.label} <span className="cc-dimmer">(worktree supprimé)</span></span>
+              </>
+            )}
             {session.owner && (
               <>
                 {' '}
@@ -291,13 +302,10 @@ export default function SessionDetailPage() {
               </>
             )}
             {archived && <> · <span className="cc-yellow">archivée</span></>}
-            {session.parentSession && (
+            {session.context.tokens !== null && (
               <>
                 {' '}
-                · lancée par{' '}
-                <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title="Session d'agent qui a lancé celle-ci">
-                  <i className="bi bi-robot" /> {session.parentSession.name}
-                </Link>
+                · <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
               </>
             )}
             {session.agent && (
@@ -405,6 +413,51 @@ export default function SessionDetailPage() {
           )}
         </div>
       </div>
+
+      {session.parentSession && (
+        <div className="cc-subagent">
+          <i className="bi bi-robot cc-subagent-icon" />
+          <span className="cc-subagent-text">
+            <strong>Sous-agent</strong> · cette session a été lancée par l'agent de la session{' '}
+            <Link to={`/sessions/${session.parentSession.id}`}>« {session.parentSession.name} »</Link>
+            {parentHint && <span className="cc-dim"> ({parentHint})</span>}, pas par une personne.
+          </span>
+          <Link to={`/sessions/${session.parentSession.id}`} className="cc-btn" title="Ouvrir la session parente">
+            <i className="bi bi-box-arrow-up-left" /> Session parente
+          </Link>
+        </div>
+      )}
+      {session.childSessions.length > 0 && (
+        <div className="cc-children" title="Sous-agents : sessions lancées par l'agent de cette session (outil sessions.create)">
+          <span className="cc-children-title">
+            <i className="bi bi-robot" /> {session.childSessions.length > 1 ? `${session.childSessions.length} sous-agents` : '1 sous-agent'}
+          </span>
+          {session.childSessions.map((c) => {
+            const hint = sessionStateHint(c.status, c.activity, c.pendingRequestCount) ?? (c.archivedAt ? 'archivée' : sessionStatusLabels[c.status]?.toLowerCase());
+            return (
+              <span key={c.id} className="cc-child">
+                <span className={`wb-dot ${sessionDotClass(c)}`} />
+                <Link to={`/sessions/${c.id}`} className="cc-child-name" title={`Ouvrir « ${c.name} »`}>
+                  {c.name}
+                </Link>
+                {hint && <span className="cc-dimmer">{hint}</span>}
+                {c.status === 'RUNNING' && (
+                  <button type="button" className="cc-link" title="L'agent de cette session finit ce qu'il fait, puis elle se termine" onClick={() => void endSession({ variables: { id: c.id } }).catch(() => undefined)}>
+                    terminer
+                  </button>
+                )}
+                {c.status === 'QUEUED' && (
+                  <button type="button" className="cc-link" title="La session ne démarrera pas" onClick={() => void stopSession({ variables: { id: c.id } }).catch(() => undefined)}>
+                    retirer de la file
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      <ContextBanner session={session} busy={Boolean(busy)} />
 
       <div className="cc-toggle">
         <div className="cc-tabs" role="tablist">

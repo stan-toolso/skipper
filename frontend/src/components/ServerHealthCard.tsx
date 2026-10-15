@@ -1,4 +1,4 @@
-import { useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import type { ReactNode } from 'react';
 import { Alert, Badge, Card, Col, ProgressBar, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -10,7 +10,7 @@ export function formatMb(mb: number | null | undefined): string {
   return mb >= 1024 ? `${(mb / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Go` : `${mb} Mo`;
 }
 
-function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number): string {
   if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}`;
   return `${Math.floor(seconds / 86400)} j ${Math.floor((seconds % 86400) / 3600)} h`;
@@ -19,7 +19,7 @@ function formatDuration(seconds: number): string {
 /** Couleur d'une jauge d'occupation (part utilisée de 0 à 1). */
 const gaugeVariant = (used: number) => (used >= 0.9 ? 'danger' : used >= 0.75 ? 'warning' : 'success');
 
-function Gauge({ label, used, total, detail }: { label: string; used: number; total: number; detail: string }) {
+export function Gauge({ label, used, total, detail }: { label: string; used: number; total: number; detail: string }) {
   const ratio = total > 0 ? used / total : 0;
   return (
     <div className="mb-3">
@@ -45,7 +45,7 @@ function Stat({ value, label, hint }: { value: ReactNode; label: string; hint?: 
 
 /** Bloc « Santé » des paramètres du serveur : mémoire, charge, sessions, processus, Docker et disque. */
 export default function ServerHealthCard({ memoryAlertThresholdMb }: { memoryAlertThresholdMb: number }) {
-  const { data, loading, error } = useQuery<{ serverHealth: ServerHealth }>(SERVER_HEALTH, { pollInterval: 15_000, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error } = usePollingQuery<{ serverHealth: ServerHealth }>(SERVER_HEALTH, { pollInterval: 15_000, fetchPolicy: 'cache-and-network' });
   const h = data?.serverHealth;
 
   return (

@@ -18,7 +18,11 @@ Trois notions :
   par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
   on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
   défaut d'y lancer aussitôt une session d'agent ; supprimer la dernière session ou le dernier terminal
-  d'un worktree propose (case à cocher) de supprimer aussi le worktree, qui resterait vide.
+  d'un worktree propose (case à cocher) d'archiver aussi le worktree, qui resterait vide. Supprimer un worktree
+  (interface, fusion d'une PR depuis le panneau git, outil MCP `worktrees.delete`) n'efface jamais ses sessions :
+  elles sont archivées avec leur transcript, leur coût, leur planification et leur lien de tâche, et gardent le nom
+  du worktree disparu (`Session.formerWorktree`) ; seule la mutation `deleteWorktree(deleteSessions: true)` les
+  supprime définitivement.
 - **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
   workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). La consigne de départ est
   facultative : sans consigne, la session est créée sans démarrer et la première instruction envoyée
@@ -195,7 +199,7 @@ backend/
       mcp.ts                   # serveur MCP `vault` (list, ssh_exec, ssh_upload, ssh_download, sql_query, sql_schema, http_request, browser_fill)
     google/
       service.ts               # comptes Google du coffre : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
-      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     sharedPages/               # pages partagées : publication, versions, membres, route de lecture en bac à sable, MCP `pages`
@@ -298,7 +302,9 @@ demande l'accord s'il le faut, puis tape la valeur par CDP ; les outils qui lira
 (`browser_evaluate`, `browser_run_code`) sont retirés quand le coffre a tapé quelque chose. Secret : des
 champs sans site, chaque saisie est soumise à accord avec la page affichée. Google : connecté par OAuth
 (`GET /auth/google/connect?projectId=…|personal=1&gmail=…&drive=…`), accès lecture ou écriture pour Gmail et
-Drive, même serveur MCP `google` qu'auparavant (`account` = nom de l'élément).
+Drive, même serveur MCP `google` qu'auparavant (`account` = nom de l'élément) : `gmail_search`, `gmail_read`,
+`gmail_attachment` (pièce jointe d'un mail téléchargée dans le dossier de travail), `gmail_send`, `drive_search`,
+`drive_read`, `drive_download`, `drive_upload`, `drive_write`.
 
 **Réservés à Skipper.** Un **jeton applicatif** (`backend/src/vault/tokens.ts`) est un identifiant
 que Skipper utilise pour le compte d'une personne : jeton d'abonnement Claude (`claude`, obtenu par
@@ -437,7 +443,7 @@ conteneur de l'agent.
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
   worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
   de l'utilisateur de Skipper, donc aucune traduction de chemin. Le dossier personnel est un tmpfs
-  inscriptible (512 Mo) dans lequel `~/.claude`, `~/.claude.json` et `~/.gitconfig` de l'hôte sont
+  inscriptible (512 Mo) dans lequel `~/.claude` (propre au projet) et `~/.gitconfig` de l'hôte sont
   montés : Chromium (rapports de plantage, profil) et npm (cache) exigent un dossier personnel
   inscriptible. Le SDK reste dans le backend : il
   reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
@@ -448,7 +454,34 @@ conteneur de l'agent.
   ses conversations survivent à la recréation) et seul `~/.gitconfig` vient de l'hôte. Le
   conteneur joint le serveur Skipper par `host.docker.internal` (ponts MCP des sessions OpenCode). Le
   terminal web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
-  page du projet (démarrer, arrêter, recréer).
+  page du projet (démarrer, arrêter, recréer). Il est lancé avec `--init` (processus init en PID 1, sinon
+  `sleep infinity` laisse s'accumuler des processus zombies à chaque commande d'agent ou lancement de
+  Chromium) et porte un label `skipper.spec` : le JSON de sa configuration de création (image et
+  identifiant de l'image, `--init`, limites, utilisateur, montages, tmpfs, commande ; `runners/spec.ts`).
+  `runnerStatus` compare ce label à la configuration attendue aujourd'hui et à l'image locale :
+  `outdated` et `outdatedReasons` (« option --init ajoutée », « image reconstruite le … », « montage
+  ~/.claude ajouté », « conteneur créé avant le suivi de sa configuration »…) ; la page du projet affiche
+  alors un badge « à recréer » avec les raisons. Un conteneur obsolète est **recréé de lui-même** : au
+  démarrage du backend (rien n'y tourne encore), puis par `ensureReady` dès que le projet est inactif
+  (aucune session dont le processus tourne, aucun terminal ouvert) ; sinon il reste signalé jusqu'au
+  clic « Recréer ». La carte compte aussi les processus zombies du conteneur (`docker top`), à titre de
+  diagnostic : un conteneur recréé avec `--init` n'en a pas.
+
+- **Mémoire et CPU des conteneurs** (`runners/stats.ts`, `runners/monitor.ts`) : `Project.containerStats`
+  lit le cgroup v2 du conteneur par un `docker exec` (`memory.current` moins `inactive_file`, comme
+  `docker stats` ; `memory.max`, swap, `cpu.max`, deux lectures de `cpu.stat` à 0,5 s d'écart,
+  compteur `oom_kill` de `memory.events`) et liste les processus `claude` avec leur mémoire. Chaque CLI
+  de session reçoit `SKIPPER_SESSION_ID` (transmis par le script de relais) : un processus est ainsi
+  relié à sa session, et les commandes qu'il lance (même variable héritée) sont comptées avec elle. Mesure
+  en cache 4 s. La carte « Environnement d'exécution » de la page projet l'affiche toutes les 10 s
+  (jauges, processus par session avec leur activité, processus orphelins) ; un administrateur y
+  modifie les limites, appliquées à chaud par `docker update` (swap = 2 × mémoire, comme `docker run`)
+  comme depuis le formulaire du projet. Toutes les 30 s, la surveillance mesure chaque conteneur : au-delà
+  de 90 % de la limite pendant plus d'une minute, notification `container.memory_high` au projet
+  (réarmée sous 80 %). À la fin d'une session en erreur, `containerMonitor.explainFailure` regarde le
+  code 137 (SIGKILL), la hausse de `oom_kill` depuis la dernière mesure et `State.OOMKilled` : l'erreur
+  du transcript et de la notification devient « le conteneur du projet a dépassé sa limite mémoire… »,
+  suivie du détail d'origine.
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : au début de chaque session, Skipper lance un Chromium sans fenêtre dans
@@ -598,8 +631,14 @@ réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Upda
 pour les lectures et recherches, diff numéroté pour les modifications, début de la sortie pour les
 commandes. Les chemins sont relatifs au dossier de travail ; les messages internes des sous-agents
 sont résumés sur l'appel qui les lance ; les autorisations accordées ne laissent pas de trace (un
-refus apparaît comme l'erreur de l'outil). « Afficher les détails techniques » ajoute les lignes de
-service : démarrage, demandes d'autorisation, audit des connexions, erreurs brutes. Les événements
+refus apparaît comme l'erreur de l'outil). Pour rester lisible, les étapes d'un tour sont **repliées
+en une ligne** (`⏺ 12 étapes · Read ×4 · Bash ×5`, dépliée au clic) : seuls le dernier message de
+l'agent et ses questions restent en vue ; pendant un tour, la ligne nomme l'étape en cours. Une
+commande sortie en code non nul avec une sortie est un avertissement (code en jaune), pas une erreur.
+Côté serveur, `sessions/providers/claudeNoise.ts` n'enregistre pas les messages du SDK sans intérêt
+pour l'historique (progression des outils, compteurs). « Afficher les détails techniques » montre
+chaque étape et ajoute les lignes de service : démarrage, demandes d'autorisation, audit des
+connexions, erreurs brutes. Les événements
 sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
 seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
@@ -707,8 +746,16 @@ prompt système :
 Garde-fous (`backend/src/sessions/service.ts`) : une session lancée par un agent reste dans le projet de
 l'agent, l'imbrication est limitée à deux niveaux (humain → agent → agent → stop), et au plus trois
 sessions lancées par une même session tournent en même temps. Une session lancée par un agent déclenche
-une notification `session.created` ; sa page indique « lancée par » avec un lien vers la session parente
-(`Session.parentSession`, `Session.childSessions`).
+une notification `session.created`. Dans l'interface ces sessions sont des **sous-agents**, identifiables d'un
+coup d'œil : dans la sidebar (et la sous-barre d'un dossier), une session parente porte un compteur
+« robot N » et ses sous-agents sont repliés derrière une ligne « N sous-agents » (dépliée d'office quand on
+est sur l'un d'eux ou qu'un sous-agent attend une réponse) ; dépliés, ils apparaissent indentés, reliés par
+└ et marqués d'un robot ; un sous-agent dont la parente est dans un autre dossier reste au premier niveau avec
+son robot. La page d'un sous-agent s'ouvre par un bandeau « Sous-agent · lancée par l'agent de la session
+« … » » avec l'état de la parente et un bouton vers elle ; celle de la parente liste ses sous-agents avec leur
+état, un lien et de quoi les terminer (`Session.parentSession`, `Session.childSessions`). Dans le transcript,
+les identifiants de session cités par les outils `sessions` (dont celui renvoyé par `create`) sont des liens.
+Rien ne change pour les sessions lancées par un humain.
 
 ## Sessions planifiées
 
@@ -750,17 +797,32 @@ planifiée qui tourne tous les jours. Deux réglages indépendants (`Session.cle
 - **Purge du transcript** : les événements de plus de N jours sont supprimés (`retentionDays`). La consommation
   enregistrée (`usage_ledger`) n'est pas touchée. Appliquée avant chaque exécution planifiée et par un balayage
   toutes les heures (`cleanupService.sweep`, lancé par l'ordonnanceur).
-- **Conversation de l'agent** : quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter**
-  (`contextAction: compact` : la commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la
-  fin du tour), soit **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain
-  lancement ne reprend plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution
-  planifiée ; une session en cours de travail est laissée tranquille (le nettoyage est reporté).
+- **Conversation de l'agent** : **repartir d'une conversation neuve à chaque exécution planifiée**
+  (`contextAction: fresh`, réglage par défaut d'une nouvelle planification : le contexte reste stable d'un jour à
+  l'autre), ou, quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter** (`compact` : la
+  commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la fin du tour), soit
+  **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain lancement ne reprend
+  plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution planifiée ; une
+  session qui attend des instructions est d'abord terminée, une session au travail est laissée tranquille (le
+  nettoyage est reporté).
+
+La modale de planification porte le même réglage (`SessionScheduleInput.cleanup`) : une nouvelle planification
+part sur « nouvelle conversation à chaque exécution », une planification existante sans nettoyage affiche un
+avertissement et un bouton « Activer le nettoyage par défaut » (rien n'est modifié sans l'accord de l'utilisateur ;
+la migration `034` ne touche pas aux planifications existantes).
 
 La taille du contexte (`Session.contextTokens`) est relevée par le provider Claude sur les messages assistant
 (tokens d'entrée, cache compris, du dernier appel au modèle) et sur les frontières de compaction
-(`compact_boundary`, `post_tokens`). « Nettoyer maintenant » applique les réglages sans attendre
-(`applySessionCleanup`) ; `updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les
-événements `cleanup` (purge, compaction, remise à zéro, report) apparaissent dans le transcript.
+(`compact_boundary`, `post_tokens`). Elle est **visible sans ouvrir les réglages** : jauge dans l'en-tête de la
+page de session (`Session.context` : tokens, part de la fenêtre du modèle, coût approximatif de la relecture du
+contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans la sidebar et les
+onglets au-delà du seuil serveur (`CONTEXT_WARN_TOKENS`, 150 000 tokens). Au-delà de ce seuil, un bandeau propose
+« Compacter » (`compactSessionContext`), « Repartir d'une conversation neuve » (`resetSessionContext`, avec ou
+sans résumé des derniers échanges, transmis au modèle avec la prochaine instruction via `sessions.resume_digest`)
+ou « Ignorer » (jusqu'à 50 000 tokens de plus) ; rien n'est fait automatiquement pour une session manuelle.
+« Nettoyer maintenant » applique les réglages sans attendre (`applySessionCleanup`) ;
+`updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les événements `cleanup` (purge,
+compaction, remise à zéro, report) apparaissent dans le transcript.
 
 ## Explorateur de fichiers et éditeur
 

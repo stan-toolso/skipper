@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import PageLoading, { ProjectPageLoading } from '../components/PageLoading';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, ButtonGroup, Col, Form, Nav, Row, Table } from 'react-bootstrap';
@@ -245,7 +246,7 @@ function InstructionEditor({ id, folders, onDeleted }: { id: string; folders: Co
       {saveError && <Alert variant="danger">{saveError.message}</Alert>}
 
       <h3 className="h6 mt-3">Versions</h3>
-      <Table size="sm" hover className="small">
+      <Table size="sm" hover responsive className="small">
         <tbody>
           {(instruction.versions ?? []).map((v) => (
             <tr key={v.id} className={v.version === viewVersion ? 'table-active' : undefined} style={{ cursor: 'pointer' }} onClick={() => setViewVersion(v.version === instruction.version ? null : v.version)}>
@@ -273,7 +274,7 @@ export default function ContextPage() {
   const selectedId = searchParams.get('instruction');
   const [tab, setTab] = useState<'library' | 'changes'>('library');
 
-  const { data, loading, error } = useQuery<{ project: ProjectContext | null }>(PROJECT_CONTEXT, { variables: { id }, pollInterval: 5000 });
+  const { data, loading, error } = usePollingQuery<{ project: ProjectContext | null }>(PROJECT_CONTEXT, { variables: { id }, pollInterval: 5000 });
   const [createFolder, { error: folderError }] = useMutation(CREATE_CONTEXT_FOLDER, { refetchQueries: ['ProjectContext'] });
   const [renameFolder] = useMutation(RENAME_CONTEXT_FOLDER, { refetchQueries: ['ProjectContext'] });
   const { confirm, prompt } = useDialogs();

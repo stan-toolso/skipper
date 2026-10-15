@@ -19,7 +19,8 @@ import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
 import { archiveWorktreeCascade, deleteProjectCascade, deleteWorktreeCascade, restoreWorktreeCascade } from '../projects/cleanup.js';
-import { runner } from '../runners/index.js';
+import { runner, type RunnerConfig } from '../runners/index.js';
+import { containerMonitor } from '../runners/monitor.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -54,6 +55,7 @@ import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { scheduleService } from '../schedules/service.js';
 import { cleanupService } from '../sessions/cleanup.js';
+import { CONTEXT_WARN_TOKENS, contextEstimate, contextModel } from '../sessions/context.js';
 import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worktreePath, worktreeService } from '../worktrees/service.js';
@@ -87,6 +89,13 @@ const loadSession = async (id: string) => {
   return session;
 };
 const guardSession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfSession(id), min);
+
+/** Parent des champs de `SessionContext` : la session, et le modèle résolu paresseusement (une requête au plus). */
+interface ContextParent {
+  session: Session;
+  model?: Promise<string | null>;
+}
+const modelOfContext = (p: ContextParent) => (p.model ??= contextModel(p.session).catch(() => null));
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
@@ -440,6 +449,22 @@ export const resolvers = {
     workspacePath: (project: Project) => workspacePath(project),
     permissionRules: (project: Project) => permissionRuleService.list(project.id),
     runnerStatus: (project: Project) => runner.status(project),
+    containerStats: async (project: Project) => {
+      const stats = await runner.stats(project);
+      if (!stats) return null;
+      return {
+        ...stats,
+        memoryHighSince: containerMonitor.memoryHighSince(project.id),
+        claudeProcesses: stats.claudeProcesses.map((p) => ({
+          ...p,
+          // Une session d'un autre projet ne peut pas tourner dans ce conteneur ; on vérifie quand même.
+          session: async () => {
+            const session = p.sessionId ? await sessionRepository.findById(p.sessionId) : null;
+            return session?.projectId === project.id ? session : null;
+          },
+        })),
+      };
+    },
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     isMember: async (project: Project, _: unknown, ctx: Ctx) => (await memberRoleFor(ctx, project.id)) !== null,
@@ -471,7 +496,7 @@ export const resolvers = {
     owner: (session: Session) => userOrNull(session.ownerId),
     task: (session: Session) => taskService.forSession(session.id),
     parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
-    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
+    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, archived: 'all', limit: 50 }),
     agent: (session: Session) => (session.agentId ? agentService.find(session.agentId) : null),
     agentRun: (session: Session) => (session.agentRunId ? agentRepository.findRun(session.agentRunId) : null),
     workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
@@ -484,12 +509,25 @@ export const resolvers = {
     queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),
+    context: (session: Session): ContextParent => ({ session }),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
   },
 
   SessionChanges: {
     mode: (c: SessionChanges) => c.mode.toUpperCase(),
+  },
+
+  // Les champs qui ne dépendent pas du modèle sont gratuits (sidebar) ; le modèle n'est cherché (relevé de
+  // consommation) que si un champ qui en dépend est demandé, une seule fois par session.
+  SessionContext: {
+    tokens: (p: ContextParent) => p.session.contextTokens,
+    warnTokens: () => CONTEXT_WARN_TOKENS,
+    overThreshold: (p: ContextParent) => contextEstimate(p.session.contextTokens, null).overThreshold,
+    model: (p: ContextParent) => modelOfContext(p),
+    windowTokens: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).windowTokens,
+    share: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).share,
+    coldTurnUsd: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).coldTurnUsd,
   },
 
   Query: {
@@ -1018,9 +1056,21 @@ export const resolvers = {
     },
     updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {
       await requireProject(ctx, id, 'admin');
+      const before = await projectService.get(id);
       const project = await projectService.update(id, input);
       // Limite du projet changée : des places se libèrent peut-être pour la file d'attente.
       void sessionService.drainQueue();
+      // Limites mémoire / CPU modifiées : appliquées à chaud au conteneur existant, sans couper les sessions.
+      if (input.runnerConfig !== undefined) {
+        const limits = (p: Project) => `${(p.runnerConfig as RunnerConfig)?.memory ?? ''}|${(p.runnerConfig as RunnerConfig)?.cpus ?? ''}`;
+        if (limits(before) !== limits(project)) {
+          try {
+            await runner.applyLimits(project);
+          } catch (err) {
+            throw new AppError(`Limites enregistrées mais pas appliquées au conteneur en marche (${(err as Error).message}) : « Recréer » le conteneur pour les appliquer.`);
+          }
+        }
+      }
       return project;
     },
     prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {
@@ -1125,6 +1175,14 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return cleanupService.applyNow(args.id);
     },
+    compactSessionContext: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.compactNow(args.id);
+    },
+    resetSessionContext: async (_: unknown, args: { id: string; keepSummary?: boolean | null }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.resetNow(args.id, args.keepSummary ?? true);
+    },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');
       return requestService.answer(args.id, args.response ?? {}, requireUser(ctx).id);
@@ -1200,9 +1258,9 @@ export const resolvers = {
       await guardWorktree(ctx, args.id, 'member');
       return restoreWorktreeCascade(args.id);
     },
-    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
+    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null; deleteSessions?: boolean | null }, ctx: Ctx) => {
       await guardWorktree(ctx, args.id, 'member');
-      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false);
+      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false, { deleteSessions: args.deleteSessions ?? false });
     },
     // Coffre : les droits sont vérifiés par le service (use / read / manage) ; un projet propriétaire exige un administrateur.
     createVaultItem: async (_: unknown, args: { projectId?: string | null; input: VaultItemInput }, ctx: Ctx) => {

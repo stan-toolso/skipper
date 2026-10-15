@@ -1,4 +1,4 @@
-import type { SessionActivity, SessionStatus, TerminalStatus } from '../graphql/operations';
+import type { ProjectRole, SessionActivity, SessionStatus, TerminalStatus } from '../graphql/operations';
 
 /**
  * Dossiers de travail : le checkout principal d'un projet (« primary ») ou l'un de ses worktrees. Tout ce qui
@@ -13,7 +13,11 @@ export interface SidebarSession {
   activity: SessionActivity | null;
   pendingRequestCount: number;
   browserActive: boolean;
+  /** Contexte de l'agent : au-delà du seuil serveur, une pastille invite à le nettoyer. */
+  context: { tokens: number | null; overThreshold: boolean };
   owner: { id: string; name: string; avatarUrl: string | null } | null;
+  /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain. */
+  parentSession: { id: string } | null;
   worktree?: { id: string } | null;
 }
 
@@ -43,6 +47,8 @@ export interface SidebarProject {
   gitUrl: string | null;
   gitBranch: string | null;
   isMember: boolean;
+  /** Rôle de la personne : ADMIN peut modifier et supprimer le projet. */
+  myRole: ProjectRole;
   sessions: SidebarSession[];
   terminals: SidebarTerminal[];
   worktrees: SidebarWorktree[];
@@ -89,6 +95,106 @@ export function mineFirst<T extends { owner: { id: string } | null }>(sessions: 
 }
 
 export const participates = (s: { owner: { id: string } | null }, userId: string | null) => !s.owner || s.owner.id === userId;
+
+/** Une session dans l'arborescence d'un dossier : sa profondeur sous sa session parente, et le nom de celle-ci si elle est dans la même liste. */
+export interface SessionNode<T> {
+  session: T;
+  /** 0 : session de premier niveau ; 1, 2… : lancée par la session qui la précède dans la liste. */
+  depth: number;
+  /** Lancée par un agent (parentSession non null), que la parente soit listée ici ou non. */
+  byAgent: boolean;
+  /** Nom de la session parente quand elle est dans la liste. */
+  parentName: string | null;
+}
+
+/**
+ * Sessions d'un dossier rangées en arbre : chaque session lancée par un agent suit sa session parente, indentée,
+ * dans l'ordre de la liste. Une session dont la parente n'est pas dans la liste (autre worktree, archivée,
+ * masquée par le filtre) reste au premier niveau, marquée « lancée par un agent ». Les cycles ne sont pas
+ * possibles en base ; si une parente manque, on ne boucle pas.
+ */
+export function sessionTree<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[]): SessionNode<T>[] {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const children = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const s of sessions) {
+    const parentId = s.parentSession?.id;
+    if (parentId && parentId !== s.id && byId.has(parentId)) children.set(parentId, [...(children.get(parentId) ?? []), s]);
+    else roots.push(s);
+  }
+  const out: SessionNode<T>[] = [];
+  const seen = new Set<string>();
+  const visit = (s: T, depth: number, parentName: string | null) => {
+    if (seen.has(s.id)) return;
+    seen.add(s.id);
+    out.push({ session: s, depth, byAgent: Boolean(s.parentSession), parentName });
+    for (const c of children.get(s.id) ?? []) visit(c, depth + 1, s.name);
+  };
+  for (const r of roots) visit(r, 0, null);
+  return out;
+}
+
+/** Une session de premier niveau et, à plat, tous ses sous-agents (sessions lancées par son agent, et par les leurs). */
+export interface SessionGroup<T> {
+  root: SessionNode<T>;
+  children: SessionNode<T>[];
+}
+
+/**
+ * Sessions de premier niveau d'une liste (celles d'un dossier), chacune avec ses descendants cherchés dans `pool`
+ * (toutes les sessions du projet) : un sous-agent lancé dans un autre worktree se range ainsi sous sa parente, et une
+ * session dont la parente est dans un autre dossier reste de premier niveau ici, avec le nom de sa parente.
+ */
+export function sessionGroups<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[], pool: T[] = sessions): SessionGroup<T>[] {
+  const poolNodes = sessionTree(pool);
+  const index = new Map(poolNodes.map((n, i) => [n.session.id, i]));
+  const groups: SessionGroup<T>[] = [];
+  for (const node of sessionTree(sessions)) {
+    if (node.depth > 0) continue; // ses descendants sont ceux du pool, rangés sous leur parente
+    const i = index.get(node.session.id);
+    const self = i === undefined ? node : poolNodes[i];
+    const children: SessionNode<T>[] = [];
+    if (i !== undefined) for (let j = i + 1; j < poolNodes.length && poolNodes[j].depth > self.depth; j++) children.push({ ...poolNodes[j], depth: poolNodes[j].depth - self.depth });
+    groups.push({ root: { ...node, parentName: node.parentName ?? self.parentName }, children });
+  }
+  return groups;
+}
+
+/**
+ * Vrai pour un sous-agent dont la parente (ou une aïeule) est dans un autre dossier du projet : il n'est listé que
+ * sous elle, pas comme session à part dans le dossier où il travaille. `here` : identifiants des sessions du dossier ;
+ * `pool` : toutes les sessions du projet par identifiant.
+ */
+export function attachedElsewhere(s: { parentSession: { id: string } | null }, here: Set<string>, pool: Map<string, { parentSession: { id: string } | null }>): boolean {
+  const seen = new Set<string>();
+  let current = s;
+  while (current.parentSession && pool.has(current.parentSession.id) && !seen.has(current.parentSession.id)) {
+    if (!here.has(current.parentSession.id)) return true;
+    seen.add(current.parentSession.id);
+    current = pool.get(current.parentSession.id)!;
+  }
+  return false;
+}
+
+/** Résumé d'un lot de sous-agents pour une ligne repliée : « 2 sous-agents », état dominant, demandes en attente. */
+export function subagentsSummary(children: Pick<SidebarSession, 'status' | 'activity' | 'pendingRequestCount'>[]): { label: string; state: WorkspaceState; pending: number; hint: string | null } {
+  const pending = children.reduce((n, s) => n + s.pendingRequestCount, 0);
+  const working = children.filter((s) => s.status === 'RUNNING' && s.activity === 'BUSY').length;
+  const idle = children.filter((s) => s.status === 'RUNNING' && s.activity !== 'BUSY').length;
+  const queued = children.filter((s) => s.status === 'QUEUED').length;
+  const one = children.length === 1;
+  const label = `${children.length} sous-agent${one ? '' : 's'}`;
+  const hint = pending
+    ? null
+    : working
+      ? one ? 'travaille' : `${working} au travail`
+      : idle
+        ? one ? 'attend des instructions' : `${idle} en attente`
+        : queued
+          ? one ? "en file d'attente" : `${queued} en file`
+          : one ? 'terminé' : 'terminés';
+  return { label, state: workspaceState(children), pending, hint };
+}
 
 /** Index des dossiers de travail construit à partir de la requête Sidebar. */
 export class WorkspaceIndex {
