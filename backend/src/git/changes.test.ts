@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Le dossier de travail est un dépôt git temporaire recréé pour chaque test.
 const dirs = vi.hoisted(() => ({ root: '' }));
 vi.mock('../files/service.js', () => ({ resolveRoot: async () => dirs.root }));
+vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, gitBranch: null }) } }));
 vi.mock('../settings/github.js', () => ({ githubService: { gitConfigArgs: async () => [] } }));
 
 const { gitService, headCommitOf } = await import('./service.js');
@@ -100,5 +101,24 @@ describe('modifications depuis le commit de départ', () => {
   it('refuse un chemin qui sort du dossier', async () => {
     await expect(gitService.restoreFromBase(ref, null, '../x')).rejects.toThrow(/Chemin invalide/);
     await expect(gitService.diffSince(ref, null, '/etc/passwd')).rejects.toThrow(/Chemin invalide/);
+  });
+});
+
+describe('modifications de la branche depuis sa base', () => {
+  it('compare à main : commits de la branche et travail non validé', async () => {
+    run('checkout', '-q', '-b', 'feature');
+    await write('a.txt', 'un\ndeux\ntrois\n');
+    run('commit', '-q', '-am', 'sur la branche');
+    await write('c.txt', 'nouveau\n');
+    const changes = await gitService.branchChanges(ref);
+    expect(changes).toMatchObject({ branch: 'feature', baseBranch: 'main', commits: 1 });
+    expect(changes?.files.map((f) => f.path).sort()).toEqual(['a.txt', 'c.txt']);
+  });
+
+  it("renvoie null, sans erreur, quand le dépôt n'a aucune branche de base", async () => {
+    run('branch', '-m', 'main', 'trunk');
+    gitService.invalidate(ref);
+    await expect(gitService.branchChanges(ref)).resolves.toBeNull();
+    await expect(gitService.branchDiff(ref, 'a.txt')).rejects.toThrow(/Aucune branche de base/);
   });
 });

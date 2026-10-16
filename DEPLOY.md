@@ -140,10 +140,11 @@ cd ~/skipper && docker build -t skipper-runner:latest deploy/runner
 
 Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env`
 (768m en production), et par projet dans son formulaire (« Mémoire », « CPU »), appliqués à la
-création du conteneur. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
-Claude Code prend 100 à 200 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo), `tsc`, `vite build`.
+création du conteneur et à chaud au conteneur existant. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
+Claude Code prend ≈ 250 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo), `tsc`, `vite build`.
 Au-delà de la limite, le noyau tue des processus du conteneur : commandes interrompues et sessions
-en erreur « Claude Code process exited with code 137 ». Réglages en place depuis le 30/09/2026 :
+en erreur ; Skipper l’explique alors dans le transcript (« le conteneur du projet a dépassé sa limite
+mémoire »). Réglages en place depuis le 30/09/2026 :
 Skipper 2g (plusieurs agents buildent en parallèle dans des worktrees), SUF 1500m (navigateur),
 Curso 768m (défaut). Pour vérifier et ajuster sans couper les sessions :
 
@@ -153,8 +154,24 @@ sudo journalctl -k -b | grep "Killed process"              # processus tués fau
 docker update --memory 2g --memory-swap 4g skipper-<slug>  # limite relevée à chaud, sans redémarrage
 ```
 
-`docker update` ne vaut que pour le conteneur en cours : reporter la même valeur dans le formulaire du
-projet, sinon elle est perdue à la prochaine recréation.
+Modifier les limites depuis la page du projet (carte « Environnement d'exécution », « Modifier ») ou
+son formulaire les enregistre **et** les applique à chaud (`docker update`, swap = 2 × mémoire). Un
+`docker update` lancé à la main ne vaut que pour le conteneur en cours : reporter la même valeur dans
+le projet, sinon elle est perdue à la prochaine recréation. La même carte montre la mémoire et le CPU
+du conteneur, les processus `claude` par session et le nombre de processus tués faute de mémoire ;
+une notification avertit quand un conteneur reste au-dessus de 90 % de sa limite plus d'une minute.
+
+**Dimensionner la limite d'un projet** : c'est le nombre de sessions ouvertes, plus que les builds,
+qui remplit le conteneur (constat du 01/10/2026 : 5 processus `claude` de 225 à 293 Mo, dont 3 de
+sessions inactives). Compter :
+
+- ≈ 250 Mo par session Claude ouverte (même inactive), plus 300 à 500 Mo avec le navigateur headless ;
+- ≈ 400 Mo pour un `npm ci`, 400 à 900 Mo pour un `tsc`, ≈ 900 Mo pour un `vite build` ;
+- une marge de 20 %.
+
+Exemples : 2 sessions sans build → 768m ; 4 sessions dont une qui builde → 2g ; projet avec
+navigateur et 3 sessions → 1500m à 2g. Terminer les sessions inutiles libère plus vite qu'un
+relèvement de limite (la somme des limites peut dépasser la RAM du serveur).
 Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
 projet applique la nouvelle image.
 
@@ -207,10 +224,14 @@ prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 ## Image du runner Docker
 
 Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, CLI OpenCode pour les
-sessions OpenCode, Playwright/Chromium pour l'option « navigateur headless ») : `docker build -t skipper-runner deploy/runner` sur le serveur
+sessions OpenCode, Playwright/Chromium pour l'option « navigateur headless », CLI AWS pour les comptes
+AWS du coffre) : `docker build -t skipper-runner deploy/runner` sur le serveur
 (≈ 1 Go, l'ARM64 télécharge son propre Chromium), puis « Recréer » le conteneur sur la page de
 chaque projet concerné. Une session avec navigateur prend 300 à 500 Mo de plus : prévoir au moins
-1,5 Go pour le conteneur du projet.
+1,5 Go pour le conteneur du projet. Les comptes AWS du coffre (outil `aws_run`) exigent une image
+reconstruite avec le CLI AWS v2 (≈ 250 Mo de plus) : sans lui, l'outil répond « “aws” est absent de l'image » ;
+chaque commande tourne dans un conteneur jetable `skipper-run-*` (512 Mo au plus, supprimé à la fin), hors du
+conteneur du projet, qui n'a donc pas besoin d'être recréé.
 
 La vue en direct du navigateur passe par le WebSocket `/browsers/<session>` : reporter le bloc
 `location /browsers/` de `deploy/nginx-skipper.conf` dans `/etc/nginx/sites-available/skipper`, puis
@@ -231,6 +252,39 @@ curl -s -X POST https://skipper.toolso.io/graphql \
   -H 'content-type: application/json' -d '{"query":"{ providers { type label } }"}'
 curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 ```
+
+## Journaux
+
+Le backend écrit une ligne par message : horodatage ISO, niveau (`DEBUG`, `INFO`, `WARN`, `ERROR`) puis
+le message avec son préfixe de module (`[sessions]`, `[graphql]`…). `info` et `debug` vont sur la
+sortie standard (`~/.pm2/logs/skipper-out.log`), `warn` et `error` sur la sortie d'erreur
+(`~/.pm2/logs/skipper-error.log`). Le niveau minimal se règle avec `LOG_LEVEL` dans le `.env`
+(défaut `info` ; `pm2 restart skipper --update-env` après modification).
+
+Une erreur métier renvoyée au client (`AppError` : refus, ressource introuvable, dépôt sans branche de
+base…) tient sur une ligne `WARN [graphql] <opération> · <champ> · <utilisateur> : <message>`. Seules les
+erreurs inattendues sortent en `ERROR` avec leur trace : le journal d'erreurs ne devrait contenir que de
+vraies anomalies. Les avertissements de Node attendus par conception (le SDK Claude signalant que
+`canUseTool` n'est pas consulté pour les serveurs MCP internes, code `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`)
+sont journalisés une seule fois, en `INFO`.
+
+**Rotation** : pm2 ne fait pas tourner ses fichiers de journal (le journal d'erreurs dépassait
+10 000 lignes en octobre 2026). Installer une fois le module `pm2-logrotate` :
+
+```bash
+export NVM_DIR=$HOME/.nvm; . $NVM_DIR/nvm.sh
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M          # rotation dès qu'un fichier dépasse 10 Mo
+pm2 set pm2-logrotate:retain 14             # 14 fichiers tournés conservés par journal
+pm2 set pm2-logrotate:compress true         # fichiers tournés compressés en gzip
+pm2 set pm2-logrotate:rotateInterval '0 0 * * *'   # et une rotation quotidienne à minuit
+pm2 set pm2-logrotate:workerInterval 60     # vérification de la taille toutes les 60 s
+pm2 conf pm2-logrotate                      # relire les réglages
+pm2 flush skipper                           # (optionnel) vider les journaux courants, une fois
+```
+
+Le module est lui-même un processus pm2 (`pm2 list` l'affiche), sauvegardé avec `pm2 save` et relancé
+au démarrage par le service systemd.
 
 ## Bon à savoir
 

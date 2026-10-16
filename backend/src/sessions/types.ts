@@ -23,8 +23,11 @@ export interface AttachmentInput {
 export interface SessionCleanup {
   /** Les événements du transcript plus vieux que N jours sont supprimés (null : jamais). */
   retentionDays?: number | null;
-  /** Quand le contexte de l'agent dépasse contextMaxTokens : compacter la conversation ou repartir d'une conversation neuve. */
-  contextAction?: 'compact' | 'reset' | null;
+  /**
+   * Conversation de l'agent avant une exécution planifiée : « compact » (compacter) ou « reset » (repartir d'une
+   * conversation neuve) quand le contexte dépasse contextMaxTokens ; « fresh » : conversation neuve à chaque exécution.
+   */
+  contextAction?: 'compact' | 'reset' | 'fresh' | null;
   contextMaxTokens?: number | null;
 }
 
@@ -32,6 +35,13 @@ export interface SessionCleanup {
 export interface QueuedStart {
   message: string | null;
   attachments: Attachment[];
+}
+
+/** Souvenir d'un worktree supprimé, gardé par ses sessions archivées. */
+export interface FormerWorktree {
+  name: string;
+  branch: string;
+  label: string;
 }
 
 export interface Session {
@@ -42,6 +52,8 @@ export interface Session {
   ownerId: string | null;
   /** Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet. */
   archivedAt: Date | null;
+  /** Worktree supprimé dans lequel la session a travaillé (nom, branche, libellé) ; null si elle n'en a pas perdu. */
+  formerWorktree: FormerWorktree | null;
   /** Session d'agent qui a lancé celle-ci (outil `sessions.create`), null pour une session lancée par un humain. */
   parentSessionId: string | null;
   /** Agent (configuration réutilisable) pour lequel la session tourne, et l'exécution qui l'a lancée ; null pour une session lancée à la main. */
@@ -63,6 +75,11 @@ export interface Session {
   cleanup: SessionCleanup;
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
+  /**
+   * Après une remise à zéro « en gardant un résumé » : derniers échanges de la conversation précédente, transmis
+   * au modèle avec la première instruction de la conversation neuve (hors transcript), puis effacés.
+   */
+  resumeDigest: string | null;
   /** Coût estimé cumulé (USD, tarif API), d'après le SDK. */
   costUsd: number;
   /** Commit HEAD du dossier de travail au premier démarrage (référence de l'onglet « Modifications »), null sans git. */

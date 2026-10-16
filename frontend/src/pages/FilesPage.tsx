@@ -1,4 +1,5 @@
 import { useApolloClient, useMutation, useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate } from 'react-router-dom';
@@ -200,7 +201,7 @@ export default function FilesPage() {
     void client.refetchQueries({ include: ['WorkspaceEntries'] });
     setRefreshKey((k) => k + 1);
   }, [client]);
-  const gitQ = useQuery<{ gitStatus: GitStatus | null }>(GIT_STATUS, { variables: wsRef ?? { projectId: '', worktreeId: null }, skip: !wsRef || !visible, pollInterval: 60_000, fetchPolicy: 'network-only' });
+  const gitQ = usePollingQuery<{ gitStatus: GitStatus | null }>(GIT_STATUS, { variables: wsRef ?? { projectId: '', worktreeId: null }, skip: !wsRef || !visible, pollInterval: 60_000, fetchPolicy: 'network-only' });
   const signature = useMemo(() => {
     const s = gitQ.data?.gitStatus;
     if (!s) return '';

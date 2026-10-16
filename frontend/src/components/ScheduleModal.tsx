@@ -3,6 +3,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Modal } from 'react-bootstrap';
 import { CLEAR_SESSION_SCHEDULE, SCHEDULE_NEXT_RUNS, SET_SESSION_SCHEDULE, type Session } from '../graphql/operations';
 import { browserTimeZone, buildCron, cronPresetLabels as presetLabels, detectCronPreset as detectPreset, weekdayLabels, type CronPreset as Preset } from '../lib/cron';
+import { formatTokens } from '../lib/humanize';
+
+/** Conversation de l'agent entre deux exécutions : neuve à chaque fois (défaut), compactée ou oubliée au-delà d'un seuil, ou laissée telle quelle. */
+type ContextMode = 'fresh' | 'compact' | 'reset' | '';
+const withThreshold = (m: ContextMode) => m === 'compact' || m === 'reset';
+/** Seuil de compaction proposé (k tokens), aligné sur DEFAULT_SCHEDULE_CONTEXT_MAX_TOKENS du serveur. */
+const DEFAULT_COMPACT_K = 100;
 
 /** Modale de planification d'une session : fréquence, instruction envoyée à chaque exécution, aperçu des prochaines échéances. */
 export default function ScheduleModal({ session, onClose }: { session: Session; onClose: () => void }) {
@@ -17,6 +24,12 @@ export default function ScheduleModal({ session, onClose }: { session: Session; 
   const [prompt, setPrompt] = useState(existing?.prompt ?? session.prompt ?? '');
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [endAfterRun, setEndAfterRun] = useState(existing?.endAfterRun ?? true);
+  // Nouvelle planification : nettoyage actif d'office (conversation neuve à chaque exécution). Planification existante : son réglage actuel.
+  const [contextMode, setContextMode] = useState<ContextMode>(existing ? (session.cleanup.contextAction ?? '') : 'fresh');
+  const [contextMaxK, setContextMaxK] = useState(String(Math.round((session.cleanup.contextMaxTokens ?? DEFAULT_COMPACT_K * 1000) / 1000)));
+  const contextValid = !withThreshold(contextMode) || Number(contextMaxK) >= 10;
+  // Planification existante sans nettoyage : le contexte grossit à chaque exécution ; on propose d'activer le réglage par défaut.
+  const missingCleanup = Boolean(existing) && !session.cleanup.contextAction && contextMode === '';
 
   const cron = buildCron(preset, time, weekday, monthDay, custom);
   const [loadPreview, preview] = useLazyQuery<{ scheduleNextRuns: string[] }>(SCHEDULE_NEXT_RUNS, { fetchPolicy: 'network-only' });
@@ -32,8 +45,14 @@ export default function ScheduleModal({ session, onClose }: { session: Session; 
   const error = saveError ?? clearError;
 
   const submit = () => {
-    if (!cron || !prompt.trim()) return;
-    void save({ variables: { id: session.id, input: { cron, timezone, prompt: prompt.trim(), enabled, endAfterRun } } });
+    if (!cron || !prompt.trim() || !contextValid) return;
+    // Le nettoyage remplace l'objet entier : la purge du transcript est reportée telle quelle.
+    const cleanup = {
+      retentionDays: session.cleanup.retentionDays,
+      contextAction: contextMode || null,
+      contextMaxTokens: withThreshold(contextMode) ? Number(contextMaxK) * 1000 : null,
+    };
+    void save({ variables: { id: session.id, input: { cron, timezone, prompt: prompt.trim(), enabled, endAfterRun, cleanup } } });
   };
 
   return (
@@ -131,6 +150,39 @@ export default function ScheduleModal({ session, onClose }: { session: Session; 
             <Form.Label>Instruction envoyée à chaque exécution</Form.Label>
             <Form.Control as="textarea" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ce que l'agent doit faire à chaque échéance…" />
           </Form.Group>
+          <Form.Group className="mb-2">
+            <Form.Label className="mb-1">Conversation de l'agent entre deux exécutions</Form.Label>
+            <Form.Select value={contextMode} onChange={(e) => setContextMode(e.target.value as ContextMode)}>
+              <option value="fresh">Nouvelle conversation à chaque exécution (recommandé)</option>
+              <option value="compact">Compacter quand le contexte dépasse un seuil</option>
+              <option value="reset">Repartir d'une conversation neuve quand le contexte dépasse un seuil</option>
+              <option value="">Ne rien faire (le contexte grossit à chaque exécution)</option>
+            </Form.Select>
+          </Form.Group>
+          {withThreshold(contextMode) && (
+            <div className="d-flex align-items-center gap-2 mb-2 ms-4">
+              <span>Seuil :</span>
+              <Form.Control type="number" min={10} step={10} value={contextMaxK} onChange={(e) => setContextMaxK(e.target.value)} style={{ width: '6rem' }} />
+              <span>k tokens</span>
+            </div>
+          )}
+          <Form.Text className="d-block mb-3">
+            {contextMode === 'fresh' && "Avant chaque exécution, l'agent repart d'une conversation vide : le contexte reste stable d'une fois sur l'autre. Le transcript affiché est conservé."}
+            {contextMode === 'compact' && "Avant une exécution, si le contexte dépasse le seuil, /compact est envoyé à l'agent : il résume la conversation et repart de ce résumé."}
+            {contextMode === 'reset' && "Avant une exécution, si le contexte dépasse le seuil, l'agent repart d'une conversation vide ; le transcript affiché est conservé."}
+            {contextMode === '' && "Chaque exécution relit toutes les précédentes : le contexte, et le coût de chaque tour, grossissent sans fin."}
+            {session.contextTokens !== null && <> Contexte actuel : {formatTokens(session.contextTokens)} tokens.</>}
+          </Form.Text>
+          {missingCleanup && (
+            <Alert variant="warning" className="d-flex align-items-center justify-content-between gap-2 py-2">
+              <span>
+                Cette planification n'a pas de nettoyage{session.contextTokens !== null ? <> : le contexte atteint déjà {formatTokens(session.contextTokens)} tokens</> : null}.
+              </span>
+              <Button size="sm" variant="outline-secondary" className="flex-shrink-0" onClick={() => setContextMode('fresh')}>
+                Activer le nettoyage par défaut
+              </Button>
+            </Alert>
+          )}
           <Form.Check
             type="switch"
             id="schedule-end-after-run"
@@ -163,7 +215,7 @@ export default function ScheduleModal({ session, onClose }: { session: Session; 
             <Button variant="secondary" disabled={busy} onClick={onClose}>
               Annuler
             </Button>
-            <Button type="submit" disabled={busy || !cron || !prompt.trim()}>
+            <Button type="submit" disabled={busy || !cron || !prompt.trim() || !contextValid}>
               {existing ? 'Enregistrer' : 'Planifier'}
             </Button>
           </div>

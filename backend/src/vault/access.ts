@@ -63,6 +63,9 @@ export function revealableFields(item: Pick<VaultItem, 'kind' | 'settings'>, per
       return (item.settings as { obtained?: string }).obtained === 'oauth' ? [] : ['token'];
     case 'langfuse':
       return ['secretKey'];
+    case 'aws':
+      // Les jetons Identity Center ne quittent jamais le serveur ; la clé d'accès secrète, saisie à la main, se révèle.
+      return (item.settings as { auth?: string }).auth === 'keys' ? ['secretAccessKey'] : [];
     case 'website':
     case 'secret':
       return ((item.settings as { fields?: { key: string; secret: boolean }[] }).fields ?? []).filter((f) => f.secret).map((f) => f.key);

@@ -7,6 +7,7 @@ export const KINDS: Record<VaultItemKind, { label: string; icon: string; hint: s
   api: { label: 'API HTTP', icon: 'bi-cloud', hint: "Appels HTTP vers une API ; le serveur ajoute l'authentification.", placeholder: 'stripe' },
   website: { label: 'Site web', icon: 'bi-globe2', hint: 'Identifiants tapés par le serveur dans le navigateur headless, jamais lus par l’agent.', placeholder: 'admin-site' },
   secret: { label: 'Secret', icon: 'bi-key', hint: 'Valeurs quelconques tapées dans le navigateur, chaque usage étant soumis à votre accord.', placeholder: 'otp-backup' },
+  aws: { label: 'Compte AWS', icon: 'bi-cloud-fill', hint: 'CLI aws exécuté par le serveur : connexion par code à IAM Identity Center ou clés d’accès, lecture seule par défaut.', placeholder: 'aws-prod' },
   google: { label: 'Compte Google', icon: 'bi-google', hint: 'Gmail et Drive, connectés par OAuth ; les écritures demandent une approbation.', placeholder: 'google-moi' },
   token: { label: 'Jeton applicatif', icon: 'bi-person-badge', hint: 'Identifiant que Skipper utilise pour vous : abonnement ou clé Claude, fournisseurs OpenCode, GitHub. Jamais offert aux agents.', placeholder: 'claude-moi' },
   litellm: { label: 'Proxy LiteLLM', icon: 'bi-hdd-stack', hint: 'Adresse et clé d’un proxy LiteLLM, pour les agents qui appellent un modèle directement. Jamais offert aux agents des sessions.', placeholder: 'litellm' },
@@ -14,7 +15,7 @@ export const KINDS: Record<VaultItemKind, { label: string; icon: string; hint: s
 };
 
 /** Types proposés aux agents, puis ceux réservés à Skipper. */
-export const KIND_ORDER: VaultItemKind[] = ['ssh', 'postgres', 'api', 'website', 'secret', 'google', ...SKIPPER_KINDS];
+export const KIND_ORDER: VaultItemKind[] = ['ssh', 'postgres', 'api', 'aws', 'website', 'secret', 'google', ...SKIPPER_KINDS];
 export const AGENT_KINDS: VaultItemKind[] = KIND_ORDER.filter((k) => !SKIPPER_KINDS.includes(k));
 
 /** Élément réservé à Skipper : référencé par les réglages d'une personne, jamais utilisable par un agent ni relié à un projet. */
@@ -59,6 +60,12 @@ export function targetOf(item: VaultItem): string {
       return item.url ?? '';
     case 'google':
       return item.google?.email ?? '';
+    case 'aws': {
+      const a = item.aws;
+      if (!a) return '';
+      const who = a.auth === 'sso' ? `${a.accountName ?? a.accountId ?? 'compte à choisir'} · ${a.roleName ?? 'rôle à choisir'}` : `${a.accessKeyId ?? ''}${a.roleArn ? ` · ${a.roleArn.split('/').pop()}` : ''}`;
+      return `${who} · ${a.region}`;
+    }
     case 'secret':
       return `${item.fields.length} champ${item.fields.length > 1 ? 's' : ''}`;
     case 'token':
@@ -103,6 +110,8 @@ export function agentToolsOf(item: VaultItem): string {
       return `sql_query${item.readOnly ? ' (lecture seule)' : ''}, sql_schema${item.database ? '' : ' — serveur entier : l’agent nomme la base à chaque appel (postgres par défaut) et peut lister les bases'}`;
     case 'api':
       return `http_request${item.readOnly ? ' (GET, HEAD, OPTIONS)' : ''}`;
+    case 'aws':
+      return `aws_run : commande du CLI aws exécutée par le serveur dans un conteneur jetable, avec les fichiers du dossier de travail${item.readOnly ? ' ; lecture seule (describe, get, list…)' : ''}${item.commandAllowlist.length ? ' ; commandes autorisées seulement' : ''}`;
     case 'website':
       return `browser_fill : le serveur tape la valeur demandée dans le champ que l'agent a sélectionné, sur une page du site seulement${item.requireApproval ? ', après votre accord' : ''}`;
     case 'secret':

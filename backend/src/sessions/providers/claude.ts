@@ -42,6 +42,7 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
+import { SESSION_ENV } from '../../runners/stats.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -168,7 +169,7 @@ export class ClaudeProvider implements SessionProvider {
     let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     owner.assertModelAllowed(model);
     const actor = { sessionId: ctx.session.id, projectId: ctx.project.id };
-    const env = { ...(await owner.credentialEnv(general.authMode, actor)), ...(await agentGitEnv(ownerId, ctx.project.gitUrl, actor)) };
+    const env = { ...(await owner.credentialEnv(general.authMode, actor)), ...(await agentGitEnv(ownerId, ctx.project.gitUrl, actor)), [SESSION_ENV]: ctx.session.id };
     // Script de relais qui exécute le CLI dans le conteneur du projet (avant le navigateur : rien à nettoyer s'il échoue).
     const claudeExecutable = await runner.claudeExecutable(ctx.project);
 
@@ -284,7 +285,7 @@ export class ClaudeProvider implements SessionProvider {
     });
 
     const queue = new MessageQueue();
-    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments));
+    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments, ctx.initialPreamble));
     // Un tour est en cours entre l'envoi d'une instruction et le message `result` qui le clôt.
     let turnInProgress = true;
     await ctx.setActivity('busy');
@@ -521,11 +522,12 @@ export class ClaudeProvider implements SessionProvider {
     return null;
   }
 
-  private async instruction(ctx: RunContext, text: string, attachments: Attachment[]): Promise<SDKUserMessage['message']['content']> {
-    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
-    if (!attachments.length) return text;
+  private async instruction(ctx: RunContext, text: string, attachments: Attachment[], preamble?: string | null): Promise<SDKUserMessage['message']['content']> {
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}), ...(preamble ? { preamble: true } : {}) });
+    const body = preamble ? `${preamble}\n\n${text}` : text;
+    if (!attachments.length) return body;
     const note = attachmentsNote(attachments);
-    return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
+    return [{ type: 'text', text: `${body}\n\n${note}` }, ...(await inlineBlocks(attachments))];
   }
 
   /**

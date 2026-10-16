@@ -288,13 +288,13 @@ export default function WorkflowPage() {
           {workflow.runs.length === 0 ? (
             <div className="text-secondary small">Aucune exécution pour l'instant.</div>
           ) : (
-            <Table size="sm" hover className="mb-0">
+            <Table size="sm" hover responsive className="mb-0">
               <thead>
                 <tr>
                   <th>Statut</th>
                   <th>Lancée</th>
-                  <th>Par</th>
-                  <th>Durée</th>
+                  <th className="d-none d-md-table-cell">Par</th>
+                  <th className="d-none d-md-table-cell">Durée</th>
                   <th>Coût</th>
                   <th />
                 </tr>
@@ -308,10 +308,10 @@ export default function WorkflowPage() {
                     <td className="small">
                       <Link to={`/workflows/${workflow.id}/runs/${r.id}`}>{fmtDateTime(r.createdAt)}</Link>
                     </td>
-                    <td>
+                    <td className="d-none d-md-table-cell">
                       <RunTriggerBadge trigger={r.trigger} />
                     </td>
-                    <td className="small">{runDurationMs({ startedAt: r.createdAt, finishedAt: r.finishedAt }) !== null && r.finishedAt ? formatDuration(new Date(r.finishedAt).getTime() - new Date(r.createdAt).getTime()) : '—'}</td>
+                    <td className="small d-none d-md-table-cell">{runDurationMs({ startedAt: r.createdAt, finishedAt: r.finishedAt }) !== null && r.finishedAt ? formatDuration(new Date(r.finishedAt).getTime() - new Date(r.createdAt).getTime()) : '—'}</td>
                     <td className="small">{r.costUsd > 0 ? formatCost(r.costUsd) : '—'}</td>
                     <td className="small text-danger text-truncate" style={{ maxWidth: 360 }}>
                       {r.error}

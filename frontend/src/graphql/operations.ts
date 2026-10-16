@@ -21,8 +21,22 @@ export interface ConfigField {
 /** Nettoyage automatique de l'historique d'une session. */
 export interface SessionCleanup {
   retentionDays: number | null;
-  contextAction: 'compact' | 'reset' | null;
+  /** compact / reset : au-delà de contextMaxTokens ; fresh : conversation neuve à chaque exécution planifiée. */
+  contextAction: 'compact' | 'reset' | 'fresh' | null;
   contextMaxTokens: number | null;
+}
+
+/** Taille du contexte de l'agent rapportée au modèle (jauge de l'en-tête, pastille de la sidebar, bandeau). */
+export interface SessionContextInfo {
+  tokens: number | null;
+  /** Seuil serveur au-delà duquel l'interface propose un nettoyage. */
+  warnTokens: number;
+  overThreshold: boolean;
+  model: string | null;
+  windowTokens: number;
+  share: number | null;
+  /** Coût approximatif (dollars) de la relecture du contexte à froid au prochain tour. */
+  coldTurnUsd: number | null;
 }
 
 export interface SessionSchedule {
@@ -89,6 +103,11 @@ export interface RunnerStatus {
   cpus: string | null;
   startedAt: string | null;
   error: string | null;
+  /** Créé avec une autre configuration ou une image depuis reconstruite : à recréer. */
+  outdated: boolean;
+  outdatedReasons: string[];
+  /** Processus zombies dans le conteneur (null s'il ne tourne pas). */
+  zombies: number | null;
 }
 
 export interface Project {
@@ -131,6 +150,7 @@ export interface Session {
   cleanup: SessionCleanup;
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
+  context: SessionContextInfo;
   pendingRequestCount: number;
   /** Navigateur headless ouvert et utilisé par l'agent : vue en direct disponible. */
   browserActive: boolean;
@@ -144,7 +164,9 @@ export interface Session {
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath' | 'approvalConnections'>;
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
-  parentSession: { id: string; name: string } | null;
+  parentSession: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null } | null;
+  /** Sessions lancées par l'agent de cette session (requête Session seulement). */
+  childSessions?: ChildSession[];
   /** Agent (configuration) et exécution qui ont ouvert la session ; null pour une session lancée à la main. */
   agent: { id: string; name: string } | null;
   agentRun: { id: string } | null;
@@ -153,10 +175,22 @@ export interface Session {
   owner: Pick<User, 'id' | 'name' | 'email' | 'avatarUrl'> | null;
   /** Archivée : consultable en lecture seule, relançable. */
   archivedAt: string | null;
+  /** Worktree supprimé dans lequel la session a travaillé (archivée avec lui) ; null sinon. */
+  formerWorktree: { name: string; branch: string; label: string } | null;
   /** Tâche dont la session est en charge. */
   task: { id: string; title: string; status: TaskStatus } | null;
   /** Planification (null si la session n'est pas planifiée). */
   schedule: SessionSchedule | null;
+}
+
+/** Session lancée par l'agent d'une autre session, telle que la page de la session parente la liste. */
+export interface ChildSession {
+  id: string;
+  name: string;
+  status: SessionStatus;
+  activity: SessionActivity | null;
+  pendingRequestCount: number;
+  archivedAt: string | null;
 }
 
 export interface ContextFolder {
@@ -391,6 +425,9 @@ export const PROJECT_FIELDS = gql`
       cpus
       startedAt
       error
+      outdated
+      outdatedReasons
+      zombies
     }
     workspacePath
     workspaceExists
@@ -505,6 +542,15 @@ export const SESSION_FIELDS = gql`
       contextMaxTokens
     }
     contextTokens
+    context {
+      tokens
+      warnTokens
+      overThreshold
+      model
+      windowTokens
+      share
+      coldTurnUsd
+    }
     pendingRequestCount
     queuedAt
     queuePosition
@@ -528,6 +574,8 @@ export const SESSION_FIELDS = gql`
     parentSession {
       id
       name
+      status
+      activity
     }
     agent {
       id
@@ -550,6 +598,11 @@ export const SESSION_FIELDS = gql`
       avatarUrl
     }
     archivedAt
+    formerWorktree {
+      name
+      branch
+      label
+    }
     task {
       id
       title
@@ -721,6 +774,14 @@ export const SESSION = gql`
       requests(status: PENDING) {
         ...RequestFields
       }
+      childSessions {
+        id
+        name
+        status
+        activity
+        pendingRequestCount
+        archivedAt
+      }
     }
   }
 `;
@@ -859,6 +920,24 @@ export const APPLY_SESSION_CLEANUP = gql`
   ${SESSION_FIELDS}
   mutation ApplySessionCleanup($id: ID!) {
     applySessionCleanup(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const COMPACT_SESSION_CONTEXT = gql`
+  ${SESSION_FIELDS}
+  mutation CompactSessionContext($id: ID!) {
+    compactSessionContext(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const RESET_SESSION_CONTEXT = gql`
+  ${SESSION_FIELDS}
+  mutation ResetSessionContext($id: ID!, $keepSummary: Boolean) {
+    resetSessionContext(id: $id, keepSummary: $keepSummary) {
       ...SessionFields
     }
   }
@@ -1038,6 +1117,7 @@ export const SIDEBAR = gql`
       gitUrl
       gitBranch
       isMember
+      myRole
       sessions(limit: 50) {
         ...SidebarSession
         worktree {
@@ -1082,10 +1162,17 @@ export const SIDEBAR = gql`
     activity
     pendingRequestCount
     browserActive
+    context {
+      tokens
+      overThreshold
+    }
     owner {
       id
       name
       avatarUrl
+    }
+    parentSession {
+      id
     }
   }
 `;
@@ -2081,5 +2168,62 @@ export const TERMINAL_NAME = gql`
 export const PROJECT_NAME = gql`
   fragment CachedProjectName on Project {
     name
+  }
+`;
+
+export interface ContainerProcess {
+  pid: number;
+  rssMb: number;
+  elapsedSeconds: number;
+  sessionId: string | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; updatedAt: string } | null;
+  childrenRssMb: number;
+  cwd: string | null;
+}
+
+export interface ContainerStats {
+  sampledAt: string;
+  memoryUsedMb: number;
+  memoryLimitMb: number | null;
+  memoryPercent: number | null;
+  swapUsedMb: number | null;
+  cpuPercent: number | null;
+  cpuLimit: number | null;
+  oomKills: number;
+  memoryHighSince: string | null;
+  claudeProcesses: ContainerProcess[];
+}
+
+export const PROJECT_CONTAINER_STATS = gql`
+  query ProjectContainerStats($id: ID!) {
+    project(id: $id) {
+      id
+      containerStats {
+        sampledAt
+        memoryUsedMb
+        memoryLimitMb
+        memoryPercent
+        swapUsedMb
+        cpuPercent
+        cpuLimit
+        oomKills
+        memoryHighSince
+        claudeProcesses {
+          pid
+          rssMb
+          elapsedSeconds
+          sessionId
+          childrenRssMb
+          cwd
+          session {
+            id
+            name
+            status
+            activity
+            updatedAt
+          }
+        }
+      }
+    }
   }
 `;

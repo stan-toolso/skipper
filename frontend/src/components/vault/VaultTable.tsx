@@ -30,8 +30,9 @@ interface Props {
 
 function PolicyBadges({ item }: { item: VaultItem }) {
   const badges: React.ReactNode[] = [];
-  if (item.kind === 'postgres' || item.kind === 'api') badges.push(item.readOnly ? <Badge key="ro" bg="success">lecture seule</Badge> : <Badge key="rw" bg="warning" text="dark">écriture</Badge>);
-  if (item.kind === 'ssh' || item.kind === 'postgres' || item.kind === 'api') badges.push(item.requireApproval ? <Badge key="ap" bg="primary">avec accord</Badge> : <Badge key="nap" bg="secondary">sans accord</Badge>);
+  if (item.kind === 'postgres' || item.kind === 'api' || item.kind === 'aws') badges.push(item.readOnly ? <Badge key="ro" bg="success">lecture seule</Badge> : <Badge key="rw" bg="warning" text="dark">écriture</Badge>);
+  if (item.kind === 'ssh' || item.kind === 'postgres' || item.kind === 'api' || item.kind === 'aws') badges.push(item.requireApproval ? <Badge key="ap" bg="primary">avec accord</Badge> : <Badge key="nap" bg="secondary">sans accord</Badge>);
+  if (item.kind === 'aws' && item.aws?.auth === 'sso') badges.push(item.aws.connected ? <Badge key="cx" bg="info" text="dark">connecté</Badge> : <Badge key="ncx" bg="danger">à connecter</Badge>);
   if (isSkipperKind(item.kind)) badges.push(<Badge key="sk" bg="secondary" title="Jamais offert aux agents : utilisé par Skipper pour vos réglages">réservé à Skipper</Badge>);
   if (isOauthToken(item)) badges.push(<Badge key="oa" bg="info" text="dark">connexion</Badge>);
   if (item.kind === 'google' && item.google) {
@@ -118,16 +119,16 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
   };
 
   return (
-    <Table hover size="sm" responsive className="align-middle vault-table">
+    <Table hover responsive size="sm" className="align-middle vault-table">
       <thead>
         <tr>
           <th style={{ width: 24 }} />
           <th>Nom</th>
           <th>Type</th>
-          <th>Cible</th>
-          {projectPage ? <th>Accès</th> : <th>Propriétaire</th>}
-          <th>Règles</th>
-          <th>Dernier test</th>
+          <th className="d-none d-md-table-cell">Cible</th>
+          {projectPage ? <th className="d-none d-md-table-cell">Accès</th> : <th className="d-none d-md-table-cell">Propriétaire</th>}
+          <th className="d-none d-md-table-cell">Règles</th>
+          <th className="d-none d-md-table-cell">Dernier test</th>
           <th />
         </tr>
       </thead>
@@ -163,17 +164,17 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
                   </div>
                 </td>
                 <td className="text-nowrap">
-                  <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} />
-                  {KINDS[item.kind].label}
+                  <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} title={KINDS[item.kind].label} />
+                  <span className="d-none d-md-inline">{KINDS[item.kind].label}</span>
                 </td>
-                <td className="small font-monospace vault-cell-target" title={targetOf(item)}>
+                <td className="small font-monospace vault-cell-target d-none d-md-table-cell" title={targetOf(item)}>
                   {targetOf(item)}
                 </td>
-                <td className="small">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>
-                <td>
+                <td className="small d-none d-md-table-cell">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>
+                <td className="d-none d-md-table-cell">
                   <PolicyBadges item={item} />
                 </td>
-                <td className="small text-nowrap">
+                <td className="small text-nowrap d-none d-md-table-cell">
                   {item.lastTestAt ? (
                     <>
                       {item.lastTestOk ? <Badge bg="success">OK</Badge> : <Badge bg="danger">échec</Badge>} <span className="text-secondary">{fmtDate(item.lastTestAt)}</span>

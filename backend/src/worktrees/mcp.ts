@@ -2,6 +2,7 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@
 import { z } from 'zod';
 import type { Project } from '../projects/types.js';
 import { sessionRepository } from '../sessions/repository.js';
+import { removeWorktreeKeepingSessions } from '../projects/cleanup.js';
 import { worktreePath, worktreeService } from './service.js';
 import type { Worktree } from './types.js';
 
@@ -61,14 +62,14 @@ export function createWorktreesMcpServer(project: Project, sessionId: string): M
       ),
       tool(
         'delete',
-        'Supprime un worktree (son dossier). Refusé si des sessions y tournent encore. La branche est conservée sauf delete_branch. Les modifications non validées sont perdues.',
+        "Supprime un worktree (son dossier). Refusé si des sessions y tournent encore : termine-les d'abord (sessions.end). Ses sessions terminées sont archivées avec leur historique. La branche est conservée sauf delete_branch. Les modifications non validées sont perdues.",
         { name: z.string().describe('Nom du worktree (dossier)'), delete_branch: z.boolean().optional().describe('Supprimer aussi la branche locale (défaut : false)') },
         async ({ name, delete_branch }) =>
           run(async () => {
             const w = (await worktreeService.listByProject(project.id)).find((x) => x.name === name || x.branch === name);
             if (!w) throw new Error(`Worktree "${name}" introuvable dans ce projet`);
-            await worktreeService.delete(w.id, delete_branch ?? false);
-            return `Worktree ${w.name} supprimé${delete_branch ? ` (branche ${w.branch} supprimée)` : ` (branche ${w.branch} conservée)`}.`;
+            const { archivedSessionIds } = await removeWorktreeKeepingSessions(w.id, { deleteBranch: delete_branch ?? false });
+            return `Worktree ${w.name} supprimé${delete_branch ? ` (branche ${w.branch} supprimée)` : ` (branche ${w.branch} conservée)`}${archivedSessionIds.length ? ` ; ${archivedSessionIds.length} session(s) archivée(s) avec leur historique` : ''}.`;
           }),
       ),
     ],

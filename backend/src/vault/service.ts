@@ -8,6 +8,7 @@ import { userService } from '../users/service.js';
 import type { ProjectRole } from '../users/types.js';
 import { atLeast, canLink, hasDirectAccess, permissionOf, revealableFields, type AccessFacts } from './access.js';
 import * as api from './api.js';
+import * as aws from './aws.js';
 import { currentKeyId, openSecrets, rewrapKey, sealSecrets, VaultDecryptError } from './crypto.js';
 import * as postgres from './postgres.js';
 import { vaultRepository, type VaultItemPatch, type VaultItemRecord } from './repository.js';
@@ -17,6 +18,7 @@ import { isTokenService, TOKEN_SERVICES, tokenMismatch, type TokenService } from
 import {
   AGENT_KINDS,
   API_AUTH_SCHEMES,
+  AWS_AUTHS,
   PERMISSION_RANK,
   SKIPPER_KINDS,
   TOOL_KINDS,
@@ -24,6 +26,7 @@ import {
   kindLabels,
   type ApiCredentials,
   type ApiSettings,
+  type AwsSettings,
   type FieldCredentials,
   type GoogleSettings,
   type LangfuseSettings,
@@ -304,6 +307,52 @@ export const vaultService = {
       }
       case 'google':
         throw new AppError('Un compte Google se relie par Google (bouton « Connecter un compte Google »)');
+      case 'aws': {
+        const base = (current?.settings ?? {}) as Partial<AwsSettings>;
+        const a = input.aws ?? {};
+        const auth = current ? base.auth! : (a.auth ?? 'sso');
+        if (!AWS_AUTHS.includes(auth)) throw new AppError(`Mode d'authentification AWS inconnu : ${auth}`);
+        if (current && a.auth && a.auth !== auth) throw new AppError("Le mode d'authentification d'un compte AWS ne change pas : créez un autre élément");
+        const pick = (next: string | null | undefined, prev: string | null | undefined, validate: (v: string) => string): string | null => (next !== undefined && next !== null ? (next.trim() ? validate(next) : null) : (prev ?? null));
+        const settings: AwsSettings = {
+          auth,
+          region: aws.validateRegion(a.region ?? base.region, 'La région par défaut'),
+          startUrl: null,
+          ssoRegion: null,
+          accountId: null,
+          accountName: null,
+          roleName: null,
+          accessKeyId: null,
+          roleArn: null,
+          tokenExpiresAt: base.tokenExpiresAt ?? null,
+          clientExpiresAt: base.clientExpiresAt ?? null,
+          identity: base.identity ?? null,
+        };
+        if (auth === 'sso') {
+          settings.startUrl = aws.validateStartUrl(a.startUrl ?? base.startUrl);
+          settings.ssoRegion = aws.validateRegion(a.ssoRegion ?? base.ssoRegion, "La région d'IAM Identity Center");
+          settings.accountId = pick(a.accountId, base.accountId, aws.validateAccountId);
+          settings.roleName = pick(a.roleName, base.roleName, aws.validateRoleName);
+          settings.accountName = settings.accountId === null ? null : a.accountName?.trim() || (settings.accountId === (base.accountId ?? null) ? base.accountName ?? null : null);
+          if ((settings.accountId === null) !== (settings.roleName === null)) throw new AppError('Indiquez le compte et le rôle ensemble');
+          // Un autre portail ou une autre région : les jetons obtenus ne valent plus, il faudra se reconnecter.
+          if (current && (settings.startUrl !== base.startUrl || settings.ssoRegion !== base.ssoRegion)) {
+            settings.tokenExpiresAt = null;
+            settings.clientExpiresAt = null;
+            for (const k of ['accessToken', 'refreshToken', 'clientId', 'clientSecret']) delete secrets[k];
+          }
+          if (settings.accountId !== (base.accountId ?? null) || settings.roleName !== (base.roleName ?? null)) settings.identity = null;
+          delete secrets.secretAccessKey;
+        } else {
+          settings.accessKeyId = aws.validateAccessKeyId(a.accessKeyId ?? base.accessKeyId);
+          settings.roleArn = pick(a.roleArn, base.roleArn, aws.validateRoleArn);
+          if (a.secretAccessKey?.trim()) secrets.secretAccessKey = assertSecretSize(a.secretAccessKey.trim(), "Clé d'accès secrète");
+          if (!secrets.secretAccessKey) throw new AppError("La clé d'accès secrète est obligatoire");
+          if (settings.accessKeyId !== (base.accessKeyId ?? null) || settings.roleArn !== (base.roleArn ?? null) || a.secretAccessKey?.trim()) settings.identity = null;
+          for (const k of ['accessToken', 'refreshToken', 'clientId', 'clientSecret']) delete secrets[k];
+        }
+        return { settings, secrets };
+      }
       case 'token': {
         const prev = (current?.settings ?? {}) as Partial<TokenSettings>;
         const service = current ? (prev.service as TokenService) : (input.service ?? '').trim().toLowerCase();
@@ -428,7 +477,7 @@ export const vaultService = {
     }
     const touchesSettings =
       (current.kind !== 'google' &&
-        [input.host, input.port, input.username, input.database, input.ssl, input.sslCa, input.url, input.authScheme, input.fields, input.privateKey, input.password, input.token, input.publicKey].some((v) => v != null)) ||
+        [input.host, input.port, input.username, input.database, input.ssl, input.sslCa, input.url, input.authScheme, input.fields, input.privateKey, input.password, input.token, input.publicKey, input.aws].some((v) => v != null)) ||
       input.viaItemId !== undefined ||
       input.authName !== undefined;
     let secretChanged = false;
@@ -604,6 +653,7 @@ export const vaultService = {
     const project = await projectService.get(projectId);
     if (source.ownerProjectId === projectId) throw new AppError('Cet élément appartient déjà à ce projet');
     if (source.kind === 'google') throw new AppError('Un compte Google se reconnecte depuis le projet plutôt que d\'être copié');
+    if (source.kind === 'aws' && (source.settings as AwsSettings).auth === 'sso') throw new AppError('Un compte AWS connecté par IAM Identity Center se reconnecte depuis le projet plutôt que d\'être copié');
     if (isOauthToken(source)) throw new AppError('Ce jeton a été obtenu par une connexion : il reste personnel (reconnectez le compte plutôt que de le copier)');
     const newName = validateName(name ?? source.name);
     const settings = JSON.parse(JSON.stringify(source.settings)) as VaultItem['settings'];
@@ -843,6 +893,7 @@ export const vaultService = {
         return (await website.probe((item.settings as WebsiteSettings).url)).detail;
       case 'secret':
         return 'Rien à tester pour un secret : il est utilisé tel quel.';
+      // aws : testeur branché par vault/awsService.ts (probers).
       case 'litellm': {
         const token = this.secretsOf(item).token;
         if (!token) throw new AppError(`« ${item.name} » n'a pas de clé`);
@@ -1059,6 +1110,12 @@ export const vaultService = {
           const via = s.viaItemId ? byId.get(s.viaItemId)?.name : null;
           const scope = s.database ? `base PostgreSQL ${s.database}` : `serveur PostgreSQL entier (toutes ses bases : paramètre \`database\` des outils, \`${postgres.MAINTENANCE_DATABASE}\` par défaut ; \`sql_schema\` sans base les liste)`;
           return `- \`${i.name}\` : ${scope} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
+        }
+        case 'aws': {
+          const s = i.settings as AwsSettings;
+          const who = s.auth === 'sso' ? `compte ${s.accountName ?? s.accountId ?? '?'}, rôle ${s.roleName ?? '?'}` : `clé ${s.accessKeyId ?? '?'}${s.roleArn ? `, rôle ${s.roleArn}` : ''}`;
+          const policy = i.commandAllowlist.length ? ` ; commandes limitées aux préfixes ${i.commandAllowlist.map((p) => `\`${p}\``).join(', ')}` : '';
+          return `- \`${i.name}\` : compte AWS (${who}, région ${s.region})${desc}. Outil \`aws_run\` : la commande du CLI sans \`aws\` (ex. \`s3 ls\`), exécutée par le serveur avec les fichiers du dossier de travail${i.readOnly ? ' ; lecture seule (describe, get, list…)' : ''}${policy}.`;
         }
         default:
           return '';

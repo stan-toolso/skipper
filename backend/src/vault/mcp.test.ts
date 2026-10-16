@@ -11,6 +11,7 @@ import type { VaultItem } from './types.js';
 // Services voisins simulés : la déclaration des outils et les outils PostgreSQL sont exercés, sans base ni réseau.
 const { service, query } = vi.hoisted(() => ({ service: {} as Record<string, unknown>, query: vi.fn() }));
 vi.mock('./service.js', () => ({ vaultService: service }));
+vi.mock('./awsService.js', () => ({ awsService: {} }));
 vi.mock('./ssh.js', () => ({}));
 vi.mock('../browser/fill.js', () => ({ browserFill: {} }));
 vi.mock('./postgres.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./postgres.js')>()), query }));
@@ -83,7 +84,7 @@ describe('serveur MCP vault', () => {
     const client = await connect(server());
     try {
       const tools = (await client.listTools()).tools;
-      expect(tools.map((t) => t.name).sort()).toEqual(['browser_fill', 'http_request', 'list', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
+      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
       const props = (name: string) => tools.find((t) => t.name === name)!.inputSchema.properties as Record<string, { type?: string; additionalProperties?: unknown }>;
       expect(Object.keys(props('sql_query')).sort()).toEqual(['database', 'item', 'sql']);
       expect(Object.keys(props('sql_schema')).sort()).toEqual(['database', 'item', 'table']);

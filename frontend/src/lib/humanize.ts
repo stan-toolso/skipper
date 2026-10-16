@@ -126,8 +126,9 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
           sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],
           sql_schema: [`Schéma de ${conn}${db}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}${db}`],
-          http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''}`],
-          browser_fill: [`Saisie du champ ${str(input, 'field') ?? ''} de ${conn} dans le navigateur`, str(input, 'page'), `saisir le champ ${str(input, 'field') ?? ''} de ${conn} dans le navigateur`],
+          aws_run: [`Commande AWS sur ${conn}`, cmd ? `aws ${cmd}` : undefined, `exécuter sur ${conn} : aws ${short(cmd)}`],
+          http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${short(str(input, 'path') ?? '')}`],
+          browser_fill: [`Saisie du champ « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`, str(input, 'page'), `saisir « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`],
         };
         const [label, detail, action] = verbs[op] ?? [`Coffre : ${op}`, undefined, `utiliser le coffre (${op})`];
         return { label, detail, action };
@@ -196,6 +197,12 @@ export function formatDuration(ms: number): string {
 
 export function formatCost(usd: number): string {
   return `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
+}
+
+/** Nombre de tokens en milliers (« 208 k »), ou en millions au-delà (« 1,2 M »). */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace('.', ',')} M`;
+  return `${Math.round(n / 1000)} k`;
 }
 
 export const sessionStatusLabels: Record<string, string> = {

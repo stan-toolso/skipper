@@ -127,6 +127,25 @@ export function createGoogleMcpServer(ctx: GoogleMcpContext): McpSdkServerConfig
             return gmail.renderMessage(m);
           }),
       ),
+      tool(
+        'gmail_attachment',
+        "Télécharge une pièce jointe d'un message Gmail dans le dossier de travail, pour la lire (image, PDF, tableur…) ou la déposer ailleurs. La liste des pièces jointes vient de gmail_read.",
+        {
+          message_id: z.string().describe('Identifiant du message'),
+          attachment: z.string().describe('Pièce jointe : son numéro dans la liste de gmail_read (1, 2…) ou son nom de fichier'),
+          local_path: z.string().optional().describe('Chemin de destination, relatif au dossier de travail (défaut : le nom du fichier, à la racine)'),
+          account: accountParam,
+        },
+        async ({ message_id, attachment, local_path, account }) =>
+          run(async () => {
+            const acct = pick(account, 'gmail', 'read');
+            const r = await audited(acct, 'gmail', 'gmail_attachment', `${message_id} · ${attachment}${local_path ? ` → ${local_path}` : ''}`, async () => {
+              const res = await gmail.downloadAttachment(acct.id, message_id, attachment, (filename) => localPath(ctx.cwd, local_path ?? filename));
+              return { result: res, note: `${res.filename} · ${res.bytes} octets` };
+            });
+            return `Pièce jointe « ${r.filename} » (${r.mimeType}) enregistrée dans ${path.relative(ctx.cwd, r.localPath)} (${r.bytes} octets).`;
+          }),
+      ),
     );
   }
   if (accounts.some((a) => a.gmailAccess === 'write')) {

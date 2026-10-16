@@ -5,10 +5,11 @@ import { browserFill } from '../browser/fill.js';
 import { AppError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import * as api from './api.js';
+import { awsService } from './awsService.js';
 import * as postgres from './postgres.js';
 import { vaultService } from './service.js';
 import * as ssh from './ssh.js';
-import { kindLabels, type ApiSettings, type PostgresSettings, type SecretSettings, type SshSettings, type VaultItem, type WebsiteSettings } from './types.js';
+import { kindLabels, type ApiSettings, type AwsSettings, type PostgresSettings, type SecretSettings, type SshSettings, type VaultItem, type WebsiteSettings } from './types.js';
 import { describeField, siteAllows } from './website.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
@@ -70,6 +71,11 @@ function describe(i: VaultItem, byId: Map<string, VaultItem>): string {
     case 'secret': {
       const s = i.settings as WebsiteSettings | SecretSettings;
       return `- ${i.name} · ${kindLabels[i.kind]}${'url' in s ? ` · ${s.url}` : ''}${desc} [navigateur] champs : ${s.fields.length ? s.fields.map(describeField).join(', ') : 'aucun'}`;
+    }
+    case 'aws': {
+      const s = i.settings as AwsSettings;
+      const who = s.auth === 'sso' ? `compte ${s.accountName ?? s.accountId ?? '?'} · rôle ${s.roleName ?? '?'}` : `clé ${s.accessKeyId ?? '?'}${s.roleArn ? ` · rôle ${s.roleArn}` : ''}`;
+      return `- ${i.name} · ${kindLabels.aws} · ${who} · région ${s.region}${desc} [${approval}, ${i.readOnly ? 'lecture seule (describe, get, list…)' : 'écriture autorisée'}${i.commandAllowlist.length ? `, commandes : ${i.commandAllowlist.join(' | ')}` : ''}]`;
     }
     default:
       return `- ${i.name} · ${kindLabels[i.kind]}${desc}`;
@@ -145,7 +151,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
   return createSdkMcpServer({
     name: 'vault',
     version: '1.0.0',
-    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
+    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
     tools: [
       tool('list', "Liste les éléments du coffre disponibles pour cette session, leur type, leur cible et leur politique d'accès.", {}, async () =>
         run(async () => {
@@ -281,6 +287,28 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
           }),
       ),
 
+
+      tool(
+        'aws_run',
+        "Exécute une commande du CLI AWS avec un compte AWS du coffre et renvoie sa sortie (stdout, stderr, code de sortie). Donne la commande sans « aws » (ex. « s3 ls s3://mon-bucket », « ec2 describe-instances --output table »). Le serveur l'exécute hors de ton environnement, avec les fichiers de ton dossier de travail (chemins relatifs) ; les identifiants ne te sont jamais communiqués. Sur un compte en lecture seule, seules les opérations de consultation (describe-*, get-*, list-*, s3 ls…) sont acceptées.",
+        {
+          item: z.string().describe("Nom de l'élément AWS"),
+          command: z.string().describe('Commande du CLI sans « aws » : service, opération et options (guillemets acceptés ; aucun shell : pas de tubes ni de substitutions)'),
+          timeout_seconds: z.number().int().min(1).max(600).optional().describe('Délai maximal (défaut 120 s)'),
+        },
+        async ({ item, command, timeout_seconds }) =>
+          run(async () => {
+            const i = await ofKind(item, 'aws');
+            const inv = awsService.check(i, command);
+            const line = inv.tokens.join(' ');
+            await gate(i, 'aws_run', `aws ${line}`, { command: line });
+            const result = await audited(i, 'aws_run', line, async () => {
+              const r = await awsService.run(i, ctx.project, ctx.cwd, command, (timeout_seconds ?? 120) * 1000);
+              return { result: r, note: `code ${r.exitCode ?? r.signal}` };
+            });
+            return renderExec(result);
+          }),
+      ),
 
       tool(
         'browser_fill',

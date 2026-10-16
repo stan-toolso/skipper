@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { access, chmod, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -10,8 +11,10 @@ import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { attachmentsRoot } from '../sessions/attachments.js';
 import { worktreesRoot } from '../worktrees/service.js';
-import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
+import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type IsolatedCommand, type IsolatedResult, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
+import { containerDrift, countZombies, SPEC_LABEL, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
+import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,12 +45,24 @@ function dockerWithInput(args: string[], input: string): Promise<void> {
   });
 }
 
+/** Durée pendant laquelle l'identifiant d'une image est gardé en mémoire (la page du projet interroge l'état toutes les 3 s). */
+const IMAGE_CACHE_MS = 30_000;
+
 /** Conteneur Docker dédié au projet, code monté aux mêmes chemins absolus que sur l'hôte. */
 export class DockerRunner implements Runner {
   readonly kind = 'docker' as const;
 
+  /** Un seul `ensureReady` à la fois par projet : deux démarrages simultanés ne créent pas deux fois le conteneur. */
+  private readonly pending = new Map<string, Promise<RunnerStatus>>();
+  private readonly images = new Map<string, { at: number; info: ImageInfo | null }>();
+  private idleCheck: ((project: Project) => Promise<boolean>) | null = null;
+
   containerName(project: Pick<Project, 'slug'>): string {
     return `skipper-${project.slug}`;
+  }
+
+  setIdleCheck(check: (project: Project) => Promise<boolean>): void {
+    this.idleCheck = check;
   }
 
   private settings(project: Project): Required<Pick<RunnerConfig, 'image' | 'memory' | 'cpus'>> {
@@ -68,7 +83,8 @@ export class DockerRunner implements Runner {
   private async writeRelay(project: Project): Promise<string> {
     const file = this.relayPath(project);
     await mkdir(path.dirname(file), { recursive: true });
-    const envFlags = PASSTHROUGH_ENV.map((v) => `-e ${v}`).join(' ');
+    // La variable de session relie le processus du CLI à sa session (mémoire par session sur la page du projet).
+    const envFlags = [...PASSTHROUGH_ENV, SESSION_ENV].map((v) => `-e ${v}`).join(' ');
     const script = `#!/bin/sh
 # Généré par Skipper : exécute le CLI Claude Code dans le conteneur du projet ${project.slug}.
 exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude "$@"
@@ -78,70 +94,194 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     return file;
   }
 
-  async status(project: Project): Promise<RunnerStatus> {
-    const s = this.settings(project);
-    const base: RunnerStatus = { kind: 'docker', ready: false, state: 'absent', containerName: this.containerName(project), image: s.image, memory: s.memory, cpus: s.cpus, startedAt: null, error: null };
-    try {
-      const { stdout, code } = await docker(['inspect', '--format', '{{.State.Status}}|{{.State.StartedAt}}|{{.Config.Image}}', this.containerName(project)], { allowFail: true });
-      if (code !== 0) return base;
-      const [state, startedAt, image] = stdout.trim().split('|');
-      return { ...base, state, ready: state === 'running', startedAt: state === 'running' ? new Date(startedAt) : null, image };
-    } catch (err) {
-      return { ...base, state: 'unavailable', error: (err as Error).message };
+  /** Identifiant et date de construction de l'image attendue, telle qu'elle existe localement (null si absente) ; mis en cache 30 s. */
+  private async imageInfo(image: string): Promise<ImageInfo | null> {
+    const cached = this.images.get(image);
+    if (cached && Date.now() - cached.at < IMAGE_CACHE_MS) return cached.info;
+    const { stdout, code } = await docker(['image', 'inspect', '--format', '{{.Id}}|{{.Created}}', image], { allowFail: true });
+    let info: ImageInfo | null = null;
+    if (code === 0) {
+      const [id, created] = stdout.trim().split('|');
+      const createdAt = new Date(created ?? '');
+      info = { id, createdAt: Number.isNaN(createdAt.getTime()) ? null : createdAt };
     }
+    this.images.set(image, { at: Date.now(), info });
+    return info;
   }
 
-  async ensureReady(project: Project): Promise<RunnerStatus> {
-    const current = await this.status(project);
-    if (current.state === 'unavailable') throw new AppError(current.error ?? 'Docker indisponible');
+  async stats(project: Project, opts: { fresh?: boolean } = {}): Promise<ContainerStats | null> {
     const name = this.containerName(project);
+    if (opts.fresh) invalidateContainerStats(name);
+    return readContainerStats(name);
+  }
+
+  async applyLimits(project: Project): Promise<boolean> {
+    const current = await this.status(project);
+    if (current.state === 'absent' || current.state === 'unavailable') return false;
+    const s = this.settings(project);
+    const memory = parseDockerSize(s.memory);
+    if (!memory) throw new AppError(`Limite mémoire illisible : ${s.memory}`);
+    // Même règle que `docker run --memory` sans --memory-swap : autant de swap que de mémoire.
+    await docker(['update', '--memory', String(memory), '--memory-swap', String(memory * 2), '--cpus', s.cpus, this.containerName(project)]);
+    invalidateContainerStats(this.containerName(project));
+    return true;
+  }
+
+  /**
+   * Configuration attendue du conteneur : tout ce qui est passé à `docker run`, et son empreinte posée
+   * en label (`skipper.spec`) pour reconnaître plus tard un conteneur créé avec d'autres paramètres.
+   */
+  private async containerSpec(project: Project): Promise<{ spec: ContainerSpec; dirs: string[] }> {
     const s = this.settings(project);
     const workspace = workspacePath(project);
     const worktrees = worktreesRoot(project);
     const plugin = contextPluginDir(project);
     const attachments = attachmentsRoot(project);
     const claudeHome = this.claudeHome(project);
-    // Les dossiers montés doivent exister avant `docker run`, sinon Docker les crée appartenant à root.
-    await Promise.all([mkdir(worktrees, { recursive: true }), mkdir(plugin, { recursive: true }), mkdir(attachments, { recursive: true }), mkdir(claudeHome, { recursive: true, mode: 0o700 })]);
     const home = os.homedir();
     const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
     const gid = typeof process.getgid === 'function' ? process.getgid() : 1000;
+    const mounts = [
+      // ~/.claude propre au projet : ses conversations, qui survivent à la recréation. Les identifiants Claude
+      // de l'hôte ne sont jamais montés : chaque session reçoit ceux de son propriétaire par variables d'environnement.
+      `${claudeHome}:${path.join(home, '.claude')}`,
+      // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
+      '/etc/passwd:/etc/passwd:ro',
+      '/etc/group:/etc/group:ro',
+      // Le code, les worktrees, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
+      `${workspace}:${workspace}`,
+      `${worktrees}:${worktrees}`,
+      `${plugin}:${plugin}`,
+      `${attachments}:${attachments}`,
+    ];
+    // Identité git de l'utilisateur système (repli quand le propriétaire de la session n'a pas de compte GitHub) ;
+    // absente : l'identité des commits vient des variables d'environnement, ou reste celle du conteneur.
+    const gitconfig = path.join(home, '.gitconfig');
+    if (await access(gitconfig).then(() => true, () => false)) mounts.push(`${gitconfig}:${gitconfig}`);
+    const image = await this.imageInfo(s.image);
+    const spec: ContainerSpec = {
+      image: s.image,
+      imageId: image?.id ?? null,
+      // Processus init (tini) : récolte les processus orphelins et terminés (dont ceux de Chromium, lancé par
+      // `docker exec -d`) ; sans lui, `sleep infinity` en PID 1 laisse des zombies s'accumuler.
+      init: true,
+      memory: s.memory,
+      cpus: s.cpus,
+      user: `${uid}:${gid}`,
+      home,
+      workdir: workspace,
+      restart: 'unless-stopped',
+      mounts,
+      // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de Chromium :
+      // sans dossier personnel inscriptible, Chromium meurt au lancement) ; ~/.claude et ~/.gitconfig s'y superposent.
+      tmpfs: [`${home}:uid=${uid},gid=${gid},mode=0750,size=512m`],
+      // Le serveur Skipper reste joignable depuis le conteneur (ponts MCP des sessions OpenCode), y compris sous Linux.
+      hosts: ['host.docker.internal:host-gateway'],
+      command: ['sleep', 'infinity'],
+    };
+    return { spec, dirs: [worktrees, plugin, attachments, claudeHome] };
+  }
 
+  /** Arguments de `docker run` dérivés de la configuration, label compris. */
+  private runArgs(name: string, spec: ContainerSpec): string[] {
+    return [
+      'run', '-d', '--name', name, '--restart', spec.restart, '--memory', spec.memory, '--cpus', spec.cpus,
+      ...(spec.init ? ['--init'] : []),
+      '--user', spec.user, '-e', `HOME=${spec.home}`, '-w', spec.workdir,
+      ...spec.hosts.flatMap((h) => ['--add-host', h]),
+      ...spec.tmpfs.flatMap((t) => ['--tmpfs', t]),
+      ...spec.mounts.flatMap((m) => ['-v', m]),
+      '--label', `${SPEC_LABEL}=${JSON.stringify(spec)}`,
+      spec.image, ...spec.command,
+    ];
+  }
+
+  async status(project: Project): Promise<RunnerStatus> {
+    const s = this.settings(project);
+    const name = this.containerName(project);
+    const base: RunnerStatus = { kind: 'docker', ready: false, state: 'absent', containerName: name, image: s.image, memory: s.memory, cpus: s.cpus, startedAt: null, error: null, outdated: false, outdatedReasons: [], zombies: null };
+    try {
+      const format = `{{.State.Status}}|{{.State.StartedAt}}|{{.Config.Image}}|{{.Image}}|{{.HostConfig.Init}}|{{index .Config.Labels "${SPEC_LABEL}"}}`;
+      const { stdout, code } = await docker(['inspect', '--format', format, name], { allowFail: true });
+      if (code !== 0) return base;
+      const [state, startedAt, image, imageId, init, specLabel] = splitInspect(stdout, 6);
+      const running = state === 'running';
+      const { spec } = await this.containerSpec(project);
+      const outdatedReasons = containerDrift(spec, { specLabel, init: init === null ? null : init === 'true', imageId }, await this.imageInfo(s.image));
+      const zombies = running ? await this.zombieCount(name) : null;
+      return { ...base, state: state ?? 'unknown', ready: running, startedAt: running && startedAt ? new Date(startedAt) : null, image: image ?? s.image, outdated: outdatedReasons.length > 0, outdatedReasons, zombies };
+    } catch (err) {
+      return { ...base, state: 'unavailable', error: (err as Error).message };
+    }
+  }
+
+  /** Processus zombies du conteneur (`docker top` lit la table des processus depuis l'hôte, sans `exec`). */
+  private async zombieCount(name: string): Promise<number | null> {
+    const { stdout, code } = await docker(['top', name, '-o', 'pid,stat'], { allowFail: true });
+    return code === 0 ? countZombies(stdout) : null;
+  }
+
+  async ensureReady(project: Project): Promise<RunnerStatus> {
+    const previous = this.pending.get(project.id) ?? Promise.resolve();
+    const run = previous.then(
+      () => this.ensureReadyNow(project),
+      () => this.ensureReadyNow(project),
+    );
+    this.pending.set(project.id, run);
+    try {
+      return await run;
+    } finally {
+      if (this.pending.get(project.id) === run) this.pending.delete(project.id);
+    }
+  }
+
+  private async ensureReadyNow(project: Project): Promise<RunnerStatus> {
+    let current = await this.status(project);
+    if (current.state === 'unavailable') throw new AppError(current.error ?? 'Docker indisponible');
+    const name = this.containerName(project);
+    // Conteneur créé avec d'autres paramètres ou une image depuis reconstruite : recréé dès que rien n'y tourne.
+    if (current.state !== 'absent' && current.outdated && (await this.isIdle(project))) {
+      console.log(`[runner] ${name} recréé : ${current.outdatedReasons.join(' ; ')}`);
+      await this.remove(project);
+      current = await this.status(project);
+    }
     if (current.state === 'absent') {
-      const args = [
-        'run', '-d', '--name', name, '--restart', 'unless-stopped', '--memory', s.memory, '--cpus', s.cpus,
-        // Processus init (tini) : récolte les processus orphelins, dont ceux de Chromium, lancé par `docker exec -d`.
-        '--init',
-        '--user', `${uid}:${gid}`, '-e', `HOME=${home}`, '-w', workspace,
-        // Le serveur Skipper reste joignable depuis le conteneur (ponts MCP des sessions OpenCode), y compris sous Linux.
-        '--add-host', 'host.docker.internal:host-gateway',
-        // Le dossier personnel est un tmpfs inscriptible (caches npm, profil et rapports de plantage de
-        // Chromium : sans dossier personnel inscriptible, Chromium meurt au lancement) ; ~/.claude (propre au
-        // projet : ses conversations, qui survivent à la recréation) et ~/.gitconfig viennent s'y superposer.
-        // Les identifiants Claude de l'hôte ne sont jamais montés : chaque session reçoit ceux de son
-        // propriétaire par variables d'environnement.
-        '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0750,size=512m`,
-        '-v', `${claudeHome}:${path.join(home, '.claude')}`,
-        // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
-        '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
-        // Le code, les worktrees, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
-        '-v', `${workspace}:${workspace}`, '-v', `${worktrees}:${worktrees}`, '-v', `${plugin}:${plugin}`, '-v', `${attachments}:${attachments}`,
-      ];
-      // Identité git de l'utilisateur système (repli quand le propriétaire de la session n'a pas de compte GitHub).
-      const gitconfig = path.join(home, '.gitconfig');
-      try {
-        await execFileAsync('test', ['-e', gitconfig]);
-        args.push('-v', `${gitconfig}:${gitconfig}`);
-      } catch {
-        /* absent : l'identité des commits vient des variables d'environnement, ou reste celle du conteneur */
-      }
-      args.push(s.image, 'sleep', 'infinity');
-      await docker(args);
+      const { spec, dirs } = await this.containerSpec(project);
+      // Les dossiers montés doivent exister avant `docker run`, sinon Docker les crée appartenant à root.
+      await Promise.all(dirs.map((dir) => mkdir(dir, { recursive: true, ...(dir === this.claudeHome(project) ? { mode: 0o700 } : {}) })));
+      await docker(this.runArgs(name, spec));
     } else if (current.state !== 'running') {
       await docker(['start', name]);
     }
     await this.writeRelay(project);
     return this.status(project);
+  }
+
+  /** Rien ne tourne dans le conteneur du projet ? Sans vérification déclarée (ou si elle échoue), on ne recrée jamais de nous-mêmes. */
+  private async isIdle(project: Project): Promise<boolean> {
+    if (!this.idleCheck) return false;
+    try {
+      return await this.idleCheck(project);
+    } catch (err) {
+      console.error('[runner] vérification d’inactivité', err);
+      return false;
+    }
+  }
+
+  async recreateOutdated(projects: Project[]): Promise<string[]> {
+    const recreated: string[] = [];
+    for (const project of projects) {
+      try {
+        const current = await this.status(project);
+        if (current.state === 'absent' || current.state === 'unavailable' || !current.outdated) continue;
+        console.log(`[runner] ${current.containerName} supprimé au démarrage, sera recréé à la demande : ${current.outdatedReasons.join(' ; ')}`);
+        await this.remove(project);
+        recreated.push(project.slug);
+      } catch (err) {
+        console.error(`[runner] ${this.containerName(project)} : recréation au démarrage`, err);
+      }
+    }
+    return recreated;
   }
 
   async stop(project: Project): Promise<RunnerStatus> {
@@ -229,6 +369,71 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   async opencodeCommand(project: Project, cwd: string, envKeys: string[]): Promise<SpawnSpec> {
     await this.ensureReady(project);
     return { command: 'docker', args: ['exec', '-i', '-w', cwd, ...[...PASSTHROUGH_ENV, ...envKeys].flatMap((v) => ['-e', v]), this.containerName(project), 'opencode'] };
+  }
+
+  /**
+   * Conteneur jetable (`docker run --rm`) de l'image du projet : même uid que l'hôte, dossier personnel en tmpfs,
+   * `cwd` seul monté. Les variables de la commande sont passées par l'environnement du client `docker` (`-e NOM`
+   * sans valeur), jamais sur sa ligne de commande (visible de tout utilisateur du serveur par `ps`). Au-delà du
+   * délai, le conteneur est supprimé de force (un signal ne suffit pas toujours à un processus qui l'ignore).
+   */
+  async runIsolated(project: Project | null, cmd: IsolatedCommand): Promise<IsolatedResult> {
+    const s = project ? this.settings(project) : { image: config.runnerImage, memory: config.runnerMemory, cpus: config.runnerCpus };
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
+    const gid = typeof process.getgid === 'function' ? process.getgid() : 1000;
+    const name = `skipper-run-${randomBytes(6).toString('hex')}`;
+    const home = '/tmp/home';
+    const args = [
+      'run', '--rm', '-i', '--name', name, '--memory', cmd.memory ?? '512m', '--cpus', s.cpus, '--init',
+      '--user', `${uid}:${gid}`, '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
+      '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0700,size=64m`,
+      '-v', `${cmd.cwd}:${cmd.cwd}`, '-w', cmd.cwd,
+      '--label', 'skipper.ephemeral=1', '-e', `HOME=${home}`,
+      ...Object.keys(cmd.env).flatMap((k) => ['-e', k]),
+      s.image, ...cmd.command,
+    ];
+    const maxBytes = cmd.maxBytes ?? 64 * 1024;
+    const started = Date.now();
+    return new Promise<IsolatedResult>((resolve, reject) => {
+      const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...cmd.env } });
+      let stdout = '';
+      let stderr = '';
+      let truncated = false;
+      const append = (current: string, chunk: Buffer) => {
+        if (current.length >= maxBytes) {
+          truncated = true;
+          return current;
+        }
+        const next = current + chunk.toString('utf8');
+        if (next.length > maxBytes) {
+          truncated = true;
+          return next.slice(0, maxBytes);
+        }
+        return next;
+      };
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void docker(['rm', '-f', name], { allowFail: true }).catch(() => undefined);
+        child.kill('SIGKILL');
+      }, cmd.timeoutMs);
+      child.stdout.on('data', (chunk: Buffer) => (stdout = append(stdout, chunk)));
+      child.stderr.on('data', (chunk: Buffer) => (stderr = append(stderr, chunk)));
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject((err as NodeJS.ErrnoException).code === 'ENOENT' ? new AppError("Docker n'est pas installé sur le serveur (commande docker introuvable)") : err);
+      });
+      child.on('close', (code, signal) => {
+        clearTimeout(timer);
+        if (timedOut) return reject(new AppError(`Commande interrompue après ${Math.round(cmd.timeoutMs / 1000)} s`, 'TIMEOUT'));
+        // Codes du démon ou du client docker (pas de la commande) : image absente, programme introuvable dans l'image.
+        if (code === 125) return reject(new AppError(`docker run a échoué : ${stderr.trim().split('\n').slice(-2).join(' ')}`));
+        if (code === 127 && /executable file not found|no such file or directory/i.test(stderr)) {
+          return reject(new AppError(`« ${cmd.command[0]} » est absent de l'image ${s.image} : reconstruisez l'image du runner (deploy/runner/Dockerfile)`));
+        }
+        resolve({ stdout, stderr, exitCode: code ?? null, signal: signal ?? null, truncated, durationMs: Date.now() - started });
+      });
+    });
   }
 
   /** `host.docker.internal` quand le conteneur le résout (Docker Desktop, ou `--add-host` sous Linux), sinon la passerelle du réseau. */

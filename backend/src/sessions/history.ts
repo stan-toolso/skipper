@@ -33,11 +33,8 @@ export async function conversationTurns(sessionId: string): Promise<Turn[]> {
   return turns;
 }
 
-/**
- * Consigne d'une nouvelle session qui reprend le travail d'une session archivée : sa conversation (les
- * derniers échanges jusqu'à 40 000 caractères) en contexte, puis l'instruction donnée ou « continue ».
- */
-export async function relaunchPrompt(source: Session, instruction?: string | null): Promise<string> {
+/** Derniers échanges d'une session (jusqu'à MAX_DIGEST_CHARS), et si des échanges plus anciens ont été omis. */
+async function digest(source: Session): Promise<{ kept: string[]; truncated: boolean }> {
   let turns = await conversationTurns(source.id);
   if (source.prompt && !turns.some((t) => t.role === 'user')) turns = [{ role: 'user', text: source.prompt }, ...turns];
   const lines = turns.map((t) => `${t.role === 'user' ? 'Utilisateur' : 'Assistant'} : ${t.text}`);
@@ -48,7 +45,31 @@ export async function relaunchPrompt(source: Session, instruction?: string | nul
     kept.unshift(lines[i]);
     size += lines[i].length;
   }
-  const truncated = kept.length < lines.length;
+  return { kept, truncated: kept.length < lines.length };
+}
+
+/**
+ * Résumé transmis au modèle avec la première instruction d'une conversation remise à zéro « en gardant un
+ * résumé » : les derniers échanges de la conversation précédente, pour mémoire. Null si la session n'a rien dit.
+ */
+export async function resumeDigest(source: Session): Promise<string | null> {
+  const { kept, truncated } = await digest(source);
+  if (!kept.length) return null;
+  return [
+    `La conversation précédente de cette session (« ${source.name} ») a été remise à zéro pour alléger ton contexte. Ses derniers échanges${truncated ? ' (les plus anciens sont omis)' : ''} suivent, pour mémoire : tu peux t'y référer, mais l'instruction à traiter est celle qui vient après.`,
+    '',
+    '<previous_conversation>',
+    kept.join('\n\n'),
+    '</previous_conversation>',
+  ].join('\n');
+}
+
+/**
+ * Consigne d'une nouvelle session qui reprend le travail d'une session archivée : sa conversation (les
+ * derniers échanges jusqu'à 40 000 caractères) en contexte, puis l'instruction donnée ou « continue ».
+ */
+export async function relaunchPrompt(source: Session, instruction?: string | null): Promise<string> {
+  const { kept, truncated } = await digest(source);
   return [
     `Tu reprends le travail d'une session précédente (« ${source.name} »), qui a été archivée. Sa conversation${truncated ? ' (les échanges les plus anciens sont omis)' : ''} suit, pour contexte ; les fichiers de ton dossier de travail peuvent différer de ceux qu'elle a vus.`,
     '',

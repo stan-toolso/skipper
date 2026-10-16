@@ -1,5 +1,5 @@
-import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useState } from 'react';
+import { useLazyQuery, useMutation, useQuery } from '@apollo/client';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Form, InputGroup, Nav, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
@@ -8,13 +8,20 @@ import {
   COPY_VAULT_ITEM,
   FORGET_VAULT_HOST_KEY,
   LINK_VAULT_ITEM,
+  POLL_AWS_LOGIN,
   REGENERATE_VAULT_KEY,
   REVEAL_VAULT_SECRET,
   SHARE_VAULT_ITEM,
+  START_AWS_LOGIN,
   UNLINK_VAULT_ITEM,
   UNSHARE_VAULT_ITEM,
+  UPDATE_VAULT_ITEM,
+  VAULT_AWS_ACCOUNTS,
   VAULT_ITEM_DETAILS,
   VAULT_SHARE_CANDIDATES,
+  type AwsLogin,
+  type AwsLoginPoll,
+  type VaultAwsAccount,
   type VaultAuditEvent,
   type VaultItem,
   type VaultLink,
@@ -43,11 +50,11 @@ const ACTION_LABELS: Record<string, string> = {
   used: 'usage par un agent',
   key_regenerated: 'clé régénérée',
   host_key_forgotten: 'clé d’hôte oubliée',
-  connected: 'connexion Google',
+  connected: 'connexion',
 };
 
 const fieldLabel = (item: VaultItem, field: string) =>
-  field === 'password' ? 'Mot de passe' : field === 'secretKey' ? 'Clé secrète' : field === 'token' ? (item.kind === 'litellm' ? "Clé d'API" : item.authScheme === 'basic' ? 'Mot de passe' : 'Jeton') : (item.fields.find((f) => f.key === field)?.label ?? field);
+  field === 'password' ? 'Mot de passe' : field === 'secretKey' ? 'Clé secrète' : field === 'secretAccessKey' ? "Clé d'accès secrète" : field === 'token' ? (item.kind === 'litellm' ? "Clé d'API" : item.authScheme === 'basic' ? 'Mot de passe' : 'Jeton') : (item.fields.find((f) => f.key === field)?.label ?? field);
 
 /** Une ligne « révéler » : la valeur est demandée au serveur (journalisée) et masquée après 30 s. */
 function RevealRow({ item, field }: { item: VaultItem; field: string }) {
@@ -104,7 +111,7 @@ function DetailsTab({ item, projectPage, browserDisabled, onEdited }: { item: Va
   const [unshare] = useMutation(UNSHARE_VAULT_ITEM, { refetchQueries: REFETCH, onError: (e) => void showError(e) });
   const manage = item.myPermission === 'MANAGE';
   const days = daysToExpiry(item);
-  const secretNote = item.kind === 'ssh' ? 'La clé privée ne quitte jamais le serveur.' : item.kind === 'google' ? 'Le jeton Google ne quitte jamais le serveur.' : isOauthToken(item) ? 'Obtenu par une connexion depuis Skipper : renouvelé automatiquement, jamais révélable.' : null;
+  const secretNote = item.kind === 'ssh' ? 'La clé privée ne quitte jamais le serveur.' : item.kind === 'google' ? 'Le jeton Google ne quitte jamais le serveur.' : item.kind === 'aws' && item.aws?.auth === 'sso' ? 'Les jetons Identity Center ne quittent jamais le serveur, qui les renouvelle.' : isOauthToken(item) ? 'Obtenu par une connexion depuis Skipper : renouvelé automatiquement, jamais révélable.' : null;
   return (
     <div className="vault-details small">
       {item.description && <p className="mb-2">{item.description}</p>}
@@ -171,6 +178,7 @@ function DetailsTab({ item, projectPage, browserDisabled, onEdited }: { item: Va
           <code>{item.langfusePublicKey}</code>
         </div>
       )}
+      {item.kind === 'aws' && item.aws && <AwsSection item={item} manage={manage} onEdited={onEdited} />}
       {isSkipperKind(item.kind) && (
         <div className="mb-1">
           <span className="text-secondary">Utilisé dans : </span>
@@ -305,6 +313,169 @@ function DetailsTab({ item, projectPage, browserDisabled, onEdited }: { item: Va
   );
 }
 
+/**
+ * Compte AWS : authentification, compte et rôle, identité ; pour IAM Identity Center, la connexion par code
+ * (code à confirmer sur le portail, interrogation jusqu'à la validation) puis le choix du compte et du rôle.
+ */
+function AwsSection({ item, manage, onEdited }: { item: VaultItem; manage: boolean; onEdited: (item: VaultItem) => void }) {
+  const a = item.aws!;
+  const [login, setLogin] = useState<AwsLogin | null>(null);
+  const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
+  const [start, { loading: starting }] = useMutation<{ startAwsLogin: AwsLogin }>(START_AWS_LOGIN, {
+    onCompleted: (res) => {
+      setOutcome(null);
+      setLogin(res.startAwsLogin);
+    },
+    onError: (e) => setOutcome({ ok: false, text: e.message }),
+  });
+  const [poll] = useMutation<{ pollAwsLogin: AwsLoginPoll }>(POLL_AWS_LOGIN, { refetchQueries: REFETCH });
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Interrogation périodique tant qu'AWS répond « en attente » ; l'intervalle vient de la réponse.
+  useEffect(() => {
+    if (!login) return;
+    let cancelled = false;
+    const tick = (delay: number) => {
+      timer.current = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          const res = await poll({ variables: { id: login.id } });
+          const r = res.data?.pollAwsLogin;
+          if (!r || cancelled) return;
+          if (r.status === 'PENDING') return void tick(Math.max(2, r.interval) * 1000);
+          setLogin(null);
+          if (r.status === 'CONNECTED') {
+            setOutcome({ ok: true, text: r.item?.aws?.accountId ? 'Compte AWS connecté.' : 'Compte AWS connecté : choisissez maintenant le compte et le rôle.' });
+            if (r.item) onEdited(r.item);
+          } else if (r.status === 'EXPIRED') setOutcome({ ok: false, text: 'Le code a expiré : recommencez.' });
+          else if (r.status === 'DENIED') setOutcome({ ok: false, text: "L'autorisation a été refusée sur le portail AWS." });
+          else setOutcome({ ok: false, text: `État inattendu : ${r.status}` });
+        } catch (err) {
+          if (cancelled) return;
+          setLogin(null);
+          setOutcome({ ok: false, text: (err as Error).message });
+        }
+      }, delay);
+    };
+    tick(Math.max(2, login.interval) * 1000);
+    return () => {
+      cancelled = true;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [login, poll, onEdited]);
+  const [loadAccounts, { data: accountsData, loading: loadingAccounts, error: accountsError }] = useLazyQuery<{ vaultAwsAccounts: VaultAwsAccount[] }>(VAULT_AWS_ACCOUNTS, { fetchPolicy: 'network-only' });
+  const [choice, setChoice] = useState('');
+  const [update, { loading: saving }] = useMutation<{ updateVaultItem: VaultItem }>(UPDATE_VAULT_ITEM, { refetchQueries: REFETCH, onError: (e) => setOutcome({ ok: false, text: e.message }) });
+  const accounts = accountsData?.vaultAwsAccounts ?? [];
+  const remaining = login ? Math.max(0, Math.round((new Date(login.expiresAt).getTime() - Date.now()) / 60000)) : 0;
+  return (
+    <>
+      <div className="mb-1">
+        <span className="text-secondary">Authentification : </span>
+        {a.auth === 'sso' ? (
+          <>
+            IAM Identity Center, portail <code>{a.startUrl}</code> ({a.ssoRegion})
+          </>
+        ) : (
+          <>
+            clés d'accès <code>{a.accessKeyId}</code>
+            {a.roleArn && (
+              <>
+                {' '}
+                · rôle endossé <code>{a.roleArn}</code>
+              </>
+            )}
+          </>
+        )}
+        {' · région par défaut '}
+        <code>{a.region}</code>
+      </div>
+      {a.auth === 'sso' && (
+        <div className="mb-1">
+          <span className="text-secondary">Compte et rôle : </span>
+          {a.accountId ? (
+            <>
+              {a.accountName ?? a.accountId} ({a.accountId}) · <code>{a.roleName}</code>
+            </>
+          ) : (
+            <span className="text-warning">à choisir après la connexion</span>
+          )}
+          {' · connexion : '}
+          {a.connected ? <>en cours{a.tokenExpiresAt && <> (jeton valable jusqu'au {fmtDate(a.tokenExpiresAt)}, renouvelé par Skipper)</>}</> : <span className="text-danger">à faire, par code</span>}
+        </div>
+      )}
+      {a.identity && (
+        <div className="mb-1">
+          <span className="text-secondary">Identité vérifiée : </span>
+          <code>{a.identity}</code>
+        </div>
+      )}
+      {manage && a.auth === 'sso' && (
+        <div className="mt-2 mb-2">
+          {login ? (
+            <Alert variant="info" className="py-2 mb-2">
+              Ouvrez{' '}
+              <a href={login.verificationUriComplete} target="_blank" rel="noreferrer">
+                {login.verificationUri}
+              </a>{' '}
+              et confirmez le code <strong className="font-monospace">{login.userCode}</strong> (valable encore {remaining} min). Cette page attend la validation.{' '}
+              <Button size="sm" variant="link" className="p-0 align-baseline" onClick={() => setLogin(null)}>
+                Annuler
+              </Button>
+            </Alert>
+          ) : (
+            <Button size="sm" variant={a.connected ? 'outline-secondary' : 'primary'} disabled={starting} onClick={() => start({ variables: { id: item.id } })}>
+              <i className="bi bi-box-arrow-in-right me-1" /> {starting ? 'Demande du code…' : a.connected ? 'Se reconnecter' : 'Se connecter à AWS'}
+            </Button>
+          )}
+          {outcome && (
+            <Alert variant={outcome.ok ? 'success' : 'danger'} className="py-1 mt-2 mb-0" dismissible onClose={() => setOutcome(null)}>
+              {outcome.text}
+            </Alert>
+          )}
+          {a.connected && !login && (
+            <div className="mt-2 d-flex gap-2 align-items-center flex-wrap">
+              {accounts.length === 0 ? (
+                <Button size="sm" variant="outline-secondary" disabled={loadingAccounts} onClick={() => loadAccounts({ variables: { id: item.id } })}>
+                  {loadingAccounts ? 'Chargement des comptes…' : a.accountId ? 'Changer de compte ou de rôle…' : 'Choisir le compte et le rôle…'}
+                </Button>
+              ) : (
+                <Form
+                  className="d-flex gap-2 align-items-center flex-wrap"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const [accountId, roleName] = choice.split('|');
+                    const accountName = accounts.find((acc) => acc.accountId === accountId)?.accountName ?? null;
+                    const res = await update({ variables: { id: item.id, input: { aws: { accountId, roleName, accountName } } } });
+                    if (res.data) {
+                      setOutcome({ ok: true, text: `Compte ${accountName ?? accountId}, rôle ${roleName} : enregistré. Testez l'élément pour vérifier l'identité.` });
+                      onEdited(res.data.updateVaultItem);
+                    }
+                  }}
+                >
+                  <Form.Select size="sm" value={choice} onChange={(e) => setChoice(e.target.value)} required style={{ width: 'auto', maxWidth: 520 }}>
+                    <option value="">Compte et rôle…</option>
+                    {accounts.flatMap((acc) =>
+                      acc.roles.map((r) => (
+                        <option key={`${acc.accountId}|${r}`} value={`${acc.accountId}|${r}`}>
+                          {acc.accountName} ({acc.accountId}) · {r}
+                        </option>
+                      )),
+                    )}
+                  </Form.Select>
+                  <Button size="sm" type="submit" disabled={saving || !choice}>
+                    Enregistrer
+                  </Button>
+                </Form>
+              )}
+              {accountsError && <span className="text-danger">{accountsError.message}</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function SharesTab({ item, shares }: { item: VaultItem; shares: VaultShare[] }) {
   const { confirm, showError } = useDialogs();
   const { data } = useQuery<{ vaultShareCandidates: { id: string; name: string; email: string }[] }>(VAULT_SHARE_CANDIDATES);
@@ -321,7 +492,7 @@ function SharesTab({ item, shares }: { item: VaultItem; shares: VaultShare[] }) 
         {(item.ownerProject || item.ownerProjectName) && " Les administrateurs du projet propriétaire le gèrent ; ses autres membres l'utilisent."}
       </p>
       {shares.length > 0 && (
-        <Table size="sm" className="mb-2">
+        <Table size="sm" className="mb-2 table-stack">
           <tbody>
             {shares.map((s) => (
               <tr key={s.user.id}>
@@ -439,7 +610,7 @@ function AgentLinksTab({ item, links, projects }: { item: VaultItem; links: Vaul
     <div className="small">
       <p className="text-secondary mb-2">Ouvrir un élément à un projet permet à ses agents de l'utiliser : soit pour toutes les sessions du projet, soit seulement pour celles que vous lancez. L'élément reste dans son coffre d'origine.</p>
       {links.length > 0 && (
-        <Table size="sm" className="mb-2">
+        <Table size="sm" className="mb-2 table-stack">
           <tbody>
             {links.map((l) => (
               <tr key={l.id}>
@@ -551,7 +722,7 @@ function AuditTab({ events, onMore, canMore }: { events: VaultAuditEvent[]; onMo
     <div className="small">
       {events.length === 0 && <div className="text-secondary">Aucun événement.</div>}
       {events.length > 0 && (
-        <Table size="sm" className="mb-1">
+        <Table size="sm" responsive className="mb-1">
           <tbody>
             {events.map((e) => (
               <tr key={e.id} className={e.ok ? '' : 'text-danger'}>
