@@ -26,7 +26,7 @@ const SKIPPED_DIRS = new Set(['.git', 'node_modules']);
 const MAX_SCANNED = 20_000;
 const MAX_FILES = 500;
 
-const refOf = (session: Session): WorkspaceRef => ({ projectId: session.projectId, worktreeId: session.worktreeId });
+const refOf = (session: Session): WorkspaceRef => ({ projectId: session.projectId, worksessionId: session.worksessionId });
 
 /** Fichiers modifiés depuis `since` dans un dossier sans git (date de modification). */
 async function modifiedSince(root: string, since: Date): Promise<{ files: GitChangeSince[]; truncated: boolean }> {

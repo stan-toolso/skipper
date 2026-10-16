@@ -29,7 +29,7 @@ export interface Task {
   priority: TaskPriority;
   /** Session en charge actuellement (l'historique complet est dans task_sessions). */
   sessionId: string | null;
-  /** Branche git de la tâche (worktree dédié), conservée après suppression du worktree. */
+  /** Branche git de la tâche (work session dédiée), conservée après suppression de la work session. */
   branch: string | null;
   createdByType: Actor['type'];
   createdBySessionId: string | null;

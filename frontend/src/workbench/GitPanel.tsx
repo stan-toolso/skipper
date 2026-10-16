@@ -65,7 +65,7 @@ function timeAgo(iso: string): string {
 }
 
 /** Fenêtre de diff (fichier ou commit). */
-function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId: string; worktreeId: string | null }; onClose: () => void }) {
+function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId: string; worksessionId: string | null }; onClose: () => void }) {
   const fileQ = useQuery<{ gitDiff: GitDiff }>(GIT_DIFF, { variables: { ...vars, path: req.kind === 'file' ? req.path : '', staged: req.kind === 'file' ? req.staged : false }, skip: req.kind !== 'file', fetchPolicy: 'network-only' });
   const commitQ = useQuery<{ gitCommitDiff: GitDiff }>(GIT_COMMIT_DIFF, { variables: { ...vars, hash: req.kind === 'commit' ? req.hash : '' }, skip: req.kind !== 'commit', fetchPolicy: 'network-only' });
   const branchQ = useQuery<{ gitBranchFileDiff: GitDiff }>(GIT_BRANCH_FILE_DIFF, { variables: { ...vars, path: req.kind === 'branch' ? req.path : '', origPath: req.kind === 'branch' ? req.origPath : null }, skip: req.kind !== 'branch', fetchPolicy: 'network-only' });
@@ -154,7 +154,7 @@ function Section({ title, count, defaultOpen = true, children, action }: { title
 }
 
 /** Revue de toutes les modifications de la branche depuis sa base, fichier par fichier (comme l'onglet « Files changed » d'une PR). */
-function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChanges; vars: { projectId: string; worktreeId: string | null }; onClose: () => void }) {
+function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChanges; vars: { projectId: string; worksessionId: string | null }; onClose: () => void }) {
   return (
     <Modal show onHide={onClose} size="xl" centered scrollable>
       <Modal.Header closeButton>
@@ -172,7 +172,7 @@ function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChang
   );
 }
 
-function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number]; vars: { projectId: string; worktreeId: string | null } }) {
+function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number]; vars: { projectId: string; worksessionId: string | null } }) {
   const q = useQuery<{ gitBranchFileDiff: GitDiff }>(GIT_BRANCH_FILE_DIFF, { variables: { ...vars, path: file.path, origPath: file.origPath }, fetchPolicy: 'network-only' });
   return (
     <div className="border-bottom">
@@ -194,7 +194,7 @@ function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number
 }
 
 /** Modifications de la branche depuis son point de divergence avec sa base (commits et travail non validé). */
-function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worktreeId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
+function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worksessionId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
   const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges | null }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
   const [review, setReview] = useState(false);
   const changes = q.data?.gitBranchChanges ?? undefined;
@@ -246,7 +246,7 @@ function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; work
 }
 
 /** Pull requests GitHub : celle de la branche courante (ou bouton de création), puis les autres PR ouvertes du dépôt. */
-function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: string; worktreeId: string | null; branch: string | null }) {
+function PullRequestsSection({ projectId, worksessionId, branch }: { projectId: string; worksessionId: string | null; branch: string | null }) {
   const q = usePollingQuery<{ githubPullRequests: PullRequest[] }>(GITHUB_PULL_REQUESTS, { variables: { projectId, state: 'OPEN', limit: 50 }, pollInterval: 30000 });
   const [creating, setCreating] = useState(false);
   const [openNumber, setOpenNumber] = useState<number | null>(null);
@@ -298,15 +298,15 @@ function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: str
           {others.map(row)}
         </>
       )}
-      {creating && <CreatePullRequestModal projectId={projectId} worktreeId={worktreeId} onClose={() => setCreating(false)} onCreated={(pr) => { setCreating(false); setOpenNumber(pr.number); }} />}
+      {creating && <CreatePullRequestModal projectId={projectId} worksessionId={worksessionId} onClose={() => setCreating(false)} onCreated={(pr) => { setCreating(false); setOpenNumber(pr.number); }} />}
       {openNumber !== null && (
         <PullRequestModal
           projectId={projectId}
           number={openNumber}
           onClose={() => setOpenNumber(null)}
           onMerged={(deleted) => {
-            // Le worktree affiché vient d'être supprimé : retour au projet.
-            if (worktreeId && deleted.includes(worktreeId) && location.pathname.startsWith('/worktrees/')) navigate(`/projects/${projectId}`);
+            // La work session affiché vient d'être supprimé : retour au projet.
+            if (worksessionId && deleted.includes(worksessionId) && location.pathname.startsWith('/worksessions/')) navigate(`/projects/${projectId}`);
           }}
         />
       )}
@@ -320,7 +320,7 @@ const panelTabChoice = new Map<string, 'task' | 'git'>();
 /** Panneau de droite : onglet « Tâche » (session en charge d'une tâche) et onglet git (modifications, commit, branche, pull requests, historique). */
 export default function GitPanel() {
   const { target, open, setOpen } = useGitPanel();
-  const vars = target ? { projectId: target.projectId, worktreeId: target.worktreeId } : null;
+  const vars = target ? { projectId: target.projectId, worksessionId: target.worksessionId } : null;
   const taskId = target?.taskId ?? null;
   const [tabState, setTabState] = useState<{ taskId: string | null; tab: 'task' | 'git' } | null>(null);
   const tab: 'task' | 'git' = taskId ? (tabState?.taskId === taskId ? tabState.tab : panelTabChoice.get(taskId) ?? 'task') : 'git';
@@ -351,7 +351,7 @@ export default function GitPanel() {
   const [pull, { loading: pulling }] = useMutation(GIT_PULL, opts);
   const [push, { loading: pushing }] = useMutation(GIT_PUSH, opts);
   const [checkout, { loading: checkingOut }] = useMutation(GIT_CHECKOUT, { ...opts, onCompleted: () => { setNewBranch(''); void refetchAll(); } });
-  useEffect(() => setActionError(null), [target?.projectId, target?.worktreeId]);
+  useEffect(() => setActionError(null), [target?.projectId, target?.worksessionId]);
 
   if (!target) return null;
   if (!open) {
@@ -513,7 +513,7 @@ export default function GitPanel() {
         </div>
 
         {vars && hasRepo && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
-        {hasRepo && <PullRequestsSection projectId={target.projectId} worktreeId={target.worktreeId} branch={status && !status.detached ? status.branch : null} />}
+        {hasRepo && <PullRequestsSection projectId={target.projectId} worksessionId={target.worksessionId} branch={status && !status.detached ? status.branch : null} />}
 
         <Section title="Branches" count={local.length} defaultOpen={false}>
           <Form

@@ -10,7 +10,7 @@ import { AppError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import { workspacePath } from '../projects/workspace.js';
 import { attachmentsRoot } from '../sessions/attachments.js';
-import { worktreesRoot } from '../worktrees/service.js';
+import { worksessionsRoot } from '../worksessions/service.js';
 import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type IsolatedCommand, type IsolatedResult, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
 import { containerDrift, countZombies, SPEC_LABEL, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
@@ -134,7 +134,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   private async containerSpec(project: Project): Promise<{ spec: ContainerSpec; dirs: string[] }> {
     const s = this.settings(project);
     const workspace = workspacePath(project);
-    const worktrees = worktreesRoot(project);
+    const worksessions = worksessionsRoot(project);
     const plugin = contextPluginDir(project);
     const attachments = attachmentsRoot(project);
     const claudeHome = this.claudeHome(project);
@@ -148,9 +148,9 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       // Comptes de l'hôte en lecture seule : l'utilisateur a un nom, un home, et ssh/git fonctionnent.
       '/etc/passwd:/etc/passwd:ro',
       '/etc/group:/etc/group:ro',
-      // Le code, les worktrees, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
+      // Le code, les work sessions, les skills et les pièces jointes des sessions du projet, au même chemin que sur l'hôte.
       `${workspace}:${workspace}`,
-      `${worktrees}:${worktrees}`,
+      `${worksessions}:${worksessions}`,
       `${plugin}:${plugin}`,
       `${attachments}:${attachments}`,
     ];
@@ -179,7 +179,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       hosts: ['host.docker.internal:host-gateway'],
       command: ['sleep', 'infinity'],
     };
-    return { spec, dirs: [worktrees, plugin, attachments, claudeHome] };
+    return { spec, dirs: [worksessions, plugin, attachments, claudeHome] };
   }
 
   /** Arguments de `docker run` dérivés de la configuration, label compris. */

@@ -91,11 +91,11 @@ export const userRepository = {
   async projectIdsHolding(open: OpenItems): Promise<string[]> {
     const { rows } = await pool.query<{ id: string }>(
       `SELECT id FROM projects WHERE id = ANY($1::uuid[])
-       UNION SELECT project_id FROM worktrees WHERE id = ANY($2::uuid[])
+       UNION SELECT project_id FROM worksessions WHERE id = ANY($2::uuid[])
        UNION SELECT project_id FROM sessions WHERE id = ANY($3::uuid[])
        UNION SELECT project_id FROM terminals WHERE id = ANY($4::uuid[])
        UNION SELECT project_id FROM tasks WHERE id = ANY($5::uuid[])`,
-      [uuids(open.projectIds), uuids(open.worktreeIds), uuids(open.sessionIds), uuids(open.terminalIds), uuids(open.taskIds)],
+      [uuids(open.projectIds), uuids(open.worksessionIds), uuids(open.sessionIds), uuids(open.terminalIds), uuids(open.taskIds)],
     );
     return rows.map((r) => r.id);
   },

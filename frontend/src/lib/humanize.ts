@@ -12,7 +12,9 @@ export interface ToolDescription {
 const str = (input: Record<string, unknown>, key: string): string | undefined => (typeof input[key] === 'string' ? (input[key] as string) : undefined);
 const baseName = (p?: string) => (p ? p.split('/').filter(Boolean).pop() ?? p : '');
 
-export function describeTool(name: string, input: Record<string, unknown> = {}): ToolDescription {
+export function describeTool(rawName: string, input: Record<string, unknown> = {}): ToolDescription {
+  // Transcripts d'avant le renommage : l'outil s'appelait `worktrees`.
+  const name = rawName.replace(/^mcp__worktrees__/, 'mcp__worksessions__');
   switch (name) {
     case 'Bash': {
       const cmd = str(input, 'command') ?? '';
@@ -89,7 +91,7 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
       if (name.startsWith('mcp__sessions__')) {
         const op = name.slice('mcp__sessions__'.length);
         const short = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
-        const target = str(input, 'new_branch') ? ` dans un nouveau worktree (${str(input, 'new_branch')})` : str(input, 'worktree') ? ` dans le worktree ${str(input, 'worktree')}` : '';
+        const target = str(input, 'new_branch') ? ` dans une nouvelle work session (${str(input, 'new_branch')})` : str(input, 'worksession') ? ` dans la work session ${str(input, 'worksession')}` : '';
         const verbs: Record<string, [string, string | undefined, string]> = {
           list: ['Consultation des sessions du projet', undefined, 'consulter les sessions du projet'],
           get: ["Consultation d'une session", undefined, 'consulter une session'],
@@ -101,15 +103,15 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
         const [label, detail, action] = verbs[op] ?? [`Sessions : ${op}`, undefined, `utiliser les sessions (${op})`];
         return { label, detail, action };
       }
-      if (name.startsWith('mcp__worktrees__')) {
-        const op = name.slice('mcp__worktrees__'.length);
+      if (name.startsWith('mcp__worksessions__')) {
+        const op = name.slice('mcp__worksessions__'.length);
         const branch = str(input, 'branch') ?? str(input, 'name') ?? '';
         const verbs: Record<string, [string, string]> = {
-          list: ['Consultation des worktrees du projet', 'consulter les worktrees'],
-          create: [`Création du worktree ${branch}`, `créer le worktree ${branch}`],
-          delete: [`Suppression du worktree ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer le worktree ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
+          list: ['Consultation des work sessions du projet', 'consulter les work sessions'],
+          create: [`Création de la work session ${branch}`, `créer la work session ${branch}`],
+          delete: [`Suppression de la work session ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer la work session ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
         };
-        const [label, action] = verbs[op] ?? [`Worktrees : ${op}`, `utiliser les worktrees (${op})`];
+        const [label, action] = verbs[op] ?? [`Work sessions : ${op}`, `utiliser les work sessions (${op})`];
         return { label, action };
       }
       if (name.startsWith('mcp__connections__') || name.startsWith('mcp__vault__')) {

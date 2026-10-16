@@ -5,9 +5,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError, NotFoundError } from '../errors.js';
 
-// Projets et worktrees viennent de la base : on les simule, et leurs dossiers pointent vers un
+// Projets et worksessions viennent de la base : on les simule, et leurs dossiers pointent vers un
 // répertoire temporaire recréé pour chaque test.
-const dirs = vi.hoisted(() => ({ workspace: '', worktrees: '' }));
+const dirs = vi.hoisted(() => ({ workspace: '', worksessions: '' }));
 vi.mock('../projects/service.js', () => ({
   projectService: {
     get: vi.fn(async (id: string) => {
@@ -17,11 +17,11 @@ vi.mock('../projects/service.js', () => ({
   },
 }));
 vi.mock('../projects/workspace.js', () => ({ workspacePath: () => dirs.workspace }));
-vi.mock('../worktrees/service.js', () => ({
-  worktreeService: {
+vi.mock('../worksessions/service.js', () => ({
+  worksessionService: {
     get: vi.fn(async (id: string) => ({ id, projectId: id === 'wt-other' ? 'p2' : 'p1', name: id })),
   },
-  worktreePath: (_project: unknown, wt: { name: string }) => path.join(dirs.worktrees, wt.name),
+  worksessionPath: (_project: unknown, wt: { name: string }) => path.join(dirs.worksessions, wt.name),
 }));
 
 const { fileService, resolveRoot } = await import('./service.js');
@@ -46,7 +46,7 @@ beforeEach(async () => {
   root = path.join(base, 'workspace');
   outside = path.join(base, 'outside');
   dirs.workspace = root;
-  dirs.worktrees = path.join(base, 'workspace.worktrees');
+  dirs.worksessions = path.join(base, 'workspace.worktrees');
   await mkdir(path.join(root, 'src'), { recursive: true });
   await mkdir(outside);
   await writeFile(path.join(root, 'src', 'index.ts'), 'export {};\n');
@@ -62,15 +62,15 @@ describe('racine du workspace', () => {
     await expect(resolveRoot(ref)).resolves.toBe(root);
   });
 
-  it("résout un worktree du projet", async () => {
-    await mkdir(path.join(dirs.worktrees, 'wt-1'), { recursive: true });
-    await writeFile(path.join(dirs.worktrees, 'wt-1', 'a.txt'), 'dans le worktree');
-    await expect(resolveRoot({ projectId: 'p1', worktreeId: 'wt-1' })).resolves.toBe(path.join(dirs.worktrees, 'wt-1'));
-    await expect(fileService.read({ projectId: 'p1', worktreeId: 'wt-1' }, 'a.txt')).resolves.toMatchObject({ content: 'dans le worktree' });
+  it("résout une work session du projet", async () => {
+    await mkdir(path.join(dirs.worksessions, 'wt-1'), { recursive: true });
+    await writeFile(path.join(dirs.worksessions, 'wt-1', 'a.txt'), 'dans la work session');
+    await expect(resolveRoot({ projectId: 'p1', worksessionId: 'wt-1' })).resolves.toBe(path.join(dirs.worksessions, 'wt-1'));
+    await expect(fileService.read({ projectId: 'p1', worksessionId: 'wt-1' }, 'a.txt')).resolves.toMatchObject({ content: 'dans la work session' });
   });
 
-  it("refuse le worktree d'un autre projet", async () => {
-    const err = await appError(resolveRoot({ projectId: 'p1', worktreeId: 'wt-other' }));
+  it("refuse la work session d'un autre projet", async () => {
+    const err = await appError(resolveRoot({ projectId: 'p1', worksessionId: 'wt-other' }));
     expect(err.message).toMatch(/autre projet/);
   });
 

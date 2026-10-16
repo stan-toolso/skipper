@@ -2,7 +2,7 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@
 import { z } from 'zod';
 import type { Actor } from '../context/types.js';
 import type { Project } from '../projects/types.js';
-import { worktreeService } from '../worktrees/service.js';
+import { worksessionService } from '../worksessions/service.js';
 import { sessionRepository } from './repository.js';
 import { sessionService } from './service.js';
 import type { Session } from './types.js';
@@ -31,17 +31,17 @@ async function lastAnswer(sessionId: string): Promise<string | null> {
 /** Description d'une session sur une ligne, avec sa relation à la session courante. */
 async function line(s: Session, sessionId: string): Promise<string> {
   const relation = s.id === sessionId ? ' · cette session' : s.parentSessionId === sessionId ? ' · lancée par cette session' : '';
-  const wt = s.worktreeId ? await worktreeService.get(s.worktreeId).then((w) => ` · worktree ${w.name} (${w.branch})`, () => '') : '';
+  const wt = s.worksessionId ? await worksessionService.get(s.worksessionId).then((w) => ` · work session ${w.name} (${w.branch})`, () => '') : '';
   return `- ${s.id} · ${s.name} · ${stateOf(s)}${wt}${relation}`;
 }
 
 /** Paragraphe du prompt système décrivant ces outils aux agents. */
 export function sessionsPromptSummary(project: Pick<Project, 'gitUrl'>): string {
   return [
-    "Tu peux déléguer du travail à d'autres sessions d'agent avec les outils du serveur MCP `sessions` : `create` lance une session (consigne complète et autonome, dans le dossier principal, un worktree existant ou un nouveau worktree via `new_branch`), `wait` attend la fin de son tour et renvoie sa réponse, `send` lui envoie une nouvelle instruction, `end` la termine quand tu n'en as plus besoin (chaque session ouverte occupe de la mémoire). Une session déléguée ne voit ni ta conversation ni tes fichiers non validés : donne-lui tout le contexte utile dans sa consigne. Termine toujours les sessions que tu as lancées.",
+    "Tu travailles dans une work session : un dossier à toi, à côté du checkout principal du projet (où rien ne s'exécute). Tu peux déléguer du travail à d'autres sessions d'agent avec les outils du serveur MCP `sessions` : `create` lance une session (consigne complète et autonome, dans une work session existante — la tienne pour partager tes fichiers —, sur une nouvelle branche via `new_branch`, ou par défaut dans une nouvelle work session), `wait` attend la fin de son tour et renvoie sa réponse, `send` lui envoie une nouvelle instruction, `end` la termine quand tu n'en as plus besoin (chaque session ouverte occupe de la mémoire). Une session déléguée ne voit ni ta conversation ni tes fichiers non validés : donne-lui tout le contexte utile dans sa consigne. Termine toujours les sessions que tu as lancées.",
     project.gitUrl
-      ? "Le serveur MCP `worktrees` (list, create, delete) gère les worktrees git du projet : un dossier par branche pour isoler un chantier ou faire travailler plusieurs agents en parallèle sans se gêner."
-      : null,
+      ? "Le serveur MCP `worksessions` (list, create, delete) gère les work sessions du projet : chacune est un git worktree sur sa propre branche, pour isoler un chantier ou faire travailler plusieurs agents en parallèle sans se gêner."
+      : "Le serveur MCP `worksessions` (list, create, delete) gère les work sessions du projet : chacune est un dossier séparé.",
   ]
     .filter(Boolean)
     .join('\n');
@@ -81,7 +81,7 @@ export function createSessionsMcpServer(project: Project, sessionId: string): Mc
     version: '1.0.0',
     instructions: `Sessions d'agent du projet "${project.name}". Lance une session (create) avec une consigne complète et autonome, attends sa réponse (wait), précise si besoin (send), puis termine-la (end). Tu ne peux parler qu'aux sessions que tu as lancées.`,
     tools: [
-      tool('list', 'Liste les sessions du projet (les plus récentes en premier), avec leur état et leur worktree.', { limit: z.number().int().positive().max(100).optional().describe('Défaut : 20') }, async ({ limit }) =>
+      tool('list', 'Liste les sessions du projet (les plus récentes en premier), avec leur état et leur work session.', { limit: z.number().int().positive().max(100).optional().describe('Défaut : 20') }, async ({ limit }) =>
         run(async () => {
           const sessions = await sessionService.list({ projectId: project.id, limit: limit ?? 20 });
           return sessions.length ? (await Promise.all(sessions.map((s) => line(s, sessionId)))).join('\n') : 'Aucune session.';
@@ -90,26 +90,26 @@ export function createSessionsMcpServer(project: Project, sessionId: string): Mc
       tool('get', "État d'une session et dernière réponse de son agent.", { id: z.string() }, async ({ id }) => run(async () => report(await getInProject(id)))),
       tool(
         'create',
-        "Lance une nouvelle session d'agent dans ce projet et renvoie son id. Sans worktree ni new_branch, elle travaille dans le dossier principal. La consigne doit être complète : la session ne connaît pas ta conversation.",
+        "Lance une nouvelle session d'agent dans ce projet et renvoie son id. Elle travaille toujours dans une work session : celle indiquée (worksession), une nouvelle sur new_branch, ou par défaut une nouvelle nommée d'après la consigne. La consigne doit être complète : la session ne connaît pas ta conversation.",
         {
           prompt: z.string().describe('Consigne complète et autonome : objectif, contexte, critères de réussite, ce qu\'il faut rendre'),
           name: z.string().optional().describe('Nom court de la session (défaut : première ligne de la consigne)'),
-          worktree: z.string().optional().describe("Nom (dossier) ou branche d'un worktree existant dans lequel travailler"),
-          new_branch: z.string().optional().describe('Crée un worktree sur cette branche (créée si absente) et y lance la session'),
+          worksession: z.string().optional().describe("Nom (dossier) ou branche d'une work session existante où travailler (la tienne : worksessions.list la signale)"),
+          new_branch: z.string().optional().describe('Crée une work session sur cette branche (créée si absente) et y lance la session'),
           base_ref: z.string().optional().describe('Avec new_branch : point de départ de la nouvelle branche (défaut : HEAD du dossier principal)'),
           permission_mode: z.enum(['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']).optional().describe('Autorisations de la session (défaut : celles de ta session)'),
           model: z.string().optional().describe('Modèle (défaut : celui de ta session)'),
         },
-        async ({ prompt, name, worktree, new_branch, base_ref, permission_mode, model }) =>
+        async ({ prompt, name, worksession, new_branch, base_ref, permission_mode, model }) =>
           run(async () => {
             const me = await sessionService.get(sessionId);
             if (!me) throw new Error('Session courante introuvable');
-            if (worktree && new_branch) throw new Error('Indique soit worktree (existant), soit new_branch (à créer)');
-            let worktreeId: string | null = null;
-            if (worktree) {
-              const w = (await worktreeService.listByProject(project.id)).find((x) => x.name === worktree || x.branch === worktree);
-              if (!w) throw new Error(`Worktree "${worktree}" introuvable : worktrees.list pour la liste, ou new_branch pour en créer un`);
-              worktreeId = w.id;
+            if (worksession && new_branch) throw new Error('Indique soit worksession (existante), soit new_branch (à créer)');
+            let worksessionId: string | null = null;
+            if (worksession) {
+              const w = (await worksessionService.listByProject(project.id)).find((x) => x.name === worksession || x.branch === worksession);
+              if (!w) throw new Error(`Work session "${worksession}" introuvable : worksessions.list pour la liste, ou new_branch pour en créer une`);
+              worksessionId = w.id;
             }
             const config: Record<string, unknown> = { ...me.config };
             if (permission_mode) config.permissionMode = permission_mode;
@@ -117,8 +117,9 @@ export function createSessionsMcpServer(project: Project, sessionId: string): Mc
             const session = await sessionService.create(
               {
                 projectId: project.id,
-                worktreeId,
-                newWorktree: new_branch ? { branch: new_branch, baseRef: base_ref ?? null } : null,
+                worksessionId,
+                // Sans work session indiquée : une nouvelle, nommée d'après la consigne.
+                newWorksession: new_branch ? { branch: new_branch, baseRef: base_ref ?? null } : worksessionId ? null : { baseRef: base_ref ?? null },
                 name: (name?.trim() || prompt.trim().split('\n')[0]).slice(0, 80),
                 provider: me.provider,
                 prompt,

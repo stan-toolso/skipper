@@ -8,7 +8,7 @@ import { useGitTarget } from '../workbench/GitTargetContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
 import { CREATE_PROJECT_API_KEY, DELETE_PROJECT_API_KEY, PROJECT_API_KEYS, type ProjectApiKey } from '../graphql/tasks';
-import { useRenameWorktree } from '../workbench/RenameWorktree';
+import { useRenameWorksession } from '../workbench/RenameWorksession';
 import { apiBaseUrl } from '../apollo';
 import StatusBadge from '../components/StatusBadge';
 import { useDialogs } from '../components/Dialogs';
@@ -255,7 +255,7 @@ import {
   PROJECT,
   PROJECTS,
   PROJECT_MEMBERS,
-  PROJECT_WORKTREES,
+  PROJECT_WORKSESSIONS,
   PROJECT_CONTAINER_STATS,
   UPDATE_PROJECT,
   type ContainerProcess,
@@ -269,7 +269,7 @@ import {
   type ProjectMember,
   type ProjectRole,
   type Session,
-  type Worktree,
+  type Worksession,
 } from '../graphql/operations';
 import { projectRoleLabels, timeAgo } from '../lib/humanize';
 import { useAuth } from '../auth/AuthContext';
@@ -530,35 +530,40 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
   );
 }
 
-/** Worktrees git du projet : liste, création (modale, avec une session par défaut), suppression. */
-function WorktreesCard({ projectId }: { projectId: string }) {
-  const { data } = usePollingQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, pollInterval: 5000 });
-  const { deleteWorktree, archiveWorktree } = useDeletions();
-  const { openRenameWorktree } = useRenameWorktree();
-  const { openNewSession, openNewWorktree } = useSessionLauncher();
+/** Work sessions du projet : liste, création (modale, avec une session si une consigne est donnée), renommage, archivage, suppression. */
+function WorksessionsCard({ projectId }: { projectId: string }) {
+  const { data } = usePollingQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worksessions: Worksession[] } | null }>(PROJECT_WORKSESSIONS, { variables: { id: projectId }, pollInterval: 5000 });
+  const { deleteWorksession, archiveWorksession } = useDeletions();
+  const { openRenameWorksession } = useRenameWorksession();
+  const { openNewSession, openNewWorksession } = useSessionLauncher();
   const project = data?.project;
-  if (!project?.gitUrl) return null;
+  if (!project) return null;
   return (
     <Card className="mt-3">
-      <Card.Header>Branches de travail (worktrees)</Card.Header>
+      <Card.Header>Work sessions</Card.Header>
       <Card.Body className="small">
         <p className="text-secondary">
-          Le dossier principal suit la branche <code>{project.git?.branch ?? 'par défaut'}</code>. Un worktree extrait une autre branche dans son propre dossier : les agents y travaillent sans gêner le
-          dossier principal. Un worktree archivé garde son dossier et ses sessions : voyez l'<Link to={`/projects/${projectId}/history`}>historique</Link>.
+          Sessions et terminaux travaillent toujours dans une work session : un dossier à elle
+          {project.gitUrl ? (
+            <>
+              , sur sa propre branche (git worktree), à côté du dossier principal qui suit <code>{project.git?.branch ?? 'la branche par défaut'}</code>
+            </>
+          ) : null}
+          . Rien ne s'exécute dans le dossier principal. Une work session archivée garde son dossier et ses sessions : voyez l'<Link to={`/projects/${projectId}/history`}>historique</Link>.
         </p>
         <Table size="sm" className="mb-3 table-stack">
           <tbody>
-            {project.worktrees.length === 0 && (
+            {project.worksessions.length === 0 && (
               <tr>
-                <td className="text-secondary">Aucun worktree.</td>
+                <td className="text-secondary">Aucune work session.</td>
               </tr>
             )}
-            {project.worktrees.map((w) => (
+            {project.worksessions.map((w) => (
               <tr key={w.id}>
                 <td>
-                  <i className="bi bi-diagram-2 me-1" />
+                  <i className="bi bi-layers me-1" />
                   <strong>{w.label}</strong>
-                  {w.label !== w.branch && <span className="text-secondary"> · {w.branch}</span>}
+                  {project.gitUrl && w.label !== w.branch && <span className="text-secondary"> · {w.branch}</span>}
                   {w.git && <span className="text-secondary"> · {w.git.commit}</span>}
                   {!w.exists && <span className="text-warning"> · dossier absent (recréé à la prochaine utilisation)</span>}
                   <div className="text-secondary">
@@ -566,16 +571,16 @@ function WorktreesCard({ projectId }: { projectId: string }) {
                   </div>
                 </td>
                 <td className="text-end text-nowrap">
-                  <Button size="sm" variant="outline-primary" className="me-1" onClick={() => openNewSession({ projectId, worktreeId: w.id })}>
+                  <Button size="sm" variant="outline-primary" className="me-1" onClick={() => openNewSession({ projectId, worksessionId: w.id })}>
                     Session
                   </Button>
-                  <Button size="sm" variant="outline-secondary" className="me-1" title="Renommer le libellé ou le dossier" onClick={() => openRenameWorktree(w)}>
+                  <Button size="sm" variant="outline-secondary" className="me-1" title="Renommer le libellé ou le dossier" onClick={() => openRenameWorksession(w)}>
                     Renommer
                   </Button>
-                  <Button size="sm" variant="outline-secondary" className="me-1" title="Archiver : sessions archivées, dossier et branche conservés" onClick={() => void archiveWorktree(w)}>
+                  <Button size="sm" variant="outline-secondary" className="me-1" title="Archiver : sessions archivées, dossier et branche conservés" onClick={() => void archiveWorksession(w)}>
                     Archiver
                   </Button>
-                  <Button size="sm" variant="outline-danger" onClick={() => void deleteWorktree(w)}>
+                  <Button size="sm" variant="outline-danger" onClick={() => void deleteWorksession(w)}>
                     Supprimer
                   </Button>
                 </td>
@@ -583,9 +588,9 @@ function WorktreesCard({ projectId }: { projectId: string }) {
             ))}
           </tbody>
         </Table>
-        <Button size="sm" onClick={() => openNewWorktree({ projectId })}>
-          <i className="bi bi-diagram-2 me-1" />
-          Nouveau worktree
+        <Button size="sm" onClick={() => openNewWorksession({ projectId })}>
+          <i className="bi bi-layers me-1" />
+          Nouvelle work session
         </Button>
       </Card.Body>
     </Card>
@@ -671,7 +676,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
   const { data, loading, error } = usePollingQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
   useTabTitle(data?.project?.name);
-  useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worktreeId: null, label: data.project.name } : null);
+  useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worksessionId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
   const { confirm } = useDialogs();
   const [deleteProject, { error: deleteError }] = useMutation(DELETE_PROJECT, {
@@ -718,7 +723,7 @@ export default function ProjectDetailPage() {
           <Button as={Link as any} to={`/projects/${project.id}/workflows`} size="sm" variant="outline-primary" title="Workflows : enchaînements d'agents, de sessions et de tâches">
             Workflows
           </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/history`} size="sm" variant="outline-primary" title="Sessions et worktrees archivés">
+          <Button as={Link as any} to={`/projects/${project.id}/history`} size="sm" variant="outline-primary" title="Sessions et work sessions archivées">
             Historique
           </Button>
           {isAdmin && (
@@ -730,7 +735,7 @@ export default function ProjectDetailPage() {
                 size="sm"
                 variant="outline-danger"
                 onClick={async () => {
-                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, worktrees, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
+                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
                     deleteProject({ variables: { id } });
                   }
                 }}
@@ -813,7 +818,7 @@ export default function ProjectDetailPage() {
       <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
       {isAdmin && <ApiKeysCard projectId={project.id} />}
-      <WorktreesCard projectId={project.id} />
+      <WorksessionsCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>
       <Table hover responsive size="sm" className="align-middle">
@@ -845,7 +850,7 @@ export default function ProjectDetailPage() {
               <td>
                 <StatusBadge status={s.status} pendingRequests={s.pendingRequestCount} />
               </td>
-              <td className="text-secondary small d-none d-md-table-cell">{s.worktree ? s.worktree.label : '—'}</td>
+              <td className="text-secondary small d-none d-md-table-cell">{s.worksession ? s.worksession.label : '—'}</td>
               <td className="text-secondary small">{new Date(s.createdAt).toLocaleString()}</td>
             </tr>
           ))}

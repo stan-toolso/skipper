@@ -33,7 +33,7 @@ export const TASK_PAGE = gql`
           id
           name
         }
-        worktree {
+        worksession {
           id
           label
         }
@@ -171,3 +171,19 @@ export interface ProjectApiKey {
   lastUsedAt: string | null;
   createdBy: { id: string; name: string } | null;
 }
+
+/** Work session consacrée à une tâche : celle où « Confier à un agent » lance la session par défaut. */
+export const TASK_WORKSESSION = gql`
+  query TaskWorksession($id: ID!) {
+    task(id: $id) {
+      id
+      worksession {
+        id
+        name
+        branch
+        label
+        archivedAt
+      }
+    }
+  }
+`;

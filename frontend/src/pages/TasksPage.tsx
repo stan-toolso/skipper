@@ -66,15 +66,15 @@ function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProje
               {task.session.status === 'RUNNING' && (task.session.activity === 'BUSY' ? ' · travaille' : ' · attend')}
             </Link>
           )}
-          {task.session?.worktree ? (
-            <Link to={`/worktrees/${task.session.worktree.id}/files`} title="Worktree dédié à cette tâche">
-              <i className="bi bi-diagram-2 me-1" />
-              {task.session.worktree.label}
+          {task.session?.worksession ? (
+            <Link to={`/worksessions/${task.session.worksession.id}/files`} title="Worksession dédié à cette tâche">
+              <i className="bi bi-layers me-1" />
+              {task.session.worksession.label}
             </Link>
           ) : (
             task.branch && (
-              <span className="font-monospace" title="Branche de la tâche (worktree supprimé)">
-                <i className="bi bi-diagram-2 me-1" />
+              <span className="font-monospace" title="Branche de la tâche (work session supprimée)">
+                <i className="bi bi-layers me-1" />
                 {task.branch}
               </span>
             )
@@ -256,7 +256,7 @@ export default function TasksPage() {
 
   const project = projectData?.project;
   useTabTitle(routeProjectId ? (project ? `Tâches · ${project.name}` : null) : 'Tâches');
-  useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worktreeId: null, label: project.name } : null);
+  useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worksessionId: null, label: project.name } : null);
   const tasks = data?.tasks ?? [];
 
   // Lien profond ?task=<id> : ouvre la tâche en édition (en levant les filtres qui la cacheraient).

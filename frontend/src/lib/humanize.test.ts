@@ -19,7 +19,8 @@ describe('describeTool', () => {
     expect(describeTool('mcp__tasks__create', { title: 'Écrire les tests' }).label).toBe('Création de la tâche « Écrire les tests »');
     expect(describeTool('mcp__context__read', { path: 'dev/tests' }).action).toBe("lire l'instruction dev/tests");
     expect(describeTool('mcp__connections__sql_query', { connection: 'base', sql: 'SELECT 1' })).toMatchObject({ label: 'Requête SQL sur base', detail: 'SELECT 1' });
-    expect(describeTool('mcp__worktrees__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression du worktree wt et de sa branche');
+    expect(describeTool('mcp__worksessions__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression de la work session wt et de sa branche');
+    expect(describeTool('mcp__worktrees__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression de la work session wt et de sa branche');
   });
 
   it('se rabat sur le nom et les arguments JSON pour un outil inconnu', () => {

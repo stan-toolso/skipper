@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Base, git et GitHub sont simulés : on vérifie l'enchaînement fusion → nettoyage.
 const m = vi.hoisted(() => ({
   git: vi.fn(async (_args: string[], _cwd?: string): Promise<string> => ''),
-  worktrees: [] as Array<{ id: string; projectId: string; name: string; branch: string }>,
+  worksessions: [] as Array<{ id: string; projectId: string; name: string; branch: string }>,
   running: [] as Array<{ id: string }>,
   tasks: [] as Array<{ id: string; projectId: string; title: string; status: string; branch: string | null }>,
   stop: vi.fn(async () => undefined),
-  deleteWorktree: vi.fn(async (_id: string, _deleteBranch?: boolean) => true),
+  deleteWorksession: vi.fn(async (_id: string, _deleteBranch?: boolean) => true),
   updateTask: vi.fn(async () => undefined),
   fetch: vi.fn(),
   gitUrl: 'https://github.com/acme/app.git' as string | null,
@@ -20,10 +20,10 @@ vi.mock('../settings/github.js', () => ({ githubService: { token: async () => 'g
 vi.mock('./service.js', () => ({ gitService: { push: vi.fn(async () => '') } }));
 vi.mock('../sessions/service.js', () => ({ sessionService: { list: async () => m.running, stop: m.stop } }));
 vi.mock('../terminals/service.js', () => ({ terminalService: { listByProject: async () => [], delete: vi.fn() } }));
-vi.mock('../worktrees/repository.js', () => ({ worktreeRepository: { listByProject: async () => m.worktrees } }));
-vi.mock('../worktrees/service.js', () => ({ worktreeService: { delete: m.deleteWorktree } }));
-// La suppression du worktree passe par le nettoyage (sessions archivées avec le souvenir du worktree) : ici on vérifie seulement qu'il est appelé avec la branche à supprimer.
-vi.mock('../projects/cleanup.js', () => ({ removeWorktreeKeepingSessions: async (id: string, opts: { deleteBranch?: boolean }) => { await m.deleteWorktree(id, opts.deleteBranch ?? false); return { archivedSessionIds: [] }; } }));
+vi.mock('../worksessions/repository.js', () => ({ worksessionRepository: { listByProject: async () => m.worksessions } }));
+vi.mock('../worksessions/service.js', () => ({ worksessionService: { delete: m.deleteWorksession } }));
+// La suppression de la work session passe par le nettoyage (sessions archivées avec le souvenir de la work session) : ici on vérifie seulement qu'il est appelé avec la branche à supprimer.
+vi.mock('../projects/cleanup.js', () => ({ removeWorksessionKeepingSessions: async (id: string, opts: { deleteBranch?: boolean }) => { await m.deleteWorksession(id, opts.deleteBranch ?? false); return { archivedSessionIds: [] }; } }));
 vi.mock('../tasks/repository.js', () => ({ taskRepository: { list: async () => m.tasks } }));
 vi.mock('../tasks/service.js', () => ({ taskService: { update: m.updateTask } }));
 vi.stubGlobal('fetch', m.fetch);
@@ -105,9 +105,9 @@ describe('pullRequestService.merge', () => {
     m.fetch.mockReset();
     m.git.mockClear();
     m.stop.mockClear();
-    m.deleteWorktree.mockClear();
+    m.deleteWorksession.mockClear();
     m.updateTask.mockClear();
-    m.worktrees = [{ id: 'wt1', projectId: 'p1', name: 'task-ma-tache', branch: 'task/ma-tache' }];
+    m.worksessions = [{ id: 'wt1', projectId: 'p1', name: 'task-ma-tache', branch: 'task/ma-tache' }];
     m.running = [];
     m.tasks = [{ id: 't1', projectId: 'p1', title: 'Ma tâche', status: 'in_progress', branch: 'task/ma-tache' }];
     m.fetch.mockImplementation(async (url: string, init: RequestInit) => {
@@ -118,29 +118,29 @@ describe('pullRequestService.merge', () => {
     });
   });
 
-  it('fusionne en squash puis supprime branche distante, worktree et termine la tâche', async () => {
-    const res = await pullRequestService.merge('p1', 'u1', 7, 'SQUASH', { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
+  it('fusionne en squash puis supprime branche distante, worksession et termine la tâche', async () => {
+    const res = await pullRequestService.merge('p1', 'u1', 7, 'SQUASH', { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true });
     const put = m.fetch.mock.calls.find(([, i]) => (i as RequestInit).method === 'PUT')!;
     expect(put[0]).toBe('https://api.github.com/repos/acme/app/pulls/7/merge');
     expect(JSON.parse((put[1] as RequestInit).body as string)).toEqual({ merge_method: 'squash' });
     const del = m.fetch.mock.calls.find(([, i]) => (i as RequestInit).method === 'DELETE')!;
     expect(del[0]).toBe('https://api.github.com/repos/acme/app/git/refs/heads/task/ma-tache');
-    expect(m.deleteWorktree).toHaveBeenCalledWith('wt1', true);
+    expect(m.deleteWorksession).toHaveBeenCalledWith('wt1', true);
     expect(m.updateTask).toHaveBeenCalledWith('t1', { status: 'done' });
-    expect(res).toMatchObject({ sha: 'abc123', deletedWorktreeIds: ['wt1'], completedTaskIds: ['t1'], warnings: [] });
+    expect(res).toMatchObject({ sha: 'abc123', deletedWorksessionIds: ['wt1'], completedTaskIds: ['t1'], warnings: [] });
     expect(res.pullRequest.state).toBe('MERGED');
   });
 
-  it('conserve le worktree si des sessions y tournent, sauf demande de les arrêter', async () => {
+  it('conserve la work session si des sessions y tournent, sauf demande de les arrêter', async () => {
     m.running = [{ id: 's1' }];
-    const kept = await pullRequestService.merge('p1', 'u1', 7, 'MERGE', { deleteWorktree: true });
-    expect(m.deleteWorktree).not.toHaveBeenCalled();
+    const kept = await pullRequestService.merge('p1', 'u1', 7, 'MERGE', { deleteWorksession: true });
+    expect(m.deleteWorksession).not.toHaveBeenCalled();
     expect(kept.warnings[0]).toMatch(/task-ma-tache conservé/);
     m.fetch.mockClear(); // la PR redevient ouverte pour la seconde fusion
 
-    const removed = await pullRequestService.merge('p1', 'u1', 7, 'MERGE', { deleteWorktree: true, stopSessions: true });
+    const removed = await pullRequestService.merge('p1', 'u1', 7, 'MERGE', { deleteWorksession: true, stopSessions: true });
     expect(m.stop).toHaveBeenCalledWith('s1');
-    expect(removed.deletedWorktreeIds).toEqual(['wt1']);
+    expect(removed.deletedWorksessionIds).toEqual(['wt1']);
   });
 
   it('traduit un refus de fusion de GitHub', async () => {

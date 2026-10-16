@@ -159,7 +159,7 @@ function tidyDiff(path: string, text: string): GitDiff {
 /** Cache court des modifications de branche (le panneau les relit souvent) ; null : pas de branche de base. */
 const branchCache = new Map<string, { at: number; value: GitBranchChanges | null }>();
 const BRANCH_CACHE_MS = 2000;
-const cacheKey = (ref: WorkspaceRef) => `${ref.projectId}|${ref.worktreeId ?? ''}`;
+const cacheKey = (ref: WorkspaceRef) => `${ref.projectId}|${ref.worksessionId ?? ''}`;
 
 /**
  * Branche de base d'un dossier : la branche du projet (origin/… puis locale), sinon la cible de origin/HEAD,

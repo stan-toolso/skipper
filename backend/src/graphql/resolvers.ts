@@ -19,7 +19,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
-import { archiveWorktreeCascade, deleteProjectCascade, deleteWorktreeCascade, restoreWorktreeCascade } from '../projects/cleanup.js';
+import { archiveWorksessionCascade, deleteProjectCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
 import { runner, type RunnerConfig } from '../runners/index.js';
 import { containerMonitor } from '../runners/monitor.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
@@ -59,8 +59,9 @@ import { cleanupService } from '../sessions/cleanup.js';
 import { CONTEXT_WARN_TOKENS, contextEstimate, contextModel } from '../sessions/context.js';
 import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
-import { worktreePath, worktreeService } from '../worktrees/service.js';
-import { worktreeLabel, type Worktree } from '../worktrees/types.js';
+import { worksessionPath, worksessionService } from '../worksessions/service.js';
+import { worksessionRepository } from '../worksessions/repository.js';
+import { worksessionLabel, type Worksession } from '../worksessions/types.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
 import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskStatus, ProjectApiKey } from '../tasks/types.js';
@@ -100,7 +101,7 @@ const modelOfContext = (p: ContextParent) => (p.model ??= contextModel(p.session
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
-const guardWorktree = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worktreeService.get(id)).projectId, min);
+const guardWorksession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worksessionService.get(id)).projectId, min);
 const guardComment = async (ctx: Ctx, id: string) => {
   const comment = await taskService.getComment(id);
   const task = await taskService.get(comment.taskId);
@@ -204,7 +205,7 @@ const toAgentInput = (i: Record<string, unknown>): AgentInput => ({
   inputs: i.inputs === undefined ? undefined : ((i.inputs ?? []) as InputVariable[]),
   outputFormat: fromGqlOutputFormat(i.outputFormat as string | null | undefined),
   outputSchema: i.outputSchema as string | null | undefined,
-  worktreeId: i.worktreeId as string | null | undefined,
+  worksessionId: i.worksessionId as string | null | undefined,
   timeoutMinutes: i.timeoutMinutes as number | null | undefined,
 });
 /** Éléments du coffre d'un type, utilisables par la personne (choix dans un formulaire). */
@@ -253,6 +254,7 @@ export const resolvers = {
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
     comments: (t: Task) => taskService.comments(t.id),
     pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
+    worksession: async (t: Task) => (await worksessionRepository.findByTask(t.id))[0] ?? null,
   },
 
   TaskComment: {
@@ -271,7 +273,7 @@ export const resolvers = {
   },
 
   PullRequest: {
-    worktree: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worktreeService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
+    worksession: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worksessionService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
     tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
   },
 
@@ -359,7 +361,7 @@ export const resolvers = {
   Agent: {
     project: (a: Agent) => projectService.get(a.projectId),
     outputFormat: (a: Agent) => a.outputFormat.toUpperCase(),
-    worktree: (a: Agent) => (a.worktreeId ? worktreeService.get(a.worktreeId).catch(() => null) : null),
+    worksession: (a: Agent) => (a.worksessionId ? worksessionService.get(a.worksessionId).catch(() => null) : null),
     runs: (a: Agent, args: { limit?: number | null }) => agentRepository.listRuns({ agentId: a.id, limit: args.limit ?? 20 }),
     lastRun: (a: Agent) => agentRepository.lastRun(a.id),
     workflows: (a: Agent) => workflowService.listUsingAgent(a.id),
@@ -429,21 +431,21 @@ export const resolvers = {
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
     project: (t: TerminalRecord) => projectService.get(t.projectId),
-    worktree: (t: TerminalRecord) => (t.worktreeId ? worktreeService.get(t.worktreeId).catch(() => null) : null),
+    worksession: (t: TerminalRecord) => (t.worksessionId ? worksessionService.get(t.worksessionId).catch(() => null) : null),
     createdBy: (t: TerminalRecord) => userOrNull(t.createdById),
   },
 
-  Worktree: {
-    project: (w: Worktree) => projectService.get(w.projectId),
-    label: (w: Worktree) => worktreeLabel(w),
-    customLabel: (w: Worktree) => w.label,
-    path: async (w: Worktree) => worktreePath(await projectService.get(w.projectId), w),
-    exists: async (w: Worktree) => worktreeService.exists(await projectService.get(w.projectId), w),
-    git: async (w: Worktree) => worktreeService.gitInfo(await projectService.get(w.projectId), w),
-    pullRequest: (w: Worktree, _: unknown, ctx: Ctx) => pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null),
-    task: (w: Worktree) => taskService.forBranch(w.projectId, w.branch),
-    sessions: (w: Worktree) => sessionService.list({ projectId: w.projectId, worktreeId: w.id, limit: 200 }),
-    terminals: async (w: Worktree, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worktreeId === w.id),
+  Worksession: {
+    project: (w: Worksession) => projectService.get(w.projectId),
+    label: (w: Worksession) => worksessionLabel(w),
+    customLabel: (w: Worksession) => w.label,
+    path: async (w: Worksession) => worksessionPath(await projectService.get(w.projectId), w),
+    exists: async (w: Worksession) => worksessionService.exists(await projectService.get(w.projectId), w),
+    git: async (w: Worksession) => worksessionService.gitInfo(await projectService.get(w.projectId), w),
+    pullRequest: async (w: Worksession, _: unknown, ctx: Ctx) => ((await projectService.get(w.projectId)).gitUrl ? pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null) : null),
+    task: async (w: Worksession) => (w.taskId ? await taskService.get(w.taskId).catch(() => null) : null) ?? taskService.forBranch(w.projectId, w.branch),
+    sessions: (w: Worksession) => sessionService.list({ projectId: w.projectId, worksessionId: w.id, limit: 200 }),
+    terminals: async (w: Worksession, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worksessionId === w.id),
   },
 
   PermissionRule: {
@@ -475,8 +477,8 @@ export const resolvers = {
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     isMember: async (project: Project, _: unknown, ctx: Ctx) => (await memberRoleFor(ctx, project.id)) !== null,
     terminals: (project: Project, _: unknown, ctx: Ctx) => terminalService.listByProject(project.id, requireUser(ctx).id),
-    worktrees: (project: Project) => worktreeService.listByProject(project.id),
-    archivedWorktrees: (project: Project) => worktreeService.listByProject(project.id, { archived: 'only' }),
+    worksessions: (project: Project) => worksessionService.listByProject(project.id),
+    archivedWorksessions: (project: Project) => worksessionService.listByProject(project.id, { archived: 'only' }),
     vaultItems: (project: Project, _: unknown, ctx: Ctx) => vaultService.projectRows(project.id, requireUser(ctx).id),
     apiKeys: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) === 'admin' ? apiKeyService.list(project.id) : []),
     approvalConnections: async (project: Project, _: unknown, ctx: Ctx) => vaultService.approvalNames(await vaultService.agentItems(project.id, ctx.user?.id ?? null)),
@@ -498,7 +500,7 @@ export const resolvers = {
 
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
-    worktree: (session: Session) => (session.worktreeId ? worktreeService.get(session.worktreeId).catch(() => null) : null),
+    worksession: (session: Session) => (session.worksessionId ? worksessionService.get(session.worksessionId).catch(() => null) : null),
     owner: (session: Session) => userOrNull(session.ownerId),
     task: (session: Session) => taskService.forSession(session.id),
     parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
@@ -606,9 +608,9 @@ export const resolvers = {
       const users = (await Promise.all(ids.map((id) => userService.get(id).catch(() => null)))).filter((u): u is User => Boolean(u));
       return users.sort((a, b) => a.name.localeCompare(b.name));
     },
-    archivedSessions: async (_: unknown, args: { projectId: string; worktreeId?: string | null; search?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
+    archivedSessions: async (_: unknown, args: { projectId: string; worksessionId?: string | null; search?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
-      return sessionService.list({ projectId: args.projectId, worktreeId: args.worktreeId ?? undefined, search: args.search ?? undefined, archived: 'only', limit: args.limit ?? 50, offset: args.offset ?? 0 });
+      return sessionService.list({ projectId: args.projectId, worksessionId: args.worksessionId ?? undefined, search: args.search ?? undefined, archived: 'only', limit: args.limit ?? 50, offset: args.offset ?? 0 });
     },
     gitBranchChanges: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
@@ -770,9 +772,9 @@ export const resolvers = {
       await guardTerminal(ctx, args.id, 'viewer');
       return terminalService.get(args.id);
     },
-    worktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'viewer');
-      return worktreeService.get(args.id);
+    worksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'viewer');
+      return worksessionService.get(args.id);
     },
     notifications: async (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }, ctx: Ctx) =>
       notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
@@ -856,7 +858,7 @@ export const resolvers = {
     },
     mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.merge(args.projectId, requireUser(ctx).id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
+      return pullRequestService.merge(args.projectId, requireUser(ctx).id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
@@ -1238,7 +1240,7 @@ export const resolvers = {
       if (comment.authorUserId !== requireUser(ctx).id && role !== 'admin') throw new AppError("Seuls l'auteur et les administrateurs du projet suppriment un commentaire", 'FORBIDDEN');
       return taskService.deleteComment(args.id);
     },
-    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null; dedicatedWorktree?: boolean | null; prompt?: string | null }, ctx: Ctx) => {
+    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worksessionId?: string | null; prompt?: string | null }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
       return startTaskSession(args.id, { ...args, ownerId: requireUser(ctx).id });
     },
@@ -1250,29 +1252,29 @@ export const resolvers = {
       await requireProject(ctx, (await apiKeyService.get(args.id)).projectId, 'admin');
       return apiKeyService.delete(args.id);
     },
-    createTerminal: async (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }, ctx: Ctx) => {
+    createTerminal: async (_: unknown, args: { projectId: string; name?: string | null; worksessionId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return terminalService.create(args.projectId, args.name, args.worktreeId, requireUser(ctx).id);
+      return terminalService.create(args.projectId, args.name, args.worksessionId, requireUser(ctx).id);
     },
-    createWorktree: async (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null; label?: string | null }, ctx: Ctx) => {
+    createWorksession: async (_: unknown, args: { projectId: string; branch?: string | null; name?: string | null; baseRef?: string | null; label?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return worktreeService.create(args.projectId, args, requireUser(ctx).id);
+      return worksessionService.create(args.projectId, args, requireUser(ctx).id);
     },
-    renameWorktree: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return worktreeService.rename(args.id, args);
+    renameWorksession: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return worksessionService.rename(args.id, args);
     },
-    archiveWorktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return archiveWorktreeCascade(args.id);
+    archiveWorksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return archiveWorksessionCascade(args.id);
     },
-    restoreWorktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return restoreWorktreeCascade(args.id);
+    restoreWorksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return restoreWorksessionCascade(args.id);
     },
-    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null; deleteSessions?: boolean | null }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false, { deleteSessions: args.deleteSessions ?? false });
+    deleteWorksession: async (_: unknown, args: { id: string; deleteBranch?: boolean | null; deleteSessions?: boolean | null }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return deleteWorksessionCascade(args.id, args.deleteBranch ?? false, { deleteSessions: args.deleteSessions ?? false });
     },
     // Coffre : les droits sont vérifiés par le service (use / read / manage) ; un projet propriétaire exige un administrateur.
     createVaultItem: async (_: unknown, args: { projectId?: string | null; input: VaultItemInput }, ctx: Ctx) => {

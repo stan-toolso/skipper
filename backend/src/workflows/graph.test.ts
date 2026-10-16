@@ -27,7 +27,7 @@ describe('parseDefinition', () => {
   it('normalise les nœuds avec leurs valeurs par défaut', () => {
     const def = parseDefinition(raw);
     expect(def.nodes.find((n) => n.key === 'start')).toMatchObject({ event: 'manual', taskFilter: null });
-    expect(def.nodes.find((n) => n.key === 'fix')).toMatchObject({ provider: 'claude', includeTask: true, worktreeMode: 'new', wait: true });
+    expect(def.nodes.find((n) => n.key === 'fix')).toMatchObject({ provider: 'claude', includeTask: true, worksessionMode: 'new', wait: true });
     expect(def.edges[2].sourceHandle).toBe('false');
     expect(parseDefinition(null)).toEqual({ nodes: [], edges: [] });
   });

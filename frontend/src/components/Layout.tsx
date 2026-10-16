@@ -6,7 +6,7 @@ import WorkspaceTabs from '../workbench/WorkspaceTabs';
 import { TabsProvider } from '../workbench/TabsContext';
 import GitPanel from '../workbench/GitPanel';
 import { GitTargetProvider } from '../workbench/GitTargetContext';
-import { RenameWorktreeProvider } from '../workbench/RenameWorktree';
+import { RenameWorksessionProvider } from '../workbench/RenameWorksession';
 import { SessionLauncherProvider } from './SessionLauncher';
 import { SearchPaletteProvider } from './SearchPalette';
 import { ShortcutsHelpProvider } from './ShortcutsHelp';
@@ -101,12 +101,12 @@ export default function Layout({ children }: { children: ReactNode }) {
   useEffect(() => write(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'), [collapsed]);
   const rootRef = useRef<HTMLDivElement>(null);
   const sidebar = useSidebarWidth(rootRef);
-  const flush = /^\/sessions\/[^/]+(?:\/browser)?$/.test(pathname) || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|worktrees)\/[^/]+\/files(?:\/|$)/.test(pathname) || /^\/shared\/[^/]+$/.test(pathname);
+  const flush = /^\/sessions\/[^/]+(?:\/browser)?$/.test(pathname) || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|worksessions)\/[^/]+\/files(?:\/|$)/.test(pathname) || /^\/shared\/[^/]+$/.test(pathname);
   return (
     <TabsProvider>
       <GitTargetProvider>
         <SessionLauncherProvider>
-          <RenameWorktreeProvider>
+          <RenameWorksessionProvider>
             <SearchPaletteProvider>
               <ShortcutsHelpProvider>
                 <div
@@ -146,7 +146,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 </div>
               </ShortcutsHelpProvider>
             </SearchPaletteProvider>
-          </RenameWorktreeProvider>
+          </RenameWorksessionProvider>
         </SessionLauncherProvider>
       </GitTargetProvider>
     </TabsProvider>

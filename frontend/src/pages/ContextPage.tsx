@@ -286,7 +286,7 @@ export default function ContextPage() {
 
   const project = data?.project;
   useTabTitle(project ? `Contexte · ${project.name}` : null);
-  useGitTarget(project ? { projectId: project.id, worktreeId: null, label: project.name } : null);
+  useGitTarget(project ? { projectId: project.id, worksessionId: null, label: project.name } : null);
   const folders = useMemo(() => project?.contextFolders ?? [], [project]);
   const instructions = useMemo(() => project?.contextInstructions ?? [], [project]);
 

@@ -117,10 +117,10 @@ type Project {
   "Terminaux de l'utilisateur connecté dans ce projet."
   terminals: [Terminal!]!
   tasks(status: [TaskStatus!]): [Task!]!
-  "Worktrees actifs."
-  worktrees: [Worktree!]!
-  "Worktrees archivés, les plus récemment archivés d'abord."
-  archivedWorktrees: [Worktree!]!
+  "Work sessions actives."
+  worksessions: [Worksession!]!
+  "Work sessions archivées, les plus récemment archivées d'abord."
+  archivedWorksessions: [Worksession!]!
   "Éléments du coffre à disposition des agents de ce projet (pour les sessions de l'utilisateur connecté)."
   vaultItems: [ProjectVaultItem!]!
   "Clés d'API du projet (administrateurs)."
@@ -284,8 +284,10 @@ type Task {
   commentCount: Int!
   "Commentaires, du plus ancien au plus récent."
   comments: [TaskComment!]!
-  "Branche git de la tâche (worktree dédié task/<slug>), conservée après suppression du worktree."
+  "Branche git de la tâche (work session dédiée task/<slug>), conservée après suppression de la work session."
   branch: String
+  "Work session consacrée à la tâche (active de préférence, sinon la dernière archivée) : ses sessions y travaillent toutes."
+  worksession: Worksession
   "Pull request GitHub de la branche de la tâche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
   pullRequest: PullRequest
   createdAt: DateTime!
@@ -365,7 +367,7 @@ enum TerminalStatus {
 type Terminal {
   id: ID!
   project: Project!
-  worktree: Worktree
+  worksession: Worksession
   "Qui a ouvert le terminal : seule cette personne le voit et s'y attache."
   createdBy: User
   name: String!
@@ -375,8 +377,8 @@ type Terminal {
   closedAt: DateTime
 }
 
-"Worktree git d'un projet : une branche extraite dans son propre dossier, à côté du checkout principal."
-type Worktree {
+"Work session d'un projet : l'unité de travail où tournent sessions et terminaux. Un dossier à elle, à côté du checkout principal : un git worktree sur sa propre branche pour un projet git, un simple dossier sinon."
+type Worksession {
   id: ID!
   project: Project!
   "Nom du dossier."
@@ -392,7 +394,7 @@ type Worktree {
   archivedAt: DateTime
   "Pull request de la branche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
   pullRequest: PullRequest
-  "Tâche traitée sur la branche du worktree."
+  "Tâche à laquelle la work session est consacrée (sinon : tâche traitée sur sa branche)."
   task: Task
   createdAt: DateTime!
   "Sessions actives."
@@ -746,7 +748,7 @@ type VaultSecretValue {
 
 # ---- Explorateur de fichiers ---------------------------------------------------------------------
 
-"Entrée d'un dossier du workspace (checkout principal ou worktree)."
+"Entrée d'un dossier du workspace (checkout principal ou work session)."
 type FileEntry {
   name: String!
   "Chemin relatif à la racine du workspace, séparateur /."
@@ -780,7 +782,7 @@ type GitCommit {
   date: DateTime!
 }
 
-"Fichier modifié dans un workspace ou un worktree (statuts git : M, A, D, R, ?, U...)."
+"Fichier modifié dans un workspace ou une work session (statuts git : M, A, D, R, ?, U...)."
 type GitFileChange {
   path: String!
   origPath: String
@@ -988,8 +990,8 @@ type PullRequest {
   updatedAt: DateTime!
   mergedAt: DateTime
   closedAt: DateTime
-  "Worktree du projet sur la branche de la PR, s'il existe."
-  worktree: Worktree
+  "Work session du projet sur la branche de la PR, s'il en existe une."
+  worksession: Worksession
   "Tâches du projet traitées sur la branche de la PR."
   tasks: [Task!]!
 }
@@ -1019,7 +1021,7 @@ type MergePullRequestResult {
   pullRequest: PullRequest!
   "Commit de fusion."
   sha: String
-  deletedWorktreeIds: [ID!]!
+  deletedWorksessionIds: [ID!]!
   completedTaskIds: [ID!]!
   "Étapes de nettoyage non réalisées, avec leur raison."
   warnings: [String!]!
@@ -1028,16 +1030,16 @@ type MergePullRequestResult {
 input MergePullRequestCleanup {
   "Supprime la branche sur GitHub."
   deleteRemoteBranch: Boolean = true
-  "Supprime le(s) worktree(s) de la branche et la branche locale."
-  deleteWorktree: Boolean = true
-  "Arrête les sessions encore ouvertes dans ces worktrees (sinon ils sont conservés). Leur historique est gardé."
+  "Supprime le(s) worksession(s) de la branche et la branche locale."
+  deleteWorksession: Boolean = true
+  "Arrête les sessions encore ouvertes dans ces work sessions (sinon elles sont conservées). Leur historique est gardé."
   stopSessions: Boolean = false
   "Passe à « terminée » les tâches ouvertes traitées sur cette branche."
   completeTasks: Boolean = true
 }
 
-"Souvenir d'un worktree supprimé, gardé par les sessions archivées avec lui."
-type FormerWorktree {
+"Souvenir d'une work session supprimée, gardé par les sessions archivées avec elle."
+type FormerWorksession {
   name: String!
   branch: String!
   label: String!
@@ -1046,14 +1048,14 @@ type FormerWorktree {
 type Session {
   id: ID!
   project: Project!
-  "Worktree dans lequel la session s'exécute (null : checkout principal)."
-  worktree: Worktree
+  "Work session où la session s'exécute (null : session d'avant les work sessions, dans le checkout principal, ou work session supprimée)."
+  worksession: Worksession
   "Utilisateur qui a lancé la session ; null : session d'avant cette version ou ouverte à tous les membres."
   owner: User
   "Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet."
   archivedAt: DateTime
-  "Worktree supprimé dans lequel la session a travaillé (elle a été archivée avec lui) ; null sinon."
-  formerWorktree: FormerWorktree
+  "Work session supprimée où la session a travaillé (elle a été archivée avec elle) ; null sinon."
+  formerWorksession: FormerWorksession
   "Tâche dont la session est en charge."
   task: Task
   "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
@@ -1565,7 +1567,7 @@ input ClaudeSettingsInput {
 "Éléments ouverts dans les onglets du workbench, par type (identifiants non UUID ignorés)."
 input OpenItemsInput {
   projectIds: [ID!]
-  worktreeIds: [ID!]
+  worksessionIds: [ID!]
   sessionIds: [ID!]
   terminalIds: [ID!]
   taskIds: [ID!]
@@ -1573,7 +1575,7 @@ input OpenItemsInput {
 
 enum SearchKind {
   PROJECT
-  WORKTREE
+  WORKSESSION
   SESSION
   TERMINAL
   TASK
@@ -1589,7 +1591,7 @@ type SearchHit {
   projectName: String
   "Projet dont l'utilisateur n'est pas membre (super administrateur)."
   outsideProjects: Boolean!
-  worktreeBranch: String
+  worksessionBranch: String
   status: String
   activity: String
   updatedAt: DateTime!
@@ -1661,8 +1663,8 @@ input PushSubscriptionInput {
 }
 
 input RelaunchSessionInput {
-  worktreeId: ID
-  newWorktree: NewWorktreeInput
+  worksessionId: ID
+  newWorksession: NewWorksessionInput
   name: String
   instruction: String
 }
@@ -1749,8 +1751,8 @@ type Agent {
   outputFormat: AgentOutputFormat!
   "Forme JSON attendue, montrée à l'agent (sortie JSON seulement)."
   outputSchema: String
-  "Worktree où travaillent les exécutions (null : dossier principal)."
-  worktree: Worktree
+  "Work session où travaillent les exécutions (null : une nouvelle work session par exécution)."
+  worksession: Worksession
   timeoutMinutes: Int!
   schedule: AutomationSchedule
   "Entrées des exécutions planifiées."
@@ -1775,7 +1777,7 @@ input CreateAgentInput {
   inputs: [InputVariableInput!]
   outputFormat: AgentOutputFormat
   outputSchema: String
-  worktreeId: ID
+  worksessionId: ID
   timeoutMinutes: Int
 }
 
@@ -1789,7 +1791,7 @@ input UpdateAgentInput {
   inputs: [InputVariableInput!]
   outputFormat: AgentOutputFormat
   outputSchema: String
-  worktreeId: ID
+  worksessionId: ID
   timeoutMinutes: Int
 }
 
@@ -1944,10 +1946,10 @@ type Query {
   "Propriétaires des sessions actives des projets de l'utilisateur (ou d'un projet)."
   sessionOwners(projectId: ID): [User!]!
   "Sessions archivées d'un projet, les plus récemment archivées d'abord ; search cherche dans le nom, la consigne et la conversation."
-  archivedSessions(projectId: ID!, worktreeId: ID, search: String, limit: Int, offset: Int): [Session!]!
+  archivedSessions(projectId: ID!, worksessionId: ID, search: String, limit: Int, offset: Int): [Session!]!
   "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base ; null : aucune branche de base à comparer (dépôt sans remote ni main/master)."
-  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges
-  gitBranchFileDiff(projectId: ID!, worktreeId: ID, path: String!, origPath: String): GitDiff!
+  gitBranchChanges(projectId: ID!, worksessionId: ID): GitBranchChanges
+  gitBranchFileDiff(projectId: ID!, worksessionId: ID, path: String!, origPath: String): GitDiff!
   "Éléments du coffre visibles par l'utilisateur connecté (siens, partagés, de ses projets, reliés à ses projets)."
   vaultItems(kind: VaultItemKind): [VaultItem!]!
   vaultItem(id: ID!): VaultItem
@@ -1966,10 +1968,10 @@ type Query {
   sharedPages: [SharedPage!]!
   "Clé publique VAPID avec laquelle les navigateurs s'abonnent aux notifications push."
   pushPublicKey: String!
-  "Contenu d'un dossier du workspace du projet (ou du worktree). path vide = racine."
-  workspaceEntries(projectId: ID!, worktreeId: ID, path: String = ""): [FileEntry!]!
+  "Contenu d'un dossier du workspace du projet (ou de la work session). path vide = racine."
+  workspaceEntries(projectId: ID!, worksessionId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
-  workspaceFile(projectId: ID!, worktreeId: ID, path: String!): FileContent!
+  workspaceFile(projectId: ID!, worksessionId: ID, path: String!): FileContent!
   "Paramètres de la personne connectée (et du serveur pour les administrateurs)."
   settings: AppSettings!
   "Santé du serveur (administrateurs de l'application)."
@@ -2012,18 +2014,18 @@ type Query {
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
   terminal(id: ID!): Terminal
-  worktree(id: ID!): Worktree
-  "Suivi git d'un workspace (checkout principal) ou d'un worktree."
-  gitStatus(projectId: ID!, worktreeId: ID): GitStatus!
-  gitDiff(projectId: ID!, worktreeId: ID, path: String!, staged: Boolean = false): GitDiff!
-  gitCommitDiff(projectId: ID!, worktreeId: ID, hash: String!): GitDiff!
-  gitBranches(projectId: ID!, worktreeId: ID): [GitBranch!]!
-  gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
+  worksession(id: ID!): Worksession
+  "Suivi git d'un workspace (checkout principal) ou d'une work session."
+  gitStatus(projectId: ID!, worksessionId: ID): GitStatus!
+  gitDiff(projectId: ID!, worksessionId: ID, path: String!, staged: Boolean = false): GitDiff!
+  gitCommitDiff(projectId: ID!, worksessionId: ID, hash: String!): GitDiff!
+  gitBranches(projectId: ID!, worksessionId: ID): [GitBranch!]!
+  gitLog(projectId: ID!, worksessionId: ID, limit: Int): [GitCommit!]!
   "Pull requests GitHub du dépôt du projet, les plus récemment mises à jour d'abord."
   githubPullRequests(projectId: ID!, state: PullRequestFilter = OPEN, limit: Int): [PullRequest!]!
   githubPullRequest(projectId: ID!, number: Int!): PullRequest!
   "Titre, description et base proposés pour une pull request de la branche courante du workspace."
-  githubPullRequestDraft(projectId: ID!, worktreeId: ID): PullRequestDraft!
+  githubPullRequestDraft(projectId: ID!, worksessionId: ID): PullRequestDraft!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tableau de bord de l'utilisateur connecté."
@@ -2075,12 +2077,14 @@ input UpdateProjectInput {
   defaultPermissionMode: String
 }
 
-"Worktree à créer en même temps que la session, qui s'y exécutera."
-input NewWorktreeInput {
-  "Branche extraite si elle existe (localement ou sur origin), sinon créée depuis baseRef."
-  branch: String!
-  "Nom du dossier (défaut : dérivé de la branche)."
+"Work session à créer en même temps que la session, qui s'y exécutera. Sans nom, branche ni libellé : nommée d'après la consigne."
+input NewWorksessionInput {
+  "Branche (projet git) extraite si elle existe (localement ou sur origin), sinon créée depuis baseRef ; défaut : le nom du dossier."
+  branch: String
+  "Nom du dossier (défaut : dérivé de la branche, sinon du libellé)."
   name: String
+  "Libellé : ce dont parle la work session."
+  label: String
   baseRef: String
 }
 
@@ -2093,9 +2097,10 @@ input AttachmentInput {
 
 input CreateSessionInput {
   projectId: ID!
-  worktreeId: ID
-  "Crée d'abord ce worktree et y lance la session (exclusif avec worktreeId)."
-  newWorktree: NewWorktreeInput
+  "Work session où la session s'exécute (obligatoire, sauf newWorksession)."
+  worksessionId: ID
+  "Crée d'abord cette work session et y lance la session (exclusif avec worksessionId)."
+  newWorksession: NewWorksessionInput
   name: String!
   provider: String!
   "Première instruction. Facultative : sans consigne ni fichier joint, la session est créée sans démarrer et attend sa première instruction."
@@ -2109,11 +2114,11 @@ input CreateSessionInput {
 
 type Mutation {
   "Écrit un fichier. Avec expectedModifiedAt, refuse (FILE_CONFLICT) si le fichier a changé depuis."
-  writeWorkspaceFile(projectId: ID!, worktreeId: ID, path: String!, content: String!, expectedModifiedAt: DateTime): FileContent!
-  createWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, kind: FileEntryKind!): FileEntry!
-  renameWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, newPath: String!): FileEntry!
+  writeWorkspaceFile(projectId: ID!, worksessionId: ID, path: String!, content: String!, expectedModifiedAt: DateTime): FileContent!
+  createWorkspaceEntry(projectId: ID!, worksessionId: ID, path: String!, kind: FileEntryKind!): FileEntry!
+  renameWorkspaceEntry(projectId: ID!, worksessionId: ID, path: String!, newPath: String!): FileEntry!
   "Supprime un fichier ou un dossier (récursivement)."
-  deleteWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!): Boolean!
+  deleteWorkspaceEntry(projectId: ID!, worksessionId: ID, path: String!): Boolean!
 
   "Active ou lève le mode maintenance (refuse les nouvelles sessions avant un redémarrage)."
   setMaintenanceMode(enabled: Boolean!, message: String): AppSettings!
@@ -2202,7 +2207,7 @@ type Mutation {
   stopProjectRunner(id: ID!): Project!
   "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
   resetProjectRunner(id: ID!): Project!
-  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, worktrees, conteneur, dossier de travail. Irréversible."
+  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, work sessions, conteneur, dossier de travail. Irréversible."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
   startSession(id: ID!): Session!
@@ -2244,43 +2249,43 @@ type Mutation {
   updateTaskComment(id: ID!, body: String!): TaskComment!
   "Ses propres commentaires, ou administrateur du projet."
   deleteTaskComment(id: ID!): Boolean!
-  "Confie la tâche à un agent. Sans worktreeId, un worktree dédié (task/<slug>) est créé si le projet est relié à git, sauf dedicatedWorktree: false (dossier principal). prompt : consigne relue (sinon le texte de la tâche)."
-  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID, dedicatedWorktree: Boolean = true, prompt: String): Session!
+  "Confie la tâche à un agent, dans la work session de la tâche (créée à sa première session, task/<slug> pour un projet git ; réutilisée ensuite), sauf worksessionId. prompt : consigne relue (sinon le texte de la tâche)."
+  startTaskSession(id: ID!, provider: String, config: JSON, worksessionId: ID, prompt: String): Session!
   "Crée une clé d'API du projet (administrateurs) ; le secret n'est montré qu'une fois."
   createProjectApiKey(projectId: ID!, name: String!): CreatedProjectApiKey!
   deleteProjectApiKey(id: ID!): Boolean!
 
   "git add (paths vide = tout)."
-  gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitStage(projectId: ID!, worksessionId: ID, paths: [String!]!): GitStatus!
   "git reset (paths vide = tout)."
-  gitUnstage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitUnstage(projectId: ID!, worksessionId: ID, paths: [String!]!): GitStatus!
   "Abandonne les modifications non indexées ; supprime un fichier non suivi."
-  gitDiscard(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitDiscard(projectId: ID!, worksessionId: ID, paths: [String!]!): GitStatus!
   "Remet un fichier dans son état du démarrage de la session (index et arbre de travail, commits inchangés)."
   discardSessionFile(sessionId: ID!, path: String!, origPath: String): SessionChanges!
-  gitCommit(projectId: ID!, worktreeId: ID, message: String!, stageAll: Boolean = false): GitStatus!
-  gitFetch(projectId: ID!, worktreeId: ID): GitStatus!
-  gitPull(projectId: ID!, worktreeId: ID): GitStatus!
-  gitPush(projectId: ID!, worktreeId: ID): GitStatus!
+  gitCommit(projectId: ID!, worksessionId: ID, message: String!, stageAll: Boolean = false): GitStatus!
+  gitFetch(projectId: ID!, worksessionId: ID): GitStatus!
+  gitPull(projectId: ID!, worksessionId: ID): GitStatus!
+  gitPush(projectId: ID!, worksessionId: ID): GitStatus!
   "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
-  gitCheckout(projectId: ID!, worktreeId: ID, branch: String!, create: Boolean = false): GitStatus!
+  gitCheckout(projectId: ID!, worksessionId: ID, branch: String!, create: Boolean = false): GitStatus!
   "Pousse la branche courante du workspace puis ouvre une pull request GitHub (base par défaut : branche du projet, sinon celle du dépôt)."
-  createPullRequest(projectId: ID!, worktreeId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
-  "Fusionne une pull request puis nettoie (branche distante, worktree, branche locale, tâches) et met à jour le dossier principal."
+  createPullRequest(projectId: ID!, worksessionId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
+  "Fusionne une pull request puis nettoie (branche distante, work session, branche locale, tâches) et met à jour le dossier principal."
   mergePullRequest(projectId: ID!, number: Int!, method: PullRequestMergeMethod = MERGE, cleanup: MergePullRequestCleanup): MergePullRequestResult!
 
-  "Ouvre un shell dans le workspace du projet (ou dans un worktree), avec l'historique des commandes de l'utilisateur sur le projet."
-  createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!
-  "Crée un worktree git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal)."
-  createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String, label: String): Worktree!
+  "Ouvre un shell dans une work session du projet, avec l'historique des commandes de l'utilisateur sur le projet."
+  createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!
+  "Crée une work session. Projet git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal). Il faut un nom, une branche ou un libellé."
+  createWorksession(projectId: ID!, branch: String, name: String, baseRef: String, label: String): Worksession!
   "Renomme le libellé (null ou vide : la branche) et/ou le dossier (git worktree move, seulement si rien n'y tourne)."
-  renameWorktree(id: ID!, label: String, name: String): Worktree!
-  "Archive le worktree avec ses sessions (arrêtées si elles tournent) ; dossier et branche conservés ; restaurable depuis l'historique du projet."
-  archiveWorktree(id: ID!): Worktree!
-  "Restaure un worktree archivé et les sessions archivées avec lui."
-  restoreWorktree(id: ID!): Worktree!
-  "Supprime le worktree (dossier, terminaux fermés) ; ses sessions sont arrêtées si elles tournent puis archivées avec son souvenir, sauf deleteSessions (suppression définitive, historique compris). La branche est conservée sauf deleteBranch."
-  deleteWorktree(id: ID!, deleteBranch: Boolean = false, deleteSessions: Boolean = false): Boolean!
+  renameWorksession(id: ID!, label: String, name: String): Worksession!
+  "Archive la work session avec ses sessions (arrêtées si elles tournent) ; dossier et branche conservés ; restaurable depuis l'historique du projet."
+  archiveWorksession(id: ID!): Worksession!
+  "Restaure une work session archivée et les sessions archivées avec elle."
+  restoreWorksession(id: ID!): Worksession!
+  "Supprime la work session (dossier, terminaux fermés) ; ses sessions sont arrêtées si elles tournent puis archivées avec son souvenir, sauf deleteSessions (suppression définitive, historique compris). La branche est conservée sauf deleteBranch."
+  deleteWorksession(id: ID!, deleteBranch: Boolean = false, deleteSessions: Boolean = false): Boolean!
   "Crée un élément dans le coffre du projet (administrateurs) ou, sans projectId, dans le coffre personnel."
   createVaultItem(projectId: ID, input: VaultItemInput!): VaultItem!
   "Met à jour un élément (permission MANAGE ; les champs absents sont inchangés)."
@@ -2304,7 +2309,7 @@ type Mutation {
   "Copie l'élément (secrets compris) dans le coffre d'un projet (MANAGE + administrateur du projet) ; l'original est intact."
   copyVaultItem(id: ID!, projectId: ID!, name: String): VaultItem!
   "Publie un fichier HTML d'un workspace comme page partagée (membres), nouvelle page ou nouvelle version (pageId)."
-  publishSharedPage(projectId: ID!, worktreeId: ID, path: String!, title: String!, pageId: ID): SharedPage!
+  publishSharedPage(projectId: ID!, worksessionId: ID, path: String!, title: String!, pageId: ID): SharedPage!
   updateSharedPage(id: ID!, input: SharedPageInput!): SharedPage!
   addSharedPageMember(id: ID!, email: String!): SharedPage!
   "Le propriétaire retire qui il veut ; une personne ajoutée peut se retirer elle-même."

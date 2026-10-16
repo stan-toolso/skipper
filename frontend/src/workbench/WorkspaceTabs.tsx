@@ -63,7 +63,7 @@ export default function WorkspaceTabs() {
   }, [location.pathname, ws?.sessions.length]);
 
   if (!ws) return null;
-  // Sous-agents cherchés dans tout le projet : un sous-agent lancé dans un autre worktree compte pour sa parente, et n'a pas d'onglet à part ici.
+  // Sous-agents cherchés dans tout le projet : un sous-agent lancé dans un autre work session compte pour sa parente, et n'a pas d'onglet à part ici.
   const pool = workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s) => ({ ...s, wsKey: w.key })));
   const poolById = new Map(pool.map((s) => [s.id, s]));
   const here = new Set(ws.sessions.map((s) => s.id));
@@ -138,7 +138,7 @@ export default function WorkspaceTabs() {
         >
           <i className="bi bi-plus-lg" />
         </button>
-        {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={false} onClose={() => setMenu(false)} />}
+        {menu && <AddMenu projectId={ws.projectId} worksession={ws.worksession} canWorksession={false} onClose={() => setMenu(false)} />}
       </span>
     </div>
   );

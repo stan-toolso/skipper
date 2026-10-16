@@ -160,7 +160,7 @@ export default function SessionDetailPage() {
   const session = data?.session;
   const cachedName = useCachedName(SESSION_NAME, 'Session', id);
   useTabTitle(session?.name ?? cachedName);
-  useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
+  useGitTarget(session ? { projectId: session.project.id, worksessionId: session.worksession?.id ?? null, label: session.worksession ? `${session.project.name} · ${session.worksession.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
   const archived = Boolean(session?.archivedAt);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
@@ -277,16 +277,16 @@ export default function SessionDetailPage() {
           <span className="cc-meta">
             {' '}
             · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
-            {session.worktree && (
+            {session.worksession && (
               <>
                 {' '}
-                · <i className="bi bi-diagram-2" /> {session.worktree.label}
+                · <i className="bi bi-layers" /> {session.worksession.label}
               </>
             )}
-            {!session.worktree && session.formerWorktree && (
+            {!session.worksession && session.formerWorksession && (
               <>
                 {' '}
-                · <span title={`La session a travaillé dans le worktree ${session.formerWorktree.name} (branche ${session.formerWorktree.branch}), supprimé depuis`}><i className="bi bi-diagram-2" /> {session.formerWorktree.label} <span className="cc-dimmer">(worktree supprimé)</span></span>
+                · <span title={`La session a travaillé dans la work session ${session.formerWorksession.name} (branche ${session.formerWorksession.branch}), supprimée depuis`}><i className="bi bi-layers" /> {session.formerWorksession.label} <span className="cc-dimmer">(worksession supprimé)</span></span>
               </>
             )}
             {session.owner && (
@@ -400,7 +400,7 @@ export default function SessionDetailPage() {
                 type="button"
                 className="cc-btn danger"
                 onClick={async () => {
-                  await deleteSession({ id, name: session.name, worktreeId: session.worktree?.id ?? null });
+                  await deleteSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null });
                 }}
               >
                 Supprimer
@@ -487,7 +487,7 @@ export default function SessionDetailPage() {
       ) : (
         <SessionChanges
           sessionId={id}
-          workspace={{ projectId: session.project.id, worktreeId: session.worktree?.id ?? null }}
+          workspace={{ projectId: session.project.id, worksessionId: session.worksession?.id ?? null }}
           changes={changesQ.data?.sessionChanges}
           loading={changesQ.loading}
           error={changesQ.error}
@@ -497,7 +497,7 @@ export default function SessionDetailPage() {
       )}
       {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
       {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
-      {relaunching && <RelaunchModal session={session} projectName={session.project.name} worktrees={session.worktree ? [{ id: session.worktree.id, label: session.worktree.label }] : []} onClose={() => setRelaunching(false)} />}
+      {relaunching && <RelaunchModal session={session} projectName={session.project.name} worksessions={session.worksession ? [{ id: session.worksession.id, label: session.worksession.label }] : []} onClose={() => setRelaunching(false)} />}
 
       {pending.map((r) => (
         <RequestPrompt key={r.id} request={r} />
@@ -621,7 +621,7 @@ export default function SessionDetailPage() {
       )}
       {technical && (
         <div className="cc-hint justify-content-end">
-          <span title="Dossier de travail de la session">{session.worktree?.path ?? session.project.workspacePath}</span>
+          <span title="Dossier de travail de la session">{session.worksession?.path ?? session.project.workspacePath}</span>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { runner } from '../runners/index.js';
 import { agentGitEnv } from '../git/agentEnv.js';
-import { worktreeService } from '../worktrees/service.js';
+import { worksessionService } from '../worksessions/service.js';
 import { TerminalHistory } from './history.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
@@ -46,11 +46,13 @@ export const terminalService = {
   liveCountByProject: (projectId: string) => [...live.values()].filter((t) => t.projectId === projectId).length,
 
   /** Ouvre un shell de connexion dans le workspace du projet, avec l'historique des commandes de l'utilisateur. */
-  async create(projectId: string, name?: string | null, worktreeId?: string | null, createdById: string | null = null): Promise<TerminalRecord> {
+  /** Ouvre un shell dans une work session du projet : rien ne s'exécute dans le checkout principal. */
+  async create(projectId: string, name: string | null | undefined, worksessionId: string, createdById: string | null = null): Promise<TerminalRecord> {
+    if (!worksessionId) throw new AppError('Un terminal s\'ouvre dans une work session : choisissez-en une');
     const project = await projectService.get(projectId);
-    const cwd = await worktreeService.resolveCwd(project, worktreeId);
+    const cwd = await worksessionService.resolveCwd(project, worksessionId);
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
-    const record = await terminalRepository.create(projectId, label, worktreeId ?? null, createdById);
+    const record = await terminalRepository.create(projectId, label, worksessionId ?? null, createdById);
 
     const history = createdById ? await TerminalHistory.prepare(project, record.id, createdById) : null;
     const spec = await runner.terminalCommand(project, cwd, history ? { rcfile: history.files.rcfile } : undefined);

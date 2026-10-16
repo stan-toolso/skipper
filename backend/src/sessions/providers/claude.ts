@@ -31,7 +31,7 @@ import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
-import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
+import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { claudeSettings } from '../../settings/claude.js';
 import { agentService } from '../../agents/service.js';
@@ -240,7 +240,7 @@ export class ClaudeProvider implements SessionProvider {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id, ctx.session.name),
         ...(vaultTools ? { vault: createVaultMcpServer(vaultContext) } : {}),
-        worktrees: createWorktreesMcpServer(ctx.project, ctx.session.id),
+        worksessions: createWorksessionsMcpServer(ctx.project, ctx.session.id),
         sessions: createSessionsMcpServer(ctx.project, ctx.session.id),
         pages: createSharedPagesMcpServer({ project: ctx.project, session: ctx.session, cwd: ctx.cwd }),
         ...(googleAccounts.length ? { google: createGoogleMcpServer({ project: ctx.project, accounts: googleAccounts, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
@@ -263,11 +263,11 @@ export class ClaudeProvider implements SessionProvider {
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils du coffre portent leur propre porte d'approbation (élément « avec approbation » : un humain
       // confirme chaque usage, quel que soit le mode d'autorisation) : le SDK ne redemande pas.
-      // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
+      // Worksessions : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
       // Pages partagées : lister est libre ; publier passe par l'autorisation quand la page est exposée à d'autres.
-      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Le coffre saisit des secrets dans le navigateur : les outils qui pourraient relire la valeur sont retirés à l'agent.
       ...(browserServer && vaultBrowser ? { disallowedTools: ['mcp__playwright__browser_evaluate', 'mcp__playwright__browser_run_code'] } : {}),
       // Reprise de la conversation Claude si la session a déjà tourné et que le CLI la retrouve encore.
