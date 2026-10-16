@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PullRequestChip } from '../components/PullRequests';
-import { isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge } from '../components/TaskBadges';
+import { isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskComments from '../components/TaskComments';
 import TaskModal from '../components/TaskModal';
 import type { Task } from '../graphql/operations';
@@ -28,10 +28,15 @@ export default function TaskPanel({ taskId }: { taskId: string }) {
         </button>
       </div>
       <div className="d-flex gap-2 align-items-center px-2 pb-2">
-        <TaskStatusBadge status={task.status} />
+        <TaskStatusBadge status={task.status} statusTag={task.statusTag} />
         <TaskPriorityBadge priority={task.priority} />
         {task.dueDate && <span className={`small ${overdue ? 'text-danger' : 'text-secondary'}`}>{overdue ? 'En retard : ' : 'Pour le '}{new Date(task.dueDate).toLocaleDateString()}</span>}
       </div>
+      {task.tags.length > 0 && (
+        <div className="px-2 pb-2">
+          <TaskTags tags={task.tags} />
+        </div>
+      )}
       <div className="git-subhead">Description</div>
       <div className="task-panel-text">{task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}</div>
       <div className="git-subhead">Personnes</div>

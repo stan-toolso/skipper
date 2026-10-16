@@ -26,6 +26,10 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté. */
+  statusTag: string | null;
+  /** Étiquettes libres (uniques sans tenir compte de la casse, dans l'ordre d'affichage). */
+  tags: string[];
   priority: TaskPriority;
   /** Session en charge actuellement (l'historique complet est dans task_sessions). */
   sessionId: string | null;
@@ -57,6 +61,8 @@ export interface CreateTaskInput {
   sessionId?: string | null;
   dueDate?: string | null;
   customFields?: TaskField[] | null;
+  statusTag?: string | null;
+  tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
 }
@@ -71,6 +77,10 @@ export interface UpdateTaskInput {
   dueDate?: string | null;
   /** Remplace la liste complète. */
   customFields?: TaskField[] | null;
+  /** Absent : inchangée ; null ou vide : retirée. */
+  statusTag?: string | null;
+  /** Remplace la liste complète. */
+  tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
 }
@@ -88,6 +98,8 @@ export interface TaskFilter {
   assigneeEmail?: string;
   /** Tâches traitées sur cette branche. */
   branch?: string;
+  /** Tâches portant cette étiquette (sans tenir compte de la casse). */
+  tag?: string;
   limit?: number;
 }
 

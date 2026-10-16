@@ -3,9 +3,10 @@ import { useState } from 'react';
 import { Alert, Button, Col, Form, Modal, Row } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
 import { CREATE_TASK, UPDATE_TASK, type Task, type TaskField, type TaskPerson, type TaskPriority, type TaskStatus } from '../graphql/operations';
-import { TASK_PEOPLE } from '../graphql/tasks';
+import { TASK_PEOPLE, TASK_PROJECT_MEMBERS, TASK_TAGS } from '../graphql/tasks';
 import { canAutoFocus } from '../lib/device';
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
+import TagsInput from './TagsInput';
 import TaskComments from './TaskComments';
 
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
@@ -15,6 +16,8 @@ interface TaskForm {
   description: string;
   priority: TaskPriority;
   status: TaskStatus;
+  statusTag: string;
+  tags: string[];
   dueDate: string;
   assignee: { name: string; email: string };
   reporter: { name: string; email: string };
@@ -24,7 +27,7 @@ interface TaskForm {
 const personForm = (p: TaskPerson | null | undefined) => ({ name: p?.name ?? '', email: p?.email ?? '' });
 const personInput = (p: { name: string; email: string }) => (p.name.trim() || p.email.trim() ? { name: p.name.trim() || null, email: p.email.trim() || null } : null);
 
-function PersonFields({ label, value, onChange, people }: { label: string; value: { name: string; email: string }; onChange: (v: { name: string; email: string }) => void; people: TaskPerson[] }) {
+function PersonFields({ label, value, onChange, people, members }: { label: string; value: { name: string; email: string }; onChange: (v: { name: string; email: string }) => void; people: TaskPerson[]; members: TaskPerson[] }) {
   const { user } = useAuth();
   const isMe = user && value.email.trim().toLowerCase() === user.email;
   const listId = `people-${label}`;
@@ -47,6 +50,25 @@ function PersonFields({ label, value, onChange, people }: { label: string; value
           </button>
         )}
       </Form.Label>
+      {members.length > 0 && (
+        <Form.Select
+          size="sm"
+          className="mb-1"
+          aria-label={`${label} : membre du projet`}
+          value={members.find((m) => m.email && m.email.toLowerCase() === value.email.trim().toLowerCase())?.email ?? ''}
+          onChange={(e) => {
+            const m = members.find((x) => x.email === e.target.value);
+            onChange(m ? personForm(m) : { name: '', email: '' });
+          }}
+        >
+          <option value="">{value.name || value.email ? 'Autre personne (ci-dessous)' : 'Choisir un membre…'}</option>
+          {members.map((m) => (
+            <option key={m.email} value={m.email!}>
+              {m.name ? `${m.name} <${m.email}>` : m.email}
+            </option>
+          ))}
+        </Form.Select>
+      )}
       <div className="d-flex gap-1">
         <Form.Control size="sm" placeholder="Nom" value={value.name} list={`${listId}-names`} onChange={(e) => pickName(e.target.value)} />
         <Form.Control size="sm" placeholder="E-mail" type="email" value={value.email} list={`${listId}-emails`} onChange={(e) => pickEmail(e.target.value)} />
@@ -67,18 +89,26 @@ function PersonFields({ label, value, onChange, people }: { label: string; value
 
 /** Fenêtre de création / édition d'une tâche : titre, description, priorité, statut, échéance, personnes, champs libres, commentaires. */
 export default function TaskModal({ task, projectId, onClose }: { task: Task | null; projectId: string; onClose: () => void }) {
+  const { user } = useAuth();
+  // Une nouvelle tâche est rapportée par sa créatrice ou son créateur, et lui est assignée, sauf changement.
+  const me: TaskPerson | null = user ? { name: user.name, email: user.email } : null;
   const [form, setForm] = useState<TaskForm>({
     title: task?.title ?? '',
     description: task?.description ?? '',
     priority: task?.priority ?? 'MEDIUM',
     status: task?.status ?? 'TODO',
+    statusTag: task?.statusTag ?? '',
+    tags: task?.tags ?? [],
     dueDate: task?.dueDate ?? '',
-    assignee: personForm(task?.assignee),
-    reporter: personForm(task?.reporter),
+    assignee: personForm(task ? task.assignee : me),
+    reporter: personForm(task ? task.reporter : me),
     customFields: task?.customFields.map((f) => ({ key: f.key, value: f.value })) ?? [],
   });
   const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId } });
   const people = peopleData?.taskPeople ?? [];
+  const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId } });
+  const { data: membersData } = useQuery<{ project: { members: { pending: boolean; user: { name: string | null; email: string } }[] } | null }>(TASK_PROJECT_MEMBERS, { variables: { id: projectId }, skip: !projectId });
+  const members: TaskPerson[] = (membersData?.project?.members ?? []).filter((m) => !m.pending).map((m) => ({ name: m.user.name, email: m.user.email }));
   const refetch = { refetchQueries: ['Tasks', 'TaskDetail', 'TaskPage', 'Sidebar'] };
   const [createTask, { loading: creating, error: createError }] = useMutation(CREATE_TASK, { ...refetch, onCompleted: onClose });
   const [updateTask, { loading: updating, error: updateError }] = useMutation(UPDATE_TASK, { ...refetch, onCompleted: onClose });
@@ -93,6 +123,8 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
       description: form.description,
       priority: form.priority,
       status: form.status,
+      statusTag: form.statusTag.trim() || null,
+      tags: form.tags,
       dueDate: form.dueDate || null,
       customFields: form.customFields.map((f) => ({ key: f.key, value: f.value })),
       assignee: personInput(form.assignee),
@@ -144,8 +176,19 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
             </Col>
           </Row>
           <Row className="g-2 mb-3">
-            <PersonFields label="Responsable" value={form.assignee} onChange={(assignee) => setForm((f) => ({ ...f, assignee }))} people={people} />
-            <PersonFields label="Rapporteur" value={form.reporter} onChange={(reporter) => setForm((f) => ({ ...f, reporter }))} people={people} />
+            <Col sm={4}>
+              <Form.Label>Étiquette d'état</Form.Label>
+              <Form.Control size="sm" maxLength={40} value={form.statusTag} onChange={set('statusTag')} placeholder="ex. en revue, bloquée" />
+              <Form.Text>Où en est le travail dans son statut.</Form.Text>
+            </Col>
+            <Col sm={8}>
+              <Form.Label htmlFor="task-tags-input">Étiquettes</Form.Label>
+              <TagsInput id="task-tags-input" value={form.tags} onChange={(tags) => setForm((f) => ({ ...f, tags }))} suggestions={tagsData?.taskTags ?? []} />
+            </Col>
+          </Row>
+          <Row className="g-2 mb-3">
+            <PersonFields label="Responsable" value={form.assignee} onChange={(assignee) => setForm((f) => ({ ...f, assignee }))} people={people} members={members} />
+            <PersonFields label="Rapporteur" value={form.reporter} onChange={(reporter) => setForm((f) => ({ ...f, reporter }))} people={people} members={members} />
           </Row>
           <div className="mb-2">
             <div className="d-flex justify-content-between align-items-center">

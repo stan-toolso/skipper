@@ -115,6 +115,13 @@ export const TASK_PROMPT = gql`
   }
 `;
 
+/** Étiquettes déjà employées (suggestions des formulaires et filtres). */
+export const TASK_TAGS = gql`
+  query TaskTags($projectId: ID) {
+    taskTags(projectId: $projectId)
+  }
+`;
+
 export const TASK_PEOPLE = gql`
   query TaskPeople($projectId: ID) {
     taskPeople(projectId: $projectId) {
@@ -183,6 +190,23 @@ export const TASK_WORKSESSION = gql`
         branch
         label
         archivedAt
+      }
+    }
+  }
+`;
+
+/** Membres d'un projet (choix du responsable et du rapporteur d'une tâche). */
+export const TASK_PROJECT_MEMBERS = gql`
+  query TaskProjectMembers($id: ID!) {
+    project(id: $id) {
+      id
+      members {
+        pending
+        user {
+          id
+          name
+          email
+        }
       }
     }
   }

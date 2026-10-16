@@ -19,6 +19,8 @@ const task: Task = {
   createdBySessionId: null,
   dueDate: null,
   customFields: [],
+  statusTag: null,
+  tags: [],
   assignee: null,
   reporter: null,
 } as unknown as Task;

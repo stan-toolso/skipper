@@ -116,6 +116,7 @@ export interface Project {
   slug: string;
   description: string | null;
   systemPrompt: string;
+  taskInstructions: string;
   gitUrl: string | null;
   gitBranch: string | null;
   runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean; maxSessions?: number };
@@ -285,6 +286,10 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…). */
+  statusTag: string | null;
+  /** Étiquettes libres. */
+  tags: string[];
   priority: TaskPriority;
   dueDate: string | null;
   createdByType: 'human' | 'agent';
@@ -296,6 +301,8 @@ export interface Task {
   reporter: TaskPerson | null;
   commentCount: number;
   branch: string | null;
+  /** Work session consacrée à la tâche (active, sinon la dernière archivée). */
+  worksession: { id: string; label: string; archivedAt: string | null } | null;
   project: { id: string; name: string };
   session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worksession: { id: string; branch: string; label: string } | null } | null;
   createdBySession: { id: string; name: string } | null;
@@ -411,6 +418,7 @@ export const PROJECT_FIELDS = gql`
     slug
     description
     systemPrompt
+    taskInstructions
     gitUrl
     gitBranch
     runnerConfig
@@ -1143,6 +1151,7 @@ export const SIDEBAR = gql`
           id
           title
           status
+          statusTag
         }
         sessions {
           ...SidebarSession
@@ -1362,6 +1371,8 @@ export const TASK_FIELDS = gql`
     title
     description
     status
+    statusTag
+    tags
     priority
     dueDate
     createdByType
@@ -1382,6 +1393,11 @@ export const TASK_FIELDS = gql`
     }
     commentCount
     branch
+    worksession {
+      id
+      label
+      archivedAt
+    }
     project {
       id
       name
@@ -1406,8 +1422,8 @@ export const TASK_FIELDS = gql`
 
 export const TASKS = gql`
   ${TASK_FIELDS}
-  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $mine: Boolean) {
-    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, mine: $mine) {
+  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean) {
+    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine) {
       ...TaskFields
       pullRequest {
         number
@@ -1438,6 +1454,16 @@ export const UPDATE_TASK = gql`
   ${TASK_FIELDS}
   mutation UpdateTask($id: ID!, $input: UpdateTaskInput!) {
     updateTask(id: $id, input: $input) {
+      ...TaskFields
+    }
+  }
+`;
+
+/** Déplace une tâche dans un autre projet. */
+export const MOVE_TASK = gql`
+  ${TASK_FIELDS}
+  mutation MoveTask($id: ID!, $projectId: ID!) {
+    moveTask(id: $id, projectId: $projectId) {
       ...TaskFields
     }
   }

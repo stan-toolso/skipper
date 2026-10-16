@@ -89,6 +89,8 @@ type Project {
   description: String
   "Ajouté au prompt système des agents qui le supportent."
   systemPrompt: String!
+  "Consignes ajoutées à l'instruction de toute session qui réalise une tâche du projet, après le texte de la tâche (vide : aucune)."
+  taskInstructions: String!
   gitUrl: String
   gitBranch: String
   "Réglages du conteneur Docker du projet : { image, memory, cpus, browser }."
@@ -268,6 +270,10 @@ type Task {
   title: String!
   description: String!
   status: TaskStatus!
+  "Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté ; posé par les personnes ou par la session en charge (outil MCP `tasks.update`)."
+  statusTag: String
+  "Étiquettes libres de la tâche, dans l'ordre d'affichage."
+  tags: [String!]!
   priority: TaskPriority!
   "Session d'agent qui s'en occupe actuellement, le cas échéant."
   session: Session
@@ -303,6 +309,8 @@ input CreateTaskInput {
   status: TaskStatus
   dueDate: String
   customFields: [TaskFieldInput!]
+  statusTag: String
+  tags: [String!]
   assignee: TaskPersonInput
   reporter: TaskPersonInput
 }
@@ -318,6 +326,10 @@ input UpdateTaskInput {
   dueDate: String
   "Remplace la liste complète."
   customFields: [TaskFieldInput!]
+  "Absente : inchangée ; null ou vide : retirée."
+  statusTag: String
+  "Remplace la liste complète des étiquettes."
+  tags: [String!]
   "Absent : inchangé ; null : retiré."
   assignee: TaskPersonInput
   reporter: TaskPersonInput
@@ -1963,6 +1975,8 @@ type Query {
   taskPrompt(id: ID!): String!
   "Personnes déjà désignées sur les tâches (suggestions)."
   taskPeople(projectId: ID): [TaskPerson!]!
+  "Étiquettes distinctes des tâches (d'un projet, ou de tous les projets accessibles), les plus utilisées d'abord : suggestions des formulaires et filtres."
+  taskTags(projectId: ID): [String!]!
   sharedPage(id: ID!): SharedPage
   "Pages dont l'utilisateur est propriétaire ou membre."
   sharedPages: [SharedPage!]!
@@ -2030,8 +2044,8 @@ type Query {
   unreadNotificationCount: Int!
   "Tableau de bord de l'utilisateur connecté."
   dashboard: Dashboard!
-  "Tâches, tous projets confondus (par défaut : ouvertes). assignee / reporter : texte cherché dans le nom ou l'e-mail ; mine : tâches dont le responsable a mon e-mail."
-  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, mine: Boolean, limit: Int): [Task!]!
+  "Tâches, tous projets confondus (par défaut : ouvertes). assignee / reporter : texte cherché dans le nom ou l'e-mail ; mine : tâches dont le responsable a mon e-mail ; tag : tâches portant cette étiquette (sans tenir compte de la casse)."
+  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, tag: String, mine: Boolean, limit: Int): [Task!]!
   task(id: ID!): Task
   contextInstruction(id: ID!): ContextInstruction
   searchContext(projectId: ID!, query: String!): [ContextInstruction!]!
@@ -2065,6 +2079,7 @@ input CreateProjectInput {
   gitBranch: String
   runnerConfig: JSON
   defaultPermissionMode: String
+  taskInstructions: String
 }
 
 input UpdateProjectInput {
@@ -2075,6 +2090,7 @@ input UpdateProjectInput {
   gitBranch: String
   runnerConfig: JSON
   defaultPermissionMode: String
+  taskInstructions: String
 }
 
 "Work session à créer en même temps que la session, qui s'y exécutera. Sans nom, branche ni libellé : nommée d'après la consigne."
@@ -2244,6 +2260,8 @@ type Mutation {
   createTask(input: CreateTaskInput!): Task!
   updateTask(id: ID!, input: UpdateTaskInput!): Task!
   deleteTask(id: ID!): Boolean!
+  "Déplace une tâche dans un autre projet (membre des deux) : sa session et sa branche en sont détachées, ses commentaires et son historique la suivent."
+  moveTask(id: ID!, projectId: ID!): Task!
   addTaskComment(taskId: ID!, body: String!): TaskComment!
   "Ses propres commentaires seulement."
   updateTaskComment(id: ID!, body: String!): TaskComment!

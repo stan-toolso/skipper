@@ -35,7 +35,7 @@ export interface SidebarWorksession {
   label: string;
   customLabel: string | null;
   exists: boolean;
-  task: { id: string; title: string; status: string } | null;
+  task: { id: string; title: string; status: string; statusTag?: string | null } | null;
   sessions: SidebarSession[];
   terminals: SidebarTerminal[];
 }
@@ -65,7 +65,7 @@ export interface Workspace {
   branch: string;
   worksession: SidebarWorksession | null;
   primary: boolean;
-  task: { id: string; title: string; status: string } | null;
+  task: { id: string; title: string; status: string; statusTag?: string | null } | null;
   exists: boolean;
   sessions: SidebarSession[];
   terminals: SidebarTerminal[];

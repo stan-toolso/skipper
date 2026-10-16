@@ -126,6 +126,8 @@ interface GqlTaskInput {
   sessionId?: string | null;
   dueDate?: string | null;
   customFields?: TaskField[] | null;
+  statusTag?: string | null;
+  tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
 }
@@ -137,6 +139,8 @@ const toTaskInput = (i: GqlTaskInput) => ({
   sessionId: i.sessionId,
   dueDate: i.dueDate,
   customFields: i.customFields ?? undefined,
+  statusTag: i.statusTag,
+  tags: i.tags ?? undefined,
   assignee: i.assignee,
   reporter: i.reporter,
 });
@@ -635,6 +639,10 @@ export const resolvers = {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return taskService.people(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
     },
+    taskTags: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return taskService.tags(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
+    },
     sharedPage: (_: unknown, args: { id: string }, ctx: Ctx) => sharedPageService.getFor(requireUser(ctx).id, args.id).catch(() => null),
     sharedPages: (_: unknown, __: unknown, ctx: Ctx) => sharedPageService.listFor(requireUser(ctx).id),
     pushPublicKey: (_: unknown, __: unknown, ctx: Ctx) => {
@@ -780,7 +788,7 @@ export const resolvers = {
       notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
     unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
     dashboard: async (_: unknown, __: unknown, ctx: Ctx) => dashboardService.build(requireUser(ctx).id, await accessibleProjectIds(ctx), new Date(), requireUser(ctx).isAdmin),
-    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; mine?: boolean | null; limit?: number | null }, ctx: Ctx) => {
+    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; tag?: string | null; mine?: boolean | null; limit?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return taskService.list({
         projectId: args.projectId ?? undefined,
@@ -789,6 +797,7 @@ export const resolvers = {
         priority: fromGqlTaskPriority(args.priority),
         assignee: args.assignee ?? undefined,
         reporter: args.reporter ?? undefined,
+        tag: args.tag?.trim() || undefined,
         assigneeEmail: args.mine ? requireUser(ctx).email : undefined,
         limit: args.limit ?? undefined,
       });
@@ -1221,6 +1230,11 @@ export const resolvers = {
     updateTask: async (_: unknown, { id, input }: { id: string; input: GqlTaskInput }, ctx: Ctx) => {
       await guardTask(ctx, id, 'member');
       return taskService.update(id, toTaskInput(input), actorOf(requireUser(ctx)));
+    },
+    moveTask: async (_: unknown, args: { id: string; projectId: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.id, 'member');
+      await requireProject(ctx, args.projectId, 'member');
+      return taskService.move(args.id, args.projectId);
     },
     deleteTask: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');

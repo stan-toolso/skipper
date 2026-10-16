@@ -309,7 +309,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   // Clic sur la tête : la première session de la work session, sinon la page où l'onglet du dossier en était, sinon les fichiers.
   const headTo = !ws.primary && groups.length ? `/sessions/${groups[0].root.session.id}` : tabUrl ?? ws.key;
   const name = ws.task && !ws.worksession?.customLabel ? ws.task.title : ws.name;
-  const title = ws.primary ? `Dossier principal · ${ws.name} · sessions d'avant les work sessions` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()} · ` : ''}${icon.title}`;
+  const title = ws.primary ? `Dossier principal · ${ws.name} · sessions d'avant les work sessions` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()}${ws.task.statusTag ? ` · ${ws.task.statusTag}` : ''} · ` : ''}${icon.title}`;
   return (
     <div className={`wb-ws${activeKey === ws.key ? ' active' : ''}`}>
       <div
@@ -348,6 +348,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
         {ws.task && (
           <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
             {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
+            {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
           </Link>
         )}
         {shown.map((c) => (

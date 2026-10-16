@@ -6,7 +6,7 @@ import PageLoading from '../components/PageLoading';
 import { PullRequestChip } from '../components/PullRequests';
 import StatusBadge from '../components/StatusBadge';
 import TaskActions from '../components/TaskActions';
-import { formatPerson, isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge } from '../components/TaskBadges';
+import { formatPerson, isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskComments from '../components/TaskComments';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 import TaskModal from '../components/TaskModal';
@@ -62,10 +62,16 @@ export default function TaskPage() {
       <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap">
         <div>
           <h1 className="h3 mb-1">
-            {task.title} <TaskStatusBadge status={task.status} /> <TaskPriorityBadge priority={task.priority} />
+            {task.title} <TaskStatusBadge status={task.status} statusTag={task.statusTag} /> <TaskPriorityBadge priority={task.priority} />
           </h1>
           <div className="small text-secondary">
             <Link to={`/projects/${task.project.id}`}>{task.project.name}</Link>
+            {task.tags.length > 0 && (
+              <>
+                {' · '}
+                <TaskTags tags={task.tags} />
+              </>
+            )}
             {' · créée le '}
             {fmt(task.createdAt)}
             {task.createdByType === 'agent' ? ' par un agent' : " depuis l'interface"}
@@ -154,14 +160,15 @@ export default function TaskPage() {
               </dl>
             </Card.Body>
           </Card>
-          {(task.branch || task.pullRequest || current?.worksession) && (
+          {(task.branch || task.pullRequest || task.worksession || current?.worksession) && (
             <Card className="mt-3">
               <Card.Header>Code</Card.Header>
               <Card.Body className="small">
-                {current?.worksession ? (
-                  <div>
+                {task.worksession || current?.worksession ? (
+                  <div title="Work session de la tâche : ses sessions y travaillent toutes">
                     <i className="bi bi-layers me-1" />
-                    <Link to={`/worksessions/${current.worksession.id}/files`}>{current.worksession.label}</Link>
+                    <Link to={`/worksessions/${(task.worksession ?? current!.worksession!).id}/files`}>{(task.worksession ?? current!.worksession!).label}</Link>
+                    {task.worksession?.archivedAt && <span className="text-secondary"> (archivée, restaurée à la prochaine session)</span>}
                   </div>
                 ) : (
                   task.branch && (

@@ -9,6 +9,8 @@ interface Row {
   title: string;
   description: string;
   status: TaskStatus;
+  status_tag: string | null;
+  tags: string[] | null;
   priority: TaskPriority;
   session_id: string | null;
   branch: string | null;
@@ -53,6 +55,8 @@ const toTask = (r: Row): Task => ({
   title: r.title,
   description: r.description,
   status: r.status,
+  statusTag: r.status_tag ?? null,
+  tags: Array.isArray(r.tags) ? r.tags : [],
   priority: r.priority,
   sessionId: r.session_id,
   branch: r.branch,
@@ -106,8 +110,8 @@ export const taskRepository = {
       await client.query('BEGIN');
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO tasks (project_id, title, description, status, priority, session_id, created_by_type, created_by_session_id, due_date, completed_at,
-                            custom_fields, assignee_name, assignee_email, reporter_name, reporter_email)
-         VALUES ($1, $2, $3, $4::task_status, $5, $6, $7, $8, $9, CASE WHEN $4::task_status = 'done' THEN now() ELSE NULL END, $10::jsonb, $11, $12, $13, $14) RETURNING id`,
+                            custom_fields, assignee_name, assignee_email, reporter_name, reporter_email, status_tag, tags)
+         VALUES ($1, $2, $3, $4::task_status, $5, $6, $7, $8, $9, CASE WHEN $4::task_status = 'done' THEN now() ELSE NULL END, $10::jsonb, $11, $12, $13, $14, $15, $16::text[]) RETURNING id`,
         [
           projectId,
           input.title,
@@ -121,6 +125,8 @@ export const taskRepository = {
           toJson(input.customFields ?? []),
           ...personColumns(input.assignee),
           ...personColumns(input.reporter),
+          input.statusTag ?? null,
+          input.tags ?? [],
         ],
       );
       await linkSession(client, rows[0].id, input.sessionId);
@@ -149,6 +155,7 @@ export const taskRepository = {
     if (filter.priority) where.push(`t.priority = $${params.push(filter.priority)}`);
     if (filter.sessionId) where.push(`t.session_id = $${params.push(filter.sessionId)}`);
     if (filter.branch) where.push(`t.branch = $${params.push(filter.branch)}`);
+    if (filter.tag) where.push(`EXISTS (SELECT 1 FROM unnest(t.tags) tag WHERE lower(tag) = lower($${params.push(filter.tag)}))`);
     if (filter.assignee) {
       const p = params.push(contains(filter.assignee));
       where.push(`(t.assignee_name ILIKE $${p} OR t.assignee_email ILIKE $${p})`);
@@ -185,6 +192,8 @@ export const taskRepository = {
     if (input.branch !== undefined) sets.push(`branch = $${params.push(input.branch)}`);
     if (input.dueDate !== undefined) sets.push(`due_date = $${params.push(input.dueDate)}`);
     if (input.customFields != null) sets.push(`custom_fields = $${params.push(toJson(input.customFields))}::jsonb`);
+    if (input.statusTag !== undefined) sets.push(`status_tag = $${params.push(input.statusTag)}`);
+    if (input.tags != null) sets.push(`tags = $${params.push(input.tags)}::text[]`);
     if (input.assignee !== undefined) {
       const [name, email] = personColumns(input.assignee);
       sets.push(`assignee_name = $${params.push(name)}`, `assignee_email = $${params.push(email)}`);
@@ -210,6 +219,21 @@ export const taskRepository = {
       client.release();
     }
     return this.findById(id);
+  },
+
+  /** Déplace une tâche dans un autre projet : sa session et sa branche restent à l'ancien projet, elles sont retirées. */
+  async move(id: string, projectId: string): Promise<Task | null> {
+    const { rowCount } = await pool.query('UPDATE tasks SET project_id = $2, session_id = NULL, branch = NULL, updated_at = now() WHERE id = $1', [id, projectId]);
+    return rowCount ? this.findById(id) : null;
+  },
+
+  /** Étiquettes distinctes des tâches des projets (les plus utilisées d'abord), pour les suggestions. */
+  async tags(projectIds: string[]): Promise<string[]> {
+    const { rows } = await pool.query<{ tag: string }>(
+      `SELECT min(tag) AS tag FROM tasks, unnest(tags) tag WHERE project_id = ANY($1::uuid[]) GROUP BY lower(tag) ORDER BY count(*) DESC, lower(tag) LIMIT 500`,
+      [projectIds],
+    );
+    return rows.map((r) => r.tag);
   },
 
   async delete(id: string): Promise<boolean> {

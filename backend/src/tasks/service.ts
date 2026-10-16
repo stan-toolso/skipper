@@ -65,6 +65,43 @@ export function normalizeFields(fields: TaskField[] | null | undefined): TaskFie
   return out;
 }
 
+export const MAX_STATUS_TAG_LENGTH = 40;
+export const MAX_TAGS = 20;
+export const MAX_TAG_LENGTH = 40;
+
+/** Étiquette d'état nettoyée (espaces réduits) ; null si vide, undefined reste undefined (inchangée). */
+export function normalizeStatusTag(tag: string | null | undefined): string | null | undefined {
+  if (tag === undefined) return undefined;
+  const text = tag?.replace(/\s+/g, ' ').trim() || null;
+  if (text && text.length > MAX_STATUS_TAG_LENGTH) throw new AppError(`Étiquette d'état trop longue (${MAX_STATUS_TAG_LENGTH} caractères au plus)`);
+  return text;
+}
+
+/** Étiquettes nettoyées (espaces réduits), sans les vides ni les doublons (sans tenir compte de la casse). */
+export function normalizeTags(tags: string[] | null | undefined): string[] | undefined {
+  if (tags == null) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tags) {
+    const tag = raw.replace(/\s+/g, ' ').trim();
+    if (!tag || seen.has(tag.toLowerCase())) continue;
+    if (tag.length > MAX_TAG_LENGTH) throw new AppError(`Étiquette trop longue (${MAX_TAG_LENGTH} caractères au plus) : ${tag.slice(0, 20)}…`);
+    seen.add(tag.toLowerCase());
+    out.push(tag);
+  }
+  if (out.length > MAX_TAGS) throw new AppError(`Au plus ${MAX_TAGS} étiquettes par tâche`);
+  return out;
+}
+
+/** « · <étiquette d'état> » après un statut, quand la tâche en a une. */
+export const statusTagText = (t: Pick<Task, 'statusTag'>) => (t.statusTag ? ` · ${t.statusTag}` : '');
+/** « , étiquettes a, b » quand la tâche en a. */
+export const tagsText = (t: Pick<Task, 'tags'>) => (t.tags.length ? `, étiquettes ${t.tags.join(', ')}` : '');
+
+/** Demande à la session en charge de tenir l'étiquette d'état de sa tâche à jour. */
+const STATUS_TAG_HINT =
+  "Tiens l'étiquette d'état de la tâche à jour à mesure que ton travail avance : un mot ou deux affichés à côté de son statut dans la sidebar et le tableau (`tasks.update` avec `status_tag`, ex. « analyse », « implémentation », « tests », « en revue », « bloquée » ; une chaîne vide la retire).";
+
 function validate(input: CreateTaskInput | UpdateTaskInput): void {
   if ('title' in input && input.title != null && !input.title.trim()) throw new AppError('Le titre de la tâche est obligatoire');
   if (input.priority != null && !TASK_PRIORITIES.includes(input.priority)) throw new AppError(`Priorité invalide : ${input.priority}`);
@@ -83,6 +120,8 @@ function prepare<T extends CreateTaskInput | UpdateTaskInput>(input: T): T & { a
   if (input.customFields != null) out.customFields = normalizeFields(input.customFields);
   if (input.title != null) out.title = input.title.trim();
   if (input.dueDate === '') out.dueDate = null;
+  if (input.statusTag !== undefined) out.statusTag = normalizeStatusTag(input.statusTag);
+  if (input.tags != null) out.tags = normalizeTags(input.tags);
   return out;
 }
 
@@ -91,6 +130,8 @@ export function describeTaskChanges(before: Task, after: Task): string[] {
   const lines: string[] = [];
   if (before.title !== after.title) lines.push(`- Titre : « ${before.title} » → « ${after.title} »`);
   if (before.status !== after.status) lines.push(`- Statut : ${statusLabels[before.status]} → ${statusLabels[after.status]}`);
+  if (before.statusTag !== after.statusTag) lines.push(`- Étiquette d'état : ${before.statusTag ? `« ${before.statusTag} »` : 'aucune'} → ${after.statusTag ? `« ${after.statusTag} »` : 'aucune'}`);
+  if (before.tags.join('\n') !== after.tags.join('\n')) lines.push(`- Étiquettes : ${before.tags.join(', ') || 'aucune'} → ${after.tags.join(', ') || 'aucune'}`);
   if (before.priority !== after.priority) lines.push(`- Priorité : ${priorityLabels[before.priority]} → ${priorityLabels[after.priority]}`);
   if (before.dueDate !== after.dueDate) lines.push(`- Échéance : ${before.dueDate ?? 'aucune'} → ${after.dueDate ?? 'aucune'}`);
   if (formatPerson(before.assignee) !== formatPerson(after.assignee)) lines.push(`- Responsable : ${formatPerson(before.assignee) || 'personne'} → ${formatPerson(after.assignee) || 'personne'}`);
@@ -205,6 +246,19 @@ export const taskService = {
     return task;
   },
 
+  /** Déplace une tâche dans un autre projet (créée par erreur dans le mauvais) ; sa session et sa branche restent à l'ancien. */
+  async move(id: string, projectId: string): Promise<Task> {
+    const before = await this.get(id);
+    if (before.projectId === projectId) return before;
+    await projectService.get(projectId);
+    const task = await taskRepository.move(id, projectId);
+    if (!task) throw new NotFoundError('Tâche introuvable');
+    return task;
+  },
+
+  /** Étiquettes distinctes des projets, les plus utilisées d'abord (suggestions des formulaires et filtres). */
+  tags: (projectIds: string[]) => (projectIds.length ? taskRepository.tags(projectIds) : Promise.resolve([] as string[])),
+
   async delete(id: string): Promise<boolean> {
     await this.get(id);
     return taskRepository.delete(id);
@@ -254,7 +308,7 @@ export const taskService = {
     if (open.length === 0) return `${intro}\nAucune tâche ouverte pour le moment.`;
     const lines = open.map(
       (t) =>
-        `- [${statusLabels[t.status]}, priorité ${priorityLabels[t.priority]}${t.sessionId && t.sessionId === sessionId ? ', assignée à cette session' : t.sessionId ? ', prise par une autre session' : ''}${t.assignee ? `, responsable ${formatPerson(t.assignee)}` : ''}] ${t.title} (id ${t.id})`,
+        `- [${statusLabels[t.status]}${statusTagText(t)}, priorité ${priorityLabels[t.priority]}${t.sessionId && t.sessionId === sessionId ? ', assignée à cette session' : t.sessionId ? ', prise par une autre session' : ''}${t.assignee ? `, responsable ${formatPerson(t.assignee)}` : ''}${tagsText(t)}] ${t.title} (id ${t.id})`,
     );
     return [intro, 'Tâches ouvertes :', ...lines].join('\n');
   },
@@ -264,8 +318,9 @@ export const taskService = {
     const task = await this.forSession(sessionId);
     if (!task) return '';
     return [
-      `Cette session est en charge de la tâche ${task.id} (« ${task.title} », ${statusLabels[task.status]}, priorité ${priorityLabels[task.priority]}) : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec ses commentaires, \`update\`, \`comment\`).`,
+      `Cette session est en charge de la tâche ${task.id} (« ${task.title} », ${statusLabels[task.status]}${statusTagText(task)}, priorité ${priorityLabels[task.priority]}${tagsText(task)}) : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec ses commentaires, \`update\`, \`comment\`).`,
       "Quand quelqu'un d'autre la modifie ou la commente, tu reçois un message commençant par « [Mise à jour de la tâche] » ou « [Commentaire sur la tâche] » qui décrit le changement : tiens-en compte, et réponds à un commentaire avec `tasks.comment` quand il appelle une réponse.",
+      STATUS_TAG_HINT,
     ].join('\n');
   },
 
@@ -280,6 +335,7 @@ export const taskService = {
     ];
     if (task.assignee) parts.push('', `Responsable : ${formatPerson(task.assignee)}`);
     if (task.reporter) parts.push(task.assignee ? '' : '', `Rapporteur : ${formatPerson(task.reporter)}`);
+    if (task.tags.length) parts.push('', `Étiquettes : ${task.tags.join(', ')}`);
     if (task.customFields.length) parts.push('', 'Champs personnalisés :', ...task.customFields.map((f) => `- ${f.key} : ${f.value}`));
     if (comments.length) {
       parts.push('', 'Commentaires (du plus ancien au plus récent) :');
@@ -288,6 +344,7 @@ export const taskService = {
     parts.push(
       '',
       "Elle t'est assignée et est déjà « en cours ». Quand c'est terminé et vérifié, passe-la en `done` avec l'outil `tasks.update`. Si tu es bloqué, laisse-la en cours et explique pourquoi (l'outil `tasks.comment` ajoute un commentaire à la tâche).",
+      STATUS_TAG_HINT,
     );
     return parts.join('\n');
   },
@@ -295,6 +352,9 @@ export const taskService = {
   /** Instruction qu'un agent recevrait pour la tâche (pré-remplit le formulaire « Confier à un agent »). */
   async promptFor(id: string): Promise<string> {
     const task = await this.get(id);
-    return this.describeForPrompt({ ...task, status: 'in_progress' }, await taskRepository.listComments(id));
+    const project = await projectService.get(task.projectId);
+    const text = this.describeForPrompt({ ...task, status: 'in_progress' }, await taskRepository.listComments(id));
+    // Même composition que tasks/launch.ts (composeTaskPrompt) : les consignes de tâches du projet suivent le texte.
+    return project.taskInstructions.trim() ? [text, '', '---', '', 'Consignes supplémentaires :', '', project.taskInstructions.trim()].join('\n') : text;
   },
 };

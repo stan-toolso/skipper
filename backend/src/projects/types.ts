@@ -14,6 +14,8 @@ export interface Project {
   runnerConfig: Record<string, unknown>;
   /** Mode d'autorisation des nouvelles sessions qui n'en précisent pas (sessions de tâches notamment). */
   defaultPermissionMode: ProjectPermissionMode;
+  /** Consignes ajoutées à l'instruction de toute session qui réalise une tâche du projet, après le texte de la tâche (vide : aucune). */
+  taskInstructions: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,6 +29,7 @@ export interface CreateProjectInput {
   gitBranch?: string | null;
   runnerConfig?: Record<string, unknown> | null;
   defaultPermissionMode?: string | null;
+  taskInstructions?: string | null;
 }
 
 export interface UpdateProjectInput {
@@ -37,4 +40,5 @@ export interface UpdateProjectInput {
   gitBranch?: string | null;
   runnerConfig?: Record<string, unknown> | null;
   defaultPermissionMode?: string | null;
+  taskInstructions?: string | null;
 }

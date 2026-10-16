@@ -665,6 +665,15 @@
 .task-status-blocked { color: var(--cc-red); border-color: var(--cc-red); }
 .task-status-done { color: var(--cc-green); border-color: var(--cc-green); }
 .task-status-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
+.task-status { max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.task-status-tag { font-weight: 500; margin-left: 0.45em; padding-left: 0.45em; border-left: 1px solid currentColor; opacity: 0.85; }
+.task-tags { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; vertical-align: middle; }
+.task-tag {
+  display: inline-block; padding: 0.05em 0.5em; border-radius: 4px; font-size: 11px; line-height: 1.4; white-space: nowrap; font-family: inherit;
+  color: var(--cc-fg); background: color-mix(in srgb, var(--cc-accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--cc-accent) 22%, transparent);
+}
+button.task-tag { cursor: pointer; }
+button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
 .task-priority { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; }
 .task-priority-low { color: var(--cc-dimmer); }
 .task-priority-medium { color: var(--cc-dim); }

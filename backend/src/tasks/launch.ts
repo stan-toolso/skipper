@@ -7,7 +7,7 @@ import { namesFromText, uniqueName } from '../worksessions/names.js';
 import { worksessionService } from '../worksessions/service.js';
 import type { Worksession } from '../worksessions/types.js';
 import { taskService } from './service.js';
-import type { Task } from './types.js';
+import type { Task, TaskComment } from './types.js';
 
 export interface StartTaskOptions {
   provider?: string | null;
@@ -27,6 +27,15 @@ export interface StartTaskOptions {
   workflowRunId?: string | null;
   /** false : la session est créée sans démarrer (l'appelant la démarre). */
   autoStart?: boolean | null;
+}
+
+/**
+ * Instruction d'une session qui réalise une tâche : le texte de la tâche, puis les consignes de tâches du
+ * projet et celles de l'appelant (nœud de workflow, exécution d'agent), sous « Consignes supplémentaires ».
+ */
+export function composeTaskPrompt(task: Task, comments: TaskComment[], ...instructions: (string | null | undefined)[]): string {
+  const extra = instructions.map((i) => i?.trim()).filter((i): i is string => Boolean(i));
+  return [taskService.describeForPrompt(task, comments), ...(extra.length ? ['', '---', '', 'Consignes supplémentaires :', '', extra.join('\n\n')] : [])].join('\n');
 }
 
 /** Nom de dossier et de branche dérivés du titre de la tâche, uniques parmi les work sessions données. */
@@ -68,9 +77,9 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
 
   // La tâche passe en cours avant le démarrage pour que l'agent la voie déjà comme la sienne.
   const inProgress = await taskService.update(task.id, { status: 'in_progress' });
-  const taskText = options.includeTask === false ? '' : taskService.describeForPrompt(inProgress, await taskService.comments(task.id));
-  const extra = options.instructions?.trim() ?? '';
-  const prompt = options.prompt?.trim() || [taskText, extra].filter(Boolean).join('\n\n---\n\n') || taskText;
+  const prompt =
+    options.prompt?.trim() ||
+    (options.includeTask === false ? (options.instructions?.trim() ?? '') : composeTaskPrompt(inProgress, await taskService.comments(task.id), project.taskInstructions, options.instructions));
   const session = await sessionService.create({
     projectId: task.projectId,
     worksessionId,
