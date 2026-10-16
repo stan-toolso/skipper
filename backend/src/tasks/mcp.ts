@@ -1,8 +1,9 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { Project } from '../projects/types.js';
-import { formatPerson, statusTagText, taskService } from './service.js';
-import { TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskActor, type TaskComment } from './types.js';
+import { describeAttachments, imageBlocks, type McpContent } from './attachments.js';
+import { describeComment, formatPerson, statusTagText, taskService } from './service.js';
+import { TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskActor, type TaskAttachment, type TaskComment } from './types.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
@@ -10,16 +11,17 @@ const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }],
 const line = (t: Task, sessionId: string) =>
   `- ${t.id} · [${t.status}${statusTagText(t)}] [${t.priority}] ${t.title}${t.tags.length ? ` · étiquettes ${t.tags.join(', ')}` : ''}${t.sessionId ? (t.sessionId === sessionId ? ' (assignée à cette session)' : ' (prise par une autre session)') : ''}${t.dueDate ? ` · échéance ${t.dueDate}` : ''}${t.assignee ? ` · responsable ${formatPerson(t.assignee)}` : ''}${t.commentCount ? ` · ${t.commentCount} commentaire${t.commentCount > 1 ? 's' : ''}` : ''}`;
 
-const fmtDate = (d: Date) => d.toISOString().slice(0, 16).replace('T', ' ');
 
-function detail(t: Task, comments: TaskComment[]): string {
+function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[]): string {
+  const own = attachments.filter((a) => !a.commentId);
   const parts = [t.description || '(pas de description)'];
+  if (own.length) parts.push(...describeAttachments(own, 'tool'));
   if (t.assignee) parts.push(`Responsable : ${formatPerson(t.assignee)}`);
   if (t.reporter) parts.push(`Rapporteur : ${formatPerson(t.reporter)}`);
   if (t.customFields.length) parts.push('Champs personnalisés :', ...t.customFields.map((f) => `- ${f.key} : ${f.value}`));
   if (comments.length) {
     parts.push('Commentaires (du plus ancien au plus récent) :');
-    for (const c of comments) parts.push(`- ${c.authorName}${c.authorType === 'agent' ? ' (agent)' : ''}, ${fmtDate(c.createdAt)} UTC :`, ...c.body.split('\n').map((l) => `  ${l}`));
+    for (const c of comments) parts.push(...describeComment(c, attachments.filter((a) => a.commentId === c.id), 'tool'));
   }
   return parts.join('\n');
 }
@@ -66,12 +68,17 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             return tasks.length ? tasks.map((t) => line(t, sessionId)).join('\n') : 'Aucune tâche.';
           }),
       ),
-      tool('get', "Détail d'une tâche : description, personnes, champs personnalisés et commentaires.", { id: z.string() }, async ({ id }) =>
-        run(async () => {
+      tool("get", "Détail d'une tâche : description, personnes, champs personnalisés, commentaires et fichiers joints (les images sont montrées).", { id: z.string() }, async ({ id }) => {
+        // Les images jointes à la tâche ou à ses commentaires suivent le texte, en blocs image, dans l'ordre où elles sont nommées.
+        try {
           const t = await own(id);
-          return `${line(t, sessionId)}\n\n${detail(t, await taskService.comments(id))}`;
-        }),
-      ),
+          const [comments, attachments] = await Promise.all([taskService.comments(id), taskService.attachments(id)]);
+          const content: McpContent[] = [{ type: 'text', text: `${line(t, sessionId)}\n\n${detail(t, comments, attachments)}` }, ...(await imageBlocks([...attachments.filter((a) => !a.commentId), ...attachments.filter((a) => a.commentId)]))];
+          return { content };
+        } catch (err) {
+          return failure(`Erreur : ${(err as Error).message}`);
+        }
+      }),
       tool(
         'create',
         'Crée une tâche dans le projet.',

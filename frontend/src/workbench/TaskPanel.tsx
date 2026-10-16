@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PullRequestChip } from '../components/PullRequests';
+import TaskAttachments from '../components/TaskAttachments';
 import { isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskComments from '../components/TaskComments';
 import TaskModal from '../components/TaskModal';
@@ -38,7 +39,10 @@ export default function TaskPanel({ taskId }: { taskId: string }) {
         </div>
       )}
       <div className="git-subhead">Description</div>
-      <div className="task-panel-text">{task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}</div>
+      <div className="task-panel-text">
+        {task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}
+        <TaskAttachments taskId={task.id} attachments={task.attachments} />
+      </div>
       <div className="git-subhead">Personnes</div>
       <div className="task-panel-text">
         <div>

@@ -78,6 +78,12 @@ export const TASK_COMMENTS = gql`
         body
         editable
         deletable
+        attachments {
+          id
+          name
+          mediaType
+          size
+        }
         createdAt
         updatedAt
       }
@@ -86,16 +92,16 @@ export const TASK_COMMENTS = gql`
 `;
 
 export const ADD_TASK_COMMENT = gql`
-  mutation AddTaskComment($taskId: ID!, $body: String!) {
-    addTaskComment(taskId: $taskId, body: $body) {
+  mutation AddTaskComment($taskId: ID!, $body: String!, $attachments: [AttachmentInput!]) {
+    addTaskComment(taskId: $taskId, body: $body, attachments: $attachments) {
       id
     }
   }
 `;
 
 export const UPDATE_TASK_COMMENT = gql`
-  mutation UpdateTaskComment($id: ID!, $body: String!) {
-    updateTaskComment(id: $id, body: $body) {
+  mutation UpdateTaskComment($id: ID!, $body: String!, $removeAttachmentIds: [ID!]) {
+    updateTaskComment(id: $id, body: $body, removeAttachmentIds: $removeAttachmentIds) {
       id
       body
       updatedAt

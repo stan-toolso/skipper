@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import PageLoading from '../components/PageLoading';
 import { PullRequestChip } from '../components/PullRequests';
 import StatusBadge from '../components/StatusBadge';
+import TaskAttachments from '../components/TaskAttachments';
 import TaskActions from '../components/TaskActions';
 import { formatPerson, isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskComments from '../components/TaskComments';
@@ -94,6 +95,7 @@ export default function TaskPage() {
             <Card.Header>Description</Card.Header>
             <Card.Body className="small" style={{ whiteSpace: 'pre-wrap' }}>
               {task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}
+              <TaskAttachments taskId={task.id} attachments={task.attachments} />
             </Card.Body>
           </Card>
           <Card className="mt-3">

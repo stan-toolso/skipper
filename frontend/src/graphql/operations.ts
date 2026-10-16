@@ -277,6 +277,7 @@ export interface TaskComment {
   body: string;
   editable: boolean;
   deletable: boolean;
+  attachments: { id: string; name: string; mediaType: string; size: number }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -300,6 +301,9 @@ export interface Task {
   assignee: TaskPerson | null;
   reporter: TaskPerson | null;
   commentCount: number;
+  /** Fichiers joints à la tâche elle-même. */
+  attachmentCount: number;
+  attachments: { id: string; name: string; mediaType: string; size: number }[];
   branch: string | null;
   /** Work session consacrée à la tâche (active, sinon la dernière archivée). */
   worksession: { id: string; label: string; archivedAt: string | null } | null;
@@ -1392,6 +1396,13 @@ export const TASK_FIELDS = gql`
       email
     }
     commentCount
+    attachmentCount
+    attachments {
+      id
+      name
+      mediaType
+      size
+    }
     branch
     worksession {
       id

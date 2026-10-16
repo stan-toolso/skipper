@@ -40,10 +40,10 @@ const comment = (over: Partial<TaskComment> = {}): TaskComment => ({
 
 describe('feedFor', () => {
   it('rien sans session en charge', () => {
-    expect(feedFor({ kind: 'commented', task: { ...task, sessionId: null }, comment: comment() })).toBeNull();
+    expect(feedFor({ kind: 'commented', attachments: [], task: { ...task, sessionId: null }, comment: comment() })).toBeNull();
   });
   it('un commentaire d’une personne est transmis à la session en charge, et la relance au besoin', () => {
-    const feed = feedFor({ kind: 'commented', task, comment: comment() });
+    const feed = feedFor({ kind: 'commented', attachments: [], task, comment: comment() });
     expect(feed).not.toBeNull();
     expect(feed!.sessionId).toBe('s1');
     expect(feed!.restart).toBe(true);
@@ -52,10 +52,10 @@ describe('feedFor', () => {
     expect(feed!.text).toContain('  Peux-tu aussi vérifier le panier ?\n  Merci.');
   });
   it('le commentaire de la session elle-même ne lui est pas renvoyé', () => {
-    expect(feedFor({ kind: 'commented', task, comment: comment({ authorType: 'agent', authorSessionId: 's1' }) })).toBeNull();
+    expect(feedFor({ kind: 'commented', attachments: [], task, comment: comment({ authorType: 'agent', authorSessionId: 's1' }) })).toBeNull();
   });
   it('une modification par quelqu’un d’autre est décrite à la session, sans relance', () => {
-    const feed = feedFor({ kind: 'updated', before: { ...task, status: 'todo' }, task, actor: { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never });
+    const feed = feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, status: 'todo' }, task, actor: { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never });
     expect(feed).not.toBeNull();
     expect(feed!.restart).toBe(false);
     expect(feed!.text).toContain('[Mise à jour de la tâche]');
@@ -63,9 +63,9 @@ describe('feedFor', () => {
     expect(feed!.text).toContain('- Statut : à faire → en cours');
   });
   it('rien pour une passation, une modification par la session elle-même, ou sans changement visible', () => {
-    expect(feedFor({ kind: 'updated', before: { ...task, sessionId: 's0' }, task, actor: { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never })).toBeNull();
-    expect(feedFor({ kind: 'updated', before: { ...task, status: 'todo' }, task, actor: { type: 'agent', userId: null, name: 'Session', sessionId: 's1' } as never })).toBeNull();
-    expect(feedFor({ kind: 'updated', before: task, task: { ...task }, actor: { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never })).toBeNull();
-    expect(feedFor({ kind: 'updated', before: { ...task, status: 'todo' }, task, actor: null })).toBeNull();
+    expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, sessionId: 's0' }, task, actor: { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never })).toBeNull();
+    expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, status: 'todo' }, task, actor: { type: 'agent', userId: null, name: 'Session', sessionId: 's1' } as never })).toBeNull();
+    expect(feedFor({ kind: 'updated', addedAttachments: [], before: task, task: { ...task }, actor: { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never })).toBeNull();
+    expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, status: 'todo' }, task, actor: null })).toBeNull();
   });
 });

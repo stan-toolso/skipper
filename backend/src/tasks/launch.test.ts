@@ -15,6 +15,7 @@ const tasks = vi.hoisted(() => ({
   update: vi.fn(async (_id: string, patch: Record<string, unknown>) => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', ...patch })),
   describeForPrompt: vi.fn(() => 'Réalise la tâche'),
   comments: vi.fn(async () => []),
+  attachments: vi.fn(async () => []),
 }));
 
 vi.mock('../sessions/repository.js', () => ({ sessionRepository: repo }));

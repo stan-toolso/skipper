@@ -1,7 +1,7 @@
 import { pool, type Queryable } from '../db/pool.js';
 import { toJson } from '../db/json.js';
 import type { Actor } from '../context/types.js';
-import type { CreateTaskInput, Task, TaskComment, TaskFilter, TaskField, TaskPerson, TaskPriority, TaskStatus, UpdateTaskInput } from './types.js';
+import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskPerson, TaskPriority, TaskStatus, UpdateTaskInput } from './types.js';
 
 interface Row {
   id: string;
@@ -23,6 +23,7 @@ interface Row {
   reporter_name: string | null;
   reporter_email: string | null;
   comment_count: string | number | null;
+  attachment_count: string | number | null;
   created_at: Date;
   updated_at: Date;
   completed_at: Date | null;
@@ -39,6 +40,18 @@ interface CommentRow {
   created_at: Date;
   updated_at: Date;
 }
+
+interface AttachmentRow {
+  id: string;
+  task_id: string;
+  comment_id: string | null;
+  name: string;
+  media_type: string;
+  size: number;
+  created_at: Date;
+}
+
+const toAttachment = (r: AttachmentRow): TaskAttachment => ({ id: r.id, taskId: r.task_id, commentId: r.comment_id, name: r.name, mediaType: r.media_type, size: Number(r.size), createdAt: r.created_at });
 
 /** Date PostgreSQL rendue AAAA-MM-JJ sans décalage de fuseau (pg renvoie un Date à minuit local). */
 function toDateString(value: string | Date | null): string | null {
@@ -67,6 +80,7 @@ const toTask = (r: Row): Task => ({
   assignee: person(r.assignee_name, r.assignee_email),
   reporter: person(r.reporter_name, r.reporter_email),
   commentCount: Number(r.comment_count ?? 0),
+  attachmentCount: Number(r.attachment_count ?? 0),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   completedAt: r.completed_at,
@@ -85,7 +99,7 @@ const toComment = (r: CommentRow): TaskComment => ({
 });
 
 /** Colonnes d'une tâche avec le nombre de commentaires. */
-const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count FROM tasks t`;
+const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count, (SELECT count(*) FROM task_attachments a WHERE a.task_id = t.id AND a.comment_id IS NULL) AS attachment_count FROM tasks t`;
 /** Tri : urgent d'abord, puis par date de création. */
 const ORDER = `ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.created_at ASC`;
 
@@ -252,6 +266,38 @@ export const taskRepository = {
       [projectIds],
     );
     return rows.map((r) => ({ name: r.name, email: r.email }));
+  },
+
+  // ---- Pièces jointes --------------------------------------------------------------------------
+
+  /** Pièces jointes d'une tâche : les siennes (`commentId` null), celles d'un commentaire, ou toutes (`commentId` absent), les plus anciennes d'abord. */
+  async listAttachments(taskId: string, commentId?: string | null): Promise<TaskAttachment[]> {
+    const scope = commentId === undefined ? '' : commentId === null ? ' AND comment_id IS NULL' : ' AND comment_id = $2';
+    const { rows } = await pool.query<AttachmentRow>(`SELECT * FROM task_attachments WHERE task_id = $1${scope} ORDER BY created_at ASC, id ASC`, commentId ? [taskId, commentId] : [taskId]);
+    return rows.map(toAttachment);
+  },
+
+  async findAttachment(id: string): Promise<TaskAttachment | null> {
+    const { rows } = await pool.query<AttachmentRow>('SELECT * FROM task_attachments WHERE id = $1', [id]);
+    return rows[0] ? toAttachment(rows[0]) : null;
+  },
+
+  async createAttachment(input: Omit<TaskAttachment, 'createdAt'>): Promise<TaskAttachment> {
+    const { rows } = await pool.query<AttachmentRow>('INSERT INTO task_attachments (id, task_id, comment_id, name, media_type, size) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [
+      input.id,
+      input.taskId,
+      input.commentId,
+      input.name,
+      input.mediaType,
+      input.size,
+    ]);
+    await pool.query('UPDATE tasks SET updated_at = now() WHERE id = $1', [input.taskId]);
+    return toAttachment(rows[0]);
+  },
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM task_attachments WHERE id = $1', [id]);
+    return (rowCount ?? 0) > 0;
   },
 
   // ---- Commentaires ----------------------------------------------------------------------------

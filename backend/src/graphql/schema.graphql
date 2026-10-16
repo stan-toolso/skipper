@@ -245,6 +245,15 @@ input TaskPersonInput {
   email: String
 }
 
+"Fichier joint à une tâche ou à l'un de ses commentaires ; téléchargeable à GET /api/task-attachments/<tâche>/<id> (cookie de session)."
+type TaskAttachment {
+  id: ID!
+  name: String!
+  mediaType: String!
+  size: Int!
+  createdAt: DateTime!
+}
+
 "Commentaire d'une tâche, par une personne ou un agent (Markdown)."
 type TaskComment {
   id: ID!
@@ -259,6 +268,8 @@ type TaskComment {
   editable: Boolean!
   "Supprimable : ses propres commentaires, ou administrateur du projet."
   deletable: Boolean!
+  "Fichiers joints au commentaire, les plus anciens d'abord."
+  attachments: [TaskAttachment!]!
   createdAt: DateTime!
   updatedAt: DateTime!
 }
@@ -288,6 +299,10 @@ type Task {
   assignee: TaskPerson
   reporter: TaskPerson
   commentCount: Int!
+  "Nombre de fichiers joints à la tâche elle-même (ceux de ses commentaires ne comptent pas)."
+  attachmentCount: Int!
+  "Fichiers joints à la tâche elle-même (pas à ses commentaires), les plus anciens d'abord."
+  attachments: [TaskAttachment!]!
   "Commentaires, du plus ancien au plus récent."
   comments: [TaskComment!]!
   "Branche git de la tâche (work session dédiée task/<slug>), conservée après suppression de la work session."
@@ -313,6 +328,8 @@ input CreateTaskInput {
   tags: [String!]
   assignee: TaskPersonInput
   reporter: TaskPersonInput
+  "Fichiers joints à la tâche (10 au plus, 10 Mo chacun, 12 Mo au total)."
+  attachments: [AttachmentInput!]
 }
 
 input UpdateTaskInput {
@@ -333,6 +350,10 @@ input UpdateTaskInput {
   "Absent : inchangé ; null : retiré."
   assignee: TaskPersonInput
   reporter: TaskPersonInput
+  "Fichiers ajoutés aux pièces jointes de la tâche (celles déjà là restent ; 10 au plus en tout)."
+  attachments: [AttachmentInput!]
+  "Pièces jointes de la tâche (pas de ses commentaires) à retirer."
+  removeAttachmentIds: [ID!]
 }
 
 "Clé d'API d'un projet (API REST des tâches) ; le secret n'est montré qu'à la création."
@@ -2262,9 +2283,10 @@ type Mutation {
   deleteTask(id: ID!): Boolean!
   "Déplace une tâche dans un autre projet (membre des deux) : sa session et sa branche en sont détachées, ses commentaires et son historique la suivent."
   moveTask(id: ID!, projectId: ID!): Task!
-  addTaskComment(taskId: ID!, body: String!): TaskComment!
+  "Ajoute un commentaire, avec des fichiers le cas échéant (le texte peut alors être vide)."
+  addTaskComment(taskId: ID!, body: String!, attachments: [AttachmentInput!]): TaskComment!
   "Ses propres commentaires seulement."
-  updateTaskComment(id: ID!, body: String!): TaskComment!
+  updateTaskComment(id: ID!, body: String!, attachments: [AttachmentInput!], removeAttachmentIds: [ID!]): TaskComment!
   "Ses propres commentaires, ou administrateur du projet."
   deleteTaskComment(id: ID!): Boolean!
   "Confie la tâche à un agent, dans la work session de la tâche (créée à sa première session, task/<slug> pour un projet git ; réutilisée ensuite), sauf worksessionId. prompt : consigne relue (sinon le texte de la tâche)."

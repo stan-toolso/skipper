@@ -130,6 +130,8 @@ interface GqlTaskInput {
   tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
+  attachments?: AttachmentInput[] | null;
+  removeAttachmentIds?: string[] | null;
 }
 const toTaskInput = (i: GqlTaskInput) => ({
   title: i.title ?? undefined,
@@ -143,6 +145,8 @@ const toTaskInput = (i: GqlTaskInput) => ({
   tags: i.tags ?? undefined,
   assignee: i.assignee,
   reporter: i.reporter,
+  attachments: i.attachments ?? null,
+  removeAttachmentIds: i.removeAttachmentIds ?? null,
 });
 const actorOf = (user: User) => ({ type: 'human' as const, userId: user.id, name: user.name || user.email });
 const fromGqlPermission = (p: string): VaultPermission => p.toLowerCase() as VaultPermission;
@@ -259,9 +263,11 @@ export const resolvers = {
     comments: (t: Task) => taskService.comments(t.id),
     pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
     worksession: async (t: Task) => (await worksessionRepository.findByTask(t.id))[0] ?? null,
+    attachments: (t: Task) => (t.attachmentCount ? taskService.attachments(t.id, null) : []),
   },
 
   TaskComment: {
+    attachments: (c: TaskComment) => taskService.attachments(c.taskId, c.id),
     author: (c: TaskComment) => userOrNull(c.authorUserId),
     authorSession: (c: TaskComment) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
     editable: (c: TaskComment, _: unknown, ctx: Ctx) => c.authorType === 'human' && c.authorUserId === ctx.user?.id,
@@ -1240,14 +1246,14 @@ export const resolvers = {
       await guardTask(ctx, args.id, 'member');
       return taskService.delete(args.id);
     },
-    addTaskComment: async (_: unknown, args: { taskId: string; body: string }, ctx: Ctx) => {
+    addTaskComment: async (_: unknown, args: { taskId: string; body: string; attachments?: AttachmentInput[] | null }, ctx: Ctx) => {
       await guardTask(ctx, args.taskId, 'member');
-      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)));
+      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)), args.attachments ?? null);
     },
-    updateTaskComment: async (_: unknown, args: { id: string; body: string }, ctx: Ctx) => {
+    updateTaskComment: async (_: unknown, args: { id: string; body: string; attachments?: AttachmentInput[] | null; removeAttachmentIds?: string[] | null }, ctx: Ctx) => {
       const { comment } = await guardComment(ctx, args.id);
       if (comment.authorUserId !== requireUser(ctx).id) throw new AppError('Seul l\'auteur modifie son commentaire', 'FORBIDDEN');
-      return taskService.updateComment(args.id, args.body);
+      return taskService.updateComment(args.id, args.body, { attachments: args.attachments, removeAttachmentIds: args.removeAttachmentIds });
     },
     deleteTaskComment: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       const { comment, role } = await guardComment(ctx, args.id);

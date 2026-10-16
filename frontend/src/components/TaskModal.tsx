@@ -6,7 +6,10 @@ import { CREATE_TASK, UPDATE_TASK, type Task, type TaskField, type TaskPerson, t
 import { TASK_PEOPLE, TASK_PROJECT_MEMBERS, TASK_TAGS } from '../graphql/tasks';
 import { canAutoFocus } from '../lib/device';
 import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
+import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
+import AttachmentChips from './AttachmentChips';
 import TagsInput from './TagsInput';
+import TaskAttachments from './TaskAttachments';
 import TaskComments from './TaskComments';
 
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
@@ -112,12 +115,20 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
   const refetch = { refetchQueries: ['Tasks', 'TaskDetail', 'TaskPage', 'Sidebar'] };
   const [createTask, { loading: creating, error: createError }] = useMutation(CREATE_TASK, { ...refetch, onCompleted: onClose });
   const [updateTask, { loading: updating, error: updateError }] = useMutation(UPDATE_TASK, { ...refetch, onCompleted: onClose });
+  const files = usePendingAttachments();
+  const [removedFiles, setRemovedFiles] = useState<string[]>([]);
+  const [encoding, setEncoding] = useState(false);
   const error = createError ?? updateError;
   const set = (k: keyof TaskForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setField = (i: number, patch: Partial<TaskField>) => setForm((f) => ({ ...f, customFields: f.customFields.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let attachments = null;
+    if (files.items.length) {
+      setEncoding(true);
+      attachments = await toAttachmentInputs(files.items).finally(() => setEncoding(false));
+    }
     const input = {
       title: form.title,
       description: form.description,
@@ -129,8 +140,9 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
       customFields: form.customFields.map((f) => ({ key: f.key, value: f.value })),
       assignee: personInput(form.assignee),
       reporter: personInput(form.reporter),
+      attachments,
     };
-    if (task) updateTask({ variables: { id: task.id, input } });
+    if (task) updateTask({ variables: { id: task.id, input: { ...input, removeAttachmentIds: removedFiles.length ? removedFiles : null } } });
     else createTask({ variables: { input: { ...input, projectId } } });
   };
 
@@ -147,7 +159,19 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Description</Form.Label>
-            <Form.Control as="textarea" rows={5} value={form.description} onChange={set('description')} placeholder="Ce qu'il faut faire, comment savoir que c'est réussi, les pistes utiles…" />
+            <Form.Control
+              as="textarea"
+              rows={5}
+              value={form.description}
+              onChange={set('description')}
+              onPaste={files.onPaste}
+              onDrop={files.onDrop}
+              onDragOver={files.onDragOver}
+              placeholder="Ce qu'il faut faire, comment savoir que c'est réussi, les pistes utiles… Collez une capture d'écran ou déposez des fichiers pour les joindre."
+            />
+            {task && <TaskAttachments taskId={task.id} attachments={task.attachments} removed={removedFiles} onToggleRemove={(id) => setRemovedFiles((r) => (r.includes(id) ? r.filter((x) => x !== id) : [...r, id]))} />}
+            <AttachmentChips items={files.items} onAdd={(f) => files.add(f)} onRemove={files.remove} error={files.error} />
+            <Form.Text>Les fichiers joints sont transmis à l'agent à qui la tâche est confiée (il voit les images).</Form.Text>
           </Form.Group>
           <Row className="g-2 mb-3">
             <Col sm={4}>
@@ -224,7 +248,7 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
           <Button variant="outline-secondary" onClick={onClose}>
             Annuler
           </Button>
-          <Button type="submit" disabled={creating || updating || !form.title.trim()}>
+          <Button type="submit" disabled={creating || updating || encoding || !form.title.trim()}>
             {task ? 'Enregistrer' : 'Créer'}
           </Button>
         </Modal.Footer>

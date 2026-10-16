@@ -7,7 +7,8 @@ import { namesFromText, uniqueName } from '../worksessions/names.js';
 import { worksessionService } from '../worksessions/service.js';
 import type { Worksession } from '../worksessions/types.js';
 import { taskService } from './service.js';
-import type { Task, TaskComment } from './types.js';
+import { asInstructionAttachments, describeAttachment, fitInInstruction } from './attachments.js';
+import type { Task, TaskAttachment, TaskComment } from './types.js';
 
 export interface StartTaskOptions {
   provider?: string | null;
@@ -33,10 +34,20 @@ export interface StartTaskOptions {
  * Instruction d'une session qui réalise une tâche : le texte de la tâche, puis les consignes de tâches du
  * projet et celles de l'appelant (nœud de workflow, exécution d'agent), sous « Consignes supplémentaires ».
  */
-export function composeTaskPrompt(task: Task, comments: TaskComment[], ...instructions: (string | null | undefined)[]): string {
+export function composeTaskPrompt(task: Task, comments: TaskComment[], files: TaskFiles | null, ...instructions: (string | null | undefined)[]): string {
   const extra = instructions.map((i) => i?.trim()).filter((i): i is string => Boolean(i));
-  return [taskService.describeForPrompt(task, comments), ...(extra.length ? ['', '---', '', 'Consignes supplémentaires :', '', extra.join('\n\n')] : [])].join('\n');
+  const leftOut = files?.leftOut.length ? ['', `Non joints (au-delà des limites d'une instruction, lisibles dans l'interface) : ${files.leftOut.map(describeAttachment).join(', ')}.`] : [];
+  return [taskService.describeForPrompt(task, comments, files?.kept ?? [], 'instruction'), ...leftOut, ...(extra.length ? ['', '---', '', 'Consignes supplémentaires :', '', extra.join('\n\n')] : [])].join('\n');
 }
+
+/** Les fichiers d'une tâche (les siens et ceux de ses commentaires), partagés entre ce qu'une instruction porte et le reste. */
+export interface TaskFiles {
+  kept: TaskAttachment[];
+  leftOut: TaskAttachment[];
+}
+
+/** Les fichiers que reçoit la session à qui l'on confie la tâche, avec sa première instruction : autant qu'une instruction en porte. */
+export const taskFiles = async (taskId: string): Promise<TaskFiles> => fitInInstruction(await taskService.attachments(taskId));
 
 /** Nom de dossier et de branche dérivés du titre de la tâche, uniques parmi les work sessions données. */
 export function taskWorksessionNames(task: Pick<Task, 'title'>, taken: Pick<Worksession, 'name'>[]): { name: string; branch: string } {
@@ -77,15 +88,19 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
 
   // La tâche passe en cours avant le démarrage pour que l'agent la voie déjà comme la sienne.
   const inProgress = await taskService.update(task.id, { status: 'in_progress' });
+  // Les fichiers de la tâche accompagnent l'instruction, comme une personne joint des fichiers à une consigne
+  // (l'agent lit les images) ; pas quand l'appelant remplace le texte de la tâche par ses propres consignes.
+  const files = options.includeTask === false ? null : await taskFiles(task.id);
   const prompt =
     options.prompt?.trim() ||
-    (options.includeTask === false ? (options.instructions?.trim() ?? '') : composeTaskPrompt(inProgress, await taskService.comments(task.id), project.taskInstructions, options.instructions));
+    (options.includeTask === false ? (options.instructions?.trim() ?? '') : composeTaskPrompt(inProgress, await taskService.comments(task.id), files, project.taskInstructions, options.instructions));
   const session = await sessionService.create({
     projectId: task.projectId,
     worksessionId,
     name: task.title.slice(0, 80),
     provider: options.provider ?? 'claude',
     prompt,
+    attachments: files?.kept.length ? await asInstructionAttachments(files.kept) : null,
     config: options.config ?? {},
     ownerId: options.ownerId ?? null,
     agentId: options.agentId ?? null,
