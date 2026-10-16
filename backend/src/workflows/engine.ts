@@ -13,7 +13,7 @@ import { TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskPriority, type Task
 import { userRepository } from '../users/repository.js';
 import { userService } from '../users/service.js';
 import { ROLE_RANK, type User } from '../users/types.js';
-import { worktreeService } from '../worktrees/service.js';
+import { worksessionService } from '../worksessions/service.js';
 import { conditionHolds, describeCondition } from './conditions.js';
 import { evaluateCondition } from './expressions.js';
 import { failureHandled, nextSteps, parseTaskPerson, peopleRefs, taskContext, triggerOf, type NodeState } from './graph.js';
@@ -37,7 +37,7 @@ interface NodeContext {
   costUsd?: number;
   /** Agent qui résout une tâche : la tâche après le tour (statut, branche…) ; tâche créée par un nœud « créer une tâche ». */
   task?: Record<string, unknown> | null;
-  /** Nœud « session » : la branche de son worktree. */
+  /** Nœud « session » : la branche de sa work session. */
   branch?: string | null;
 }
 
@@ -247,7 +247,7 @@ class Execution {
     const taskId = render(node.taskId ?? '', this.context).trim();
     const instructions = render(node.prompt ?? '', this.context).trim();
     const ownerRefs = peopleRefs(render(node.sessionOwner ?? '', this.context));
-    await workflowRepository.upsertNode(this.run.id, node.key, 'task', { input: { taskId, instructions, provider: node.provider, worktree: node.worktreeMode, ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
+    await workflowRepository.upsertNode(this.run.id, node.key, 'task', { input: { taskId, instructions, provider: node.provider, worksession: node.worksessionMode, ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
     const taken = await this.takeableTask(taskId);
     if (taken.error) return { ok: false, ctx: { status: 'failed', output: null, error: taken.error, task: this.snapshot(taken.task) } };
     const people = await this.sessionOwner(node.key, ownerRefs);
@@ -258,8 +258,7 @@ class Execution {
         ownerId: people.ownerId,
         provider: node.provider || 'claude',
         config: node.config ?? {},
-        worktreeId: node.worktreeMode === 'existing' ? (node.worktreeId ?? null) : null,
-        dedicatedWorktree: node.worktreeMode !== 'main',
+        worksessionId: node.worksessionMode === 'existing' ? (node.worksessionId ?? null) : null,
         instructions,
         includeTask: node.includeTask !== false,
         workflowRunId: this.run.id,
@@ -309,31 +308,31 @@ class Execution {
     const name = render(node.sessionName ?? '', this.context).trim().slice(0, 80) || this.label(node);
     const instructions = render(node.prompt ?? '', this.context).trim();
     const ownerRefs = peopleRefs(render(node.sessionOwner ?? '', this.context));
-    const mode = node.worktreeMode ?? 'main';
+    const mode = node.worksessionMode === 'existing' ? 'existing' : 'new';
     const branch = mode === 'new' ? render(node.branch ?? '', this.context).trim() || `workflow/${slugify(this.label(node)).slice(0, 40) || node.key}-${this.run.id.slice(0, 8)}` : null;
-    await workflowRepository.upsertNode(this.run.id, node.key, 'session', { input: { name, instructions, provider: node.provider, worktree: mode, ...(branch ? { branch } : {}), ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
+    await workflowRepository.upsertNode(this.run.id, node.key, 'session', { input: { name, instructions, provider: node.provider, worksession: mode, ...(branch ? { branch } : {}), ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
     if (!instructions) return { ok: false, ctx: { status: 'failed', output: null, error: "L'instruction est vide" } };
     const people = await this.sessionOwner(node.key, ownerRefs);
 
     let session: Session;
-    let worktreeBranch: string | null = null;
+    let worksessionBranch: string | null = null;
     try {
-      let worktreeId: string | null = null;
+      let worksessionId: string | null = null;
       if (mode === 'existing') {
-        worktreeId = node.worktreeId ?? null;
-        worktreeBranch = worktreeId ? (await worktreeService.get(worktreeId)).branch : null;
-      } else if (mode === 'new' && branch) {
-        const worktree = await this.branchWorktree(node, branch, people.ownerId);
-        worktreeId = worktree?.id ?? null;
-        worktreeBranch = worktree?.branch ?? null;
+        worksessionId = node.worksessionId ?? null;
+        worksessionBranch = worksessionId ? (await worksessionService.get(worksessionId)).branch : null;
+      } else if (branch) {
+        const worksession = await this.branchWorksession(node, branch, name, people.ownerId);
+        worksessionId = worksession.id;
+        worksessionBranch = worksession.branch;
       }
-      const created = await sessionService.create({ projectId: this.workflow.projectId, worktreeId, name, provider: node.provider || 'claude', prompt: instructions, config: node.config ?? {}, ownerId: people.ownerId, workflowRunId: this.run.id, autoStart: false });
+      const created = await sessionService.create({ projectId: this.workflow.projectId, worksessionId, name, provider: node.provider || 'claude', prompt: instructions, config: node.config ?? {}, ownerId: people.ownerId, workflowRunId: this.run.id, autoStart: false });
       session = await sessionService.start(created.id);
     } catch (err) {
-      return { ok: false, ctx: { status: 'failed', output: null, error: (err as Error).message, branch: worktreeBranch } };
+      return { ok: false, ctx: { status: 'failed', output: null, error: (err as Error).message, branch: worksessionBranch } };
     }
-    await this.log('info', `Session « ${name} » démarrée${people.owner ? ` pour ${people.owner.name}` : ''}`, node.key, { sessionId: session.id, ownerId: session.ownerId, ...(worktreeBranch ? { branch: worktreeBranch } : {}) });
-    const base: NodeContext = { status: 'succeeded', output: '', sessionId: session.id, costUsd: session.costUsd, branch: worktreeBranch };
+    await this.log('info', `Session « ${name} » démarrée${people.owner ? ` pour ${people.owner.name}` : ''}`, node.key, { sessionId: session.id, ownerId: session.ownerId, ...(worksessionBranch ? { branch: worksessionBranch } : {}) });
+    const base: NodeContext = { status: 'succeeded', output: '', sessionId: session.id, costUsd: session.costUsd, branch: worksessionBranch };
     if (node.wait === false) return { ok: true, ctx: base };
 
     const turn = await this.awaitTurn(node, session);
@@ -349,24 +348,24 @@ class Execution {
     return { ok: !turn.error, ctx: { ...base, status: turn.error ? 'failed' : 'succeeded', output: turn.output, error: turn.error, costUsd: turn.session.costUsd } };
   }
 
-  /** Le worktree d'un nœud « session » sur `branch` : celui du projet sur cette branche s'il existe, sinon un nouveau. Null sans dépôt git. */
-  private async branchWorktree(node: WorkflowNode, branch: string, userId: string | null) {
+  /**
+   * La work session d'un nœud « session » sur `branch` : celle du projet sur cette branche s'il en existe une,
+   * sinon une nouvelle (projet sans dépôt : un dossier nommé d'après la branche).
+   */
+  private async branchWorksession(node: WorkflowNode, branch: string, label: string, userId: string | null) {
     const project = await projectService.get(this.workflow.projectId);
-    if (!project.gitUrl) {
-      await this.log('info', "Le projet n'a pas de dépôt git : la session travaille dans le dossier principal", node.key);
-      return null;
-    }
-    const existing = (await worktreeService.listByProject(project.id)).find((w) => w.branch === branch);
+    const wanted = project.gitUrl ? branch : slugify(branch);
+    const existing = (await worksessionService.listByProject(project.id)).find((w) => w.branch === wanted);
     if (existing) {
-      await this.log('info', `Travail dans le worktree existant de la branche ${branch}`, node.key, { worktreeId: existing.id });
+      await this.log('info', `Travail dans la work session existante ${project.gitUrl ? `de la branche ${branch}` : `« ${existing.name} »`}`, node.key, { worksessionId: existing.id });
       return existing;
     }
     try {
-      const worktree = await worktreeService.create(project.id, { branch }, userId);
-      await this.log('info', `Worktree créé sur la branche ${branch}`, node.key, { worktreeId: worktree.id });
-      return worktree;
+      const worksession = await worksessionService.create(project.id, { branch: project.gitUrl ? branch : null, name: project.gitUrl ? null : wanted, label }, userId);
+      await this.log('info', `Work session créée${project.gitUrl ? ` sur la branche ${branch}` : ` : ${worksession.name}`}`, node.key, { worksessionId: worksession.id });
+      return worksession;
     } catch (err) {
-      throw new Error(`Impossible de créer le worktree de la branche ${branch} : ${(err as Error).message}`);
+      throw new Error(`Impossible de créer la work session ${branch} : ${(err as Error).message}`);
     }
   }
 

@@ -50,7 +50,7 @@ export interface Agent {
   inputs: InputVariable[];
   outputFormat: AgentOutputFormat;
   outputSchema: string | null;
-  worktreeId: string | null;
+  worksessionId: string | null;
   timeoutMinutes: number;
   schedule: AutomationSchedule | null;
   scheduleInputs: Record<string, unknown>;
@@ -71,7 +71,7 @@ export interface AgentInput {
   inputs?: InputVariable[] | null;
   outputFormat?: AgentOutputFormat | null;
   outputSchema?: string | null;
-  worktreeId?: string | null;
+  worksessionId?: string | null;
   timeoutMinutes?: number | null;
 }
 

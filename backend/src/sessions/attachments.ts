@@ -30,13 +30,13 @@ function sessionDir(project: Pick<Project, 'slug'>, sessionId: string): string {
 }
 
 /** Nom de fichier sûr : pas de chemin, pas de caractères de contrôle, longueur bornée, jamais vide. */
-function safeName(raw: string): string {
+export function safeName(raw: string): string {
   const base = path.basename(raw.replace(/\\/g, '/')).replace(/[\u0000-\u001f\u007f]/g, '').trim();
   const cleaned = base.replace(/^\.+/, '') || 'fichier';
   return cleaned.length > 120 ? `${cleaned.slice(0, 100)}${path.extname(cleaned).slice(0, 20)}` : cleaned;
 }
 
-function normalizeMediaType(raw: string, name: string): string {
+export function normalizeMediaType(raw: string, name: string): string {
   const type = raw.trim().toLowerCase().split(';')[0];
   if (/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(type)) return type;
   const ext = path.extname(name).toLowerCase();
@@ -55,9 +55,12 @@ function decode(input: AttachmentInput): Buffer {
  * (à conserver dans la session ou l'événement `instruction`). Chaque fichier a son propre dossier, nommé par
  * un identifiant, pour garder le nom d'origine sans collision.
  */
-export async function storeAttachments(project: Pick<Project, 'slug'>, sessionId: string, inputs: AttachmentInput[] | null | undefined): Promise<Attachment[]> {
-  if (!inputs?.length) return [];
-  if (inputs.length > MAX_ATTACHMENTS) throw new AppError(`Au plus ${MAX_ATTACHMENTS} fichiers par instruction`);
+/**
+ * Décode et vérifie un lot de fichiers (nombre, fichiers vides, taille de chacun et du total) sans rien écrire :
+ * un lot refusé ne laisse rien derrière lui. Partagé avec les pièces jointes des tâches.
+ */
+export function decodeAttachments(inputs: AttachmentInput[], what = 'instruction'): { input: AttachmentInput; name: string; bytes: Buffer }[] {
+  if (inputs.length > MAX_ATTACHMENTS) throw new AppError(`Au plus ${MAX_ATTACHMENTS} fichiers par ${what}`);
   const decoded = inputs.map((input) => ({ input, name: safeName(input.name), bytes: decode(input) }));
   let total = 0;
   for (const { name, bytes } of decoded) {
@@ -66,6 +69,12 @@ export async function storeAttachments(project: Pick<Project, 'slug'>, sessionId
     total += bytes.length;
   }
   if (total > MAX_TOTAL_ATTACHMENT_BYTES) throw new AppError(`Les fichiers joints dépassent ${Math.round(MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024)} Mo au total`);
+  return decoded;
+}
+
+export async function storeAttachments(project: Pick<Project, 'slug'>, sessionId: string, inputs: AttachmentInput[] | null | undefined): Promise<Attachment[]> {
+  if (!inputs?.length) return [];
+  const decoded = decodeAttachments(inputs);
 
   const stored: Attachment[] = [];
   for (const { input, name, bytes } of decoded) {
@@ -104,7 +113,7 @@ export function publicAttachment(a: Attachment): Omit<Attachment, 'path'> {
   return { id: a.id, name: a.name, mediaType: a.mediaType, size: a.size };
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} o`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} Ko`;
   return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;

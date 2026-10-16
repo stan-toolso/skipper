@@ -2,22 +2,26 @@ import { useMutation, useQuery } from '@apollo/client';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Button, Collapse, Form, Modal } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
-import { CREATE_SESSION, CREATE_WORKTREE, PROJECTS, PROJECT_WORKTREES, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worktree } from '../graphql/operations';
+import { CREATE_SESSION, CREATE_WORKSESSION, PROJECTS, PROJECT_WORKSESSIONS, PROVIDERS, type ConfigField, type Project, type Provider, type Session, type Worksession } from '../graphql/operations';
 import { canAutoFocus } from '../lib/device';
+import { branchFromName, namesFromText, slugify, suggestWorksessionName } from '../lib/worksessions';
 import { bypassConnectionsWarning } from '../lib/humanize';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import AttachmentChips from './AttachmentChips';
 
-/** Ouverture de la modale : « Nouvelle session » (worktree existant ou nouveau au choix) ou « Nouveau worktree » (avec une session par défaut). */
-export type LaunchMode = 'session' | 'worktree';
+/** Ouverture de la modale : « Nouvelle session » ou « Nouvelle work session » (même formulaire, titre différent). */
+export type LaunchMode = 'session' | 'worksession';
 export interface LaunchOptions {
   projectId?: string | null;
-  worktreeId?: string | null;
+  /** Work session où lancer la session ; sans elle, une nouvelle work session est créée. */
+  worksessionId?: string | null;
+  /** Consigne pré-remplie. */
+  prompt?: string | null;
 }
 
 interface LauncherState {
   openNewSession: (options?: LaunchOptions) => void;
-  openNewWorktree: (options: { projectId: string }) => void;
+  openNewWorksession: (options: { projectId: string; prompt?: string | null }) => void;
 }
 
 const LauncherContext = createContext<LauncherState | null>(null);
@@ -47,8 +51,8 @@ export function rememberPermissionMode(projectId: string, mode: string): void {
   }
 }
 
-/** Valeur spéciale du sélecteur de branche : créer un worktree. */
-const NEW_WORKTREE = '__new__';
+/** Valeur spéciale du sélecteur de work session : en créer une nouvelle. */
+const NEW_WORKSESSION = '';
 
 function ConfigInput({ field, value, onChange }: { field: ConfigField; value: string; onChange: (v: string) => void }) {
   if (field.type === 'boolean') {
@@ -103,40 +107,42 @@ interface LaunchModalProps {
 }
 
 /**
- * Formulaire de lancement. Mode « session » : projet, branche de travail (dossier principal, worktree
- * existant ou nouveau worktree), consigne facultative et options de l'agent. Mode « worktree » : branche à créer,
- * puis, par défaut, une session lancée dans ce worktree avec les mêmes options.
- * Sans consigne ni fichier joint, la session est créée sans démarrer : la première instruction envoyée depuis sa page la lance.
+ * Formulaire de lancement : une seule question, « que voulez-vous faire ? ». Toute session travaille dans une
+ * work session : une nouvelle par défaut, nommée d'après la consigne (dossier, branche et libellé dérivés,
+ * modifiables), ou une existante. Type d'agent, modèle et autorisations restent des options discrètes.
+ * Sans consigne ni fichier joint : dans une nouvelle work session, seule la work session est créée (on y ouvrira
+ * une session ou un terminal) ; dans une existante, la session est créée sans démarrer.
  */
 function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const navigate = useNavigate();
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
+  const { data: projectsData, loading: projectsLoading } = useQuery<{ projects: Project[] }>(PROJECTS);
   const providers = providersData?.providers ?? [];
-  const projects = useMemo(() => (projectsData?.projects ?? []).filter((p) => mode === 'session' || p.gitUrl), [projectsData, mode]);
+  const projects = projectsData?.projects ?? [];
 
   const [projectId, setProjectId] = useState(initial.projectId ?? '');
-  const [worktreeChoice, setWorktreeChoice] = useState(initial.worktreeId ?? (mode === 'worktree' ? NEW_WORKTREE : ''));
+  const [worksessionChoice, setWorksessionChoice] = useState(initial.worksessionId ?? NEW_WORKSESSION);
+  const [prompt, setPrompt] = useState(initial.prompt ?? '');
+  const [editNames, setEditNames] = useState(false);
+  const [folder, setFolder] = useState('');
   const [branch, setBranch] = useState('');
   const [baseRef, setBaseRef] = useState('');
-  const [withSession, setWithSession] = useState(true);
-  const [prompt, setPrompt] = useState('');
-  const [name, setName] = useState('');
+  const [fallbackName] = useState(suggestWorksessionName);
   const [providerType, setProviderType] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
-  const [autoStart, setAutoStart] = useState(true);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attachments = usePendingAttachments();
 
   const project = projects.find((p) => p.id === projectId);
-  const { data: worktreesData } = useQuery<{ project: { id: string; worktrees: Worktree[]; git: { branch: string } | null; defaultPermissionMode: string; approvalConnections: string[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
-  const worktrees = worktreesData?.project?.worktrees ?? [];
-  const mainBranch = worktreesData?.project?.git?.branch;
+  const { data: worksessionsData } = useQuery<{ project: { id: string; worksessions: Worksession[]; git: { branch: string } | null; defaultPermissionMode: string; approvalConnections: string[] } | null }>(PROJECT_WORKSESSIONS, { variables: { id: projectId }, skip: !projectId });
+  const worksessions = worksessionsData?.project?.id === projectId ? worksessionsData.project.worksessions : [];
+  const mainBranch = worksessionsData?.project?.git?.branch;
   const provider = providers.find((p) => p.type === providerType);
+  const existing = worksessionChoice ? worksessions.find((w) => w.id === worksessionChoice) : null;
 
-  const [createSession, { loading: creatingSession }] = useMutation<{ createSession: Session }>(CREATE_SESSION, { refetchQueries: ['Sidebar', 'ProjectWorktrees', 'Sessions'] });
-  const [createWorktree, { loading: creatingWorktree }] = useMutation<{ createWorktree: { id: string } }>(CREATE_WORKTREE, { refetchQueries: ['Sidebar', 'ProjectWorktrees'] });
+  const [createSession, { loading: creatingSession }] = useMutation<{ createSession: Session }>(CREATE_SESSION, { refetchQueries: ['Sidebar', 'ProjectWorksessions', 'Sessions'] });
+  const [createWorksession, { loading: creatingWorksession }] = useMutation<{ createWorksession: { id: string } }>(CREATE_WORKSESSION, { refetchQueries: ['Sidebar', 'ProjectWorksessions'] });
 
   useEffect(() => {
     if (!projectId && projects.length) setProjectId(projects[0].id);
@@ -144,10 +150,9 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   }, [projects, projectId]);
 
   useEffect(() => {
-    // Le worktree choisi doit appartenir au projet sélectionné ; un projet sans git n'a que son dossier principal.
-    if (worktreeChoice && worktreeChoice !== NEW_WORKTREE && worktreesData?.project && !worktrees.some((w) => w.id === worktreeChoice)) setWorktreeChoice('');
-    if (worktreeChoice === NEW_WORKTREE && project && !project.gitUrl) setWorktreeChoice('');
-  }, [worktreesData, worktrees, worktreeChoice, project]);
+    // La work session choisie doit appartenir au projet sélectionné.
+    if (worksessionChoice && worksessionsData?.project?.id === projectId && !worksessions.some((w) => w.id === worksessionChoice)) setWorksessionChoice(NEW_WORKSESSION);
+  }, [worksessionsData, worksessions, worksessionChoice, projectId]);
 
   useEffect(() => {
     if (!providerType && providers.length) setProviderType(providers[0].type);
@@ -161,7 +166,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   }, [provider]);
 
   // Mode d'autorisation : le dernier choisi dans ce formulaire pour le projet, sinon celui du projet.
-  const projectDefaultMode = worktreesData?.project?.id === projectId ? worktreesData?.project?.defaultPermissionMode : undefined;
+  const projectDefaultMode = worksessionsData?.project?.id === projectId ? worksessionsData?.project?.defaultPermissionMode : undefined;
   useEffect(() => {
     const field = provider?.configFields.find((f) => f.key === 'permissionMode');
     if (!field || !projectId || !projectDefaultMode) return;
@@ -170,21 +175,31 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
     setValues((prev) => ({ ...prev, permissionMode: mode }));
   }, [provider, projectId, projectDefaultMode]);
 
-  const creatingNewWorktree = worktreeChoice === NEW_WORKTREE;
-  const sessionWanted = mode === 'session' || withSession;
-  const busy = creatingSession || creatingWorktree;
+  // Noms dérivés de la consigne, sauf s'ils sont modifiés.
+  const derived = namesFromText(prompt);
+  const hasText = Boolean(prompt.trim());
+  const suggestedName = hasText ? derived.name : fallbackName;
+  const effectiveName = folder.trim() ? slugify(folder) : suggestedName;
+  const effectiveBranch = branch.trim() ? branchFromName(branch) : effectiveName;
+  const label = hasText ? derived.label : null;
+  const isGit = Boolean(project?.gitUrl);
+  const creatingNew = !worksessionChoice;
+
+  const busy = creatingSession || creatingWorksession;
   const hasInstruction = Boolean(prompt.trim() || attachments.items.length);
-  const launching = autoStart && hasInstruction;
-  const canSubmit = Boolean(project) && !busy && (!creatingNewWorktree || branch.trim()) && (!sessionWanted || Boolean(provider));
+  const sessionWanted = hasInstruction || !creatingNew;
+  const canSubmit = Boolean(project) && !busy && (!sessionWanted || Boolean(provider)) && (!creatingNew || Boolean(effectiveName));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!project || !canSubmit) return;
     setError(null);
+    const newWorksession = { name: effectiveName, branch: isGit ? effectiveBranch : null, label, baseRef: isGit ? baseRef.trim() || null : null };
     try {
       if (!sessionWanted) {
-        await createWorktree({ variables: { projectId: project.id, branch: branch.trim(), baseRef: baseRef.trim() || null } });
+        const res = await createWorksession({ variables: { projectId: project.id, ...newWorksession } });
         onClose();
+        if (res.data) navigate(`/worksessions/${res.data.createWorksession.id}/files`);
         return;
       }
       const chosenMode = values.permissionMode;
@@ -193,14 +208,14 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
         variables: {
           input: {
             projectId: project.id,
-            worktreeId: creatingNewWorktree || !worktreeChoice ? null : worktreeChoice,
-            newWorktree: creatingNewWorktree ? { branch: branch.trim(), baseRef: baseRef.trim() || null } : null,
-            name: name.trim() || prompt.trim().split('\n')[0].slice(0, 60) || attachments.items[0]?.name.slice(0, 60) || 'Session',
+            worksessionId: creatingNew ? null : worksessionChoice,
+            newWorksession: creatingNew ? newWorksession : null,
+            name: prompt.trim().split('\n')[0].slice(0, 60) || attachments.items[0]?.name.slice(0, 60) || 'Session',
             provider: provider!.type,
             prompt: prompt || null,
             attachments: attachments.items.length ? await toAttachmentInputs(attachments.items) : null,
             config: buildConfig(provider!.configFields, values),
-            autoStart: launching,
+            autoStart: hasInstruction,
           },
         },
       });
@@ -211,154 +226,143 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
     }
   };
 
-  const mainFields = (provider?.configFields ?? []).filter((f) => !f.advanced);
-  const advancedFields = (provider?.configFields ?? []).filter((f) => f.advanced);
+  const configFields = provider?.configFields ?? [];
   const setValue = (key: string) => (v: string) => setValues((prev) => ({ ...prev, [key]: v }));
-  const bypassWarning = values.permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(worktreesData?.project?.approvalConnections ?? []) : null;
-
-  const worktreeFields = (
-    <div className="ps-3 border-start mb-3">
-      <Form.Group className="mb-2">
-        <Form.Label className="mb-1">Branche</Form.Label>
-        <Form.Control value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="ex. feature/contact (créée si elle n'existe pas)" autoFocus={mode === 'worktree' && canAutoFocus()} />
-      </Form.Group>
-      <Form.Group className="mb-2">
-        <Form.Label className="mb-1">À partir de</Form.Label>
-        <Form.Control value={baseRef} onChange={(e) => setBaseRef(e.target.value)} placeholder={`HEAD du dossier principal${mainBranch ? ` (${mainBranch})` : ''} par défaut`} />
-        <Form.Text>Ignoré si la branche existe déjà, localement ou sur origin.</Form.Text>
-      </Form.Group>
-    </div>
-  );
+  const bypassWarning = values.permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(worksessionsData?.project?.approvalConnections ?? []) : null;
+  const optionSummary = [provider && providers.length > 1 ? provider.label : null, ...configFields.filter((f) => !f.advanced && values[f.key]).map((f) => f.options?.find((o) => o.value === values[f.key])?.label ?? values[f.key])].filter(Boolean).join(' · ');
+  const title = existing ? `Nouvelle session dans ${existing.label}` : mode === 'worksession' ? 'Nouvelle work session' : 'Nouvelle session';
+  const submitLabel = busy ? (creatingNew ? 'Création de la work session…' : 'Création…') : !sessionWanted ? 'Créer la work session' : hasInstruction ? 'Lancer' : 'Créer la session';
 
   return (
     <Modal show onHide={onClose} centered size="lg" backdrop={busy ? 'static' : true}>
       <Form onSubmit={submit}>
         <Modal.Header closeButton={!busy}>
-          <Modal.Title className="h6">{mode === 'worktree' ? 'Nouveau worktree' : 'Nouvelle session'}</Modal.Title>
+          <Modal.Title className="h6">{title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {projects.length === 0 ? (
-            <Alert variant="warning" className="mb-0">
-              {mode === 'worktree' ? 'Aucun projet relié à un dépôt git : les worktrees exigent un dépôt.' : "Commencez par créer un projet : c'est le dossier de travail dans lequel l'agent interviendra."}
+            <Alert variant={projectsLoading ? 'light' : 'warning'} className="mb-0">
+              {projectsLoading ? 'Chargement des projets…' : "Commencez par créer un projet : c'est le dossier de travail dans lequel l'agent interviendra."}
             </Alert>
           ) : (
             <>
-              <Form.Group className="mb-3">
-                <Form.Label className="mb-1">Projet</Form.Label>
-                <Form.Select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={projects.length === 1}>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </Form.Select>
-              </Form.Group>
-
-              {mode === 'session' && project?.gitUrl && (
-                <Form.Group className="mb-3">
-                  <Form.Label className="mb-1">Branche de travail</Form.Label>
-                  <Form.Select value={worktreeChoice} onChange={(e) => setWorktreeChoice(e.target.value)}>
-                    <option value="">Dossier principal{mainBranch ? ` (${mainBranch})` : ''}</option>
-                    {worktrees.map((w) => (
-                      <option key={w.id} value={w.id} disabled={!w.exists}>
-                        Worktree {w.label}
-                        {!w.exists ? ' (absent du disque)' : ''}
+              {(projects.length > 1 || worksessions.length > 0) && (
+                <div className="d-flex gap-2 mb-3 flex-wrap">
+                  {projects.length > 1 && (
+                    <Form.Select size="sm" className="w-auto flex-grow-1" value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Projet" disabled={Boolean(initial.worksessionId)}>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </Form.Select>
+                  )}
+                  <Form.Select size="sm" className="w-auto flex-grow-1" value={worksessionChoice} onChange={(e) => setWorksessionChoice(e.target.value)} aria-label="Work session">
+                    <option value={NEW_WORKSESSION}>Nouvelle work session</option>
+                    {worksessions.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        Work session {w.label}
                       </option>
                     ))}
-                    <option value={NEW_WORKTREE}>Nouveau worktree…</option>
                   </Form.Select>
-                  {!creatingNewWorktree && <Form.Text>Un worktree isole le travail de l'agent sur sa propre branche, sans toucher au dossier principal.</Form.Text>}
-                </Form.Group>
+                </div>
               )}
-              {mode === 'session' && creatingNewWorktree && worktreeFields}
 
-              {mode === 'worktree' && (
-                <>
-                  <p className="text-secondary small">
-                    Un worktree extrait une branche dans son propre dossier, à côté du dossier principal{mainBranch ? ` (${mainBranch})` : ''} : les agents y travaillent sans le gêner.
-                  </p>
-                  {worktreeFields}
-                  <Form.Check className="mb-3" type="switch" id="launch-with-session" label="Lancer une session dans ce worktree" checked={withSession} onChange={(e) => setWithSession(e.target.checked)} />
-                </>
+              <Form.Group className="mb-2">
+                <Form.Control
+                  as="textarea"
+                  rows={6}
+                  className="fs-6"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  autoFocus={canAutoFocus()}
+                  placeholder="Que voulez-vous faire ? Décrivez la tâche comme à un collègue."
+                  onPaste={attachments.onPaste}
+                  onDrop={attachments.onDrop}
+                  onDragOver={attachments.onDragOver}
+                />
+                <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={busy} error={attachments.error} />
+              </Form.Group>
+
+              {creatingNew && (
+                <div className="small text-secondary mb-3">
+                  {!editNames ? (
+                    <>
+                      <i className="bi bi-layers me-1" />
+                      Work session <code>{effectiveName}</code>
+                      {isGit && (
+                        <>
+                          {' '}
+                          · branche <code>{effectiveBranch}</code>
+                        </>
+                      )}
+                      {!hasInstruction && <> · une session ou un terminal pourra y être ouvert ensuite</>}
+                      <Button variant="link" size="sm" className="p-0 ms-2 text-secondary align-baseline" onClick={() => setEditNames(true)} title="Choisir le dossier et la branche">
+                        <i className="bi bi-pencil-square" />
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="ps-3 border-start">
+                      <Form.Group className="mb-2">
+                        <Form.Label className="mb-1">Nom du dossier</Form.Label>
+                        <Form.Control size="sm" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder={suggestedName} />
+                      </Form.Group>
+                      {isGit && (
+                        <>
+                          <Form.Group className="mb-2">
+                            <Form.Label className="mb-1">Branche</Form.Label>
+                            <Form.Control size="sm" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder={`${effectiveName} (extraite si elle existe, créée sinon)`} />
+                          </Form.Group>
+                          <Form.Group className="mb-2">
+                            <Form.Label className="mb-1">À partir de</Form.Label>
+                            <Form.Control size="sm" value={baseRef} onChange={(e) => setBaseRef(e.target.value)} placeholder={`HEAD du dossier principal${mainBranch ? ` (${mainBranch})` : ''} par défaut`} />
+                            <Form.Text>Ignoré si la branche existe déjà, localement ou sur origin.</Form.Text>
+                          </Form.Group>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
 
               {sessionWanted && (
-                <>
-                  <Form.Group className="mb-3">
-                    <Form.Label className="mb-1">
-                      Que doit faire l'agent ? <span className="text-secondary fw-normal">(facultatif)</span>
-                    </Form.Label>
-                    <Form.Control
-                      as="textarea"
-                      rows={5}
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      autoFocus={mode === 'session' && canAutoFocus()}
-                      placeholder="Décrivez la tâche comme à un collègue. Ex. : « Ajoute une page de contact au site, avec un formulaire qui envoie un e-mail. »"
-                      onPaste={attachments.onPaste}
-                      onDrop={attachments.onDrop}
-                      onDragOver={attachments.onDragOver}
-                    />
-                    <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={busy} error={attachments.error} />
-                    <Form.Text>
-                      {hasInstruction
-                        ? "Vous pourrez préciser, corriger ou relancer l'agent à tout moment pendant la session."
-                        : 'Sans consigne, la session est créée sans démarrer : vous écrirez la première instruction depuis sa page.'}{' '}
-                      Images, PDF et autres fichiers joints sont lisibles par l'agent.
-                    </Form.Text>
-                  </Form.Group>
-
-                  <Form.Group className="mb-3">
-                    <Form.Label className="mb-1">Nom de la session</Form.Label>
-                    <Form.Control value={name} onChange={(e) => setName(e.target.value)} placeholder="Facultatif, déduit de la consigne sinon" />
-                  </Form.Group>
-
-                  {providers.length > 1 && (
-                    <Form.Group className="mb-3">
-                      <Form.Label className="mb-1">Agent</Form.Label>
-                      <Form.Select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
-                        {providers.map((p) => (
-                          <option key={p.type} value={p.type}>
-                            {p.label}
-                          </option>
-                        ))}
-                      </Form.Select>
-                      {provider && <Form.Text>{provider.description}</Form.Text>}
-                    </Form.Group>
-                  )}
-
-                  {mainFields.map((field) => (
-                    <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
-                  ))}
-                  {bypassWarning && (
-                    <Alert variant="warning" className="py-2 small">
-                      <i className="bi bi-exclamation-triangle me-1" />
-                      {bypassWarning}
-                    </Alert>
-                  )}
-
-                  {hasInstruction && <Form.Check className="mb-3" type="switch" id="launch-autostart" label="Démarrer tout de suite" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} />}
-
-                  {advancedFields.length > 0 && (
-                    <div className="mb-2">
-                      <Button variant="link" size="sm" className="p-0 text-secondary" onClick={() => setShowAdvanced((v) => !v)} aria-expanded={showAdvanced}>
-                        <i className={`bi bi-chevron-${showAdvanced ? 'down' : 'right'} me-1`} />
-                        Options avancées
-                      </Button>
-                      <Collapse in={showAdvanced}>
-                        <div className="pt-2 ps-3 border-start">
-                          {advancedFields.map((field) => (
-                            <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
-                          ))}
-                        </div>
-                      </Collapse>
+                <div className="mb-2">
+                  <Button variant="link" size="sm" className="p-0 text-secondary text-decoration-none" onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions}>
+                    <i className={`bi bi-chevron-${showOptions ? 'down' : 'right'} me-1`} />
+                    Options de l'agent{optionSummary && !showOptions ? <span className="ms-1">· {optionSummary}</span> : null}
+                  </Button>
+                  <Collapse in={showOptions}>
+                    <div className="pt-2 ps-3 border-start">
+                      {providers.length > 1 && (
+                        <Form.Group className="mb-3">
+                          <Form.Label className="mb-1">Agent</Form.Label>
+                          <Form.Select value={providerType} onChange={(e) => setProviderType(e.target.value)}>
+                            {providers.map((p) => (
+                              <option key={p.type} value={p.type}>
+                                {p.label}
+                              </option>
+                            ))}
+                          </Form.Select>
+                          {provider && <Form.Text>{provider.description}</Form.Text>}
+                        </Form.Group>
+                      )}
+                      {configFields.map((field) => (
+                        <FieldGroup key={field.key} field={field} value={values[field.key] ?? ''} onChange={setValue(field.key)} />
+                      ))}
                     </div>
-                  )}
-                </>
+                  </Collapse>
+                </div>
               )}
+              {sessionWanted && bypassWarning && (
+                <Alert variant="warning" className="py-2 small">
+                  <i className="bi bi-exclamation-triangle me-1" />
+                  {bypassWarning}
+                </Alert>
+              )}
+              {!creatingNew && !hasInstruction && <Form.Text className="d-block mb-2">Sans consigne, la session est créée sans démarrer : vous écrirez la première instruction depuis sa page.</Form.Text>}
 
               {error && (
-                <Alert variant="danger" className="mb-0">
+                <Alert variant="danger" className="mb-0 mt-2">
                   {error}
                 </Alert>
               )}
@@ -370,7 +374,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
             Annuler
           </Button>
           <Button type="submit" size="sm" disabled={!canSubmit}>
-            {busy ? (creatingNewWorktree ? 'Création du worktree…' : launching ? 'Lancement…' : 'Création…') : !sessionWanted ? 'Créer le worktree' : launching ? 'Lancer la session' : 'Créer la session'}
+            {submitLabel}
           </Button>
         </Modal.Footer>
       </Form>
@@ -378,12 +382,12 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   );
 }
 
-/** Fournit `openNewSession` / `openNewWorktree` à toute l'application et affiche la modale correspondante. */
+/** Fournit `openNewSession` / `openNewWorksession` à toute l'application et affiche la modale correspondante. */
 export function SessionLauncherProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{ mode: LaunchMode; initial: LaunchOptions; key: number } | null>(null);
   const openNewSession = useCallback((options: LaunchOptions = {}) => setState((s) => ({ mode: 'session', initial: options, key: (s?.key ?? 0) + 1 })), []);
-  const openNewWorktree = useCallback((options: { projectId: string }) => setState((s) => ({ mode: 'worktree', initial: { projectId: options.projectId }, key: (s?.key ?? 0) + 1 })), []);
-  const value = useMemo(() => ({ openNewSession, openNewWorktree }), [openNewSession, openNewWorktree]);
+  const openNewWorksession = useCallback((options: { projectId: string; prompt?: string | null }) => setState((s) => ({ mode: 'worksession', initial: { projectId: options.projectId, prompt: options.prompt ?? null }, key: (s?.key ?? 0) + 1 })), []);
+  const value = useMemo(() => ({ openNewSession, openNewWorksession }), [openNewSession, openNewWorksession]);
   return (
     <LauncherContext.Provider value={value}>
       {children}

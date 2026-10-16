@@ -2,18 +2,11 @@ import { parseDockerSize } from '../runners/stats.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectRepository } from './repository.js';
 import { projectPermissionModes, type CreateProjectInput, type Project, type UpdateProjectInput } from './types.js';
+import { slugify } from './slug.js';
 import { ensureWorkspace } from './workspace.js';
 
 /** Dérive un identifiant de dossier sûr à partir du nom du projet. */
-export function slugify(input: string): string {
-  return input
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-}
+export { slugify };
 
 function validateSlug(slug: string): void {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {

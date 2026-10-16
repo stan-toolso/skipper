@@ -399,7 +399,7 @@ function SessionRow({ session, hint, icon, showStatus }: { session: Session; hin
         <Link to={`/sessions/${session.id}`} className="title">{session.name}</Link>
         <div className="meta">
           {session.project.name}
-          {session.worktree && <span className="font-monospace"> · {session.worktree.branch}</span>}
+          {session.worksession && <span className="font-monospace"> · {session.worksession.branch}</span>}
           {state && !showStatus && ` · ${state}`}
         </div>
       </div>

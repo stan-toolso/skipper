@@ -8,8 +8,47 @@ const PRIORITY: Record<TaskPriority, { label: string; icon: string }> = {
   LOW: { label: 'Basse', icon: 'bi-chevron-down' },
 };
 
-export function TaskStatusBadge({ status }: { status: TaskStatus }) {
-  return <span className={`task-status task-status-${status.toLowerCase()}`}>{STATUS[status]}</span>;
+/**
+ * Statut d'une tâche : une pastille par étape (à faire gris, en cours bleu, terminée vert, annulée barrée) ; son
+ * étiquette d'état (où en est le travail : « en revue », « bloquée »…), quand elle existe, suit dans la même pastille.
+ */
+export function TaskStatusBadge({ status, statusTag, className = '' }: { status: TaskStatus; statusTag?: string | null; className?: string }) {
+  const label = STATUS[status];
+  return (
+    <span className={`task-status task-status-${status.toLowerCase()} ${className}`} title={statusTag ? `${label} · ${statusTag}` : undefined}>
+      {label}
+      {statusTag && <span className="task-status-tag">{statusTag}</span>}
+    </span>
+  );
+}
+
+/** Étiquettes d'une tâche en petites puces ; avec `onSelect`, ce sont des boutons (filtrer par étiquette). */
+export function TaskTags({ tags, onSelect, className = '' }: { tags: string[]; onSelect?: (tag: string) => void; className?: string }) {
+  if (tags.length === 0) return null;
+  return (
+    <span className={`task-tags ${className}`}>
+      {tags.map((tag) =>
+        onSelect ? (
+          <button
+            key={tag}
+            type="button"
+            className="task-tag"
+            title={`Voir les tâches étiquetées « ${tag} »`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(tag);
+            }}
+          >
+            {tag}
+          </button>
+        ) : (
+          <span key={tag} className="task-tag">
+            {tag}
+          </span>
+        ),
+      )}
+    </span>
+  );
 }
 
 export function TaskPriorityBadge({ priority, short = false }: { priority: TaskPriority; short?: boolean }) {

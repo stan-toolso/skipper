@@ -14,7 +14,7 @@ const repo = vi.hoisted(() => {
   const queued = () => [...store.sessions.values()].filter((s) => s.status === 'queued').sort((a, b) => (a.queuedAt as Date).getTime() - (b.queuedAt as Date).getTime() || Number(String(a.id).slice(1)) - Number(String(b.id).slice(1)));
   return {
     create: vi.fn(async (input: Record<string, unknown>) => {
-      const s = { id: `s${++store.seq}`, projectId: input.projectId, worktreeId: null, parentSessionId: input.parentSessionId ?? null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null, queuedAt: null, queuedStart: null };
+      const s = { id: `s${++store.seq}`, projectId: input.projectId, worksessionId: null, parentSessionId: input.parentSessionId ?? null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null, queuedAt: null, queuedStart: null };
       store.sessions.set(s.id, s);
       return { ...s };
     }),
@@ -45,7 +45,7 @@ vi.mock('../requests/service.js', () => ({ requestService: { cancelAllForSession
 vi.mock('../notifications/service.js', () => ({ notificationService: notifications }));
 vi.mock('../settings/repository.js', () => ({ settingsRepository: settingsRepo }));
 vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => store.projects.get(id) ?? { id, name: id, runnerConfig: {} } } }));
-vi.mock('../worktrees/service.js', () => ({ worktreeService: { resolveCwd: async () => '/tmp' } }));
+vi.mock('../worksessions/service.js', () => ({ worksessionService: { resolveCwd: async () => '/tmp', assertUsable: async () => ({}) } }));
 vi.mock('../pubsub.js', () => ({ pubSub: { publish: vi.fn(), subscribe: () => ({ next: () => new Promise(() => undefined), return: async () => ({ done: true, value: undefined }) }) } }));
 vi.mock('./providers/registry.js', () => ({ getProvider: () => providers.current }));
 
@@ -107,8 +107,8 @@ describe("file d'attente", () => {
     const { sessionService } = await load({ maxConcurrentSessions: 1 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const a = await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'premier' });
-    const b = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'second' });
+    const a = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'premier' });
+    const b = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'second' });
     expect(a.status).toBe('running');
     expect(b.status).toBe('queued');
     expect(session(b.id).queuedStart).toEqual({ message: null, attachments: [] });
@@ -126,8 +126,8 @@ describe("file d'attente", () => {
     const { sessionService } = await load({ maxConcurrentSessions: 1 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const a = await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
-    const b = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'y', autoStart: false });
+    const a = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const b = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'y', autoStart: false });
     await sessionService.sendMessage(b.id, 'reprends');
     expect(session(b.id).status).toBe('queued');
     await expect(sessionService.sendMessage(b.id, 'autre chose')).rejects.toMatchObject({ code: 'SESSIONS_LIMIT' });
@@ -142,13 +142,13 @@ describe("file d'attente", () => {
     const { sessionService } = await load({ maxConcurrentSessions: 2 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const a = await sessionService.create({ projectId: 'p1', name: 'a', provider: 'fake', prompt: 'x' });
-    const b = await sessionService.create({ projectId: 'p1', name: 'b', provider: 'fake', prompt: 'x' });
+    const a = await sessionService.create({ projectId: 'p1', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const b = await sessionService.create({ projectId: 'p1', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'x' });
     expect(b.status).toBe('queued');
     expect(eventsOf(b.id).find((e) => e.payload.reason === 'queued')?.payload.message).toContain('dans ce projet');
-    const c = await sessionService.create({ projectId: 'p2', name: 'c', provider: 'fake', prompt: 'x' });
+    const c = await sessionService.create({ projectId: 'p2', worksessionId: 'w1', name: 'c', provider: 'fake', prompt: 'x' });
     expect(c.status).toBe('running');
-    const d = await sessionService.create({ projectId: 'p2', name: 'd', provider: 'fake', prompt: 'x' });
+    const d = await sessionService.create({ projectId: 'p2', worksessionId: 'w1', name: 'd', provider: 'fake', prompt: 'x' });
     expect(d.status).toBe('queued');
 
     // Une place du serveur se libère (c) : b est toujours bloquée par son projet, d passe.
@@ -166,8 +166,8 @@ describe("file d'attente", () => {
     const { sessionService } = await load({ maxConcurrentSessions: 1 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const a = await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
-    const b = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'x' });
+    const a = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const b = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'x' });
     await sessionService.stop(b.id);
     expect(session(b.id)).toMatchObject({ status: 'stopped', queuedAt: null });
     fake.handles.get(a.id)!.finish();
@@ -179,8 +179,8 @@ describe("file d'attente", () => {
     const { sessionService, serverSettings } = await load({ maxConcurrentSessions: 1 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
-    const b = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'x' });
+    await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const b = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'x' });
     await serverSettings.update({ maxConcurrentSessions: 0 });
     await sessionService.drainQueue();
     expect(session(b.id).status).toBe('running');
@@ -189,15 +189,15 @@ describe("file d'attente", () => {
   it("sans limite, rien n'est mis en file", async () => {
     const { sessionService } = await load({});
     providers.current = fakeProvider().provider;
-    for (let i = 0; i < 5; i++) expect((await sessionService.create({ projectId: 'p', name: `s${i}`, provider: 'fake', prompt: 'x' })).status).toBe('running');
+    for (let i = 0; i < 5; i++) expect((await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: `s${i}`, provider: 'fake', prompt: 'x' })).status).toBe('running');
   });
 
   it("waitForIdle ne considère pas une session en file comme ayant fini son tour", async () => {
     const { sessionService } = await load({ maxConcurrentSessions: 1 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
-    const b = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'x' });
+    await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const b = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'x' });
     const waited = await sessionService.waitForIdle(b.id, 50);
     expect(waited.status).toBe('queued');
   });
@@ -208,8 +208,8 @@ describe('sessions inactives', () => {
     const { sessionService } = await load({ maxConcurrentSessions: 1, idleSessionTimeoutMinutes: 30 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const a = await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
-    const b = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'x' });
+    const a = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const b = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'x' });
     await fake.handles.get(a.id)!.ctx.setActivity('idle');
 
     expect(await sessionService.endIdleSessions(Date.now() + 10 * 60_000)).toEqual([]);
@@ -225,7 +225,7 @@ describe('sessions inactives', () => {
     const { sessionService } = await load({ idleSessionTimeoutMinutes: 0 });
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const a = await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
+    const a = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
     await fake.handles.get(a.id)!.ctx.setActivity('idle');
     expect(await sessionService.endIdleSessions(Date.now() + 24 * 3_600_000)).toEqual([]);
   });

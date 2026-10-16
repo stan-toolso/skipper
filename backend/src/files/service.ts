@@ -3,10 +3,10 @@ import path from 'node:path';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { workspacePath } from '../projects/workspace.js';
-import { worktreePath, worktreeService } from '../worktrees/service.js';
+import { worksessionPath, worksessionService } from '../worksessions/service.js';
 
 /**
- * Explorateur de fichiers d'un workspace (checkout principal d'un projet ou worktree) : lecture,
+ * Explorateur de fichiers d'un workspace (checkout principal d'un projet ou worksession) : lecture,
  * écriture et opérations de base, toutes confinées au dossier racine (aucun chemin ne peut en
  * sortir, même via `..` ou un lien symbolique).
  */
@@ -34,7 +34,7 @@ export interface FileContent {
 
 export interface WorkspaceRef {
   projectId: string;
-  worktreeId?: string | null;
+  worksessionId?: string | null;
 }
 
 const MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -48,14 +48,14 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/** Racine (chemin réel) du workspace ou du worktree. */
+/** Racine (chemin réel) du workspace ou de la work session. */
 export async function resolveRoot(ref: WorkspaceRef): Promise<string> {
   const project = await projectService.get(ref.projectId);
   let dir: string;
-  if (ref.worktreeId) {
-    const wt = await worktreeService.get(ref.worktreeId);
-    if (wt.projectId !== project.id) throw new AppError('Ce worktree appartient à un autre projet');
-    dir = worktreePath(project, wt);
+  if (ref.worksessionId) {
+    const wt = await worksessionService.get(ref.worksessionId);
+    if (wt.projectId !== project.id) throw new AppError('Cette work session appartient à un autre projet');
+    dir = worksessionPath(project, wt);
   } else {
     dir = workspacePath(project);
   }

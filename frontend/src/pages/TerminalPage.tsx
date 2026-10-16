@@ -66,7 +66,7 @@ export default function TerminalPage() {
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const terminal = data?.terminal;
   useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : cachedName);
-  useGitTarget(terminal ? { projectId: terminal.project.id, worktreeId: terminal.worktree?.id ?? null, label: terminal.worktree ? `${terminal.project.name} · ${terminal.worktree.label}` : terminal.project.name } : null);
+  useGitTarget(terminal ? { projectId: terminal.project.id, worksessionId: terminal.worksession?.id ?? null, label: terminal.worksession ? `${terminal.project.name} · ${terminal.worksession.label}` : terminal.project.name } : null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -151,13 +151,13 @@ export default function TerminalPage() {
           <span className="term-meta">
             {' '}
             · <Link to={`/projects/${terminal.project.id}`} className="term-meta">{terminal.project.name}</Link>
-            {terminal.worktree && (
+            {terminal.worksession && (
               <>
                 {' '}
-                · <i className="bi bi-diagram-2" /> {terminal.worktree.label}
+                · <i className="bi bi-layers" /> {terminal.worksession.label}
               </>
             )}{' '}
-            · {terminal.worktree?.path ?? terminal.project.workspacePath}
+            · {terminal.worksession?.path ?? terminal.project.workspacePath}
             {!live && <> · fermé{terminal.exitCode !== null && ` (code ${terminal.exitCode})`}</>}
             {live && connection !== 'open' && <> · {connection === 'connecting' ? 'connexion…' : 'déconnecté'}</>}
           </span>
@@ -171,7 +171,7 @@ export default function TerminalPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={() => void deleteTerminal({ id, name: terminal.name, worktreeId: terminal.worktree?.id ?? null })}
+            onClick={() => void deleteTerminal({ id, name: terminal.name, worksessionId: terminal.worksession?.id ?? null })}
           >
             Supprimer
           </button>

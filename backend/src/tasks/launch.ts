@@ -1,20 +1,20 @@
 import { AppError, NotFoundError } from '../errors.js';
-import { projectService, slugify } from '../projects/service.js';
+import { projectService } from '../projects/service.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
-import { worktreeRepository } from '../worktrees/repository.js';
-import { worktreeService } from '../worktrees/service.js';
-import type { Worktree } from '../worktrees/types.js';
+import { worksessionRepository } from '../worksessions/repository.js';
+import { namesFromText, uniqueName } from '../worksessions/names.js';
+import { worksessionService } from '../worksessions/service.js';
+import type { Worksession } from '../worksessions/types.js';
 import { taskService } from './service.js';
-import type { Task } from './types.js';
+import { asInstructionAttachments, describeAttachment, fitInInstruction } from './attachments.js';
+import type { Task, TaskAttachment, TaskComment } from './types.js';
 
 export interface StartTaskOptions {
   provider?: string | null;
   config?: Record<string, unknown> | null;
-  /** Worktree existant dans lequel travailler. */
-  worktreeId?: string | null;
-  /** Sans worktree précisé : créer un worktree dédié à la tâche (défaut) ou travailler dans le dossier principal. */
-  dedicatedWorktree?: boolean | null;
+  /** Work session existante où travailler (nœud de workflow) ; par défaut, celle de la tâche. */
+  worksessionId?: string | null;
   /** Consigne relue par l'humain ; sinon le texte de la tâche. */
   prompt?: string | null;
   /** Utilisateur qui lance la session (propriétaire). */
@@ -30,59 +30,77 @@ export interface StartTaskOptions {
   autoStart?: boolean | null;
 }
 
-/** Nom de dossier et de branche dérivés du titre de la tâche, uniques dans le projet (worktrees archivés compris). */
-async function taskWorktreeNames(task: Task): Promise<{ name: string; branch: string }> {
-  const base = slugify(task.title).slice(0, 40).replace(/-+$/, '') || 'tache';
-  const taken = new Set((await worktreeRepository.listByProject(task.projectId, { includeArchived: true })).map((w) => w.name));
-  let name = `task-${base}`;
-  for (let i = 2; taken.has(name); i++) name = `task-${base}-${i}`;
+/**
+ * Instruction d'une session qui réalise une tâche : le texte de la tâche, puis les consignes de tâches du
+ * projet et celles de l'appelant (nœud de workflow, exécution d'agent), sous « Consignes supplémentaires ».
+ */
+export function composeTaskPrompt(task: Task, comments: TaskComment[], files: TaskFiles | null, ...instructions: (string | null | undefined)[]): string {
+  const extra = instructions.map((i) => i?.trim()).filter((i): i is string => Boolean(i));
+  const leftOut = files?.leftOut.length ? ['', `Non joints (au-delà des limites d'une instruction, lisibles dans l'interface) : ${files.leftOut.map(describeAttachment).join(', ')}.`] : [];
+  return [taskService.describeForPrompt(task, comments, files?.kept ?? [], 'instruction'), ...leftOut, ...(extra.length ? ['', '---', '', 'Consignes supplémentaires :', '', extra.join('\n\n')] : [])].join('\n');
+}
+
+/** Les fichiers d'une tâche (les siens et ceux de ses commentaires), partagés entre ce qu'une instruction porte et le reste. */
+export interface TaskFiles {
+  kept: TaskAttachment[];
+  leftOut: TaskAttachment[];
+}
+
+/** Les fichiers que reçoit la session à qui l'on confie la tâche, avec sa première instruction : autant qu'une instruction en porte. */
+export const taskFiles = async (taskId: string): Promise<TaskFiles> => fitInInstruction(await taskService.attachments(taskId));
+
+/** Nom de dossier et de branche dérivés du titre de la tâche, uniques parmi les work sessions données. */
+export function taskWorksessionNames(task: Pick<Task, 'title'>, taken: Pick<Worksession, 'name'>[]): { name: string; branch: string } {
+  const name = uniqueName(taken, namesFromText(task.title, 'task-').name);
   return { name, branch: name.replace(/^task-/, 'task/') };
 }
 
 /**
- * Crée le worktree dédié à une tâche : dossier `task-<slug>` et branche `task/<slug>` à partir du
- * checkout principal. Renvoie null si le projet n'est pas relié à un dépôt git (la tâche tourne alors
- * dans le dossier principal). `actorId` : personne dont le compte GitHub contacte le dépôt distant.
+ * La work session consacrée à une tâche : celle qu'elle a déjà (restaurée si elle était archivée), sinon une
+ * nouvelle — dossier `task-<slug>`, branche `task/<slug>` depuis le checkout principal pour un projet git.
+ * `actorId` : personne dont le compte GitHub contacte le dépôt distant.
  */
-export async function createTaskWorktree(task: Task, actorId?: string | null): Promise<Worktree | null> {
-  const project = await projectService.get(task.projectId);
-  if (!project.gitUrl) return null;
-  const { name, branch } = await taskWorktreeNames(task);
-  return worktreeService.create(project.id, { name, branch }, actorId);
+export async function taskWorksession(task: Task, actorId?: string | null): Promise<Worksession> {
+  const existing = await worksessionService.forTask(task.id);
+  if (existing) return existing;
+  const { name, branch } = taskWorksessionNames(task, await worksessionRepository.listByProject(task.projectId, { includeArchived: true }));
+  return worksessionService.create(task.projectId, { name, branch, label: task.title, taskId: task.id }, actorId);
 }
 
 /**
- * Confie une tâche à un nouvel agent : crée la session (dans un worktree dédié par défaut), l'assigne à la
- * tâche et passe celle-ci en cours. Pour une automatisation, le texte de la tâche ouvre l'instruction, suivi
- * de la consigne de l'agent ou du nœud.
+ * Confie une tâche à un nouvel agent : crée la session dans la work session de la tâche (créée avec sa
+ * première session, gardée pour les suivantes), l'assigne à la tâche et passe celle-ci en cours. Pour une
+ * automatisation, le texte de la tâche ouvre l'instruction, suivi de la consigne de l'agent ou du nœud.
  */
 export async function startTaskSession(taskId: string, options: StartTaskOptions = {}): Promise<Session> {
   const task = await taskService.get(taskId);
   if (!task) throw new NotFoundError('Tâche introuvable');
+  const project = await projectService.get(task.projectId);
 
-  let worktreeId = options.worktreeId ?? null;
-  let branch = worktreeId ? (await worktreeService.get(worktreeId)).branch : null;
-  if (!worktreeId && options.dedicatedWorktree !== false) {
-    try {
-      const wt = await createTaskWorktree(task, options.ownerId);
-      worktreeId = wt?.id ?? null;
-      branch = wt?.branch ?? null;
-    } catch (err) {
-      throw new AppError(`Impossible de créer le worktree de la tâche : ${(err as Error).message}`);
-    }
+  let worksession: Worksession;
+  try {
+    worksession = options.worksessionId ? await worksessionService.assertUsable(project, options.worksessionId) : await taskWorksession(task, options.ownerId);
+  } catch (err) {
+    throw new AppError(`Impossible de préparer la work session de la tâche : ${(err as Error).message}`);
   }
+  const worksessionId = worksession.id;
+  const branch = project.gitUrl ? worksession.branch : null;
 
   // La tâche passe en cours avant le démarrage pour que l'agent la voie déjà comme la sienne.
   const inProgress = await taskService.update(task.id, { status: 'in_progress' });
-  const taskText = options.includeTask === false ? '' : taskService.describeForPrompt(inProgress, await taskService.comments(task.id));
-  const extra = options.instructions?.trim() ?? '';
-  const prompt = options.prompt?.trim() || [taskText, extra].filter(Boolean).join('\n\n---\n\n') || taskText;
+  // Les fichiers de la tâche accompagnent l'instruction, comme une personne joint des fichiers à une consigne
+  // (l'agent lit les images) ; pas quand l'appelant remplace le texte de la tâche par ses propres consignes.
+  const files = options.includeTask === false ? null : await taskFiles(task.id);
+  const prompt =
+    options.prompt?.trim() ||
+    (options.includeTask === false ? (options.instructions?.trim() ?? '') : composeTaskPrompt(inProgress, await taskService.comments(task.id), files, project.taskInstructions, options.instructions));
   const session = await sessionService.create({
     projectId: task.projectId,
-    worktreeId,
+    worksessionId,
     name: task.title.slice(0, 80),
     provider: options.provider ?? 'claude',
     prompt,
+    attachments: files?.kept.length ? await asInstructionAttachments(files.kept) : null,
     config: options.config ?? {},
     ownerId: options.ownerId ?? null,
     agentId: options.agentId ?? null,
@@ -90,7 +108,7 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
     workflowRunId: options.workflowRunId ?? null,
     autoStart: false,
   });
-  // La branche reste attachée à la tâche (pull request) même après suppression du worktree.
+  // La branche reste attachée à la tâche (pull request) même après suppression de la work session.
   await taskService.update(task.id, { sessionId: session.id, ...(branch ? { branch } : {}) });
   return options.autoStart === false ? session : sessionService.start(session.id);
 }

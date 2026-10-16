@@ -121,8 +121,8 @@ export default function SessionsPage() {
               <tr key={s.id}>
                 <td>
                   <Link to={`/sessions/${s.id}`}>{s.name}</Link>
-                  {s.worktree && <span className="text-secondary small ms-2"><i className="bi bi-diagram-2" /> {s.worktree.label}</span>}
-                  {!s.worktree && s.formerWorktree && <span className="text-secondary small ms-2" title="Worktree supprimé"><i className="bi bi-diagram-2" /> {s.formerWorktree.label} <i className="bi bi-trash3" /></span>}
+                  {s.worksession && <span className="text-secondary small ms-2"><i className="bi bi-layers" /> {s.worksession.label}</span>}
+                  {!s.worksession && s.formerWorksession && <span className="text-secondary small ms-2" title="Worksession supprimé"><i className="bi bi-layers" /> {s.formerWorksession.label} <i className="bi bi-trash3" /></span>}
                   {s.schedule?.enabled && <i className="bi bi-alarm ms-2 text-secondary" title={`Planifiée : ${s.schedule.cron}${s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : ''}`} />}
                 </td>
                 <td>
@@ -141,7 +141,7 @@ export default function SessionsPage() {
                         Arrêter
                       </Button>
                     )}
-                    <Button variant="outline-secondary" title="Archiver : la session quitte la barre latérale et reste consultable dans l'historique du projet" onClick={() => void archiveSession({ id: s.id, name: s.name, worktreeId: s.worktree?.id ?? null })}>
+                    <Button variant="outline-secondary" title="Archiver : la session quitte la barre latérale et reste consultable dans l'historique du projet" onClick={() => void archiveSession({ id: s.id, name: s.name, worksessionId: s.worksession?.id ?? null })}>
                       Archiver
                     </Button>
                   </ButtonGroup>

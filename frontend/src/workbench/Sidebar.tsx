@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
-import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKTREE_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
+import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKSESSION_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
@@ -25,7 +25,7 @@ const MAX_CHIPS = 6;
 const CHILD_INDENT = 14;
 
 /** Session annotée de son dossier (toutes celles d'un projet forment le « pool » où l'on cherche les sous-agents d'une parente). */
-type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsWorktreeId: string | null; /** Rangée dans le dossier principal parce que son worktree a été supprimé. */ wsDeleted: boolean };
+type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsWorksessionId: string | null; /** Rangée dans le dossier principal parce que sa work session a été supprimée. */ wsDeleted: boolean };
 
 /** Note d'un dossier dont les seules sessions sont des sous-agents rangés sous leur parente, ailleurs : « 4 sous-agents de « Session » ». */
 function ElsewhereNote({ subs, poolById, row }: { subs: PoolSession[]; poolById: Map<string, PoolSession>; row?: boolean }) {
@@ -84,10 +84,10 @@ function statusTitle(s: SidebarSession): string {
   return 'Pas encore démarrée';
 }
 
-/** Icône d'un worktree, colorée par l'état de la pull request de sa branche. */
-function worktreeIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
-  if (!ws.exists) return { cls: 'wt-missing', title: 'Worktree absent du disque' };
-  const base = `Worktree · branche ${ws.branch}`;
+/** Icône d'une work session, colorée par l'état de la pull request de sa branche. */
+function worksessionIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
+  if (!ws.exists) return { cls: 'wt-missing', title: 'Work session absente du disque' };
+  const base = `Work session · branche ${ws.branch}`;
   if (!pr) return { cls: '', title: base };
   const state = pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase();
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
@@ -179,7 +179,7 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
  * Ligne d'une session. Ses sous-agents (`children`, sessions lancées par son agent) sont repliés derrière une ligne
  * « N sous-agents » ; dépliés, ils apparaissent indentés (`depth`), reliés par └ et marqués d'un robot.
  */
-function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null }: { s: SidebarSession; worktreeId: string | null; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null }) {
+function SessionRow({ s, worksessionId, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null }: { s: SidebarSession; worksessionId: string | null; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null }) {
   const location = useLocation();
   const [open, setOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
   const childActive = children.some((c) => location.pathname.startsWith(`/sessions/${c.session.id}`));
@@ -193,7 +193,7 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
     ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch(showError) }] : []),
-    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name, worktreeId }) },
+    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name, worksessionId }) },
   ];
   const browserPath = `/sessions/${s.id}/browser`;
   const left = indent + depth * CHILD_INDENT;
@@ -206,7 +206,7 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
         <span className="wb-row-label">{s.name}</span>
         {elsewhere && !s.name.toLowerCase().startsWith(elsewhere.toLowerCase()) && (
           <span className="wb-tag" title={`Travaille dans le dossier ${elsewhere}`}>
-            <i className="bi bi-diagram-2" /> {elsewhere}
+            <i className="bi bi-layers" /> {elsewhere}
           </span>
         )}
         {s.context.overThreshold && <ContextDot context={s.context} />}
@@ -224,12 +224,12 @@ function SessionRow({ s, worktreeId, indent, depth = 0, byAgent = false, parentN
         </Link>
       )}
       {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
-      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worktreeId={c.session.wsWorktreeId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'worktree supprimé' : c.session.wsName) : null} />)}
+      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worksessionId={c.session.wsWorksessionId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'worksession supprimé' : c.session.wsName) : null} />)}
     </>
   );
 }
 
-function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId: string | null; indent: number }) {
+function TerminalRow({ t, worksessionId, indent }: { t: SidebarTerminal; worksessionId: string | null; indent: number }) {
   const location = useLocation();
   const { showError } = useDialogs();
   const { deleteTerminal } = useDeletions();
@@ -237,7 +237,7 @@ function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
     ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
-    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name, worktreeId }) },
+    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name, worksessionId }) },
   ];
   return (
     <RowWithMenu to={`/terminals/${t.id}`} active={location.pathname === `/terminals/${t.id}`} indent={indent} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'} items={items}>
@@ -248,10 +248,10 @@ function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId
 }
 
 /**
- * Carte d'un dossier de travail (checkout principal ou worktree) : état, nom, puces de ce qui y est ouvert,
+ * Carte d'un dossier de travail (checkout principal ou worksession) : état, nom, puces de ce qui y est ouvert,
  * et lignes détaillées quand on la déplie.
  */
-function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWorktree }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; canWorktree: boolean }) {
+function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWorksession }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; canWorksession: boolean }) {
   const location = useLocation();
   const { user } = useAuth();
   const { activeKey, workspaces } = useTabs();
@@ -261,10 +261,10 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   const userId = user?.id ?? null;
   const current = location.pathname;
   const isCurrent = (path: string) => current === path || current === `${path}/browser`;
-  // Toutes les sessions du projet, annotées de leur dossier : les sous-agents lancés dans un autre worktree se rangent sous leur parente.
-  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsWorktreeId: w.worktreeId, wsDeleted: Boolean(w.primary && s.worktree) }))), [workspaces, ws.projectId]);
+  // Toutes les sessions du projet, annotées de leur dossier : les sous-agents lancés dans un autre work session se rangent sous leur parente.
+  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsWorksessionId: w.worksessionId, wsDeleted: Boolean(w.primary && s.worksession) }))), [workspaces, ws.projectId]);
   const poolById = useMemo(() => new Map(pool.map((s) => [s.id, s])), [pool]);
-  // Les sous-agents (sessions lancées par un agent) sont rangés sous leur session parente, même lancés dans un autre worktree :
+  // Les sous-agents (sessions lancées par un agent) sont rangés sous leur session parente, même lancés dans un autre work session :
   // ceux dont la parente est dans un autre dossier ne sont pas listés ici (`elsewhereSubs`, juste une note). Un sous-agent dont
   // la parente a disparu du projet reste au premier niveau, avec son robot.
   const { local, elsewhereSubs } = useMemo(() => {
@@ -282,7 +282,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   const hiddenOthers = local.length - visibleSessions.length;
   const state = workspaceState(ws.sessions);
   const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
-  const icon = worktreeIcon(ws, pr);
+  const icon = worksessionIcon(ws, pr);
   const chips = [
     // Une puce par session de premier niveau, avec le compte de ses sous-agents ; un sous-agent n'a sa propre puce que s'il est la page courante ou attend une réponse.
     ...groups.flatMap(({ root, children }) =>
@@ -306,10 +306,10 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   ];
   const activeIndex = chips.findIndex((c) => c.active);
   const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
-  // Clic sur la tête : la première session du worktree, sinon la page où l'onglet du dossier en était, sinon les fichiers.
+  // Clic sur la tête : la première session de la work session, sinon la page où l'onglet du dossier en était, sinon les fichiers.
   const headTo = !ws.primary && groups.length ? `/sessions/${groups[0].root.session.id}` : tabUrl ?? ws.key;
-  const name = ws.task && !ws.worktree?.customLabel ? ws.task.title : ws.name;
-  const title = ws.primary ? `Dossier principal · ${ws.name}` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()} · ` : ''}${icon.title}`;
+  const name = ws.task && !ws.worksession?.customLabel ? ws.task.title : ws.name;
+  const title = ws.primary ? `Dossier principal · ${ws.name} · sessions d'avant les work sessions` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()}${ws.task.statusTag ? ` · ${ws.task.statusTag}` : ''} · ` : ''}${icon.title}`;
   return (
     <div className={`wb-ws${activeKey === ws.key ? ' active' : ''}`}>
       <div
@@ -323,9 +323,9 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
       >
         <Link to={headTo} className="wb-ws-link">
           <span className={`wb-ws-state ${state ?? 'none'}`} />
-          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-diagram-2'} wb-icon ${icon.cls}`} />}
+          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-layers'} wb-icon ${icon.cls}`} />}
           <span className="wb-ws-name">{name}</span>
-          {ws.primary && ws.projectName && <span className="wb-tag">principal</span>}
+          {ws.primary && ws.projectName && <span className="wb-tag" title="Sessions et terminaux d'avant les work sessions, dans le checkout principal">principal</span>}
           {!ws.exists && <span className="wb-tag missing">absent</span>}
           {pending > 0 && <span className="wb-badge">{pending}</span>}
         </Link>
@@ -333,7 +333,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
           <button
             type="button"
             className="wb-plus"
-            title={ws.primary ? 'Ouvrir quelque chose dans le dossier principal' : 'Ouvrir quelque chose ici, ou gérer le worktree'}
+            title={ws.primary ? 'Ouvrir quelque chose dans le dossier principal' : 'Ouvrir quelque chose ici, ou gérer la work session'}
             onClick={(e) => {
               e.stopPropagation();
               setMenu((v) => !v);
@@ -341,13 +341,14 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
           >
             <i className="bi bi-three-dots" />
           </button>
-          {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={canWorktree && ws.primary} onClose={() => setMenu(false)} />}
+          {menu && <AddMenu projectId={ws.projectId} worksession={ws.worksession} canWorksession={canWorksession && ws.primary} onClose={() => setMenu(false)} />}
         </span>
       </div>
       <div className="wb-ws-items">
         {ws.task && (
           <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
             {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
+            {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
           </Link>
         )}
         {shown.map((c) => (
@@ -376,10 +377,10 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
       {expanded && (
         <div className="wb-ws-rows">
           {groups.map(({ root, children }) => (
-            <SessionRow key={root.session.id} s={root.session} worktreeId={ws.worktreeId} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} />
+            <SessionRow key={root.session.id} s={root.session} worksessionId={ws.worksessionId} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} />
           ))}
           {ws.terminals.map((t) => (
-            <TerminalRow key={t.id} t={t} worktreeId={ws.worktreeId} indent={30} />
+            <TerminalRow key={t.id} t={t} worksessionId={ws.worksessionId} indent={30} />
           ))}
           {hiddenOthers > 0 && (
             <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 30 }} onClick={() => setShowOthers(true)}>
@@ -433,10 +434,10 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const { openHelp } = useShortcutsHelp();
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
   const { data } = usePollingQuery<{ projects: SidebarProject[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
-  const { data: prData } = usePollingQuery<{ projects: { id: string; worktrees: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKTREE_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKSESSION_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
-  const prByWorktree = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worktrees.map((w) => [w.id, w.pullRequest] as const))), [prData]);
+  const prByWorksession = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worksessions.map((w) => [w.id, w.pullRequest] as const))), [prData]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
   const [filter, setFilter] = useState<'mine' | 'all'>(() => {
     try {
@@ -593,7 +594,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   <button
                     type="button"
                     className="wb-plus"
-                    title="Actions du projet : nouvelle session, terminal, worktree, agent, workflow ; pages ; modification, suppression"
+                    title="Actions du projet : nouvelle work session, agent, workflow ; pages ; modification, suppression"
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuFor(menuFor === p.id ? null : p.id);
@@ -604,24 +605,25 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   {menuFor === p.id && (
                     <AddMenu
                       projectId={p.id}
-                      project={{ id: p.id, name: p.name, canManage: p.myRole === 'ADMIN', paths: [...p.sessions.map((s) => `/sessions/${s.id}`), ...p.terminals.map((t) => `/terminals/${t.id}`), ...p.worktrees.map((w) => `/worktrees/${w.id}`)] }}
-                      canWorktree={Boolean(p.gitUrl)}
+                      project={{ id: p.id, name: p.name, canManage: p.myRole === 'ADMIN', paths: [...p.sessions.map((s) => `/sessions/${s.id}`), ...p.terminals.map((t) => `/terminals/${t.id}`), ...p.worksessions.map((w) => `/worksessions/${w.id}`)] }}
+                      canWorksession
                       onClose={() => setMenuFor(null)}
                     />
                   )}
                 </span>
               </div>
               {open &&
-                list.map((ws) => (
+                // Le dossier principal n'accueille plus rien : sa carte ne reste que pour les sessions et terminaux d'avant les work sessions.
+                list.filter((ws) => !ws.primary || ws.sessions.length > 0 || ws.terminals.length > 0).map((ws) => (
                   <WorkspaceCard
                     key={ws.key}
                     ws={ws}
-                    pr={ws.worktreeId ? prByWorktree.get(ws.worktreeId) : null}
+                    pr={ws.worksessionId ? prByWorksession.get(ws.worksessionId) : null}
                     expanded={expanded[ws.key] ?? false}
                     onToggle={() => toggle(ws.key, false)}
                     tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
                     filterMine={filter === 'mine'}
-                    canWorktree={Boolean(p.gitUrl)}
+                    canWorksession
                   />
                 ))}
             </div>

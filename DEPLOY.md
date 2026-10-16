@@ -123,7 +123,7 @@ gh repo deploy-key add <clé>.pub --repo <org>/<repo> --title "Skipper (skipper.
 
 Dans Skipper, l'URL git du projet doit alors être `git@github-<projet>:<org>/<repo>.git` (pas
 l'URL https). Un dossier principal vide est cloné automatiquement à la prochaine préparation du
-dossier ou création de worktree.
+dossier ou création de work session.
 
 ## Conteneurs des projets (Docker obligatoire)
 
@@ -145,7 +145,7 @@ Claude Code prend ≈ 250 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo
 Au-delà de la limite, le noyau tue des processus du conteneur : commandes interrompues et sessions
 en erreur ; Skipper l’explique alors dans le transcript (« le conteneur du projet a dépassé sa limite
 mémoire »). Réglages en place depuis le 30/09/2026 :
-Skipper 2g (plusieurs agents buildent en parallèle dans des worktrees), SUF 1500m (navigateur),
+Skipper 2g (plusieurs agents buildent en parallèle dans des work sessions), SUF 1500m (navigateur),
 Curso 768m (défaut). Pour vérifier et ajuster sans couper les sessions :
 
 ```bash

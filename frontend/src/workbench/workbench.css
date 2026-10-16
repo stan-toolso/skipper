@@ -73,9 +73,9 @@
 .wb-row-label { flex: 1; min-width: 40%; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
 .wb-project-row { color: var(--cc-fg); }
 .wb-session-row { padding-left: 30px; }
-.wb-worktree-row { padding-left: 22px; color: var(--cc-dim); }
-.wb-worktree-row .wb-row-label { color: var(--cc-fg); }
-.wb-worktree-row:hover .wb-row-actions, .wb-worktree-row .wb-row-actions.open { visibility: visible; }
+.wb-worksession-row { padding-left: 22px; color: var(--cc-dim); }
+.wb-worksession-row .wb-row-label { color: var(--cc-fg); }
+.wb-worksession-row:hover .wb-row-actions, .wb-worksession-row .wb-row-actions.open { visibility: visible; }
 .wb-empty { padding-left: 30px; font-style: italic; color: var(--cc-dimmer); }
 .wb-chevron { background: none; border: 0; color: var(--cc-dim); padding: 0; width: 14px; font: inherit; cursor: pointer; }
 .wb-row-actions { visibility: hidden; display: flex; gap: 6px; }
@@ -494,7 +494,7 @@
   .fe-meta { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: 0; }
   .fe-meta .fx-muted { display: none; }
   .fx-header-actions .btn { white-space: nowrap; }
-  /* Tableaux « contenu + actions » (worktrees, membres, règles, comptes…) : chaque ligne devient un bloc et les
+  /* Tableaux « contenu + actions » (worksessions, membres, règles, comptes…) : chaque ligne devient un bloc et les
      actions passent sous le contenu plutôt que d'être repoussées hors de l'écran. */
   .table-stack thead { display: none; }
   .table-stack tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--cc-border); }
@@ -547,7 +547,7 @@
 .wb-filter { background: none; border: 0; font: inherit; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
 .wb-filter.active { color: var(--cc-accent); }
 
-/* ---- Dossiers de travail (projet principal, worktrees) --------------------------------------- */
+/* ---- Dossiers de travail (projet principal, worksessions) --------------------------------------- */
 .wb-project { margin-bottom: 2px; }
 .wb-ws { margin: 2px 8px 4px 10px; border: 1px solid transparent; border-radius: 6px; }
 .wb-ws.active { border-color: var(--cc-border); background: var(--cc-bg-elevated); }
@@ -665,6 +665,15 @@
 .task-status-blocked { color: var(--cc-red); border-color: var(--cc-red); }
 .task-status-done { color: var(--cc-green); border-color: var(--cc-green); }
 .task-status-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
+.task-status { max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.task-status-tag { font-weight: 500; margin-left: 0.45em; padding-left: 0.45em; border-left: 1px solid currentColor; opacity: 0.85; }
+.task-tags { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; vertical-align: middle; }
+.task-tag {
+  display: inline-block; padding: 0.05em 0.5em; border-radius: 4px; font-size: 11px; line-height: 1.4; white-space: nowrap; font-family: inherit;
+  color: var(--cc-fg); background: color-mix(in srgb, var(--cc-accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--cc-accent) 22%, transparent);
+}
+button.task-tag { cursor: pointer; }
+button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
 .task-priority { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; }
 .task-priority-low { color: var(--cc-dimmer); }
 .task-priority-medium { color: var(--cc-dim); }
@@ -690,7 +699,7 @@
 .task-comment:hover .task-comment-actions { display: inline-flex; }
 .task-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* ---- Worktrees : état de la PR, dossier absent ----------------------------------------------- */
+/* ---- Worksessions : état de la PR, dossier absent ----------------------------------------------- */
 .wt-pr-open { color: var(--cc-green); }
 .wt-pr-draft { color: var(--cc-dim); }
 .wt-pr-merged { color: var(--cc-purple); }

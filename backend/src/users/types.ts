@@ -37,7 +37,7 @@ export interface GoogleProfile {
 /** Éléments ouverts dans les onglets d'une personne, par type (sidebar d'un super administrateur). */
 export interface OpenItems {
   projectIds?: string[] | null;
-  worktreeIds?: string[] | null;
+  worksessionIds?: string[] | null;
   sessionIds?: string[] | null;
   terminalIds?: string[] | null;
   taskIds?: string[] | null;

@@ -70,8 +70,8 @@ function ConfigSummary({ agent, providers }: { agent: Agent; providers: Provider
           <dd className="col-8">{agent.outputFormat === 'JSON' ? 'JSON' : 'texte'}</dd>
           {agent.provider !== LLM_PROVIDER && (
             <>
-              <dt className="col-4">Worktree</dt>
-              <dd className="col-8">{agent.worktree ? agent.worktree.branch : 'dossier principal'}</dd>
+              <dt className="col-4">Work session</dt>
+              <dd className="col-8">{agent.worksession ? agent.worksession.name : 'une nouvelle à chaque exécution'}</dd>
             </>
           )}
           <dt className="col-4">Délai</dt>

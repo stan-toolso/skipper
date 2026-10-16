@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Collapse, Form, Modal } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { PROVIDERS, START_TASK_SESSION, type ConfigField, type Provider, type Task } from '../graphql/operations';
-import { TASK_PROMPT } from '../graphql/tasks';
+import { TASK_PROMPT, TASK_WORKSESSION } from '../graphql/tasks';
 import { bypassConnectionsWarning } from '../lib/humanize';
 import { buildConfig, FieldGroup, lastPermissionMode, rememberPermissionMode } from './SessionLauncher';
 
@@ -12,11 +12,11 @@ export interface LaunchTarget {
   gitUrl: string | null;
   defaultPermissionMode: string;
   approvalConnections?: string[];
-  worktrees: { id: string; branch: string; label: string; exists: boolean }[];
+  worksessions: { id: string; branch: string; label: string; exists: boolean }[];
 }
 
-const DEDICATED = '__dedicated__';
-const MAIN = '__main__';
+/** Valeur du sélecteur : la work session de la tâche (existante, ou créée à sa première session). */
+const OWN = '';
 
 /** « Confier à un agent » : consigne relue, où l'agent travaille, type d'agent et ses options. */
 export default function TaskLaunchModal({ task, target, onClose }: { task: Task; target: LaunchTarget | undefined; onClose: () => void }) {
@@ -27,7 +27,9 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
   const [providerType, setProviderType] = useState('');
   const provider = providers.find((p) => p.type === (providerType || providers[0]?.type));
   const [prompt, setPrompt] = useState<string | null>(null);
-  const [where, setWhere] = useState(target?.gitUrl ? DEDICATED : MAIN);
+  const [where, setWhere] = useState(OWN);
+  const { data: wsData } = useQuery<{ task: { id: string; worksession: { id: string; name: string; branch: string; label: string; archivedAt: string | null } | null } | null }>(TASK_WORKSESSION, { variables: { id: task.id }, fetchPolicy: 'cache-and-network' });
+  const own = wsData?.task?.worksession ?? null;
   const [values, setValues] = useState<Record<string, string>>({});
   const [advanced, setAdvanced] = useState(false);
   const original = promptData?.taskPrompt ?? '';
@@ -70,8 +72,7 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
         provider: provider.type,
         config: buildConfig(fields, values),
         prompt: edited ? text : null,
-        worktreeId: where === DEDICATED || where === MAIN ? null : where,
-        dedicatedWorktree: where === DEDICATED,
+        worksessionId: where === OWN ? null : where,
       },
     });
   };
@@ -95,23 +96,26 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
             <Form.Control as="textarea" rows={10} className="font-monospace small" value={promptLoading ? 'Chargement…' : text} disabled={promptLoading} onChange={(e) => setPrompt(e.target.value)} />
             <Form.Text>Construite à partir de la tâche (description, champs, commentaires). Modifiez-la librement : l'agent reçoit ce texte comme première instruction.</Form.Text>
           </Form.Group>
-          {target?.gitUrl && (
-            <Form.Group className="mb-3">
-              <Form.Label>Où l'agent travaille</Form.Label>
-              <Form.Select value={where} onChange={(e) => setWhere(e.target.value)}>
-                <option value={DEDICATED}>Nouveau worktree dédié (recommandé)</option>
-                <option value={MAIN}>Dossier principal du projet</option>
-                {target.worktrees
-                  .filter((w) => w.exists)
-                  .map((w) => (
-                    <option key={w.id} value={w.id}>
-                      Worktree {w.label}
-                    </option>
-                  ))}
-              </Form.Select>
-              {where === DEDICATED && <Form.Text>Un worktree sur une branche task/… est créé pour cette tâche.</Form.Text>}
-            </Form.Group>
-          )}
+          <Form.Group className="mb-3">
+            <Form.Label>Où l'agent travaille</Form.Label>
+            <Form.Select value={where} onChange={(e) => setWhere(e.target.value)}>
+              <option value={OWN}>{own ? `Work session de la tâche · ${own.label}${own.archivedAt ? ' (archivée, restaurée)' : ''}` : 'Nouvelle work session pour la tâche (recommandé)'}</option>
+              {(target?.worksessions ?? [])
+                .filter((w) => w.exists && w.id !== own?.id)
+                .map((w) => (
+                  <option key={w.id} value={w.id}>
+                    Work session {w.label}
+                  </option>
+                ))}
+            </Form.Select>
+            {where === OWN && (
+              <Form.Text>
+                {own
+                  ? 'Les sessions de la tâche travaillent toutes dans sa work session : elles retrouvent les fichiers et la branche des précédentes.'
+                  : `Une work session${target?.gitUrl ? ' sur une branche task/…' : ''} est créée pour la tâche ; ses sessions suivantes y travailleront aussi.`}
+              </Form.Text>
+            )}
+          </Form.Group>
           {providers.length > 1 && (
             <Form.Group className="mb-3">
               <Form.Label>Agent</Form.Label>
@@ -149,7 +153,7 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
             Annuler
           </Button>
           <Button type="submit" disabled={loading || !provider || promptLoading || !text.trim()}>
-            {loading ? (where === DEDICATED ? 'Création du worktree…' : 'Lancement…') : 'Lancer la session'}
+            {loading ? (where === OWN && !own ? 'Création de la work session…' : 'Lancement…') : 'Lancer la session'}
           </Button>
         </Modal.Footer>
       </Form>

@@ -1,22 +1,22 @@
 import { useQuery } from '@apollo/client';
 import { useParams } from 'react-router-dom';
-import { PROJECT, WORKTREE, type Project } from '../graphql/operations';
+import { PROJECT, WORKSESSION, type Project } from '../graphql/operations';
 
-/** Workspace visé par l'explorateur : checkout principal d'un projet, ou un worktree. */
+/** Workspace visé par l'explorateur : checkout principal d'un projet, ou une work session. */
 export interface WorkspaceRef {
   projectId: string;
-  worktreeId: string | null;
+  worksessionId: string | null;
 }
 
 /** URL de l'explorateur (path vide) ou de l'éditeur d'un fichier, chaque segment encodé. */
 export function filesUrl(ref: WorkspaceRef, path = ''): string {
-  const base = ref.worktreeId ? `/worktrees/${ref.worktreeId}/files` : `/projects/${ref.projectId}/files`;
+  const base = ref.worksessionId ? `/worksessions/${ref.worksessionId}/files` : `/projects/${ref.projectId}/files`;
   if (!path) return base;
   return `${base}/${path.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 export interface WorkspaceInfo extends WorkspaceRef {
-  /** Libellé : nom du projet, ou "projet · branche" pour un worktree. */
+  /** Libellé : nom du projet, ou "projet · branche" pour une work session. */
   label: string;
   projectName: string;
   branch: string | null;
@@ -25,26 +25,26 @@ export interface WorkspaceInfo extends WorkspaceRef {
 }
 
 /**
- * Résout le workspace depuis l'URL courante (/projects/:id/files/* ou /worktrees/:wid/files/*),
+ * Résout le workspace depuis l'URL courante (/projects/:id/files/* ou /worksessions/:wid/files/*),
  * avec le chemin du fichier demandé (splat).
  */
 export function useWorkspaceFromRoute(): { info: WorkspaceInfo | null; loading: boolean; error: Error | undefined; filePath: string } {
   const params = useParams();
   const projectId = params.id;
-  const worktreeId = params.wid;
+  const worksessionId = params.wid;
   const filePath = params['*'] ?? '';
   const { data: pData, loading: pLoading, error: pError } = useQuery<{ project: (Project & { workspaceExists: boolean }) | null }>(PROJECT, { variables: { id: projectId }, skip: !projectId });
   const { data: wData, loading: wLoading, error: wError } = useQuery<{
-    worktree: { id: string; name: string; branch: string; path: string; exists: boolean; project: { id: string; name: string; slug: string } } | null;
-  }>(WORKTREE, { variables: { id: worktreeId }, skip: !worktreeId });
+    worksession: { id: string; name: string; branch: string; path: string; exists: boolean; project: { id: string; name: string; slug: string } } | null;
+  }>(WORKSESSION, { variables: { id: worksessionId }, skip: !worksessionId });
 
   let info: WorkspaceInfo | null = null;
-  if (worktreeId && wData?.worktree) {
-    const w = wData.worktree;
-    info = { projectId: w.project.id, worktreeId: w.id, label: `${w.project.name} · ${w.branch}`, projectName: w.project.name, branch: w.branch, path: w.path, exists: w.exists };
+  if (worksessionId && wData?.worksession) {
+    const w = wData.worksession;
+    info = { projectId: w.project.id, worksessionId: w.id, label: `${w.project.name} · ${w.branch}`, projectName: w.project.name, branch: w.branch, path: w.path, exists: w.exists };
   } else if (projectId && pData?.project) {
     const p = pData.project;
-    info = { projectId: p.id, worktreeId: null, label: p.name, projectName: p.name, branch: p.git?.branch ?? null, path: p.workspacePath, exists: p.workspaceExists };
+    info = { projectId: p.id, worksessionId: null, label: p.name, projectName: p.name, branch: p.git?.branch ?? null, path: p.workspacePath, exists: p.workspaceExists };
   }
   return { info, loading: pLoading || wLoading, error: pError ?? wError, filePath };
 }

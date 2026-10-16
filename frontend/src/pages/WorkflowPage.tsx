@@ -10,7 +10,7 @@ import WorkflowCanvas, { dragNodeType } from '../components/automation/workflow/
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
 import { AGENTS, CLEAR_WORKFLOW_SCHEDULE, DELETE_WORKFLOW, SET_WORKFLOW_SCHEDULE, UPDATE_WORKFLOW, VALIDATE_WORKFLOW, WORKFLOW, type Agent, type InputVariable, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNodeType, type WorkflowRunSummary } from '../graphql/automation';
-import { PROJECT_WORKTREES, PROVIDERS, type Provider, type Worktree } from '../graphql/operations';
+import { PROJECT_WORKSESSIONS, PROVIDERS, type Provider, type Worksession } from '../graphql/operations';
 import { fmtDateTime, nodeTypeInfo, runDurationMs } from '../lib/automation';
 import { formatCost, formatDuration } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
@@ -96,10 +96,10 @@ export default function WorkflowPage() {
   useTabTitle(workflow ? workflow.name : null);
   const { data: agentsData } = useQuery<{ agents: Agent[] }>(AGENTS, { variables: { projectId: workflow?.project.id }, skip: !workflow });
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: workflow?.project.id }, skip: !workflow });
+  const { data: worksessionsData } = useQuery<{ project: { worksessions: Worksession[] } | null }>(PROJECT_WORKSESSIONS, { variables: { id: workflow?.project.id }, skip: !workflow });
   const agents = agentsData?.agents ?? [];
   const providers = providersData?.providers ?? [];
-  const worktrees = (worktreesData?.project?.worktrees ?? []).filter((w) => !w.archivedAt);
+  const worksessions = (worksessionsData?.project?.worksessions ?? []).filter((w) => !w.archivedAt);
 
   // Définition locale : repart de la version serveur tant qu'aucune modification n'est en attente.
   const [def, setDef] = useState<WorkflowDefinition | null>(null);
@@ -257,7 +257,7 @@ export default function WorkflowPage() {
               }}
               agents={agents}
               providers={providers}
-              worktrees={worktrees}
+              worksessions={worksessions}
               issues={issues.filter((i) => i.nodeKey === selectedNode.key)}
             />
           ) : (

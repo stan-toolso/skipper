@@ -1,10 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 
-/** Workspace suivi par le panneau de droite : projet (checkout principal) ou worktree, et tâche éventuelle. */
+/** Workspace suivi par le panneau de droite : projet (checkout principal) ou worksession, et tâche éventuelle. */
 export interface GitTarget {
   projectId: string;
-  worktreeId: string | null;
+  worksessionId: string | null;
   label?: string;
   /** Tâche affichée dans l'onglet « Tâche » du panneau (page d'une session en charge d'une tâche). */
   taskId?: string | null;
@@ -21,7 +21,7 @@ const Ctx = createContext<State | null>(null);
 const OPEN_KEY = 'skipper.workbench.gitPanel';
 const isMobile = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767.98px)').matches;
 
-const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worktreeId === b!.worktreeId && a!.label === b!.label && (a!.taskId ?? null) === (b!.taskId ?? null));
+const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worksessionId === b!.worksessionId && a!.label === b!.label && (a!.taskId ?? null) === (b!.taskId ?? null));
 
 export function GitTargetProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -61,7 +61,7 @@ export function GitTargetProvider({ children }: { children: ReactNode }) {
     if (declared && declared.path === location.pathname) return declared.target;
     // Sans déclaration : les pages d'un projet suivent son checkout principal.
     const m = location.pathname.match(/^\/projects\/([^/]+)(?:\/(?!new$)[^/]+)?$/);
-    if (m && m[1] !== 'new' && !location.pathname.endsWith('/edit')) return { projectId: m[1], worktreeId: null };
+    if (m && m[1] !== 'new' && !location.pathname.endsWith('/edit')) return { projectId: m[1], worksessionId: null };
     return null;
   }, [declared, location.pathname]);
   const value = useMemo(() => ({ target, setTarget, open, setOpen }), [target, setTarget, open, setOpen]);
@@ -77,7 +77,7 @@ export function useGitPanel(): State {
 /** Déclare, depuis une page, le workspace (et la tâche) que le panneau de droite doit suivre. */
 export function useGitTarget(target: GitTarget | null | undefined): void {
   const { setTarget } = useGitPanel();
-  const key = target ? `${target.projectId}|${target.worktreeId ?? ''}|${target.label ?? ''}|${target.taskId ?? ''}` : '';
+  const key = target ? `${target.projectId}|${target.worksessionId ?? ''}|${target.label ?? ''}|${target.taskId ?? ''}` : '';
   useEffect(() => {
     if (target) setTarget(target);
   }, [key, setTarget]); // eslint-disable-line react-hooks/exhaustive-deps

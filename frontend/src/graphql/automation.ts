@@ -74,7 +74,7 @@ export interface Agent {
   inputs: InputVariable[];
   outputFormat: AgentOutputFormat;
   outputSchema: string | null;
-  worktree: { id: string; name: string; branch: string } | null;
+  worksession: { id: string; name: string; branch: string } | null;
   timeoutMinutes: number;
   schedule: AutomationSchedule | null;
   scheduleInputs: Record<string, unknown>;
@@ -138,7 +138,7 @@ export interface CreateAgentInput {
   inputs?: InputVariableInput[] | null;
   outputFormat?: AgentOutputFormat | null;
   outputSchema?: string | null;
-  worktreeId?: string | null;
+  worksessionId?: string | null;
   timeoutMinutes?: number | null;
 }
 
@@ -149,7 +149,7 @@ export type UpdateAgentInput = Partial<Omit<CreateAgentInput, 'projectId'>>;
 export type WorkflowNodeType = 'trigger' | 'agent' | 'task' | 'session' | 'createTask' | 'condition' | 'end';
 export type TriggerEvent = 'manual' | 'task.created';
 export type EdgeHandle = 'default' | 'true' | 'false' | 'error';
-export type TaskWorktreeMode = 'new' | 'existing' | 'main';
+export type TaskWorksessionMode = 'new' | 'existing';
 
 export type ConditionOperator = 'is' | 'isNot' | 'contains' | 'notContains' | 'startsWith' | 'endsWith' | 'matches' | 'isEmpty' | 'isNotEmpty' | 'isTrue' | 'isFalse' | 'greaterThan' | 'atLeast' | 'lessThan' | 'atMost';
 export interface ConditionRule {
@@ -207,8 +207,8 @@ export interface WorkflowNode {
   config?: Record<string, unknown>;
   prompt?: string;
   includeTask?: boolean;
-  worktreeMode?: TaskWorktreeMode;
-  worktreeId?: string | null;
+  worksessionMode?: TaskWorksessionMode;
+  worksessionId?: string | null;
   wait?: boolean;
   sessionName?: string;
   branch?: string;
@@ -379,7 +379,7 @@ export const AGENT_FIELDS = gql`
     }
     outputFormat
     outputSchema
-    worktree {
+    worksession {
       id
       name
       branch

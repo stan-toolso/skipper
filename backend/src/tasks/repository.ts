@@ -1,7 +1,7 @@
 import { pool, type Queryable } from '../db/pool.js';
 import { toJson } from '../db/json.js';
 import type { Actor } from '../context/types.js';
-import type { CreateTaskInput, Task, TaskComment, TaskFilter, TaskField, TaskPerson, TaskPriority, TaskStatus, UpdateTaskInput } from './types.js';
+import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskPerson, TaskPriority, TaskStatus, UpdateTaskInput } from './types.js';
 
 interface Row {
   id: string;
@@ -9,6 +9,8 @@ interface Row {
   title: string;
   description: string;
   status: TaskStatus;
+  status_tag: string | null;
+  tags: string[] | null;
   priority: TaskPriority;
   session_id: string | null;
   branch: string | null;
@@ -21,6 +23,7 @@ interface Row {
   reporter_name: string | null;
   reporter_email: string | null;
   comment_count: string | number | null;
+  attachment_count: string | number | null;
   created_at: Date;
   updated_at: Date;
   completed_at: Date | null;
@@ -38,6 +41,18 @@ interface CommentRow {
   updated_at: Date;
 }
 
+interface AttachmentRow {
+  id: string;
+  task_id: string;
+  comment_id: string | null;
+  name: string;
+  media_type: string;
+  size: number;
+  created_at: Date;
+}
+
+const toAttachment = (r: AttachmentRow): TaskAttachment => ({ id: r.id, taskId: r.task_id, commentId: r.comment_id, name: r.name, mediaType: r.media_type, size: Number(r.size), createdAt: r.created_at });
+
 /** Date PostgreSQL rendue AAAA-MM-JJ sans décalage de fuseau (pg renvoie un Date à minuit local). */
 function toDateString(value: string | Date | null): string | null {
   if (!value) return null;
@@ -53,6 +68,8 @@ const toTask = (r: Row): Task => ({
   title: r.title,
   description: r.description,
   status: r.status,
+  statusTag: r.status_tag ?? null,
+  tags: Array.isArray(r.tags) ? r.tags : [],
   priority: r.priority,
   sessionId: r.session_id,
   branch: r.branch,
@@ -63,6 +80,7 @@ const toTask = (r: Row): Task => ({
   assignee: person(r.assignee_name, r.assignee_email),
   reporter: person(r.reporter_name, r.reporter_email),
   commentCount: Number(r.comment_count ?? 0),
+  attachmentCount: Number(r.attachment_count ?? 0),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   completedAt: r.completed_at,
@@ -81,7 +99,7 @@ const toComment = (r: CommentRow): TaskComment => ({
 });
 
 /** Colonnes d'une tâche avec le nombre de commentaires. */
-const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count FROM tasks t`;
+const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count, (SELECT count(*) FROM task_attachments a WHERE a.task_id = t.id AND a.comment_id IS NULL) AS attachment_count FROM tasks t`;
 /** Tri : urgent d'abord, puis par date de création. */
 const ORDER = `ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.created_at ASC`;
 
@@ -106,8 +124,8 @@ export const taskRepository = {
       await client.query('BEGIN');
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO tasks (project_id, title, description, status, priority, session_id, created_by_type, created_by_session_id, due_date, completed_at,
-                            custom_fields, assignee_name, assignee_email, reporter_name, reporter_email)
-         VALUES ($1, $2, $3, $4::task_status, $5, $6, $7, $8, $9, CASE WHEN $4::task_status = 'done' THEN now() ELSE NULL END, $10::jsonb, $11, $12, $13, $14) RETURNING id`,
+                            custom_fields, assignee_name, assignee_email, reporter_name, reporter_email, status_tag, tags)
+         VALUES ($1, $2, $3, $4::task_status, $5, $6, $7, $8, $9, CASE WHEN $4::task_status = 'done' THEN now() ELSE NULL END, $10::jsonb, $11, $12, $13, $14, $15, $16::text[]) RETURNING id`,
         [
           projectId,
           input.title,
@@ -121,6 +139,8 @@ export const taskRepository = {
           toJson(input.customFields ?? []),
           ...personColumns(input.assignee),
           ...personColumns(input.reporter),
+          input.statusTag ?? null,
+          input.tags ?? [],
         ],
       );
       await linkSession(client, rows[0].id, input.sessionId);
@@ -149,6 +169,7 @@ export const taskRepository = {
     if (filter.priority) where.push(`t.priority = $${params.push(filter.priority)}`);
     if (filter.sessionId) where.push(`t.session_id = $${params.push(filter.sessionId)}`);
     if (filter.branch) where.push(`t.branch = $${params.push(filter.branch)}`);
+    if (filter.tag) where.push(`EXISTS (SELECT 1 FROM unnest(t.tags) tag WHERE lower(tag) = lower($${params.push(filter.tag)}))`);
     if (filter.assignee) {
       const p = params.push(contains(filter.assignee));
       where.push(`(t.assignee_name ILIKE $${p} OR t.assignee_email ILIKE $${p})`);
@@ -185,6 +206,8 @@ export const taskRepository = {
     if (input.branch !== undefined) sets.push(`branch = $${params.push(input.branch)}`);
     if (input.dueDate !== undefined) sets.push(`due_date = $${params.push(input.dueDate)}`);
     if (input.customFields != null) sets.push(`custom_fields = $${params.push(toJson(input.customFields))}::jsonb`);
+    if (input.statusTag !== undefined) sets.push(`status_tag = $${params.push(input.statusTag)}`);
+    if (input.tags != null) sets.push(`tags = $${params.push(input.tags)}::text[]`);
     if (input.assignee !== undefined) {
       const [name, email] = personColumns(input.assignee);
       sets.push(`assignee_name = $${params.push(name)}`, `assignee_email = $${params.push(email)}`);
@@ -212,6 +235,21 @@ export const taskRepository = {
     return this.findById(id);
   },
 
+  /** Déplace une tâche dans un autre projet : sa session et sa branche restent à l'ancien projet, elles sont retirées. */
+  async move(id: string, projectId: string): Promise<Task | null> {
+    const { rowCount } = await pool.query('UPDATE tasks SET project_id = $2, session_id = NULL, branch = NULL, updated_at = now() WHERE id = $1', [id, projectId]);
+    return rowCount ? this.findById(id) : null;
+  },
+
+  /** Étiquettes distinctes des tâches des projets (les plus utilisées d'abord), pour les suggestions. */
+  async tags(projectIds: string[]): Promise<string[]> {
+    const { rows } = await pool.query<{ tag: string }>(
+      `SELECT min(tag) AS tag FROM tasks, unnest(tags) tag WHERE project_id = ANY($1::uuid[]) GROUP BY lower(tag) ORDER BY count(*) DESC, lower(tag) LIMIT 500`,
+      [projectIds],
+    );
+    return rows.map((r) => r.tag);
+  },
+
   async delete(id: string): Promise<boolean> {
     const { rowCount } = await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
     return (rowCount ?? 0) > 0;
@@ -228,6 +266,38 @@ export const taskRepository = {
       [projectIds],
     );
     return rows.map((r) => ({ name: r.name, email: r.email }));
+  },
+
+  // ---- Pièces jointes --------------------------------------------------------------------------
+
+  /** Pièces jointes d'une tâche : les siennes (`commentId` null), celles d'un commentaire, ou toutes (`commentId` absent), les plus anciennes d'abord. */
+  async listAttachments(taskId: string, commentId?: string | null): Promise<TaskAttachment[]> {
+    const scope = commentId === undefined ? '' : commentId === null ? ' AND comment_id IS NULL' : ' AND comment_id = $2';
+    const { rows } = await pool.query<AttachmentRow>(`SELECT * FROM task_attachments WHERE task_id = $1${scope} ORDER BY created_at ASC, id ASC`, commentId ? [taskId, commentId] : [taskId]);
+    return rows.map(toAttachment);
+  },
+
+  async findAttachment(id: string): Promise<TaskAttachment | null> {
+    const { rows } = await pool.query<AttachmentRow>('SELECT * FROM task_attachments WHERE id = $1', [id]);
+    return rows[0] ? toAttachment(rows[0]) : null;
+  },
+
+  async createAttachment(input: Omit<TaskAttachment, 'createdAt'>): Promise<TaskAttachment> {
+    const { rows } = await pool.query<AttachmentRow>('INSERT INTO task_attachments (id, task_id, comment_id, name, media_type, size) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [
+      input.id,
+      input.taskId,
+      input.commentId,
+      input.name,
+      input.mediaType,
+      input.size,
+    ]);
+    await pool.query('UPDATE tasks SET updated_at = now() WHERE id = $1', [input.taskId]);
+    return toAttachment(rows[0]);
+  },
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    const { rowCount } = await pool.query('DELETE FROM task_attachments WHERE id = $1', [id]);
+    return (rowCount ?? 0) > 0;
   },
 
   // ---- Commentaires ----------------------------------------------------------------------------

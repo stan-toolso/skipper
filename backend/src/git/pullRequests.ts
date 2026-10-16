@@ -1,19 +1,19 @@
 import { AppError } from '../errors.js';
 import { resolveRoot, type WorkspaceRef } from '../files/service.js';
-import { removeWorktreeKeepingSessions } from '../projects/cleanup.js';
+import { removeWorksessionKeepingSessions } from '../projects/cleanup.js';
 import { projectService } from '../projects/service.js';
 import { git, gitAuthFor, workspacePath } from '../projects/workspace.js';
 import { sessionService } from '../sessions/service.js';
 import { githubOwnerOf, githubService } from '../settings/github.js';
 import { taskRepository } from '../tasks/repository.js';
 import { taskService } from '../tasks/service.js';
-import { worktreeRepository } from '../worktrees/repository.js';
+import { worksessionRepository } from '../worksessions/repository.js';
 import { gitService } from './service.js';
 
 /**
  * Pull requests GitHub d'un projet, avec le jeton de la connexion GitHub (Paramètres) : liste avec
  * l'état des checks, des revues et de la fusion (API GraphQL de GitHub, une requête), création et
- * fusion (API REST), puis nettoyage du worktree et des branches de la PR fusionnée.
+ * fusion (API REST), puis nettoyage de la work session et des branches de la PR fusionnée.
  */
 
 export interface GithubRepoRef {
@@ -86,7 +86,7 @@ export interface PullRequestDraft {
 
 export interface MergeCleanup {
   deleteRemoteBranch?: boolean | null;
-  deleteWorktree?: boolean | null;
+  deleteWorksession?: boolean | null;
   stopSessions?: boolean | null;
   completeTasks?: boolean | null;
 }
@@ -94,7 +94,7 @@ export interface MergeCleanup {
 export interface MergeResult {
   pullRequest: PullRequest;
   sha: string | null;
-  deletedWorktreeIds: string[];
+  deletedWorksessionIds: string[];
   completedTaskIds: string[];
   /** Étapes de nettoyage non réalisées, expliquées. */
   warnings: string[];
@@ -439,7 +439,7 @@ export const pullRequestService = {
   },
 
   /**
-   * Fusionne la PR, puis nettoie selon `cleanup` : branche distante, worktree(s) et branche locale de
+   * Fusionne la PR, puis nettoie selon `cleanup` : branche distante, worksession(s) et branche locale de
    * la branche de la PR (sessions encore ouvertes arrêtées si `stopSessions`), tâches liées terminées.
    * Le checkout principal est ensuite mis à jour (fetch, et pull si sa branche est la base).
    */
@@ -461,7 +461,7 @@ export const pullRequestService = {
     invalidate(repo);
 
     const warnings: string[] = [];
-    const deletedWorktreeIds: string[] = [];
+    const deletedWorksessionIds: string[] = [];
     const completedTaskIds: string[] = [];
     const branch = pr.headRefName;
     const project = await projectService.get(projectId);
@@ -477,25 +477,25 @@ export const pullRequestService = {
       }
     }
 
-    if (cleanup.deleteWorktree && !pr.isCrossRepository) {
-      const worktrees = (await worktreeRepository.listByProject(projectId)).filter((w) => w.branch === branch);
-      for (const wt of worktrees) {
+    if (cleanup.deleteWorksession && !pr.isCrossRepository) {
+      const worksessions = (await worksessionRepository.listByProject(projectId)).filter((w) => w.branch === branch);
+      for (const wt of worksessions) {
         try {
-          const running = await sessionService.list({ worktreeId: wt.id, status: 'running', limit: 200 });
+          const running = await sessionService.list({ worksessionId: wt.id, status: 'running', limit: 200 });
           if (running.length && cleanup.stopSessions) for (const s of running) await sessionService.stop(s.id).catch(() => undefined);
           else if (running.length) {
-            warnings.push(`Worktree ${wt.name} conservé : ${running.length} session(s) y tournent encore`);
+            warnings.push(`Worksession ${wt.name} conservé : ${running.length} session(s) y tournent encore`);
             continue;
           }
-          // Les sessions sont archivées avec le souvenir du worktree (historique de la tâche) ; ses terminaux sont fermés.
-          await removeWorktreeKeepingSessions(wt.id, { deleteBranch: true, stopSessions: Boolean(cleanup.stopSessions) });
-          deletedWorktreeIds.push(wt.id);
+          // Les sessions sont archivées avec le souvenir de la work session (historique de la tâche) ; ses terminaux sont fermés.
+          await removeWorksessionKeepingSessions(wt.id, { deleteBranch: true, stopSessions: Boolean(cleanup.stopSessions) });
+          deletedWorksessionIds.push(wt.id);
         } catch (err) {
-          warnings.push(`Worktree ${wt.name} conservé : ${(err as Error).message}`);
+          warnings.push(`Worksession ${wt.name} conservé : ${(err as Error).message}`);
         }
       }
-      // Branche locale sans worktree dans le checkout principal (sauf si c'est la branche extraite).
-      if (worktrees.length === 0) {
+      // Branche locale sans worksession dans le checkout principal (sauf si c'est la branche extraite).
+      if (worksessions.length === 0) {
         const current = await git(['rev-parse', '--abbrev-ref', 'HEAD'], main).catch(() => '');
         const exists = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], main).catch(() => '');
         if (exists && current !== branch) await git(['branch', '-D', branch], main).catch((err) => warnings.push(`Branche locale ${branch} conservée : ${(err as Error).message}`));
@@ -519,6 +519,6 @@ export const pullRequestService = {
     }
 
     const merged = await this.get(projectId, userId, number).catch(() => ({ ...pr, state: 'MERGED' as const, mergedAt: new Date() }));
-    return { pullRequest: merged, sha, deletedWorktreeIds, completedTaskIds, warnings };
+    return { pullRequest: merged, sha, deletedWorksessionIds, completedTaskIds, warnings };
   },
 };

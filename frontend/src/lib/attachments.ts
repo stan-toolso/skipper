@@ -41,6 +41,11 @@ export function attachmentUrl(sessionId: string, attachmentId: string): string {
   return `${apiBaseUrl}/api/attachments/${sessionId}/${attachmentId}`;
 }
 
+/** URL de téléchargement d'un fichier joint à une tâche ou à l'un de ses commentaires (cookie de session). */
+export function taskAttachmentUrl(taskId: string, attachmentId: string): string {
+  return `${apiBaseUrl}/api/task-attachments/${taskId}/${attachmentId}`;
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} o`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;

@@ -27,7 +27,7 @@ import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
 import { createVaultMcpServer, type VaultApproval } from '../../vault/mcp.js';
 import { vaultService } from '../../vault/service.js';
-import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
+import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
 import { attachmentsNote, publicAttachment } from '../attachments.js';
 import { sessionIdentityPrompt } from '../identity.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
@@ -67,7 +67,7 @@ const BROWSER_READ_TOOLS = ['browser_snapshot', 'browser_take_screenshot', 'brow
 const BROWSER_FIELD_READERS = ['browser_evaluate', 'browser_run_code'];
 
 /** Outils des serveurs MCP de Skipper autorisés d'office (mêmes règles que pour une session Claude). */
-const SKIPPER_FREE_TOOLS = ['mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list'];
+const SKIPPER_FREE_TOOLS = ['mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list'];
 
 /** Autorisations d'OpenCode lui-même : lectures et recherches libres, tout le reste demande — à cet exécuteur, qui applique le mode et les règles de la session puis interroge l'humain. */
 const BASE_PERMISSION: Record<string, string> = { '*': 'ask', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow', lsp: 'allow', todowrite: 'allow', todoread: 'allow', question: 'allow', skill: 'allow', task: 'allow' };
@@ -328,7 +328,7 @@ class OpencodeRun {
       context: () => createContextMcpServer(ctx.project, ctx.session.id),
       tasks: () => createTasksMcpServer(ctx.project, ctx.session.id, ctx.session.name),
       ...(vaultTools ? { vault: () => createVaultMcpServer(vaultContext) } : {}),
-      worktrees: () => createWorktreesMcpServer(ctx.project, ctx.session.id),
+      worksessions: () => createWorksessionsMcpServer(ctx.project, ctx.session.id),
       sessions: () => createSessionsMcpServer(ctx.project, ctx.session.id),
       pages: () => createSharedPagesMcpServer({ project: ctx.project, session: ctx.session, cwd: ctx.cwd }),
       ...(googleAccounts.length ? { google: () => createGoogleMcpServer({ project: ctx.project, accounts: googleAccounts, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
