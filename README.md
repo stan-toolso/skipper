@@ -719,9 +719,18 @@ la work session) et sa pull request GitHub avec ses checks et revues ; un clic o
 fusion. Cycle complet sans quitter Skipper : tâche → work session → PR (panneau git) → fusion →
 nettoyage de la work session et de la branche.
 
-Une tâche porte aussi un **responsable** et un **rapporteur** (nom et/ou e-mail libres), des **champs
-personnalisés** (clé → valeur), et des **commentaires** (humains ou agents, via l'outil `tasks.comment`).
-Chaque tâche a sa page (`/tasks/:id`, vue tableau ou kanban sur la liste, filtres par statut, priorité,
+Une tâche porte aussi un **responsable** et un **rapporteur** (membre du projet, ou nom et/ou e-mail libres ;
+une nouvelle tâche est rapportée par et assignée à sa créatrice ou son créateur), une **étiquette d'état**
+(court libellé de l'avancement dans le statut, « en revue », « bloquée »…, affiché dans la pastille du statut
+et tenu à jour par la session en charge), des **étiquettes** libres (filtre de la liste, `?tag=` de l'API),
+des **champs personnalisés** (clé → valeur), des **fichiers joints** (captures collées ou fichiers déposés
+dans la description ou un commentaire ; `WORKSPACES_ROOT/.task-attachments/`, route
+`/api/task-attachments/<tâche>/<id>` ; la session à qui l'on confie la tâche les reçoit avec sa consigne,
+`tasks.get` montre les images) et des **commentaires** (humains ou agents, via l'outil `tasks.comment`).
+Les **consignes des sessions de tâches** du projet (fiche du projet) sont ajoutées après le texte de la tâche
+dans l'instruction de toute session qui la réalise. Une tâche se **déplace** dans un autre projet (sa session
+et sa branche restent dans l'ancien).
+Chaque tâche a sa page (`/tasks/:id`, vue liste par défaut ou kanban sur la liste, filtres par statut, priorité,
 responsable, « mes tâches »). La session en charge d'une tâche reçoit les changements faits par d'autres
 (`[Mise à jour de la tâche]`) et les nouveaux commentaires (`[Commentaire sur la tâche]`, qui relancent
 une session terminée) ; son historique de sessions est conservé (`task_sessions`). « Confier à un agent »
