@@ -51,7 +51,7 @@ export function targetOf(item: VaultItem): string {
     case 'ssh':
     case 'postgres': {
       const port = item.port && item.port !== DEFAULT_PORTS[item.kind] ? `:${item.port}` : '';
-      const db = item.kind === 'postgres' && item.database ? `/${item.database}` : '';
+      const db = item.kind === 'postgres' ? (item.database ? `/${item.database}` : ' · toutes les bases') : '';
       const via = item.via ? ` · via ${item.via.name}` : '';
       return `${item.username ?? ''}@${item.host ?? ''}${port}${db}${via}`;
     }
@@ -107,7 +107,7 @@ export function agentToolsOf(item: VaultItem): string {
     case 'ssh':
       return item.commandAllowlist.length ? 'ssh_exec (commandes autorisées seulement) ; transferts désactivés' : 'ssh_exec, ssh_upload, ssh_download';
     case 'postgres':
-      return `sql_query${item.readOnly ? ' (lecture seule)' : ''}, sql_schema`;
+      return `sql_query${item.readOnly ? ' (lecture seule)' : ''}, sql_schema${item.database ? '' : ' — serveur entier : l’agent nomme la base à chaque appel (postgres par défaut) et peut lister les bases'}`;
     case 'api':
       return `http_request${item.readOnly ? ' (GET, HEAD, OPTIONS)' : ''}`;
     case 'aws':

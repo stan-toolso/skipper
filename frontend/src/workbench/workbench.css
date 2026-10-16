@@ -733,9 +733,13 @@
 
 /* ---- Coffre ----------------------------------------------------------------------------------- */
 .vault-row { cursor: pointer; }
-.vault-desc { max-width: 320px; }
 .vault-row.open td { border-bottom-color: transparent; }
-.vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); }
+/* Une ligne par élément : rien ne passe à la ligne, nom + description et cible sont tronqués (texte complet au survol). */
+.vault-row td { white-space: nowrap; }
+.vault-cell-name { display: flex; align-items: center; gap: 6px; max-width: 360px; }
+.vault-cell-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vault-cell-target { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); white-space: normal; }
 .vault-item-details { padding: 6px 4px 10px; }
 .vault-details { line-height: 1.6; }
 .vault-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
@@ -754,9 +758,8 @@
 .vault-field-actions button:disabled { opacity: 0.3; cursor: default; }
 @media (max-width: 767.98px) {
   .vault-field-row { grid-template-columns: 1fr 1fr; }
-  .vault-table .small.font-monospace { max-width: 160px; }
-  /* La description tronquée fixe la largeur minimale de la colonne : plus courte pour que le tableau tienne dans l'écran. */
-  .vault-desc { max-width: 170px; }
+  .vault-cell-name { max-width: 200px; }
+  .vault-cell-target { max-width: 160px; }
 }
 
 /* ---- Petits écrans en hauteur : menu de la sidebar en grille d'icônes ------------------------ */
