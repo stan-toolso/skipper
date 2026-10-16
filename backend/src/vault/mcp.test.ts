@@ -9,7 +9,7 @@ import type { VaultItem } from './types.js';
 // schéma zod échoue, tout le serveur disparaît pour l'agent, sans erreur visible dans l'interface (incident
 // du 10/10/2026 : `z.record` de zod 4 refusé par le convertisseur du SDK, aucun outil `vault`).
 // Services voisins simulés : la déclaration des outils et les outils PostgreSQL sont exercés, sans base ni réseau.
-const { service, query, duplicate } = vi.hoisted(() => ({ service: {} as Record<string, unknown>, query: vi.fn(), duplicate: vi.fn() }));
+const { service, query } = vi.hoisted(() => ({ service: {} as Record<string, unknown>, query: vi.fn() }));
 vi.mock('./service.js', () => ({ vaultService: service }));
 vi.mock('./ssh.js', () => ({}));
 vi.mock('../browser/fill.js', () => ({ browserFill: {} }));
@@ -40,7 +40,6 @@ beforeEach(() => {
   approvals.length = 0;
   events.length = 0;
   query.mockReset();
-  duplicate.mockReset();
   items = [pgItem()];
   Object.assign(service, {
     agentItems: async () => items,
@@ -50,7 +49,6 @@ beforeEach(() => {
       return i;
     },
     postgresCredentials: async (item: VaultItem, database?: string | null) => ({ host: 'db.example.org', port: 5432, username: 'skipper', database: database ?? 'postgres', ssl: true, sslCa: null, password: null, via: null }),
-    duplicatePostgresDatabase: duplicate,
     audit: async () => undefined,
   });
 });
@@ -85,11 +83,10 @@ describe('serveur MCP vault', () => {
     const client = await connect(server());
     try {
       const tools = (await client.listTools()).tools;
-      expect(tools.map((t) => t.name).sort()).toEqual(['browser_fill', 'http_request', 'list', 'sql_duplicate_database', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
+      expect(tools.map((t) => t.name).sort()).toEqual(['browser_fill', 'http_request', 'list', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
       const props = (name: string) => tools.find((t) => t.name === name)!.inputSchema.properties as Record<string, { type?: string; additionalProperties?: unknown }>;
       expect(Object.keys(props('sql_query')).sort()).toEqual(['database', 'item', 'sql']);
       expect(Object.keys(props('sql_schema')).sort()).toEqual(['database', 'item', 'table']);
-      expect(Object.keys(props('sql_duplicate_database')).sort()).toEqual(['item', 'source', 'target']);
       expect(props('http_request').query.type).toBe('object');
     } finally {
       await client.close();
@@ -140,29 +137,23 @@ describe('serveur MCP vault', () => {
     }
   });
 
-  it('sql_duplicate_database demande toujours l’accord, même sans approbation requise, puis journalise', async () => {
-    duplicate.mockResolvedValue('Base « app_test » créée à partir de « app » (12 MB) en 3 s');
+  it('sql_query avec approbation requise passe par la porte, et refuse une base étrangère à un élément rattaché', async () => {
+    items = [pgItem({ requireApproval: true })];
+    query.mockResolvedValue({ statements: [{ command: 'SELECT', rowCount: 0, fields: [], rows: [], truncated: false }], durationMs: 1, sshHostKey: null });
+    Object.assign(service, {
+      postgresCredentials: async (_item: VaultItem, database?: string | null) => {
+        if (database === 'autre') throw new Error('« rds » est rattaché à la base app : la base « autre » n\'y est pas accessible');
+        return { host: 'db.example.org', port: 5432, username: 'skipper', database: 'app', ssl: true, sslCa: null, password: null, via: null };
+      },
+    });
     const client = await connect(server());
     try {
-      const res = (await client.callTool({ name: 'sql_duplicate_database', arguments: { item: 'rds', source: 'app', target: 'app_test' } })) as ToolResult;
-      expect(res.isError).toBeFalsy();
-      expect(res.content[0].text).toBe('Base « app_test » créée à partir de « app » (12 MB) en 3 s');
-      expect(approvals).toEqual([{ toolName: 'mcp__vault__sql_duplicate_database', key: 'rds', input: { item: 'rds', source: 'app', target: 'app_test' } }]);
-      expect(duplicate).toHaveBeenCalledWith(items[0], 'app', 'app_test');
-      expect(events).toEqual([expect.objectContaining({ type: 'connection', action: 'sql_duplicate_database', summary: 'app → app_test', ok: true })]);
-    } finally {
-      await client.close();
-    }
-  });
-
-  it('sql_duplicate_database rend l’erreur du service sans exception, en la journalisant', async () => {
-    duplicate.mockRejectedValue(new Error('« rds » est en lecture seule : impossible d\'y créer une base'));
-    const client = await connect(server());
-    try {
-      const res = (await client.callTool({ name: 'sql_duplicate_database', arguments: { item: 'rds', source: 'app', target: 'app_test' } })) as ToolResult;
+      await client.callTool({ name: 'sql_query', arguments: { item: 'rds', sql: 'SELECT 1' } });
+      expect(approvals).toEqual([{ toolName: 'mcp__vault__sql_query', key: 'rds', input: { item: 'rds', sql: 'SELECT 1', database: null } }]);
+      const res = (await client.callTool({ name: 'sql_query', arguments: { item: 'rds', sql: 'SELECT 1', database: 'autre' } })) as ToolResult;
       expect(res.isError).toBe(true);
-      expect(res.content[0].text).toBe('Erreur : « rds » est en lecture seule : impossible d\'y créer une base');
-      expect(events).toEqual([expect.objectContaining({ type: 'connection', action: 'sql_duplicate_database', ok: false })]);
+      expect(res.content[0].text).toContain('la base « autre » n\'y est pas accessible');
+      expect(events.at(-1)).toEqual(expect.objectContaining({ type: 'connection', action: 'sql_query', ok: false }));
     } finally {
       await client.close();
     }

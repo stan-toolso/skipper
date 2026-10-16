@@ -2160,8 +2160,8 @@ type Mutation {
   deleteVaultItem(id: ID!): Boolean!
   "Vérifie l'élément depuis le serveur (MANAGE) ; mémorise la clé d'hôte SSH à la première réussite."
   testVaultItem(id: ID!): VaultTest!
-  "postgres : duplique une base du serveur sous un nouveau nom (CREATE DATABASE … TEMPLATE …) ; MANAGE, élément en écriture ; source obligatoire pour un élément rattaché à un serveur entier. Renvoie un compte rendu."
-  duplicateVaultDatabase(id: ID!, target: String!, source: String): String!
+  "Duplique l'élément dans le même coffre, secrets compris, sous un nouveau nom (défaut : <nom>-copie) ; MANAGE. Partages, liens et journal ne sont pas copiés ; ni compte Google ni jeton obtenu par connexion."
+  duplicateVaultItem(id: ID!, name: String): VaultItem!
   "ssh : nouvelle paire de clés (l'ancienne clé publique est à retirer du serveur)."
   regenerateVaultKey(id: ID!): VaultItem!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."

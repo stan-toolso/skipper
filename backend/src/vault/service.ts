@@ -647,6 +647,46 @@ export const vaultService = {
     return { ...item, permission: 'manage' };
   },
 
+  /**
+   * Duplique un élément dans le même coffre (même propriétaire), secrets compris, sous un nouveau nom
+   * (`<nom>-copie` par défaut) : pour créer une variante (autre base, autre politique) sans tout ressaisir.
+   * Partages, liens et journal ne sont pas copiés ; un compte Google ou un jeton obtenu par connexion ne se
+   * duplique pas.
+   */
+  async duplicate(actor: VaultActor & { userId: string }, id: string, name?: string | null): Promise<VaultItemWithPermission> {
+    const source = await this.getFor(actor.userId, id, 'manage');
+    if (source.kind === 'google') throw new AppError('Un compte Google ne se duplique pas : reconnectez-le');
+    if (isOauthToken(source)) throw new AppError('Ce jeton a été obtenu par une connexion : il ne se duplique pas (reconnectez le compte)');
+    const newName = validateName(name?.trim() || `${source.name.slice(0, 34)}-copie`);
+    if (newName === source.name) throw new AppError('Donnez un autre nom à la copie');
+    if (source.ownerProjectId) await this.assertNameFree(source.ownerProjectId, null, newName, null);
+    const newId = randomUUID();
+    const item = await vaultRepository.create({
+      id: newId,
+      ownerUserId: source.ownerUserId,
+      ownerProjectId: source.ownerProjectId,
+      name: newName,
+      kind: source.kind,
+      description: source.description,
+      settings: JSON.parse(JSON.stringify(source.settings)) as VaultItem['settings'],
+      ...sealSecrets(newId, source.kind, this.secretsOf(source)),
+      publicKey: source.publicKey,
+      hostKey: source.hostKey,
+      hostKeySeenAt: source.hostKeySeenAt,
+      readOnly: source.readOnly,
+      requireApproval: source.requireApproval,
+      commandAllowlist: source.commandAllowlist,
+      expiresAt: source.expiresAt,
+      createdById: actor.userId,
+    }).catch((err) => {
+      if ((err as { code?: string }).code === '23505') throw new AppError(`Un élément « ${newName} » existe déjà dans ce coffre`);
+      throw err;
+    });
+    await this.audit(item, 'created', actor, `${kindLabels[item.kind]}, copie de « ${source.name} »`);
+    await this.audit(source, 'duplicated', actor, `« ${newName} »`);
+    return { ...item, permission: 'manage' };
+  },
+
   // ---- Portée des agents ---------------------------------------------------------------------------
 
   /** Un nom ne doit désigner qu'un élément dans la portée des agents d'un projet. */
@@ -733,37 +773,6 @@ export const vaultService = {
     return { host: s.host, port: s.port, username: s.username, database: db, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
   },
 
-  /**
-   * Duplique une base du serveur (CREATE DATABASE … TEMPLATE …) : refusé sur un élément en lecture seule ; un
-   * élément rattaché à une base ne duplique que celle-ci. Appelé par l'interface (après contrôle des droits et
-   * journalisé par duplicateDatabase) et par l'outil MCP (après la porte d'approbation, journalisé par l'outil).
-   */
-  async duplicatePostgresDatabase(item: VaultItem, source: string | null | undefined, target: string): Promise<string> {
-    if (item.kind !== 'postgres') throw new AppError(`« ${item.name} » n'est pas une base PostgreSQL`);
-    if (item.readOnly) throw new AppError(`« ${item.name} » est en lecture seule : impossible d'y créer une base`, 'FORBIDDEN');
-    const s = item.settings as PostgresSettings;
-    const src = source?.trim() || s.database;
-    if (!src) throw new AppError('Indiquez la base à dupliquer (source)');
-    if (s.database && src !== s.database) throw new AppError(`« ${item.name} » est rattaché à la base ${s.database} : seule cette base peut être dupliquée`, 'FORBIDDEN');
-    const creds = await this.postgresCredentials(item);
-    const r = await postgres.duplicateDatabase(creds, src, target);
-    if (creds.via) await this.rememberHostKey(creds.via.item, r.sshHostKey);
-    return r.detail;
-  },
-
-  /** Duplication demandée depuis l'interface (permission MANAGE), journalisée. */
-  async duplicateDatabase(actor: VaultActor & { userId: string }, id: string, source: string | null | undefined, target: string): Promise<string> {
-    const item = await this.getFor(actor.userId, id, 'manage');
-    const label = `${source?.trim() || (item.settings as PostgresSettings).database || '?'} → ${target.trim()}`;
-    try {
-      const detail = await this.duplicatePostgresDatabase(item, source, target);
-      await this.audit(item, 'duplicated', actor, `${label} : ${detail}`);
-      return detail;
-    } catch (err) {
-      await this.audit(item, 'duplicated', actor, `${label} — ${(err as Error).message}`, false);
-      throw err;
-    }
-  },
 
   apiCredentials(item: VaultItem): ApiCredentials {
     if (item.kind !== 'api') throw new AppError(`« ${item.name} » n'est pas une API HTTP`);
@@ -1049,7 +1058,7 @@ export const vaultService = {
           const s = i.settings as PostgresSettings;
           const via = s.viaItemId ? byId.get(s.viaItemId)?.name : null;
           const scope = s.database ? `base PostgreSQL ${s.database}` : `serveur PostgreSQL entier (toutes ses bases : paramètre \`database\` des outils, \`${postgres.MAINTENANCE_DATABASE}\` par défaut ; \`sql_schema\` sans base les liste)`;
-          return `- \`${i.name}\` : ${scope} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`${i.readOnly ? '' : ', \`sql_duplicate_database\` (copie d\'une base, soumise à accord)'}.`;
+          return `- \`${i.name}\` : ${scope} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
         }
         default:
           return '';

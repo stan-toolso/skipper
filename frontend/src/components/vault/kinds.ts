@@ -100,7 +100,7 @@ export function agentToolsOf(item: VaultItem): string {
     case 'ssh':
       return item.commandAllowlist.length ? 'ssh_exec (commandes autorisées seulement) ; transferts désactivés' : 'ssh_exec, ssh_upload, ssh_download';
     case 'postgres':
-      return `sql_query${item.readOnly ? ' (lecture seule)' : ''}, sql_schema${item.readOnly ? '' : ', sql_duplicate_database (copie d’une base, toujours avec votre accord)'}${item.database ? '' : ' — serveur entier : l’agent nomme la base à chaque appel (postgres par défaut) et peut lister les bases'}`;
+      return `sql_query${item.readOnly ? ' (lecture seule)' : ''}, sql_schema${item.database ? '' : ' — serveur entier : l’agent nomme la base à chaque appel (postgres par défaut) et peut lister les bases'}`;
     case 'api':
       return `http_request${item.readOnly ? ' (GET, HEAD, OPTIONS)' : ''}`;
     case 'website':

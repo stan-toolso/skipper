@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { databasesSql, duplicateSql, MAINTENANCE_DATABASE, validateDatabaseName } from './postgres.js';
+import { databasesSql, MAINTENANCE_DATABASE, validateDatabaseName } from './postgres.js';
 
 describe('validateDatabaseName', () => {
   it('accepte un identifiant simple, espaces retirés', () => {
@@ -15,15 +15,6 @@ describe('validateDatabaseName', () => {
   });
   it('nomme le champ dans le message', () => {
     expect(() => validateDatabaseName('a b', 'Le nom de la nouvelle base')).toThrow(/^Le nom de la nouvelle base est invalide/);
-  });
-});
-
-describe('duplicateSql', () => {
-  it('cite les deux identifiants', () => {
-    expect(duplicateSql('prod', 'prod-copie')).toBe('CREATE DATABASE "prod-copie" TEMPLATE "prod"');
-  });
-  it('neutralise un guillemet (défense en profondeur : les noms sont validés avant)', () => {
-    expect(duplicateSql('a"b', 'c')).toBe('CREATE DATABASE "c" TEMPLATE "a""b"');
   });
 });
 

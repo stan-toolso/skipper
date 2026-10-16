@@ -3,10 +3,10 @@ import { Fragment, useState } from 'react';
 import { Alert, Badge, Button, Table } from 'react-bootstrap';
 import { useAuth } from '../../auth/AuthContext';
 import type { Project } from '../../graphql/operations';
-import { DELETE_VAULT_ITEM, TEST_VAULT_ITEM, type VaultItem } from '../../graphql/vault';
+import { DELETE_VAULT_ITEM, DUPLICATE_VAULT_ITEM, TEST_VAULT_ITEM, type VaultItem } from '../../graphql/vault';
 import { useDialogs } from '../Dialogs';
 import VaultItemDetails from './VaultItemDetails';
-import { daysToExpiry, fmtDate, isOauthToken, isSkipperKind, KINDS, ownerLabelOf, targetOf } from './kinds';
+import { daysToExpiry, fmtDate, isOauthToken, isSkipperKind, KINDS, NAME_PATTERN, ownerLabelOf, targetOf } from './kinds';
 
 export interface VaultRow {
   item: VaultItem;
@@ -44,7 +44,7 @@ function PolicyBadges({ item }: { item: VaultItem }) {
 /** Tableau des éléments du coffre, commun aux pages personnelle et projet. */
 export default function VaultTable({ rows, projects, openId, onOpenChange, onEdit, projectPage = false, browserDisabled = false, empty }: Props) {
   const { user } = useAuth();
-  const { confirm } = useDialogs();
+  const { confirm, prompt } = useDialogs();
   const [localOpen, setLocalOpen] = useState<string | null>(null);
   const open = openId !== undefined ? openId : localOpen;
   const setOpen = (id: string | null) => {
@@ -61,6 +61,7 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
     });
   const [test, { loading: testing }] = useMutation<{ testVaultItem: { ok: boolean; error: string | null; detail: string | null } }>(TEST_VAULT_ITEM, { refetchQueries: ['VaultItems', 'VaultProject'] });
   const [remove] = useMutation(DELETE_VAULT_ITEM, { refetchQueries: ['VaultItems', 'VaultProject', 'Sidebar'] });
+  const [duplicate] = useMutation<{ duplicateVaultItem: VaultItem }>(DUPLICATE_VAULT_ITEM, { refetchQueries: ['VaultItems', 'VaultProject', 'Sidebar'] });
   const [testingId, setTestingId] = useState<string | null>(null);
 
   const runTest = async (item: VaultItem) => {
@@ -74,6 +75,28 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
       notice(item.id, false, (err as Error).message);
     } finally {
       setTestingId(null);
+    }
+  };
+  /** Copie dans le même coffre, secrets compris, sous le nom demandé ; la copie s'ouvre ensuite dans l'éditeur pour l'ajuster. */
+  const runDuplicate = async (item: VaultItem) => {
+    const name = await prompt({
+      title: `Dupliquer « ${item.name} »`,
+      message: 'Une copie de cet élément, secrets compris, sera créée dans le même coffre sous ce nom (partages, ouvertures aux projets et journal ne sont pas copiés). Vous pourrez ensuite la modifier.',
+      defaultValue: `${item.name.slice(0, 34)}-copie`,
+      placeholder: 'nom de la copie',
+      confirmLabel: 'Dupliquer',
+    });
+    if (name === null) return;
+    if (!NAME_PATTERN.test(name.trim().toLowerCase())) return notice(item.id, false, 'Nom invalide : minuscules, chiffres, tirets et tirets bas, 40 caractères au plus.');
+    try {
+      const res = await duplicate({ variables: { id: item.id, name: name.trim().toLowerCase() } });
+      const copy = res.data?.duplicateVaultItem;
+      if (copy) {
+        setOpen(copy.id);
+        onEdit(copy);
+      }
+    } catch (err) {
+      notice(item.id, false, (err as Error).message);
     }
   };
   const runDelete = async (item: VaultItem) => {
@@ -169,6 +192,11 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
                       <Button size="sm" variant="link" className="p-0 px-1" title="Modifier" onClick={() => onEdit(item)}>
                         <i className="bi bi-pencil" />
                       </Button>
+                      {item.kind !== 'google' && !isOauthToken(item) && (
+                        <Button size="sm" variant="link" className="p-0 px-1" title="Dupliquer dans le même coffre" onClick={() => void runDuplicate(item)}>
+                          <i className="bi bi-copy" />
+                        </Button>
+                      )}
                       <Button size="sm" variant="link" className="p-0 px-1 text-danger" title="Supprimer" onClick={() => void runDelete(item)}>
                         <i className="bi bi-trash" />
                       </Button>

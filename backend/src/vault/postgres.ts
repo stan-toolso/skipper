@@ -13,8 +13,6 @@ export const SQL_MAX_ROWS = 200;
 export const SQL_TIMEOUT_MS = 30_000;
 /** Base de connexion d'un élément rattaché à un serveur entier, quand l'agent n'en nomme pas une. */
 export const MAINTENANCE_DATABASE = 'postgres';
-/** Délai d'une duplication (CREATE DATABASE … TEMPLATE … copie les fichiers : long sur une grosse base). */
-export const DUPLICATE_TIMEOUT_MS = 30 * 60_000;
 
 /** Nom de base PostgreSQL acceptable : lettres, chiffres, `_`, `-` et `$`, 63 octets au plus (cité en identifiant dans le SQL). */
 export function validateDatabaseName(name: string | null | undefined, label = 'Le nom de la base'): string {
@@ -48,7 +46,7 @@ function sslConfig(creds: PostgresCredentials): pg.ClientConfig['ssl'] {
 }
 
 /** Ouvre le tunnel SSH si besoin puis la connexion PostgreSQL. */
-async function open(creds: PostgresCredentials, readOnly: boolean, statementTimeoutMs = SQL_TIMEOUT_MS): Promise<Opened> {
+async function open(creds: PostgresCredentials, readOnly: boolean): Promise<Opened> {
   let ssh: SshSession | null = null;
   let tunnel: Tunnel | null = null;
   let host = creds.host;
@@ -67,7 +65,7 @@ async function open(creds: PostgresCredentials, readOnly: boolean, statementTime
     database: creds.database,
     ssl: sslConfig(creds),
     connectionTimeoutMillis: 15_000,
-    statement_timeout: statementTimeoutMs,
+    statement_timeout: SQL_TIMEOUT_MS,
     application_name: 'skipper',
   });
   const close = async () => {
@@ -156,43 +154,6 @@ export async function probe(creds: PostgresCredentials, serverWide = false): Pro
     );
     const scope = serverWide ? `toutes les bases (${rows[0].databases}, connexion par ${rows[0].db})` : `base ${rows[0].db}`;
     return { detail: `${rows[0].version.split(',')[0]} · ${scope} · utilisateur ${rows[0].usr}`, sshHostKey: opened.sshHostKey };
-  } finally {
-    await opened.close();
-  }
-}
-
-/** SQL de duplication : la nouvelle base est créée à partir de la source prise comme modèle (copie des fichiers, sans dump). */
-export function duplicateSql(source: string, target: string): string {
-  return `CREATE DATABASE ${pg.escapeIdentifier(target)} TEMPLATE ${pg.escapeIdentifier(source)}`;
-}
-
-/**
- * Duplique une base par `CREATE DATABASE … TEMPLATE …`. PostgreSQL exige qu'aucune autre session ne soit
- * connectée à la source : la connexion passe donc par la base de maintenance, jamais par la source, et les
- * connexions ouvertes sont vérifiées avant pour donner une erreur claire. Hors transaction (interdit dans un
- * bloc), avec un délai long. Le rôle doit pouvoir créer des bases (CREATEDB) et être propriétaire de la source.
- */
-export async function duplicateDatabase(creds: PostgresCredentials, source: string, target: string): Promise<{ detail: string; sshHostKey: string | null }> {
-  const src = validateDatabaseName(source, 'Le nom de la base source');
-  const dst = validateDatabaseName(target, 'Le nom de la nouvelle base');
-  if (src === dst) throw new AppError('La nouvelle base doit porter un autre nom que la source');
-  const started = Date.now();
-  const opened = await open({ ...creds, database: creds.database === src ? MAINTENANCE_DATABASE : creds.database }, false, DUPLICATE_TIMEOUT_MS);
-  try {
-    const c = opened.client;
-    const { rows: existing } = await c.query<{ datname: string }>('SELECT datname FROM pg_database WHERE datname = ANY($1)', [[src, dst]]);
-    if (!existing.some((d) => d.datname === src)) throw new AppError(`La base « ${src} » n'existe pas sur ce serveur`, 'POSTGRES');
-    if (existing.some((d) => d.datname === dst)) throw new AppError(`La base « ${dst} » existe déjà sur ce serveur`, 'POSTGRES');
-    const { rows: [state] } = await c.query<{ others: string; size: string | null }>(
-      `SELECT (SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()) AS others,
-              CASE WHEN has_database_privilege($1, 'CONNECT') THEN pg_size_pretty(pg_database_size($1)) END AS size`,
-      [src],
-    );
-    if (Number(state.others) > 0) throw new AppError(`La base « ${src} » est utilisée par ${state.others} autre(s) connexion(s) : PostgreSQL ne la copie que si personne n'y est connecté (fermer ces connexions, ou pg_terminate_backend)`, 'POSTGRES');
-    await c.query(duplicateSql(src, dst)).catch((err: Error) => {
-      throw new AppError(`Erreur SQL : ${err.message}`, 'POSTGRES');
-    });
-    return { detail: `Base « ${dst} » créée à partir de « ${src} »${state.size ? ` (${state.size})` : ''} en ${Math.max(1, Math.round((Date.now() - started) / 1000))} s`, sshHostKey: opened.sshHostKey };
   } finally {
     await opened.close();
   }

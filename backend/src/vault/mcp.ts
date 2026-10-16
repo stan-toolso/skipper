@@ -134,8 +134,8 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
    * Porte d'approbation : un élément « avec approbation » soumet chaque usage à un humain, quel que soit le
    * mode d'autorisation de la session, sauf approbation déjà mémorisée pour cet élément (session ou projet).
    */
-  const gate = async (item: VaultItem, tool: string, summary: string, input: Record<string, unknown>, always = false) => {
-    if (!item.requireApproval && !always) return;
+  const gate = async (item: VaultItem, tool: string, summary: string, input: Record<string, unknown>) => {
+    if (!item.requireApproval) return;
     const toolName = `mcp__vault__${tool}`;
     const projectRules = item.ownerProjectId === ctx.project.id;
     if (await ctx.remembered(toolName, item.name, projectRules)) return;
@@ -145,7 +145,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
   return createSdkMcpServer({
     name: 'vault',
     version: '1.0.0',
-    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases ; sql_duplicate_database copie une base, toujours soumis à accord). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
+    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
     tools: [
       tool('list', "Liste les éléments du coffre disponibles pour cette session, leur type, leur cible et leur politique d'accès.", {}, async () =>
         run(async () => {
@@ -251,27 +251,6 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
               return { result: r };
             });
             return postgres.renderResult(result);
-          }),
-      ),
-
-      tool(
-        'sql_duplicate_database',
-        "Duplique une base PostgreSQL du serveur (CREATE DATABASE … TEMPLATE …) : copie complète sous un nouveau nom, sur le même serveur. Refusé sur un élément en lecture seule ; un élément rattaché à une base ne copie que celle-ci. Toujours soumis à l'accord d'un humain. PostgreSQL exige qu'aucune autre connexion ne soit ouverte sur la source.",
-        {
-          item: z.string().describe("Nom de l'élément PostgreSQL"),
-          target: z.string().describe('Nom de la nouvelle base (ne doit pas exister)'),
-          source: z.string().optional().describe("Base à copier ; obligatoire pour un élément rattaché à un serveur entier, inutile pour un élément rattaché à une base"),
-        },
-        async ({ item, target, source }) =>
-          run(async () => {
-            const i = await ofKind(item, 'postgres');
-            const src = source?.trim() || (i.settings as PostgresSettings).database || '?';
-            const summary = `${src} → ${target.trim()}`;
-            await gate(i, 'sql_duplicate_database', `Copier la base ${summary} sur ${i.name}`, { source: src, target: target.trim() }, true);
-            return audited(i, 'sql_duplicate_database', summary, async () => {
-              const detail = await vaultService.duplicatePostgresDatabase(i, source, target);
-              return { result: detail, note: detail };
-            });
           }),
       ),
 

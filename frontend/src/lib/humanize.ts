@@ -126,7 +126,6 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
           sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],
           sql_schema: [`Schéma de ${conn}${db}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}${db}`],
-          sql_duplicate_database: [`Duplication de la base ${str(input, 'source') ?? ''} en ${str(input, 'target') ?? ''} sur ${conn}`, undefined, `dupliquer la base ${str(input, 'source') ?? ''} en ${str(input, 'target') ?? ''} sur ${conn}`],
           http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''}`],
           browser_fill: [`Saisie du champ ${str(input, 'field') ?? ''} de ${conn} dans le navigateur`, str(input, 'page'), `saisir le champ ${str(input, 'field') ?? ''} de ${conn} dans le navigateur`],
         };

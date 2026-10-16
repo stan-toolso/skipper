@@ -275,7 +275,9 @@ personnel se **partage** avec des collègues, avec une permission `utiliser` < `
 administrer le projet) ou seulement pour les sessions que l'on lance soi-même. Les agents d'une session
 voient les éléments du projet, ceux ouverts à tous ses agents, et ceux que l'auteur de la session a
 ouverts pour ses propres sessions ; un nom ne peut pas désigner deux éléments dans une même portée. Un
-élément se **copie** dans un projet (secrets compris) pour une migration.
+élément se **copie** dans un projet (secrets compris) pour une migration, et se **duplique** dans son propre coffre
+(bouton de la ligne, permission `gérer`) sous un nouveau nom, secrets compris, sans ses partages, liens ni journal :
+la copie s'ouvre aussitôt dans l'éditeur pour en faire une variante.
 
 **Chiffrement.** Les secrets d'un élément forment un document chiffré (AES-256-GCM) avec une clé de
 données propre à l'élément, elle-même enveloppée par la clé maîtresse (`SKIPPER_SECRET_KEY` ou
@@ -291,11 +293,7 @@ dédié recommandé, « lecture seule » force des transactions `READ ONLY`, TLS
 optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. Le champ « base de
 données » est facultatif : vide, l'élément couvre **le serveur entier** et l'agent nomme la base à chaque
 appel (paramètre `database` de `sql_query` et `sql_schema`, base de maintenance `postgres` par défaut ;
-`sql_schema` sans base liste les bases du serveur). **Dupliquer une base** (bloc de la fiche de l'élément,
-permission `gérer`, ou outil `sql_duplicate_database`, toujours soumis à accord) crée une copie complète sur le
-même serveur par `CREATE DATABASE … TEMPLATE …` depuis la base de maintenance : refusé sur un élément en
-lecture seule, limité à sa base pour un élément rattaché à une base, et PostgreSQL exige qu'aucune autre
-connexion ne soit ouverte sur la source (vérifié avant, erreur claire sinon). API : l'agent
+`sql_schema` sans base liste les bases du serveur). API : l'agent
 donne un chemin relatif à l'adresse de base, la requête ne sort ni de l'origine ni du chemin, le serveur
 ajoute l'authentification (Bearer, en-tête, Basic, paramètre), ne suit pas les redirections, masque le jeton
 dans la réponse ; « lecture seule » limite à GET, HEAD et OPTIONS ; les adresses internes sont refusées
@@ -322,7 +320,7 @@ test d'un élément vérifie le jeton auprès du service (Anthropic, GitHub, Lit
 Langfuse `/api/public/projects`).
 
 **Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`,
-`sql_query`, `sql_schema`, `sql_duplicate_database`, `http_request`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
+`sql_query`, `sql_schema`, `http_request`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
