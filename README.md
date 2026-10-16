@@ -287,7 +287,9 @@ personnel se **partage** avec des collègues, avec une permission `utiliser` < `
 administrer le projet) ou seulement pour les sessions que l'on lance soi-même. Les agents d'une session
 voient les éléments du projet, ceux ouverts à tous ses agents, et ceux que l'auteur de la session a
 ouverts pour ses propres sessions ; un nom ne peut pas désigner deux éléments dans une même portée. Un
-élément se **copie** dans un projet (secrets compris) pour une migration.
+élément se **copie** dans un projet (secrets compris) pour une migration, et se **duplique** dans son propre coffre
+(bouton de la ligne, permission `gérer`) sous un nouveau nom, secrets compris, sans ses partages, liens ni journal :
+la copie s'ouvre aussitôt dans l'éditeur pour en faire une variante.
 
 **Chiffrement.** Les secrets d'un élément forment un document chiffré (AES-256-GCM) avec une clé de
 données propre à l'élément, elle-même enveloppée par la clé maîtresse (`SKIPPER_SECRET_KEY` ou
@@ -300,7 +302,10 @@ fréquence, masqué après 30 s) ; la clé privée SSH et le jeton Google ne qui
 avec `restrict,command="…"`), clé d'hôte mémorisée à la première connexion et vérifiée ensuite, liste
 blanche de préfixes de commandes (qui désactive alors enchaînements et transferts). PostgreSQL : rôle
 dédié recommandé, « lecture seule » force des transactions `READ ONLY`, TLS avec certificat d'autorité
-optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. API : l'agent
+optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. Le champ « base de
+données » est facultatif : vide, l'élément couvre **le serveur entier** et l'agent nomme la base à chaque
+appel (paramètre `database` de `sql_query` et `sql_schema`, base de maintenance `postgres` par défaut ;
+`sql_schema` sans base liste les bases du serveur). API : l'agent
 donne un chemin relatif à l'adresse de base, la requête ne sort ni de l'origine ni du chemin, le serveur
 ajoute l'authentification (Bearer, en-tête, Basic, paramètre), ne suit pas les redirections, masque le jeton
 dans la réponse ; « lecture seule » limite à GET, HEAD et OPTIONS ; les adresses internes sont refusées

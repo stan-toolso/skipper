@@ -646,6 +646,7 @@ type VaultItem {
   token: VaultTokenInfo
   "website, secret : champs ; vide pour les autres types."
   fields: [VaultField!]!
+  "postgres : base rattachée ; null = le serveur entier (les agents nomment la base à chaque appel)."
   database: String
   ssl: Boolean
   "postgres : certificat de l'autorité du serveur (PEM), pour une vérification sans contrôle du nom d'hôte."
@@ -714,6 +715,7 @@ input VaultItemInput {
   host: String
   port: Int
   username: String
+  "postgres : base rattachée ; chaîne vide ou null = le serveur entier."
   database: String
   ssl: Boolean
   "postgres : certificat PEM de l'autorité ; chaîne vide pour le retirer."
@@ -2334,6 +2336,8 @@ type Mutation {
   deleteVaultItem(id: ID!): Boolean!
   "Vérifie l'élément depuis le serveur (MANAGE) ; mémorise la clé d'hôte SSH à la première réussite."
   testVaultItem(id: ID!): VaultTest!
+  "Duplique l'élément dans le même coffre, secrets compris, sous un nouveau nom (défaut : <nom>-copie) ; MANAGE. Partages, liens et journal ne sont pas copiés ; ni compte Google ni jeton obtenu par connexion."
+  duplicateVaultItem(id: ID!, name: String): VaultItem!
   "ssh : nouvelle paire de clés (l'ancienne clé publique est à retirer du serveur)."
   regenerateVaultKey(id: ID!): VaultItem!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."

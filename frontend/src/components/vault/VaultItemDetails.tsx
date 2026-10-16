@@ -45,6 +45,7 @@ const ACTION_LABELS: Record<string, string> = {
   linked: 'ouvert à un projet',
   unlinked: 'retiré d’un projet',
   copied: 'copie',
+  duplicated: 'duplication',
   tested: 'test',
   used: 'usage par un agent',
   key_regenerated: 'clé régénérée',
@@ -260,6 +261,20 @@ function DetailsTab({ item, projectPage, browserDisabled, onEdited }: { item: Va
         {agentToolsOf(item)}
         {projectPage && browserDisabled && (item.kind === 'website' || item.kind === 'secret') && <span className="text-warning"> · navigateur headless désactivé sur ce projet</span>}
       </div>
+      {item.kind === 'postgres' && (
+        <div className="mb-1">
+          <span className="text-secondary">Portée : </span>
+          {item.database ? (
+            <>
+              base <code>{item.database}</code> seulement
+            </>
+          ) : (
+            'le serveur entier : toutes ses bases'
+          )}
+          {' · '}
+          {item.readOnly ? 'lecture seule' : 'écriture autorisée'}
+        </div>
+      )}
       {item.kind === 'ssh' && item.publicKey && (
         <div className="mt-2">
           <div className="text-secondary">

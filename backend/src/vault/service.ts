@@ -260,7 +260,8 @@ export const vaultService = {
           host: requireText(input.host ?? base.host, "L'hôte est"),
           port: validatePort(input.port ?? base.port ?? null, DEFAULT_PORTS.postgres),
           username: requireText(input.username ?? base.username, "L'utilisateur est"),
-          database: requireText(input.database ?? base.database, 'Le nom de la base est'),
+          // Vide : le serveur entier, l'agent nomme la base à chaque appel.
+          database: input.database !== undefined ? (input.database?.trim() ? postgres.validateDatabaseName(input.database) : null) : (base.database ?? null),
           ssl: input.ssl ?? base.ssl ?? false,
           sslCa: input.sslCa !== undefined ? validateSslCa(input.sslCa) : base.sslCa ?? null,
           viaItemId,
@@ -696,6 +697,46 @@ export const vaultService = {
     return { ...item, permission: 'manage' };
   },
 
+  /**
+   * Duplique un élément dans le même coffre (même propriétaire), secrets compris, sous un nouveau nom
+   * (`<nom>-copie` par défaut) : pour créer une variante (autre base, autre politique) sans tout ressaisir.
+   * Partages, liens et journal ne sont pas copiés ; un compte Google ou un jeton obtenu par connexion ne se
+   * duplique pas.
+   */
+  async duplicate(actor: VaultActor & { userId: string }, id: string, name?: string | null): Promise<VaultItemWithPermission> {
+    const source = await this.getFor(actor.userId, id, 'manage');
+    if (source.kind === 'google') throw new AppError('Un compte Google ne se duplique pas : reconnectez-le');
+    if (isOauthToken(source)) throw new AppError('Ce jeton a été obtenu par une connexion : il ne se duplique pas (reconnectez le compte)');
+    const newName = validateName(name?.trim() || `${source.name.slice(0, 34)}-copie`);
+    if (newName === source.name) throw new AppError('Donnez un autre nom à la copie');
+    if (source.ownerProjectId) await this.assertNameFree(source.ownerProjectId, null, newName, null);
+    const newId = randomUUID();
+    const item = await vaultRepository.create({
+      id: newId,
+      ownerUserId: source.ownerUserId,
+      ownerProjectId: source.ownerProjectId,
+      name: newName,
+      kind: source.kind,
+      description: source.description,
+      settings: JSON.parse(JSON.stringify(source.settings)) as VaultItem['settings'],
+      ...sealSecrets(newId, source.kind, this.secretsOf(source)),
+      publicKey: source.publicKey,
+      hostKey: source.hostKey,
+      hostKeySeenAt: source.hostKeySeenAt,
+      readOnly: source.readOnly,
+      requireApproval: source.requireApproval,
+      commandAllowlist: source.commandAllowlist,
+      expiresAt: source.expiresAt,
+      createdById: actor.userId,
+    }).catch((err) => {
+      if ((err as { code?: string }).code === '23505') throw new AppError(`Un élément « ${newName} » existe déjà dans ce coffre`);
+      throw err;
+    });
+    await this.audit(item, 'created', actor, `${kindLabels[item.kind]}, copie de « ${source.name} »`);
+    await this.audit(source, 'duplicated', actor, `« ${newName} »`);
+    return { ...item, permission: 'manage' };
+  },
+
   // ---- Portée des agents ---------------------------------------------------------------------------
 
   /** Un nom ne doit désigner qu'un élément dans la portée des agents d'un projet. */
@@ -758,17 +799,30 @@ export const vaultService = {
     return { host: s.host, port: s.port, username: s.username, privateKey };
   },
 
-  async postgresCredentials(item: VaultItem): Promise<PostgresCredentials> {
+  /**
+   * Identifiants d'une base. `database` : base demandée par l'agent ; admise seulement si l'élément couvre le
+   * serveur entier (sinon elle doit être celle de l'élément), à défaut la base de maintenance.
+   */
+  async postgresCredentials(item: VaultItem, database?: string | null): Promise<PostgresCredentials> {
     if (item.kind !== 'postgres') throw new AppError(`« ${item.name} » n'est pas une base PostgreSQL`);
     const s = item.settings as PostgresSettings;
+    const requested = database?.trim() || null;
+    let db: string;
+    if (s.database) {
+      if (requested && requested !== s.database) throw new AppError(`« ${item.name} » est rattaché à la base ${s.database} : la base « ${requested} » n'y est pas accessible`, 'FORBIDDEN');
+      db = s.database;
+    } else {
+      db = requested ? postgres.validateDatabaseName(requested) : postgres.MAINTENANCE_DATABASE;
+    }
     let via: PostgresCredentials['via'] = null;
     if (s.viaItemId) {
       const tunnel = await this.getInternal(s.viaItemId);
       if (tunnel.ownerUserId !== item.ownerUserId || tunnel.ownerProjectId !== item.ownerProjectId) throw new AppError(`Le tunnel de « ${item.name} » n'appartient plus au même propriétaire`, 'FORBIDDEN');
       via = { item: tunnel, credentials: this.sshCredentials(tunnel) };
     }
-    return { host: s.host, port: s.port, username: s.username, database: s.database, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
+    return { host: s.host, port: s.port, username: s.username, database: db, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
   },
+
 
   apiCredentials(item: VaultItem): ApiCredentials {
     if (item.kind !== 'api') throw new AppError(`« ${item.name} » n'est pas une API HTTP`);
@@ -829,7 +883,7 @@ export const vaultService = {
       }
       case 'postgres': {
         const creds = await this.postgresCredentials(item);
-        const probe = await postgres.probe(creds);
+        const probe = await postgres.probe(creds, !(item.settings as PostgresSettings).database);
         if (creds.via) await this.rememberHostKey(creds.via.item, probe.sshHostKey);
         return probe.detail;
       }
@@ -1054,7 +1108,8 @@ export const vaultService = {
         case 'postgres': {
           const s = i.settings as PostgresSettings;
           const via = s.viaItemId ? byId.get(s.viaItemId)?.name : null;
-          return `- \`${i.name}\` : base PostgreSQL ${s.database} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
+          const scope = s.database ? `base PostgreSQL ${s.database}` : `serveur PostgreSQL entier (toutes ses bases : paramètre \`database\` des outils, \`${postgres.MAINTENANCE_DATABASE}\` par défaut ; \`sql_schema\` sans base les liste)`;
+          return `- \`${i.name}\` : ${scope} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
         }
         case 'aws': {
           const s = i.settings as AwsSettings;
