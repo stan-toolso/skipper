@@ -350,7 +350,8 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
                     <Col md={4}>
                       <Form.Group>
                         <Form.Label>Base de données</Form.Label>
-                        <Form.Control value={database} onChange={(e) => setDatabase(e.target.value)} required />
+                        <Form.Control value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="toutes les bases" />
+                        <Form.Text className="text-secondary">Vide : le serveur entier, l’agent nomme la base à chaque appel (postgres par défaut).</Form.Text>
                       </Form.Group>
                     </Col>
                     <Col md={4}>

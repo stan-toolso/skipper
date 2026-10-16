@@ -38,7 +38,7 @@ function PolicyBadges({ item }: { item: VaultItem }) {
     if (item.google.gmailAccess !== 'NONE') badges.push(<Badge key="gm" bg={item.google.gmailAccess === 'WRITE' ? 'warning' : 'success'} text={item.google.gmailAccess === 'WRITE' ? 'dark' : undefined}>Gmail {item.google.gmailAccess === 'WRITE' ? 'écriture' : 'lecture'}</Badge>);
     if (item.google.driveAccess !== 'NONE') badges.push(<Badge key="dr" bg={item.google.driveAccess === 'WRITE' ? 'warning' : 'success'} text={item.google.driveAccess === 'WRITE' ? 'dark' : undefined}>Drive {item.google.driveAccess === 'WRITE' ? 'écriture' : 'lecture'}</Badge>);
   }
-  return <span className="d-inline-flex gap-1 flex-wrap">{badges}</span>;
+  return <span className="d-inline-flex gap-1 flex-nowrap">{badges}</span>;
 }
 
 /** Tableau des éléments du coffre, commun aux pages personnelle et projet. */
@@ -95,7 +95,7 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
   };
 
   return (
-    <Table hover size="sm" className="align-middle vault-table">
+    <Table hover size="sm" responsive className="align-middle vault-table">
       <thead>
         <tr>
           <th style={{ width: 24 }} />
@@ -128,16 +128,22 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
                   <i className={`bi bi-chevron-${expanded ? 'down' : 'right'} small`} />
                 </td>
                 <td>
-                  <strong>{item.name}</strong>
-                  {days !== null && days < 0 && <Badge bg="danger" className="ms-2">expiré</Badge>}
-                  {days !== null && days >= 0 && days < 30 && <Badge bg="warning" text="dark" className="ms-2">expire dans {days} j</Badge>}
-                  {item.description && <div className="small text-secondary text-truncate" style={{ maxWidth: 320 }}>{item.description}</div>}
+                  <div className="vault-cell-name">
+                    <strong>{item.name}</strong>
+                    {days !== null && days < 0 && <Badge bg="danger">expiré</Badge>}
+                    {days !== null && days >= 0 && days < 30 && <Badge bg="warning" text="dark">expire dans {days} j</Badge>}
+                    {item.description && (
+                      <span className="small text-secondary vault-cell-desc" title={item.description}>
+                        {item.description}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="text-nowrap">
                   <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} />
                   {KINDS[item.kind].label}
                 </td>
-                <td className="small font-monospace text-break" style={{ maxWidth: 320 }}>
+                <td className="small font-monospace vault-cell-target" title={targetOf(item)}>
                   {targetOf(item)}
                 </td>
                 <td className="small">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>

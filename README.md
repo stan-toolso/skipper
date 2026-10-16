@@ -288,7 +288,14 @@ fréquence, masqué après 30 s) ; la clé privée SSH et le jeton Google ne qui
 avec `restrict,command="…"`), clé d'hôte mémorisée à la première connexion et vérifiée ensuite, liste
 blanche de préfixes de commandes (qui désactive alors enchaînements et transferts). PostgreSQL : rôle
 dédié recommandé, « lecture seule » force des transactions `READ ONLY`, TLS avec certificat d'autorité
-optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. API : l'agent
+optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. Le champ « base de
+données » est facultatif : vide, l'élément couvre **le serveur entier** et l'agent nomme la base à chaque
+appel (paramètre `database` de `sql_query` et `sql_schema`, base de maintenance `postgres` par défaut ;
+`sql_schema` sans base liste les bases du serveur). **Dupliquer une base** (bloc de la fiche de l'élément,
+permission `gérer`, ou outil `sql_duplicate_database`, toujours soumis à accord) crée une copie complète sur le
+même serveur par `CREATE DATABASE … TEMPLATE …` depuis la base de maintenance : refusé sur un élément en
+lecture seule, limité à sa base pour un élément rattaché à une base, et PostgreSQL exige qu'aucune autre
+connexion ne soit ouverte sur la source (vérifié avant, erreur claire sinon). API : l'agent
 donne un chemin relatif à l'adresse de base, la requête ne sort ni de l'origine ni du chemin, le serveur
 ajoute l'authentification (Bearer, en-tête, Basic, paramètre), ne suit pas les redirections, masque le jeton
 dans la réponse ; « lecture seule » limite à GET, HEAD et OPTIONS ; les adresses internes sont refusées
@@ -314,8 +321,8 @@ jeton (permission `utiliser`) permet à un collègue de le choisir dans ses rég
 test d'un élément vérifie le jeton auprès du service (Anthropic, GitHub, LiteLLM `/v1/models`,
 Langfuse `/api/public/projects`).
 
-**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_exec`, `ssh_upload`, `ssh_download`,
-`sql_query`, `sql_schema`, `http_request`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
+**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`,
+`sql_query`, `sql_schema`, `sql_duplicate_database`, `http_request`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être

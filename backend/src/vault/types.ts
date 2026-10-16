@@ -46,7 +46,8 @@ export interface PostgresSettings {
   host: string;
   port: number;
   username: string;
-  database: string;
+  /** Base rattachée ; null = le serveur entier : l'agent choisit la base à chaque appel (vault/postgres.ts, MAINTENANCE_DATABASE par défaut). */
+  database: string | null;
   ssl: boolean;
   /** Certificat de l'autorité du serveur (PEM) : vérification de la chaîne sans contrôle du nom d'hôte (Cloud SQL). */
   sslCa: string | null;
@@ -221,6 +222,7 @@ export interface VaultItemInput {
   host?: string | null;
   port?: number | null;
   username?: string | null;
+  /** postgres : base rattachée ; vide ou null = le serveur entier (toutes ses bases). */
   database?: string | null;
   ssl?: boolean | null;
   sslCa?: string | null;
@@ -266,6 +268,7 @@ export interface PostgresCredentials {
   host: string;
   port: number;
   username: string;
+  /** Base de la connexion, résolue : celle de l'élément, ou celle demandée (ou de maintenance) pour un serveur entier. */
   database: string;
   ssl: boolean;
   sslCa: string | null;

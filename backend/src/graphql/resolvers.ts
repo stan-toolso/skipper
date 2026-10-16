@@ -1215,6 +1215,7 @@ export const resolvers = {
       const { item, result } = await vaultService.test(vaultActor(ctx), args.id);
       return { item, ...result };
     },
+    duplicateVaultDatabase: (_: unknown, args: { id: string; target: string; source?: string | null }, ctx: Ctx) => vaultService.duplicateDatabase(vaultActor(ctx), args.id, args.source, args.target),
     regenerateVaultKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.regenerateKey(vaultActor(ctx), args.id),
     forgetVaultHostKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.forgetHostKey(vaultActor(ctx), args.id),
     revealVaultSecret: async (_: unknown, args: { id: string; field: string }, ctx: Ctx) => ({ field: args.field, value: await vaultService.reveal(vaultActor(ctx), args.id, args.field) }),

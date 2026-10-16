@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthContext';
 import type { Project } from '../../graphql/operations';
 import {
   COPY_VAULT_ITEM,
+  DUPLICATE_VAULT_DATABASE,
   FORGET_VAULT_HOST_KEY,
   LINK_VAULT_ITEM,
   REGENERATE_VAULT_KEY,
@@ -38,6 +39,7 @@ const ACTION_LABELS: Record<string, string> = {
   linked: 'ouvert à un projet',
   unlinked: 'retiré d’un projet',
   copied: 'copie',
+  duplicated: 'base dupliquée',
   tested: 'test',
   used: 'usage par un agent',
   key_regenerated: 'clé régénérée',
@@ -91,6 +93,52 @@ function RevealRow({ item, field }: { item: VaultItem; field: string }) {
         </>
       )}
       {error && <span className="text-danger small">{error}</span>}
+    </div>
+  );
+}
+
+/** Duplication d'une base du serveur (CREATE DATABASE … TEMPLATE …), pour un élément en écriture que l'on gère. */
+function DuplicateDatabase({ item }: { item: VaultItem }) {
+  const { confirm } = useDialogs();
+  const [source, setSource] = useState(item.database ?? '');
+  const [target, setTarget] = useState('');
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [duplicate, { loading }] = useMutation<{ duplicateVaultDatabase: string }>(DUPLICATE_VAULT_DATABASE, { refetchQueries: REFETCH });
+  const src = item.database ?? source.trim();
+  const run = async () => {
+    setResult(null);
+    if (!src || !target.trim()) return;
+    const ok = await confirm({
+      title: 'Dupliquer la base',
+      message: `Créer la base « ${target.trim()} » comme copie de « ${src} » sur ${item.host} ? La copie se fait sur le serveur (CREATE DATABASE … TEMPLATE …) : aucune autre connexion ne doit être ouverte sur la source pendant l'opération, qui peut durer plusieurs minutes.`,
+      confirmLabel: 'Dupliquer',
+    });
+    if (!ok) return;
+    try {
+      const res = await duplicate({ variables: { id: item.id, target: target.trim(), source: item.database ? null : source.trim() } });
+      setResult({ ok: true, text: res.data?.duplicateVaultDatabase ?? 'Base dupliquée.' });
+      setTarget('');
+    } catch (err) {
+      setResult({ ok: false, text: (err as Error).message });
+    }
+  };
+  return (
+    <div className="mt-2">
+      <div className="text-secondary">Dupliquer une base du serveur (copie complète sous un nouveau nom, journalisée) :</div>
+      <InputGroup size="sm" className="mt-1" style={{ maxWidth: 560 }}>
+        <InputGroup.Text>Source</InputGroup.Text>
+        <Form.Control value={item.database ?? source} readOnly={Boolean(item.database)} onChange={(e) => setSource(e.target.value)} placeholder="base à copier" className="font-monospace" />
+        <InputGroup.Text>Nouvelle base</InputGroup.Text>
+        <Form.Control value={target} onChange={(e) => setTarget(e.target.value)} placeholder="nom inexistant" className="font-monospace" onKeyDown={(e) => e.key === 'Enter' && void run()} />
+        <Button variant="outline-secondary" disabled={loading || !src || !target.trim()} onClick={() => void run()}>
+          {loading ? <span className="spinner-border spinner-border-sm" /> : 'Dupliquer'}
+        </Button>
+      </InputGroup>
+      {result && (
+        <Alert variant={result.ok ? 'success' : 'danger'} className="py-1 my-1 small" dismissible onClose={() => setResult(null)}>
+          {result.text}
+        </Alert>
+      )}
     </div>
   );
 }
@@ -252,6 +300,21 @@ function DetailsTab({ item, projectPage, browserDisabled, onEdited }: { item: Va
         {agentToolsOf(item)}
         {projectPage && browserDisabled && (item.kind === 'website' || item.kind === 'secret') && <span className="text-warning"> · navigateur headless désactivé sur ce projet</span>}
       </div>
+      {item.kind === 'postgres' && (
+        <div className="mb-1">
+          <span className="text-secondary">Portée : </span>
+          {item.database ? (
+            <>
+              base <code>{item.database}</code> seulement
+            </>
+          ) : (
+            'le serveur entier : toutes ses bases'
+          )}
+          {' · '}
+          {item.readOnly ? 'lecture seule' : 'écriture autorisée'}
+        </div>
+      )}
+      {item.kind === 'postgres' && manage && !item.readOnly && <DuplicateDatabase item={item} />}
       {item.kind === 'ssh' && item.publicKey && (
         <div className="mt-2">
           <div className="text-secondary">

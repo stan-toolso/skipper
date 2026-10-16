@@ -11,6 +11,17 @@ import type { PostgresCredentials } from './types.js';
 
 export const SQL_MAX_ROWS = 200;
 export const SQL_TIMEOUT_MS = 30_000;
+/** Base de connexion d'un élément rattaché à un serveur entier, quand l'agent n'en nomme pas une. */
+export const MAINTENANCE_DATABASE = 'postgres';
+/** Délai d'une duplication (CREATE DATABASE … TEMPLATE … copie les fichiers : long sur une grosse base). */
+export const DUPLICATE_TIMEOUT_MS = 30 * 60_000;
+
+/** Nom de base PostgreSQL acceptable : lettres, chiffres, `_`, `-` et `$`, 63 octets au plus (cité en identifiant dans le SQL). */
+export function validateDatabaseName(name: string | null | undefined, label = 'Le nom de la base'): string {
+  const n = (name ?? '').trim();
+  if (!n || Buffer.byteLength(n, 'utf8') > 63 || !/^[A-Za-z0-9_][A-Za-z0-9_$-]*$/.test(n)) throw new AppError(`${label} est invalide : lettres, chiffres, _ - $, 63 caractères au plus${n ? ` (« ${n} »)` : ''}`);
+  return n;
+}
 
 export interface QueryResult {
   /** Une entrée par instruction exécutée. */
@@ -37,7 +48,7 @@ function sslConfig(creds: PostgresCredentials): pg.ClientConfig['ssl'] {
 }
 
 /** Ouvre le tunnel SSH si besoin puis la connexion PostgreSQL. */
-async function open(creds: PostgresCredentials, readOnly: boolean): Promise<Opened> {
+async function open(creds: PostgresCredentials, readOnly: boolean, statementTimeoutMs = SQL_TIMEOUT_MS): Promise<Opened> {
   let ssh: SshSession | null = null;
   let tunnel: Tunnel | null = null;
   let host = creds.host;
@@ -56,7 +67,7 @@ async function open(creds: PostgresCredentials, readOnly: boolean): Promise<Open
     database: creds.database,
     ssl: sslConfig(creds),
     connectionTimeoutMillis: 15_000,
-    statement_timeout: SQL_TIMEOUT_MS,
+    statement_timeout: statementTimeoutMs,
     application_name: 'skipper',
   });
   const close = async () => {
@@ -136,15 +147,63 @@ function statementOf(r: pg.QueryArrayResult, maxRows: number, command?: string):
   return { command: command ?? r.command, rowCount: truncated ? null : (fields.length ? r.rows.length : r.rowCount), fields, rows, truncated };
 }
 
-/** Vérifie la connexion et renvoie la version du serveur. */
-export async function probe(creds: PostgresCredentials): Promise<{ detail: string; sshHostKey: string | null }> {
+/** Vérifie la connexion et renvoie la version du serveur (serverWide : l'élément couvre toutes les bases, la connexion de test passe par la base de maintenance). */
+export async function probe(creds: PostgresCredentials, serverWide = false): Promise<{ detail: string; sshHostKey: string | null }> {
   const opened = await open(creds, true);
   try {
-    const { rows } = await opened.client.query<{ version: string; db: string; usr: string }>('SELECT version() AS version, current_database() AS db, current_user AS usr');
-    return { detail: `${rows[0].version.split(',')[0]} · base ${rows[0].db} · utilisateur ${rows[0].usr}`, sshHostKey: opened.sshHostKey };
+    const { rows } = await opened.client.query<{ version: string; db: string; usr: string; databases: string }>(
+      'SELECT version() AS version, current_database() AS db, current_user AS usr, (SELECT count(*) FROM pg_database WHERE datallowconn) AS databases',
+    );
+    const scope = serverWide ? `toutes les bases (${rows[0].databases}, connexion par ${rows[0].db})` : `base ${rows[0].db}`;
+    return { detail: `${rows[0].version.split(',')[0]} · ${scope} · utilisateur ${rows[0].usr}`, sshHostKey: opened.sshHostKey };
   } finally {
     await opened.close();
   }
+}
+
+/** SQL de duplication : la nouvelle base est créée à partir de la source prise comme modèle (copie des fichiers, sans dump). */
+export function duplicateSql(source: string, target: string): string {
+  return `CREATE DATABASE ${pg.escapeIdentifier(target)} TEMPLATE ${pg.escapeIdentifier(source)}`;
+}
+
+/**
+ * Duplique une base par `CREATE DATABASE … TEMPLATE …`. PostgreSQL exige qu'aucune autre session ne soit
+ * connectée à la source : la connexion passe donc par la base de maintenance, jamais par la source, et les
+ * connexions ouvertes sont vérifiées avant pour donner une erreur claire. Hors transaction (interdit dans un
+ * bloc), avec un délai long. Le rôle doit pouvoir créer des bases (CREATEDB) et être propriétaire de la source.
+ */
+export async function duplicateDatabase(creds: PostgresCredentials, source: string, target: string): Promise<{ detail: string; sshHostKey: string | null }> {
+  const src = validateDatabaseName(source, 'Le nom de la base source');
+  const dst = validateDatabaseName(target, 'Le nom de la nouvelle base');
+  if (src === dst) throw new AppError('La nouvelle base doit porter un autre nom que la source');
+  const started = Date.now();
+  const opened = await open({ ...creds, database: creds.database === src ? MAINTENANCE_DATABASE : creds.database }, false, DUPLICATE_TIMEOUT_MS);
+  try {
+    const c = opened.client;
+    const { rows: existing } = await c.query<{ datname: string }>('SELECT datname FROM pg_database WHERE datname = ANY($1)', [[src, dst]]);
+    if (!existing.some((d) => d.datname === src)) throw new AppError(`La base « ${src} » n'existe pas sur ce serveur`, 'POSTGRES');
+    if (existing.some((d) => d.datname === dst)) throw new AppError(`La base « ${dst} » existe déjà sur ce serveur`, 'POSTGRES');
+    const { rows: [state] } = await c.query<{ others: string; size: string | null }>(
+      `SELECT (SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()) AS others,
+              CASE WHEN has_database_privilege($1, 'CONNECT') THEN pg_size_pretty(pg_database_size($1)) END AS size`,
+      [src],
+    );
+    if (Number(state.others) > 0) throw new AppError(`La base « ${src} » est utilisée par ${state.others} autre(s) connexion(s) : PostgreSQL ne la copie que si personne n'y est connecté (fermer ces connexions, ou pg_terminate_backend)`, 'POSTGRES');
+    await c.query(duplicateSql(src, dst)).catch((err: Error) => {
+      throw new AppError(`Erreur SQL : ${err.message}`, 'POSTGRES');
+    });
+    return { detail: `Base « ${dst} » créée à partir de « ${src} »${state.size ? ` (${state.size})` : ''} en ${Math.max(1, Math.round((Date.now() - started) / 1000))} s`, sshHostKey: opened.sshHostKey };
+  } finally {
+    await opened.close();
+  }
+}
+
+/** Requête listant les bases du serveur (nom, propriétaire, taille quand le rôle peut s'y connecter). */
+export function databasesSql(): string {
+  return `SELECT d.datname AS database, pg_catalog.pg_get_userbyid(d.datdba) AS owner,
+       CASE WHEN has_database_privilege(d.datname, 'CONNECT') THEN pg_size_pretty(pg_database_size(d.datname)) END AS size,
+       d.datistemplate AS template
+       FROM pg_database d WHERE d.datallowconn ORDER BY d.datname`;
 }
 
 /** Valeur SQL présentable en texte (dates, JSON, tableaux, binaires). */

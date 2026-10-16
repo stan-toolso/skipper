@@ -112,9 +112,10 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
         const [label, action] = verbs[op] ?? [`Worktrees : ${op}`, `utiliser les worktrees (${op})`];
         return { label, action };
       }
-      if (name.startsWith('mcp__connections__')) {
-        const op = name.slice('mcp__connections__'.length);
-        const conn = str(input, 'connection') ?? '';
+      if (name.startsWith('mcp__connections__') || name.startsWith('mcp__vault__')) {
+        const op = name.replace(/^mcp__(connections|vault)__/, '');
+        const conn = str(input, 'connection') ?? str(input, 'item') ?? '';
+        const db = str(input, 'database') ? ` (base ${str(input, 'database')})` : '';
         const cmd = str(input, 'command') ?? '';
         const sql = str(input, 'sql') ?? '';
         const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
@@ -123,10 +124,13 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
           ssh_run: [`Commande sur ${conn} (SSH)`, cmd, `exécuter sur ${conn} : ${short(cmd)}`],
           ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
-          sql_query: [`Requête SQL sur ${conn}`, sql, `exécuter sur ${conn} : ${short(sql)}`],
-          sql_schema: [`Schéma de ${conn}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}`],
+          sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],
+          sql_schema: [`Schéma de ${conn}${db}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}${db}`],
+          sql_duplicate_database: [`Duplication de la base ${str(input, 'source') ?? ''} en ${str(input, 'target') ?? ''} sur ${conn}`, undefined, `dupliquer la base ${str(input, 'source') ?? ''} en ${str(input, 'target') ?? ''} sur ${conn}`],
+          http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''}`],
+          browser_fill: [`Saisie du champ ${str(input, 'field') ?? ''} de ${conn} dans le navigateur`, str(input, 'page'), `saisir le champ ${str(input, 'field') ?? ''} de ${conn} dans le navigateur`],
         };
-        const [label, detail, action] = verbs[op] ?? [`Connexions : ${op}`, undefined, `utiliser une connexion (${op})`];
+        const [label, detail, action] = verbs[op] ?? [`Coffre : ${op}`, undefined, `utiliser le coffre (${op})`];
         return { label, detail, action };
       }
       const json = JSON.stringify(input);

@@ -377,6 +377,12 @@ export const TEST_VAULT_ITEM = gql`
   }
 `;
 
+export const DUPLICATE_VAULT_DATABASE = gql`
+  mutation DuplicateVaultDatabase($id: ID!, $target: String!, $source: String) {
+    duplicateVaultDatabase(id: $id, target: $target, source: $source)
+  }
+`;
+
 export const REGENERATE_VAULT_KEY = gql`
   ${VAULT_ITEM_FIELDS}
   mutation RegenerateVaultKey($id: ID!) {

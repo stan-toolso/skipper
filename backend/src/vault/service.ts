@@ -257,7 +257,8 @@ export const vaultService = {
           host: requireText(input.host ?? base.host, "L'hôte est"),
           port: validatePort(input.port ?? base.port ?? null, DEFAULT_PORTS.postgres),
           username: requireText(input.username ?? base.username, "L'utilisateur est"),
-          database: requireText(input.database ?? base.database, 'Le nom de la base est'),
+          // Vide : le serveur entier, l'agent nomme la base à chaque appel.
+          database: input.database !== undefined ? (input.database?.trim() ? postgres.validateDatabaseName(input.database) : null) : (base.database ?? null),
           ssl: input.ssl ?? base.ssl ?? false,
           sslCa: input.sslCa !== undefined ? validateSslCa(input.sslCa) : base.sslCa ?? null,
           viaItemId,
@@ -708,16 +709,60 @@ export const vaultService = {
     return { host: s.host, port: s.port, username: s.username, privateKey };
   },
 
-  async postgresCredentials(item: VaultItem): Promise<PostgresCredentials> {
+  /**
+   * Identifiants d'une base. `database` : base demandée par l'agent ; admise seulement si l'élément couvre le
+   * serveur entier (sinon elle doit être celle de l'élément), à défaut la base de maintenance.
+   */
+  async postgresCredentials(item: VaultItem, database?: string | null): Promise<PostgresCredentials> {
     if (item.kind !== 'postgres') throw new AppError(`« ${item.name} » n'est pas une base PostgreSQL`);
     const s = item.settings as PostgresSettings;
+    const requested = database?.trim() || null;
+    let db: string;
+    if (s.database) {
+      if (requested && requested !== s.database) throw new AppError(`« ${item.name} » est rattaché à la base ${s.database} : la base « ${requested} » n'y est pas accessible`, 'FORBIDDEN');
+      db = s.database;
+    } else {
+      db = requested ? postgres.validateDatabaseName(requested) : postgres.MAINTENANCE_DATABASE;
+    }
     let via: PostgresCredentials['via'] = null;
     if (s.viaItemId) {
       const tunnel = await this.getInternal(s.viaItemId);
       if (tunnel.ownerUserId !== item.ownerUserId || tunnel.ownerProjectId !== item.ownerProjectId) throw new AppError(`Le tunnel de « ${item.name} » n'appartient plus au même propriétaire`, 'FORBIDDEN');
       via = { item: tunnel, credentials: this.sshCredentials(tunnel) };
     }
-    return { host: s.host, port: s.port, username: s.username, database: s.database, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
+    return { host: s.host, port: s.port, username: s.username, database: db, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
+  },
+
+  /**
+   * Duplique une base du serveur (CREATE DATABASE … TEMPLATE …) : refusé sur un élément en lecture seule ; un
+   * élément rattaché à une base ne duplique que celle-ci. Appelé par l'interface (après contrôle des droits et
+   * journalisé par duplicateDatabase) et par l'outil MCP (après la porte d'approbation, journalisé par l'outil).
+   */
+  async duplicatePostgresDatabase(item: VaultItem, source: string | null | undefined, target: string): Promise<string> {
+    if (item.kind !== 'postgres') throw new AppError(`« ${item.name} » n'est pas une base PostgreSQL`);
+    if (item.readOnly) throw new AppError(`« ${item.name} » est en lecture seule : impossible d'y créer une base`, 'FORBIDDEN');
+    const s = item.settings as PostgresSettings;
+    const src = source?.trim() || s.database;
+    if (!src) throw new AppError('Indiquez la base à dupliquer (source)');
+    if (s.database && src !== s.database) throw new AppError(`« ${item.name} » est rattaché à la base ${s.database} : seule cette base peut être dupliquée`, 'FORBIDDEN');
+    const creds = await this.postgresCredentials(item);
+    const r = await postgres.duplicateDatabase(creds, src, target);
+    if (creds.via) await this.rememberHostKey(creds.via.item, r.sshHostKey);
+    return r.detail;
+  },
+
+  /** Duplication demandée depuis l'interface (permission MANAGE), journalisée. */
+  async duplicateDatabase(actor: VaultActor & { userId: string }, id: string, source: string | null | undefined, target: string): Promise<string> {
+    const item = await this.getFor(actor.userId, id, 'manage');
+    const label = `${source?.trim() || (item.settings as PostgresSettings).database || '?'} → ${target.trim()}`;
+    try {
+      const detail = await this.duplicatePostgresDatabase(item, source, target);
+      await this.audit(item, 'duplicated', actor, `${label} : ${detail}`);
+      return detail;
+    } catch (err) {
+      await this.audit(item, 'duplicated', actor, `${label} — ${(err as Error).message}`, false);
+      throw err;
+    }
   },
 
   apiCredentials(item: VaultItem): ApiCredentials {
@@ -779,7 +824,7 @@ export const vaultService = {
       }
       case 'postgres': {
         const creds = await this.postgresCredentials(item);
-        const probe = await postgres.probe(creds);
+        const probe = await postgres.probe(creds, !(item.settings as PostgresSettings).database);
         if (creds.via) await this.rememberHostKey(creds.via.item, probe.sshHostKey);
         return probe.detail;
       }
@@ -1003,7 +1048,8 @@ export const vaultService = {
         case 'postgres': {
           const s = i.settings as PostgresSettings;
           const via = s.viaItemId ? byId.get(s.viaItemId)?.name : null;
-          return `- \`${i.name}\` : base PostgreSQL ${s.database} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
+          const scope = s.database ? `base PostgreSQL ${s.database}` : `serveur PostgreSQL entier (toutes ses bases : paramètre \`database\` des outils, \`${postgres.MAINTENANCE_DATABASE}\` par défaut ; \`sql_schema\` sans base les liste)`;
+          return `- \`${i.name}\` : ${scope} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`${i.readOnly ? '' : ', \`sql_duplicate_database\` (copie d\'une base, soumise à accord)'}.`;
         }
         default:
           return '';
