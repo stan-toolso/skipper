@@ -49,10 +49,15 @@ export interface TaskFiles {
 /** Les fichiers que reçoit la session à qui l'on confie la tâche, avec sa première instruction : autant qu'une instruction en porte. */
 export const taskFiles = async (taskId: string): Promise<TaskFiles> => fitInInstruction(await taskService.attachments(taskId));
 
-/** Nom de dossier et de branche dérivés du titre de la tâche, uniques parmi les work sessions données. */
-export function taskWorksessionNames(task: Pick<Task, 'title'>, taken: Pick<Worksession, 'name'>[]): { name: string; branch: string } {
-  const name = uniqueName(taken, namesFromText(task.title, 'task-').name);
-  return { name, branch: name.replace(/^task-/, 'task/') };
+/**
+ * Libellé, nom de dossier et branche dérivés du titre de la tâche, uniques parmi les work sessions données.
+ * Le libellé est le titre ramené à la longueur admise par une work session : un titre long ne doit pas
+ * empêcher de confier la tâche à un agent.
+ */
+export function taskWorksessionNames(task: Pick<Task, 'title'>, taken: Pick<Worksession, 'name'>[]): { label: string; name: string; branch: string } {
+  const names = namesFromText(task.title, 'task-');
+  const name = uniqueName(taken, names.name);
+  return { label: names.label, name, branch: name.replace(/^task-/, 'task/') };
 }
 
 /**
@@ -63,8 +68,8 @@ export function taskWorksessionNames(task: Pick<Task, 'title'>, taken: Pick<Work
 export async function taskWorksession(task: Task, actorId?: string | null): Promise<Worksession> {
   const existing = await worksessionService.forTask(task.id);
   if (existing) return existing;
-  const { name, branch } = taskWorksessionNames(task, await worksessionRepository.listByProject(task.projectId, { includeArchived: true }));
-  return worksessionService.create(task.projectId, { name, branch, label: task.title, taskId: task.id }, actorId);
+  const { label, name, branch } = taskWorksessionNames(task, await worksessionRepository.listByProject(task.projectId, { includeArchived: true }));
+  return worksessionService.create(task.projectId, { name, branch, label, taskId: task.id }, actorId);
 }
 
 /**
