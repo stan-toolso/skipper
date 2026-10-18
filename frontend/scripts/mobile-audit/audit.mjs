@@ -40,7 +40,7 @@ const SCENARIOS = [
   ['tasks-table', '/tasks', async (p) => p.locator('button[title="Liste"]').click()],
   ['vault-new', '/vault', async (p) => p.click('text=Ajouter un élément')],
   ['vault-expanded', '/vault', async (p) => p.click('.vault-row')],
-  ['project-worktrees', '/projects/p1', async (p) => p.locator('text=Nouveau worktree').scrollIntoViewIfNeeded()],
+  ['project-worktrees', '/projects/p1', async (p) => p.locator('text=Nouvelle work session').first().scrollIntoViewIfNeeded()],
   ['project-members', '/projects/p1', async (p) => p.locator('text=Membres').first().scrollIntoViewIfNeeded()],
   ['file-code', '/projects/p1/files/previsionnel/Previsionnel_2026-2027.html', async (p) => p.locator('button', { hasText: /^Code$/ }).click()],
   ['file-publish', '/projects/p1/files/previsionnel/Previsionnel_2026-2027.html', async (p) => p.locator('button', { hasText: 'Publier' }).first().click()],

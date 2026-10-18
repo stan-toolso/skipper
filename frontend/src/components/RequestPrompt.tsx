@@ -71,6 +71,9 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
   const desc = describeTool(p.toolName ?? 'outil', input);
   const detail = desc.detail ?? (typeof input.content === 'string' ? undefined : JSON.stringify(input, null, 2));
   const content = typeof input.content === 'string' ? input.content : typeof input.new_string === 'string' ? input.new_string : undefined;
+  // Les outils du coffre passent la commande en message : ne pas la répéter sous le détail (deux blocs identiques
+  // qui doublent la hauteur de la demande).
+  const note = request.message && request.message.trim() !== detail?.trim() && request.message.trim() !== content?.trim() ? request.message : undefined;
 
   const options: Option[] = [
     { label: 'Oui, autoriser', value: () => ({ decision: 'allow' }) },
@@ -88,7 +91,7 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
       <div className="cc-prompt-title">L'agent souhaite {desc.action}</div>
       {detail && <div className="cc-prompt-body">{detail}</div>}
       {content && <div className="cc-prompt-body">{content.length > 1500 ? `${content.slice(0, 1500)}\n…` : content}</div>}
-      {request.message && <Markdown className="cc-prompt-body" text={request.message} />}
+      {note && <Markdown className="cc-prompt-body" text={note} />}
       {proposed.length > 0 && !denying && (
         <label className="cc-rule-edit">
           <span className="cc-desc">Règle à retenir si vous ne voulez plus être sollicité (modifiable, une par ligne) :</span>
@@ -197,7 +200,7 @@ export default function RequestPrompt({ request }: { request: HumanRequest }) {
         <InputPrompt request={request} answer={answer} busy={busy} />
       )}
       <div className="cc-hint">
-        <span>{error ? <span className="cc-red">{error.message}</span> : 'Cliquez sur une réponse, ou tapez son numéro'}</span>
+        {error ? <span className="cc-red">{error.message}</span> : <span className="cc-hint-text">Cliquez sur une réponse, ou tapez son numéro</span>}
         <button type="button" className="cc-btn" disabled={busy} onClick={() => cancelRequest({ variables: { id: request.id } })}>
           Ignorer cette demande
         </button>

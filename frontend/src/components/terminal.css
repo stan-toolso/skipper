@@ -137,6 +137,11 @@
 .cc-note.error { color: var(--cc-red); }
 .cc-note.warn { color: var(--cc-yellow); }
 
+/* Demandes en attente : sous le transcript, dans leur propre zone qui défile. Sans cela, une demande haute (longue
+   commande, règle à retenir, plusieurs options) pousse ses options sous le bord du conteneur .cc (overflow: hidden) :
+   on ne peut plus répondre, surtout sur mobile. Bornée pour laisser toujours un bout de conversation visible. */
+.cc-prompts { flex: 0 1 auto; min-height: 0; max-height: 70%; overflow-y: auto; }
+
 /* Demande d'intervention (autorisation, question) : encadré orange, options numérotées */
 .cc-prompt {
   border: 1px solid var(--cc-accent);
@@ -289,7 +294,9 @@
   .cc-send { display: inline-flex; }
 }
 @media (max-width: 767.98px) {
-  .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; }
+  /* Le conteneur défile au lieu de rogner : avec un en-tête haut (sous-agents, bandeaux) et des demandes en attente,
+     la zone de saisie resterait sinon hors de l'écran. */
+  .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; overflow-y: auto; }
   .cc-header { padding: 8px 10px; gap: 6px; }
   .cc-children { padding: 5px 10px; }
   .cc-subagent { padding: 6px 10px; }
@@ -302,7 +309,10 @@
   .cc-toggle { padding: 4px 10px 0; }
   .cc-status { padding: 4px 10px; flex-direction: column; gap: 2px; font-size: 12px; }
   .cc-input { margin: 0 8px 8px; }
-  .cc-hint { display: none; }
+  /* Pas de raccourcis clavier sur mobile : seul le bouton « Ignorer » reste, à droite. */
+  .cc-hint { padding: 0 8px 8px; justify-content: flex-end; }
+  .cc-hint .cc-hint-text { display: none; }
+  .cc-prompts { max-height: 75%; min-height: 160px; }
   .cc-prompt { margin: 10px 8px; padding: 8px 10px; }
   .cc-result { margin-left: 8px; }
 }

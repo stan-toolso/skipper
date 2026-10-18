@@ -40,7 +40,7 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
         </Form.Group>
       )}
       <Form.Control size="sm" className="mb-2" placeholder="Motif ou consigne en cas de refus (optionnel)" value={message} onChange={(e) => setMessage(e.target.value)} />
-      <div className="d-flex gap-2">
+      <div className="d-flex flex-wrap gap-2">
         <Button size="sm" variant="success" disabled={busy} onClick={() => onAnswer({ decision: 'allow' })}>
           Autoriser
         </Button>
