@@ -142,6 +142,20 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
 }
 
 /** Titre lisible d'une demande : pour une autorisation, l'action demandée ("Autorisation de lire le fichier x"). */
+/**
+ * Message d'une demande d'autorisation, sans ce que le détail de l'outil montre déjà : les outils du coffre passent la
+ * commande (ou `[base] requête`) en message, parfois suivie d'une remarque (élément personnel). On ne garde que le reste.
+ */
+export function requestNote(message: string | null | undefined, ...shown: (string | undefined)[]): string | undefined {
+  let rest = message ?? '';
+  for (const s of shown) {
+    const t = s?.trim();
+    if (t && rest.includes(t)) rest = rest.replace(t, '');
+  }
+  rest = rest.replace(/^\s*\[[^\]\n]*\]\s*$/m, '').trim();
+  return rest || undefined;
+}
+
 export function requestTitle(r: { type: string; title: string; payload: Record<string, unknown> }): string {
   const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
   if (r.type === 'permission' && p.toolName) return `Autorisation de ${describeTool(p.toolName, p.input ?? {}).action}`;

@@ -186,7 +186,7 @@ function TaskTable({ tasks, showProject, onEdit, targets, onTag }: { tasks: Task
               <TaskTags tags={t.tags} onSelect={onTag} className="ms-2" />
             </td>
             {showProject && (
-              <td>
+              <td className="task-cell-project" title={t.project.name}>
                 <Link to={`/projects/${t.project.id}/tasks`}>{t.project.name}</Link>
               </td>
             )}

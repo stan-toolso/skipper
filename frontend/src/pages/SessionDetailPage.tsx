@@ -499,9 +499,13 @@ export default function SessionDetailPage() {
       {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
       {relaunching && <RelaunchModal session={session} projectName={session.project.name} worksessions={session.worksession ? [{ id: session.worksession.id, label: session.worksession.label }] : []} onClose={() => setRelaunching(false)} />}
 
-      {pending.map((r) => (
-        <RequestPrompt key={r.id} request={r} />
-      ))}
+      {pending.length > 0 && (
+        <div className="cc-prompts">
+          {pending.map((r) => (
+            <RequestPrompt key={r.id} request={r} />
+          ))}
+        </div>
+      )}
 
       <div className="cc-status">
         <span>

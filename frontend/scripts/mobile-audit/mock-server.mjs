@@ -78,6 +78,12 @@ function value(type, field, parentType, depth) {
 }
 const fieldResolver = (source, _args, _ctx, info) => {
   if (source && typeof source === 'object' && info.fieldName in source) return source[info.fieldName];
+  // Fichier ouvert dans l'éditeur : son nom suit le chemin demandé (l'aperçu HTML et le bouton « Code » n'existent
+  // que pour un .html), au lieu d'alterner au gré du compteur.
+  if (info.fieldName === 'name' && /^File/.test(info.parentType.name)) {
+    const p = Object.values(info.variableValues ?? {}).find((v) => typeof v === 'string' && /\.[a-z0-9]+$/i.test(v));
+    if (p) return path.basename(p);
+  }
   return value(info.returnType, info.fieldName, info.parentType.name, ((source && source.__depth) || 0) + 1);
 };
 const typeResolver = (v) => v.__typename;
