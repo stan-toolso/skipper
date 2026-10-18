@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
+import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestNote, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
 
 describe('describeTool', () => {
   it('décrit une commande Bash et tronque une longue commande dans la demande', () => {
@@ -128,5 +128,18 @@ describe('generalizeBashRule / editableRules', () => {
     ];
     expect(editableRules(suggestions)).toEqual(['Bash(git checkout *)', 'Read(//tmp/**)']);
     expect(parseRuleLines(' Bash(git *)\n\n Read \n')).toEqual(['Bash(git *)', 'Read']);
+  });
+});
+
+describe('requestNote', () => {
+  it("retire du message ce que le détail de l'outil montre déjà", () => {
+    const cmd = 'export NVM_DIR=$HOME/.nvm; cd ~/skipper && git pull';
+    expect(requestNote(cmd, cmd)).toBeUndefined();
+    expect(requestNote(`${cmd}\nÉlément personnel : ne vaut que pour cette session.`, cmd)).toBe('Élément personnel : ne vaut que pour cette session.');
+    expect(requestNote('[skipper] select 1', 'select 1')).toBeUndefined();
+    expect(requestNote('[skipper] select 1\nÉlément personnel.', 'select 1')).toBe('Élément personnel.');
+    expect(requestNote('Un motif à part', 'select 1', 'contenu')).toBe('Un motif à part');
+    expect(requestNote(null, cmd)).toBeUndefined();
+    expect(requestNote('', undefined)).toBeUndefined();
   });
 });

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Card, Form } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool, editableRules, parseRuleLines, suggestedModes } from '../lib/humanize';
+import { describeTool, editableRules, parseRuleLines, requestNote, suggestedModes } from '../lib/humanize';
 import Markdown from './Markdown';
 
 interface Question {
@@ -25,9 +25,12 @@ function PermissionForm({ request, onAnswer, busy }: { request: HumanRequest; on
   const remember = (scope: 'session' | 'project') => onAnswer({ decision: 'allow', scope, ...(proposed.length ? { rules: parseRuleLines(ruleText) } : {}) });
   const desc = describeTool(p.toolName ?? 'outil', p.input ?? {});
   const content = typeof p.input?.content === 'string' ? p.input.content : undefined;
+  // Le message ne répète pas ce que le détail montre déjà (commande des outils du coffre).
+  const note = requestNote(request.message, desc.detail, content);
   return (
     <>
       <div className="mb-1">L'agent souhaite {desc.action}.</div>
+      {note && <p className="small mb-2">{note}</p>}
       {(desc.detail || content) && (
         <pre className="pre-dark p-2 small mb-2" style={{ maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
           {[desc.detail, content].filter(Boolean).join('\n\n')}
@@ -161,7 +164,7 @@ export default function RequestCard({ request, showSession = false }: { request:
         </span>
       </Card.Header>
       <Card.Body>
-        {request.message && <p className="small">{request.message}</p>}
+        {request.message && request.type !== 'permission' && <p className="small">{request.message}</p>}
         {request.type === 'permission' && <PermissionForm request={request} onAnswer={onAnswer} busy={busy} />}
         {request.type === 'question' && <QuestionForm request={request} onAnswer={onAnswer} busy={busy} />}
         {request.type !== 'permission' && request.type !== 'question' && <InputForm onAnswer={onAnswer} busy={busy} />}

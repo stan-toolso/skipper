@@ -1,7 +1,7 @@
 import { useMutation } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { ANSWER_REQUEST, CANCEL_REQUEST, type HumanRequest } from '../graphql/operations';
-import { describeTool, editableRules, parseRuleLines, suggestedModes } from '../lib/humanize';
+import { describeTool, editableRules, parseRuleLines, requestNote, suggestedModes } from '../lib/humanize';
 import { canAutoFocus } from '../lib/device';
 import Markdown from './Markdown';
 
@@ -72,8 +72,8 @@ function PermissionPrompt({ request, answer, busy }: { request: HumanRequest; an
   const detail = desc.detail ?? (typeof input.content === 'string' ? undefined : JSON.stringify(input, null, 2));
   const content = typeof input.content === 'string' ? input.content : typeof input.new_string === 'string' ? input.new_string : undefined;
   // Les outils du coffre passent la commande en message : ne pas la répéter sous le détail (deux blocs identiques
-  // qui doublent la hauteur de la demande).
-  const note = request.message && request.message.trim() !== detail?.trim() && request.message.trim() !== content?.trim() ? request.message : undefined;
+  // qui doublent la hauteur de la demande) ; seule une éventuelle remarque à la suite est gardée.
+  const note = requestNote(request.message, detail, content);
 
   const options: Option[] = [
     { label: 'Oui, autoriser', value: () => ({ decision: 'allow' }) },
