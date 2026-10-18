@@ -306,15 +306,40 @@
   .cc-context-banner-actions .cc-btn { flex: 1 1 auto; text-align: center; }
   .cc-actions .cc-btn { flex: 1 1 auto; text-align: center; padding: 5px 8px; }
   .cc-transcript { padding: 10px 10px; }
-  .cc-toggle { padding: 4px 10px 0; }
-  .cc-status { padding: 4px 10px; flex-direction: column; gap: 2px; font-size: 12px; }
-  .cc-input { margin: 0 8px 8px; }
+  .cc-toggle { padding: 3px 10px 0; }
+  /* Bas de page : état sur une ligne, modèle et autorisations côte à côte, saisie resserrée. */
+  .cc-status { padding: 3px 10px; flex-direction: column; gap: 0; font-size: 12px; }
+  .cc-status > span:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+  .cc-status .cc-settings { gap: 6px; }
+  .cc-select { max-width: min(48%, 180px); overflow: hidden; text-overflow: ellipsis; padding: 0 2px; }
+  .cc-input { margin: 0 6px 6px; padding: 6px 8px; gap: 6px; }
   /* Pas de raccourcis clavier sur mobile : seul le bouton « Ignorer » reste, à droite. */
   .cc-hint { padding: 0 8px 8px; justify-content: flex-end; }
   .cc-hint .cc-hint-text { display: none; }
   .cc-prompts { max-height: 75%; min-height: 160px; }
   .cc-prompt { margin: 10px 8px; padding: 8px 10px; }
   .cc-result { margin-left: 8px; }
+}
+
+/* En-tête de la page de session : sur mobile, replié par défaut sur le nom et la jauge de contexte ;
+   un chevron déplie le détail (projet, work session, tâche…) et les actions. */
+.cc-header-main { min-width: 0; }
+.cc-header-toggle { display: none; }
+@media (max-width: 767.98px) {
+  .cc-header { padding: 6px 10px; gap: 4px 6px; align-items: center; }
+  .cc-header-main { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+  .cc-header-main .cc-meta { min-width: 0; }
+  .cc-header-gauge { flex: 0 0 auto; display: inline-flex; align-items: center; }
+  .cc-header-toggle {
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 28px;
+    background: none; border: 1px solid var(--cc-border); border-radius: 4px; color: var(--cc-dim); font-size: 13px; cursor: pointer;
+  }
+  .cc-header-toggle:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
+  .cc-header:not(.open) .cc-header-main { flex-wrap: nowrap; }
+  .cc-header:not(.open) .cc-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cc-header:not(.open) .cc-meta, .cc-header:not(.open) .cc-sep, .cc-header:not(.open) .cc-gauge-cost, .cc-header:not(.open) .cc-actions { display: none; }
+  .cc-header.open .cc-header-toggle { align-self: flex-start; }
+  .cc-header.open .cc-actions { margin-top: 4px; }
 }
 
 /* Markdown des agents (réponses, questions, motifs) : compact, dans la teinte du transcript */

@@ -19,8 +19,9 @@ Trois notions :
   principal — un `git worktree` sur sa propre branche pour un projet relié à un dépôt, un simple dossier
   sinon. Elle est nommée d'après ce dont elle parle : la première ligne de la consigne devient son libellé,
   un slug de ses premiers mots son dossier et sa branche (modifiables). Une tâche a **sa** work session,
-  créée à sa première session et réutilisée par les suivantes. Supprimer la dernière session ou le dernier
-  terminal d'une work session propose (case à cocher) de l'archiver aussi. Supprimer une work session
+  créée à sa première session et réutilisée par les suivantes. Archiver ou supprimer la dernière session (ou
+  le dernier terminal) d'une work session propose (case à cocher, cochée d'avance à l'archivage) de
+  l'archiver aussi. Supprimer une work session
   (interface, fusion d'une PR depuis le panneau git, outil MCP `worksessions.delete`) n'efface jamais ses
   sessions : elles sont archivées avec leur transcript, leur coût, leur planification et leur lien de tâche,
   et gardent le nom de la work session disparue (`Session.formerWorksession`) ; seule la mutation

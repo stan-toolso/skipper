@@ -34,8 +34,10 @@ const SCENARIOS = [
   ['session-launcher', '/', async (p) => p.locator('.wb-content button', { hasText: 'Session' }).first().click()],
   ['dashboard-lists', '/', async (p) => p.locator('.dash-list').first().scrollIntoViewIfNeeded()],
   ['sessions-all', '/sessions', async (p) => p.locator('button', { hasText: 'Toutes' }).first().click()],
-  ['session-settings', '/sessions/s1', async (p) => p.click('text=Réglages')],
-  ['session-schedule', '/sessions/s1', async (p) => p.click('text=Planification')],
+  // Sur mobile l'en-tête de la session est replié : le chevron déplie le détail et les actions.
+  ['session-header', '/sessions/s1', async (p) => p.click('.cc-header-toggle')],
+  ['session-settings', '/sessions/s1', async (p) => { await p.click('.cc-header-toggle'); await p.click('text=Réglages'); }],
+  ['session-schedule', '/sessions/s1', async (p) => { await p.click('.cc-header-toggle'); await p.click('text=Planification'); }],
   ['task-modal', '/tasks', async (p) => p.click('text=Nouvelle tâche')],
   ['tasks-table', '/tasks', async (p) => p.locator('button[title="Liste"]').click()],
   ['vault-new', '/vault', async (p) => p.click('text=Ajouter un élément')],

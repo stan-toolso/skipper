@@ -56,7 +56,7 @@ export function ContextGauge({ context, onClick }: { context: Session['context']
       <span className="cc-gauge-bar" aria-hidden>
         <span style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} />
       </span>
-      {pct} %{context.coldTurnUsd !== null && context.coldTurnUsd >= 0.01 && <> · ≈ {formatCost(context.coldTurnUsd)}/tour</>}
+      {pct} %{context.coldTurnUsd !== null && context.coldTurnUsd >= 0.01 && <span className="cc-gauge-cost"> · ≈ {formatCost(context.coldTurnUsd)}/tour</span>}
     </button>
   );
 }

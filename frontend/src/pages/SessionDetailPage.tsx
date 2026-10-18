@@ -11,7 +11,7 @@ import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
 import { useDeletions } from '../workbench/useDeletions';
 import RelaunchModal from '../components/RelaunchModal';
-import { ARCHIVE_SESSION, UNARCHIVE_SESSION } from '../graphql/sessions';
+import { UNARCHIVE_SESSION } from '../graphql/sessions';
 import { useAuth } from '../auth/AuthContext';
 
 import { bypassConnectionsWarning, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
@@ -79,15 +79,16 @@ export default function SessionDetailPage() {
   const [endSession, { error: endError }] = useMutation(END_SESSION);
   const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
   const { confirm } = useDialogs();
-  const { deleteSession } = useDeletions();
+  const { archiveSession, deleteSession } = useDeletions();
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
   const [scheduling, setScheduling] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
+  // Mobile : l'en-tête ne montre que le nom et la jauge ; un bouton déplie le détail et les actions.
+  const [headerOpen, setHeaderOpen] = useState(false);
   const { user } = useAuth();
-  const [archiveSession, { error: archiveError }] = useMutation(ARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
   const [unarchiveSession, { error: unarchiveError }] = useMutation(UNARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
 
   // Brouillon conservé par session dans ce navigateur : fermer l'onglet ne perd pas une instruction en cours de rédaction.
@@ -232,7 +233,7 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? archiveError ?? unarchiveError;
+  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? unarchiveError;
   const schedule = session.schedule;
   const parentHint = session.parentSession ? (sessionStateHint(session.parentSession.status, session.parentSession.activity, 0) ?? sessionStatusLabels[session.parentSession.status]?.toLowerCase() ?? null) : null;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
@@ -271,8 +272,8 @@ export default function SessionDetailPage() {
 
   return (
     <div className="cc">
-      <div className="cc-header">
-        <div>
+      <div className={`cc-header${headerOpen ? ' open' : ''}`}>
+        <div className="cc-header-main">
           <span className="cc-title">✻ {session.name}</span>
           <span className="cc-meta">
             {' '}
@@ -302,12 +303,14 @@ export default function SessionDetailPage() {
               </>
             )}
             {archived && <> · <span className="cc-yellow">archivée</span></>}
-            {session.context.tokens !== null && (
-              <>
-                {' '}
-                · <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
-              </>
-            )}
+          </span>
+          {session.context.tokens !== null && (
+            <span className="cc-header-gauge">
+              <span className="cc-sep"> · </span>
+              <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
+            </span>
+          )}
+          <span className="cc-meta">
             {session.agent && (
               <>
                 {' '}
@@ -345,6 +348,9 @@ export default function SessionDetailPage() {
             )}
           </span>
         </div>
+        <button type="button" className="cc-header-toggle" aria-expanded={headerOpen} title={headerOpen ? 'Replier le détail de la session' : 'Détail et actions de la session'} onClick={() => setHeaderOpen((v) => !v)}>
+          <i className={`bi bi-chevron-${headerOpen ? 'up' : 'down'}`} />
+        </button>
         <div className="cc-actions">
           <button type="button" className="cc-btn" title="Nom de la session et nettoyage automatique de l'historique" onClick={() => setSettingsOpen(true)}>
             <i className="bi bi-gear" /> Réglages
@@ -407,7 +413,7 @@ export default function SessionDetailPage() {
               </button>
             </>
           ) : (
-            <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ variables: { id } }).catch(() => undefined)}>
+            <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null })}>
               <i className="bi bi-archive" /> Archiver
             </button>
           )}
@@ -478,7 +484,8 @@ export default function SessionDetailPage() {
         </div>
         {tab === 'conversation' && (
           <label>
-            <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
+            <input type="checkbox" checked={technical} onChange={toggleTechnical} /> <span className="d-none d-md-inline">Afficher les détails techniques</span>
+            <span className="d-md-none">Détails techniques</span>
           </label>
         )}
       </div>

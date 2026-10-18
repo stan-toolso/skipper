@@ -777,6 +777,27 @@ button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, tra
   .task-cell-project { max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
+/* ---- Mobile : menus de la sidebar en grille d'icônes, pour laisser la place aux projets --------- */
+@media (max-width: 767.98px) {
+  .wb-brand { padding: 8px 12px; }
+  .wb-search-btn { margin: 6px 10px 2px; padding: 4px 10px; }
+  .wb-search-btn kbd { display: none; }
+  .wb-menu:not(.wb-menu-bottom) { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 4px 6px; }
+  .wb-menu:not(.wb-menu-bottom) .wb-menu-item { position: relative; flex-direction: column; justify-content: center; gap: 3px; padding: 6px 2px; font-size: 10.5px; border-radius: 6px; }
+  .wb-menu:not(.wb-menu-bottom) .wb-menu-item > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wb-menu:not(.wb-menu-bottom) .wb-menu-item .wb-icon { width: auto; font-size: 17px; line-height: 1; }
+  .wb-menu:not(.wb-menu-bottom) .wb-menu-item.active { box-shadow: inset 0 -2px 0 var(--cc-accent); }
+  .wb-menu:not(.wb-menu-bottom) .wb-badge { position: absolute; top: 2px; right: 10px; }
+  /* Bas : compte à gauche, utilisateurs et paramètres en icônes à droite. */
+  .wb-menu-bottom { display: flex; flex-wrap: wrap; align-items: center; padding: 4px 6px; }
+  .wb-menu-bottom .wb-menu-item { padding: 6px 8px; border-radius: 6px; }
+  .wb-menu-bottom .wb-menu-item > span { display: none; }
+  .wb-menu-bottom .wb-menu-item .wb-icon { width: auto; font-size: 17px; }
+  .wb-menu-bottom .wb-install { flex: 1 1 100%; padding: 6px 8px; }
+  .wb-menu-bottom .wb-install-hint { flex: 1 1 100%; }
+  .wb-menu-bottom .wb-user { order: -1; flex: 1; min-width: 0; padding: 4px 6px; }
+}
+
 /* ---- Petits écrans en hauteur : menu de la sidebar en grille d'icônes ------------------------ */
 @media (max-height: 640px) and (min-width: 768px) {
   .wb-menu { display: grid; grid-template-columns: repeat(4, 1fr); padding: 4px 8px; }

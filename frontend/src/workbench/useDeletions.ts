@@ -41,7 +41,8 @@ function evict(cache: ApolloCache<unknown>, __typename: string, id: string): voi
  * que le serveur travaille. En cas d'erreur, la couche est retirée et l'élément réapparaît.
  *
  * Quand on retire le dernier élément d'une work session, la confirmation propose d'archiver aussi la work session,
- * qui serait sinon laissé vide. Archiver une session ne demande pas de confirmation : rien n'est perdu.
+ * qui serait sinon laissée vide (case cochée par défaut à l'archivage). Archiver une session qui n'est pas la
+ * dernière de sa work session ne demande pas de confirmation : rien n'est perdu.
  */
 export function useDeletions() {
   const client = useApolloClient();
@@ -101,7 +102,7 @@ export function useDeletions() {
         title: 'Archiver la session',
         message: `Archiver la session « ${session.name} » ? Elle reste consultable et relançable depuis l'historique du projet.`,
         confirmLabel: 'Archiver',
-        checkbox: { label: `Archiver aussi la work session « ${worksession.label} », qui sera vide (restaurable depuis l'historique avec ses sessions)` },
+        checkbox: { label: `Archiver aussi la work session « ${worksession.label} », qui sera vide (restaurable depuis l'historique avec ses sessions)`, defaultChecked: true },
       });
       if (!res) return;
       withWorksession = res.checked;
