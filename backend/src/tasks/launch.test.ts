@@ -46,7 +46,7 @@ vi.mock('../sessions/providers/registry.js', () => ({
 }));
 
 const { sessionService } = await import('../sessions/service.js');
-const { startTaskSession } = await import('./launch.js');
+const { startTaskSession, taskWorksessionNames } = await import('./launch.js');
 
 beforeEach(() => {
   state.created = [];
@@ -77,6 +77,21 @@ describe('work session de la tâche', () => {
   it('crée la work session de la tâche à sa première session, nommée d’après son titre', async () => {
     tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title: 'Export CSV des factures', description: '', status: 'todo' });
     await startTaskSession('t1');
+    expect(state.created[0].worksessionId).toBe('w-new');
+  });
+
+  it('ramène un titre trop long à la longueur admise pour le libellé de la work session', async () => {
+    const title = `Corriger ${'un bug très long à décrire '.repeat(8)}dans le lancement`;
+    expect(title.length).toBeGreaterThan(100);
+    const names = taskWorksessionNames({ title }, []);
+    expect(names.label.length).toBeLessThanOrEqual(100);
+    expect(names.label.startsWith('Corriger un bug')).toBe(true);
+    expect(names.branch).toMatch(/^task\/corriger-un-bug/);
+    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title, description: '', status: 'todo' });
+    await startTaskSession('t1');
+    const { worksessionService } = await import('../worksessions/service.js');
+    const input = (worksessionService.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as { label: string };
+    expect(input.label.length).toBeLessThanOrEqual(100);
     expect(state.created[0].worksessionId).toBe('w-new');
   });
 
