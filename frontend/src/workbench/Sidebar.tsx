@@ -7,7 +7,7 @@ import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKSESSION_PULL_REQUESTS, S
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
-import InstallButton from '../components/InstallButton';
+import { useInstallApp } from '../components/InstallButton';
 import { useDialogs } from '../components/Dialogs';
 import { useSearchPalette } from '../components/SearchPalette';
 import { useShortcutsHelp } from '../components/ShortcutsHelp';
@@ -42,6 +42,19 @@ function ElsewhereNote({ subs, poolById, row }: { subs: PoolSession[]; poolById:
     </span>
   );
 }
+
+/** Menus principaux, affichés en une ligne d'icônes (le libellé sert d'infobulle). */
+const MAIN_MENU: { to: string; label: string; icon: string; title?: string }[] = [
+  { to: '/', label: 'Tableau de bord', icon: 'bi-speedometer2' },
+  { to: '/projects', label: 'Projets', icon: 'bi-folder2' },
+  { to: '/sessions', label: 'Sessions', icon: 'bi-chat-dots' },
+  { to: '/tasks', label: 'Tâches', icon: 'bi-check2-square' },
+  { to: '/shared', label: 'Pages', icon: 'bi-file-earmark-richtext', title: 'Pages partagées' },
+  { to: '/vault', label: 'Coffre', icon: 'bi-shield-lock' },
+  { to: '/agents', label: 'Agents', icon: 'bi-robot', title: 'Agents : configurations réutilisables, planifiables' },
+  { to: '/workflows', label: 'Workflows', icon: 'bi-diagram-3', title: "Workflows : enchaînements d'agents, de sessions et de tâches" },
+  { to: '/requests', label: 'Demandes', icon: 'bi-bell' },
+];
 
 interface PullRequestRef {
   number: number;
@@ -103,7 +116,7 @@ interface MenuItem {
 }
 
 /** Menu contextuel d'une ligne (clic sur ⋯ ou clic droit). */
-function PopMenu({ items, onClose }: { items: MenuItem[]; onClose: () => void }) {
+function PopMenu({ items, onClose, up }: { items: MenuItem[]; onClose: () => void; up?: boolean }) {
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('click', close);
@@ -114,7 +127,7 @@ function PopMenu({ items, onClose }: { items: MenuItem[]; onClose: () => void })
     };
   }, [onClose]);
   return (
-    <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
+    <div className={`wb-pop${up ? ' up' : ''}`} onClick={(e) => e.stopPropagation()}>
       {items.map((it) => (
         <div key={it.label}>
           {it.separatorBefore && <div className="wb-pop-sep" />}
@@ -399,20 +412,42 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   );
 }
 
-/** Utilisateur connecté (avatar, nom) et déconnexion, en bas de la sidebar. */
+/**
+ * Utilisateur connecté (avatar, nom, e-mail) en bas de la sidebar : un clic ouvre le menu du compte
+ * (installer l'application, utilisateurs, paramètres, déconnexion).
+ */
 function UserBlock() {
   const { user, logout } = useAuth();
+  const { available: installable, install } = useInstallApp();
+  const [open, setOpen] = useState(false);
   if (!user) return null;
+  const items: MenuItem[] = [
+    ...(installable ? [{ label: "Installer l'application", icon: 'bi-phone', onClick: install }] : []),
+    ...(user.isAdmin ? [{ label: 'Utilisateurs', icon: 'bi-people', to: '/users' }] : []),
+    { label: 'Paramètres', icon: 'bi-gear', to: '/settings' },
+    { label: 'Se déconnecter', icon: 'bi-box-arrow-right', separatorBefore: true, onClick: () => void logout() },
+  ];
   return (
-    <div className="wb-user" title={user.email}>
-      {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initialsOf(user.name)}</span>}
-      <span className="wb-user-name">
-        {user.name}
-        <span className="wb-user-email">{user.email}</span>
-      </span>
-      <button type="button" className="wb-plus" title="Se déconnecter" onClick={() => void logout()}>
-        <i className="bi bi-box-arrow-right" />
+    <div className={`wb-user-wrap${open ? ' open' : ''}`}>
+      <button
+        type="button"
+        className="wb-user"
+        title="Menu du compte"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initialsOf(user.name)}</span>}
+        <span className="wb-user-name">
+          <span className="wb-user-label">{user.name}</span>
+          <span className="wb-user-email">{user.email}</span>
+        </span>
+        <i className={`bi bi-chevron-${open ? 'down' : 'up'} wb-user-chevron`} />
       </button>
+      {open && <PopMenu items={items} onClose={() => setOpen(false)} up />}
     </div>
   );
 }
@@ -519,39 +554,17 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
         <kbd>{displayComboText('mod+k')}</kbd>
       </button>
 
-      <nav className="wb-menu">
-        <NavLink to="/" end className="wb-menu-item" title="Tableau de bord">
-          <i className="bi bi-speedometer2 wb-icon" /> <span>Tableau de bord</span>
-        </NavLink>
-        <NavLink to="/projects" end className="wb-menu-item" title="Projets">
-          <i className="bi bi-folder2 wb-icon" /> <span>Projets</span>
-        </NavLink>
-        <NavLink to="/sessions" end className="wb-menu-item" title="Sessions">
-          <i className="bi bi-chat-dots wb-icon" /> <span>Sessions</span>
-        </NavLink>
-        <NavLink to="/tasks" end className="wb-menu-item" title="Tâches">
-          <i className="bi bi-check2-square wb-icon" /> <span>Tâches</span>
-        </NavLink>
-        <NavLink to="/shared" end className="wb-menu-item" title="Pages partagées">
-          <i className="bi bi-file-earmark-richtext wb-icon" /> <span>Pages</span>
-        </NavLink>
-        <NavLink to="/vault" end className="wb-menu-item" title="Coffre">
-          <i className="bi bi-shield-lock wb-icon" /> <span>Coffre</span>
-        </NavLink>
-        <NavLink to="/agents" end className="wb-menu-item" title="Agents : configurations réutilisables, planifiables">
-          <i className="bi bi-robot wb-icon" /> <span>Agents</span>
-        </NavLink>
-        <NavLink to="/workflows" end className="wb-menu-item" title="Workflows : enchaînements d'agents, de sessions et de tâches">
-          <i className="bi bi-diagram-3 wb-icon" /> <span>Workflows</span>
-        </NavLink>
-        <NavLink to="/requests" className="wb-menu-item" title="Demandes">
-          <i className="bi bi-bell wb-icon" /> <span>Demandes</span>
-          {pending > 0 && (
-            <span className="wb-badge" title="Un agent attend votre réponse">
-              {pending}
-            </span>
-          )}
-        </NavLink>
+      <nav className="wb-menu wb-menu-icons" aria-label="Navigation principale">
+        {MAIN_MENU.map((m) => (
+          <NavLink key={m.to} to={m.to} end={m.to !== '/requests'} className="wb-menu-item" title={m.title ?? m.label} aria-label={m.label}>
+            <i className={`bi ${m.icon} wb-icon`} />
+            {m.to === '/requests' && pending > 0 && (
+              <span className="wb-badge" title="Un agent attend votre réponse">
+                {pending}
+              </span>
+            )}
+          </NavLink>
+        ))}
       </nav>
 
       <div className="wb-section-title">
@@ -635,18 +648,9 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
           </div>
         )}
       </div>
-      <nav className="wb-menu wb-menu-bottom">
-        <InstallButton />
-        {user?.isAdmin && (
-          <NavLink to="/users" className="wb-menu-item" title="Utilisateurs">
-            <i className="bi bi-people wb-icon" /> <span>Utilisateurs</span>
-          </NavLink>
-        )}
-        <NavLink to="/settings" className="wb-menu-item" title="Paramètres">
-          <i className="bi bi-gear wb-icon" /> <span>Paramètres</span>
-        </NavLink>
+      <div className="wb-menu wb-menu-bottom">
         <UserBlock />
-      </nav>
+      </div>
     </aside>
   );
 }
