@@ -1,3 +1,5 @@
+import { CONTEXT_WARN_TOKENS } from '../sessions/context.js';
+
 /**
  * Comment les sessions d'une personne s'authentifient auprès de Claude : `oauth` = jeton longue durée de
  * son abonnement (obtenu depuis l'interface, `claude setup-token`), `api_key` = clé API Anthropic. Les deux
@@ -27,6 +29,11 @@ export interface ClaudeSettings {
   /** Éléments du coffre des identifiants (jetons applicatifs 'claude' et 'anthropic'). */
   oauthItemId: string | null;
   apiKeyItemId: string | null;
+  /**
+   * Seuil (tokens) au-delà duquel ses pages signalent le contexte d'une session (jauge, pastille, bandeau
+   * « Compacter / Repartir d'une conversation neuve »). null = ne jamais signaler.
+   */
+  contextWarnTokens: number | null;
 }
 
 export const defaultClaudeSettings: ClaudeSettings = {
@@ -39,6 +46,7 @@ export const defaultClaudeSettings: ClaudeSettings = {
   defaultMaxTurns: null,
   oauthItemId: null,
   apiKeyItemId: null,
+  contextWarnTokens: CONTEXT_WARN_TOKENS,
 };
 
 export interface ClaudeAccount {

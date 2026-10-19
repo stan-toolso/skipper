@@ -98,6 +98,24 @@ interface ContextParent {
   model?: Promise<string | null>;
 }
 const modelOfContext = (p: ContextParent) => (p.model ??= contextModel(p.session).catch(() => null));
+/**
+ * Seuil de signalement du contexte de la personne connectée (réglages Claude), lu une fois par requête quel que soit
+ * le nombre de sessions listées ; seuil par défaut sans personne connectée ou si la lecture échoue.
+ */
+const warnTokensByCtx = new WeakMap<Ctx, Promise<number | null>>();
+const warnTokensOf = (ctx: Ctx): Promise<number | null> => {
+  let pending = warnTokensByCtx.get(ctx);
+  if (!pending) {
+    pending = ctx.user
+      ? claudeSettings
+          .forUser(ctx.user.id)
+          .then((s) => s.settings.contextWarnTokens)
+          .catch(() => CONTEXT_WARN_TOKENS)
+      : Promise.resolve(CONTEXT_WARN_TOKENS);
+    warnTokensByCtx.set(ctx, pending);
+  }
+  return pending;
+};
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
@@ -540,8 +558,8 @@ export const resolvers = {
   // consommation) que si un champ qui en dépend est demandé, une seule fois par session.
   SessionContext: {
     tokens: (p: ContextParent) => p.session.contextTokens,
-    warnTokens: () => CONTEXT_WARN_TOKENS,
-    overThreshold: (p: ContextParent) => contextEstimate(p.session.contextTokens, null).overThreshold,
+    warnTokens: (_: ContextParent, __: unknown, ctx: Ctx) => warnTokensOf(ctx),
+    overThreshold: async (p: ContextParent, _: unknown, ctx: Ctx) => contextEstimate(p.session.contextTokens, null, await warnTokensOf(ctx)).overThreshold,
     model: (p: ContextParent) => modelOfContext(p),
     windowTokens: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).windowTokens,
     share: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).share,
