@@ -29,8 +29,8 @@ export interface SessionCleanup {
 /** Taille du contexte de l'agent rapportée au modèle (jauge de l'en-tête, pastille de la sidebar, bandeau). */
 export interface SessionContextInfo {
   tokens: number | null;
-  /** Seuil serveur au-delà duquel l'interface propose un nettoyage. */
-  warnTokens: number;
+  /** Seuil au-delà duquel l'interface propose un nettoyage (réglages Claude de la personne connectée ; null : jamais). */
+  warnTokens: number | null;
   overThreshold: boolean;
   model: string | null;
   windowTokens: number;

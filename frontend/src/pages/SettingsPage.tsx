@@ -380,15 +380,23 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
   const [monthly, setMonthly] = useState(claude.monthlyBudgetUsd?.toString() ?? '');
   const [perSession, setPerSession] = useState(claude.sessionBudgetUsd?.toString() ?? '');
   const [maxTurns, setMaxTurns] = useState(claude.defaultMaxTurns?.toString() ?? '');
+  // Seuil de signalement du contexte, saisi en milliers de tokens (150 = 150 000) ; vide = ne jamais signaler.
+  const kTokens = (n: number | null) => (n === null ? '' : String(Math.round(n / 1000)));
+  const [warnK, setWarnK] = useState(kTokens(claude.contextWarnTokens));
   const [update, { loading, error }] = useMutation(UPDATE_CLAUDE_SETTINGS);
   useEffect(() => {
     setMonthly(claude.monthlyBudgetUsd?.toString() ?? '');
     setPerSession(claude.sessionBudgetUsd?.toString() ?? '');
     setMaxTurns(claude.defaultMaxTurns?.toString() ?? '');
+    setWarnK(kTokens(claude.contextWarnTokens));
   }, [claude]);
 
   const num = (s: string) => (s.trim() === '' ? null : Number(s.replace(',', '.')));
-  const dirty = num(monthly) !== claude.monthlyBudgetUsd || num(perSession) !== claude.sessionBudgetUsd || num(maxTurns) !== claude.defaultMaxTurns;
+  const warnTokens = (() => {
+    const k = num(warnK);
+    return k === null ? null : Math.round(k * 1000);
+  })();
+  const dirty = num(monthly) !== claude.monthlyBudgetUsd || num(perSession) !== claude.sessionBudgetUsd || num(maxTurns) !== claude.defaultMaxTurns || warnTokens !== claude.contextWarnTokens;
   const cap = claude.monthlyBudgetUsd;
   const ratio = cap ? Math.min(100, (usage.monthUsd / cap) * 100) : 0;
   const monthLabel = new Date(usage.monthStart).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
@@ -402,7 +410,7 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
             <Form
               onSubmit={(e) => {
                 e.preventDefault();
-                void update({ variables: { input: { monthlyBudgetUsd: num(monthly), sessionBudgetUsd: num(perSession), defaultMaxTurns: num(maxTurns) } } }).catch(() => undefined);
+                void update({ variables: { input: { monthlyBudgetUsd: num(monthly), sessionBudgetUsd: num(perSession), defaultMaxTurns: num(maxTurns), contextWarnTokens: warnTokens } } }).catch(() => undefined);
               }}
             >
               <Form.Group className="mb-3">
@@ -418,6 +426,13 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
               <Form.Group className="mb-3">
                 <Form.Label className="mb-1">Nombre maximum d'étapes par session</Form.Label>
                 <Form.Control size="sm" type="number" min={1} step={1} value={maxTurns} onChange={(e) => setMaxTurns(e.target.value)} placeholder="Illimité" />
+              </Form.Group>
+              <Form.Group className="mb-3">
+                <Form.Label className="mb-1">Signaler le contexte d'une session à partir de (milliers de tokens)</Form.Label>
+                <Form.Control size="sm" type="number" min={1} step={10} value={warnK} onChange={(e) => setWarnK(e.target.value)} placeholder="Jamais" />
+                <Form.Text>
+                  Au-delà, la jauge de la session passe en couleur, une pastille apparaît dans la sidebar et un bandeau propose de compacter ou de repartir d'une conversation neuve (rien n'est fait sans votre accord). Par défaut 150, soit 150 000 tokens ; vide : jamais de bandeau.
+                </Form.Text>
               </Form.Group>
               <Button size="sm" type="submit" disabled={loading || !dirty}>
                 {loading ? 'Enregistrement…' : 'Enregistrer'}

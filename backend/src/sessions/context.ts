@@ -2,8 +2,9 @@ import { pool } from '../db/pool.js';
 import type { Session, SessionCleanup } from './types.js';
 
 /**
- * Seuil (tokens) au-delà duquel l'interface signale le contexte d'une session et propose de le nettoyer :
+ * Seuil par défaut (tokens) au-delà duquel l'interface signale le contexte d'une session et propose de le nettoyer :
  * jauge en couleur dans l'en-tête, pastille dans la sidebar, bandeau « Compacter / Repartir de zéro / Ignorer ».
+ * Chaque personne peut le remplacer, ou désactiver le signalement, dans ses réglages Claude (`contextWarnTokens`).
  * Aucune action automatique : une session manuelle n'est jamais compactée sans l'accord de l'utilisateur.
  */
 export const CONTEXT_WARN_TOKENS = 150_000;
@@ -45,7 +46,8 @@ export function modelProfile(model: string | null | undefined): ModelProfile {
 
 export interface ContextEstimate {
   tokens: number | null;
-  warnTokens: number;
+  /** Seuil de signalement de la personne qui regarde (null : signalement désactivé). */
+  warnTokens: number | null;
   overThreshold: boolean;
   windowTokens: number;
   /** Part de la fenêtre occupée (0..1), null si la taille est inconnue. */
@@ -54,13 +56,16 @@ export interface ContextEstimate {
   coldTurnUsd: number | null;
 }
 
-/** Estimation pure : taille du contexte rapportée à la fenêtre du modèle et au tarif de ses tokens d'entrée. */
-export function contextEstimate(tokens: number | null, model: string | null | undefined): ContextEstimate {
+/**
+ * Estimation pure : taille du contexte rapportée à la fenêtre du modèle et au tarif de ses tokens d'entrée, et
+ * comparée au seuil de signalement (celui de la personne qui regarde, sinon le seuil par défaut ; null = jamais).
+ */
+export function contextEstimate(tokens: number | null, model: string | null | undefined, warnTokens: number | null = CONTEXT_WARN_TOKENS): ContextEstimate {
   const profile = modelProfile(model);
   return {
     tokens,
-    warnTokens: CONTEXT_WARN_TOKENS,
-    overThreshold: tokens !== null && tokens >= CONTEXT_WARN_TOKENS,
+    warnTokens,
+    overThreshold: tokens !== null && warnTokens !== null && tokens >= warnTokens,
     windowTokens: profile.windowTokens,
     share: tokens === null ? null : Math.min(1, tokens / profile.windowTokens),
     coldTurnUsd: tokens === null ? null : (tokens / M) * profile.inputUsdPerMTok,

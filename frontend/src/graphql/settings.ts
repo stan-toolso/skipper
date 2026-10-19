@@ -50,6 +50,8 @@ export interface ClaudeSettings {
   monthlyBudgetUsd: number | null;
   sessionBudgetUsd: number | null;
   defaultMaxTurns: number | null;
+  /** Seuil (tokens) de signalement du contexte d'une session ; null = jamais. */
+  contextWarnTokens: number | null;
 }
 
 export interface UsageSummary {
@@ -329,6 +331,7 @@ export const APP_SETTINGS_FIELDS = gql`
       monthlyBudgetUsd
       sessionBudgetUsd
       defaultMaxTurns
+      contextWarnTokens
     }
     claudeAuth {
       mode
