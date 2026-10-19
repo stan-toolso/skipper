@@ -1,35 +1,30 @@
 import { useEffect, useState } from 'react';
 import { isIos, isStandalone } from '../lib/device';
 import { canPromptInstall, onInstallChange, promptInstall } from '../lib/pwa';
+import { useDialogs } from './Dialogs';
 
 /**
  * « Installer l'application » : sur Android/Chrome déclenche la fenêtre d'installation ; sur
- * iPhone/iPad (pas de fenêtre possible) explique le geste. Rien si l'application est déjà installée.
+ * iPhone/iPad (pas de fenêtre possible) explique le geste dans une boîte de dialogue. `available`
+ * est faux si l'application est déjà installée ou si le navigateur ne permet rien.
  */
-export default function InstallButton() {
+export function useInstallApp(): { available: boolean; install: () => void } {
+  const { alert } = useDialogs();
   const [promptable, setPromptable] = useState(canPromptInstall());
-  const [showIosHint, setShowIosHint] = useState(false);
   useEffect(() => onInstallChange(() => setPromptable(canPromptInstall())), []);
-  if (isStandalone()) return null;
   const ios = isIos();
-  if (!promptable && !ios) return null;
-  return (
-    <>
-      <button
-        type="button"
-        className="wb-menu-item wb-install"
-        onClick={() => {
-          if (promptable) void promptInstall();
-          else setShowIosHint((v) => !v);
-        }}
-      >
-        <i className="bi bi-phone wb-icon" /> Installer l'application
-      </button>
-      {showIosHint && (
-        <div className="wb-install-hint">
-          Dans Safari : bouton <i className="bi bi-box-arrow-up" /> Partager, puis « Sur l'écran d'accueil ».
-        </div>
-      )}
-    </>
-  );
+  const available = !isStandalone() && (promptable || ios);
+  const install = () => {
+    if (promptable) void promptInstall();
+    else
+      void alert({
+        title: "Installer l'application",
+        message: (
+          <>
+            Dans Safari : bouton <i className="bi bi-box-arrow-up" /> Partager, puis « Sur l'écran d'accueil ».
+          </>
+        ),
+      });
+  };
+  return { available, install };
 }
