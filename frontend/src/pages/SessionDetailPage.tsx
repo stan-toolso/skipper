@@ -14,7 +14,7 @@ import RelaunchModal from '../components/RelaunchModal';
 import { UNARCHIVE_SESSION } from '../graphql/sessions';
 import { useAuth } from '../auth/AuthContext';
 
-import { bypassConnectionsWarning, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
+import { bypassConnectionsWarning, permissionModeLabels, permissionModeShortLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
 import { sessionDotClass } from '../workbench/WorkspaceTabs';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
@@ -259,7 +259,7 @@ export default function SessionDetailPage() {
   const statusLine = pending.length
     ? `⏸ L'agent attend votre réponse ci-dessus`
     : busy
-      ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
+      ? "L'agent travaille… (Échap pour l'interrompre)"
       : running
         ? "⏵ L'agent attend vos instructions"
         : archived
@@ -524,57 +524,24 @@ export default function SessionDetailPage() {
           {actionError && <span className="cc-red">{actionError.message} · </span>}
           {bypassWarning() && (
             <span className="cc-yellow" title={bypassWarning() ?? undefined}>
-              ⚠ connexions non soumises ·{' '}
+              <i className="bi bi-exclamation-triangle" /> connexions non soumises
             </span>
           )}
-          <span className="cc-settings">
-            {modelField ? (
-              <select
-                className="cc-select"
-                title="Modèle de cette session (modifiable à tout moment)"
-                aria-label="Modèle"
-                value={model ?? ''}
-                disabled={updatingConfig}
-                onChange={(e) => changeSetting(modelField, e.target.value)}
-              >
-                {model && !(modelField.options ?? []).some((o) => o.value === model) && <option value={model}>{model}</option>}
-                {(modelField.options ?? []).map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              model && <span title="Modèle de cette session">{model}</span>
-            )}
-            {permissionField ? (
-              <select
-                className="cc-select"
-                title="Autorisations de cette session (modifiables à tout moment)"
-                aria-label="Autorisations"
-                value={permissionMode}
-                disabled={updatingConfig}
-                onChange={(e) => changeSetting(permissionField, e.target.value)}
-              >
-                {(permissionField.options ?? []).map((o) => (
-                  <option key={o.value} value={o.value} title={o.description ?? undefined}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
-            )}
-          </span>
         </span>
       </div>
 
       {!archived && (
-      <div className="cc-input" onClick={() => inputRef.current?.focus()} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
+      <div
+        className="cc-input"
+        onClick={(e) => {
+          // Un clic sur la boîte ramène le curseur dans la saisie, sauf sur un contrôle (listes, boutons, puces).
+          if (!(e.target as HTMLElement).closest('select, button, label, a')) inputRef.current?.focus();
+        }}
+        onDrop={attachments.onDrop}
+        onDragOver={attachments.onDragOver}
+      >
         <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={sending || encoding} showButton={false} error={attachments.error} />
-        <div className="cc-input-row">
-          <span className="cc-caret">&gt;</span>
-          <textarea
+        <textarea
             ref={inputRef}
             rows={1}
             value={text}
@@ -611,8 +578,10 @@ export default function SessionDetailPage() {
               }
             }}
           />
-          <label className="cc-attach" title="Joindre des fichiers (ou collez une image, ou déposez des fichiers ici)">
-            <i className="bi bi-paperclip" />
+        {/* Rangée d'outils : fichiers joints, modèle et autorisations de la session (modifiables à tout moment), envoi. */}
+        <div className="cc-input-tools">
+          <label className="cc-attach" title="Joindre des fichiers (ou collez une image, ou déposez des fichiers ici)" aria-label="Joindre des fichiers">
+            <i className="bi bi-plus-lg" />
             <input
               type="file"
               multiple
@@ -624,8 +593,50 @@ export default function SessionDetailPage() {
               }}
             />
           </label>
-          <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={!canSend} onClick={() => void submit()}>
-            <i className="bi bi-send" />
+          {modelField ? (
+            <span className="cc-pill" title="Modèle de cette session (modifiable à tout moment)">
+              <span className="cc-pill-label">{(modelField.options ?? []).find((o) => o.value === model)?.label ?? model ?? '—'}</span>
+              <i className="bi bi-chevron-down" />
+              <select className="cc-select" aria-label="Modèle" value={model ?? ''} disabled={updatingConfig} onChange={(e) => changeSetting(modelField, e.target.value)}>
+                {model && !(modelField.options ?? []).some((o) => o.value === model) && <option value={model}>{model}</option>}
+                {(modelField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+          ) : (
+            model && (
+              <span className="cc-pill static" title="Modèle de cette session">
+                {model}
+              </span>
+            )
+          )}
+          {permissionField ? (
+            <span
+              className={`cc-pill${permissionMode === 'bypassPermissions' ? ' warn' : ''}`}
+              title={`Autorisations de cette session (modifiables à tout moment) : ${permissionModeLabels[permissionMode] ?? permissionMode}.${bypassWarning() ? ` ${bypassWarning()}` : ''}`}
+            >
+              {permissionMode === 'bypassPermissions' && <i className="bi bi-exclamation-triangle" />}
+              <span className="cc-pill-label">{permissionModeShortLabels[permissionMode] ?? (permissionField.options ?? []).find((o) => o.value === permissionMode)?.label ?? permissionMode}</span>
+              <i className="bi bi-chevron-down" />
+              <select className="cc-select" aria-label="Autorisations" value={permissionMode} disabled={updatingConfig} onChange={(e) => changeSetting(permissionField, e.target.value)}>
+                {(permissionField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value} title={o.description ?? undefined}>
+                    {permissionModeShortLabels[o.value] ?? o.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+          ) : (
+            <span className={`cc-pill static${permissionMode === 'bypassPermissions' ? ' warn' : ''}`} title={`Autorisations de cette session : ${permissionModeLabels[permissionMode] ?? permissionMode}`}>
+              {permissionMode === 'bypassPermissions' && <i className="bi bi-exclamation-triangle" />}
+              {permissionModeShortLabels[permissionMode] ?? permissionMode}
+            </span>
+          )}
+          <button type="button" className="cc-send" title="Envoyer (Entrée)" aria-label="Envoyer" disabled={!canSend} onClick={() => void submit()}>
+            <i className="bi bi-arrow-up" />
           </button>
         </div>
       </div>

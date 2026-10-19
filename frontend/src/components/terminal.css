@@ -186,48 +186,59 @@
 .cc-prompt .cc-rule-edit .cc-desc { color: var(--cc-dim); }
 .cc-prompt .cc-rule-edit textarea { resize: vertical; white-space: pre; }
 
-/* Barre d'état + zone de saisie */
+/* Bas de page : ligne d'état sobre (sans filet), puis la zone de saisie en boîte arrondie. */
 .cc-status {
   font-family: var(--bs-font-sans-serif);
-  padding: 4px 16px;
+  padding: 8px 16px 2px;
   color: var(--cc-dim);
-  border-top: 1px solid var(--cc-border);
   display: flex;
   justify-content: space-between;
   gap: 12px;
 }
-.cc-status .cc-spinner { color: var(--cc-accent); display: inline-block; animation: cc-blink 1s ease-in-out infinite; }
-/* Réglages modifiables en cours de session (modèle, autorisations) : listes déroulantes discrètes dans la barre d'état */
-.cc-status .cc-settings { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.cc-select {
-  font: inherit;
-  color: var(--cc-dim);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0 4px;
-  max-width: 260px;
-  cursor: pointer;
-}
-.cc-select:hover, .cc-select:focus { border-color: var(--cc-border); color: var(--cc-fg); outline: none; }
-.cc-select:disabled { opacity: 0.5; cursor: default; }
-.cc-select option { background: var(--cc-bg-elevated); color: var(--cc-fg); }
+.cc-status .cc-spinner { color: var(--cc-accent); display: inline-block; margin-right: 5px; animation: cc-blink 1s ease-in-out infinite; }
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* Zone de saisie : le texte en haut, une rangée d'outils en bas (fichiers, modèle, autorisations, envoi). */
 .cc-input {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 0 12px 12px;
+  gap: 6px;
+  margin: 4px 12px 12px;
   border: 1px solid var(--cc-border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: var(--cc-bg-elevated);
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  background: var(--cc-bg-user);
+  font-family: var(--bs-font-sans-serif);
+  font-size: 14px;
+  cursor: text;
 }
 .cc-input:focus-within { border-color: var(--cc-dim); }
-.cc-input .cc-input-row { display: flex; gap: 8px; }
-/* Bouton trombone : ouvre le sélecteur de fichiers ; les fichiers peuvent aussi être collés ou déposés. */
-.cc-attach { flex: 0 0 auto; align-self: flex-end; color: var(--cc-dim); font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; margin: 0; }
-.cc-attach:hover { color: var(--cc-fg); }
+.cc-input-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; cursor: default; }
+/* Bouton « + » : ouvre le sélecteur de fichiers ; les fichiers peuvent aussi être collés ou déposés. */
+.cc-attach {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px;
+  color: var(--cc-dim); font-size: 16px; line-height: 1; cursor: pointer; margin: 0;
+}
+.cc-attach:hover { color: var(--cc-fg); background: var(--cc-bg-hover); }
+/* Pastilles de réglage (modèle, autorisations) : libellé courant et chevron ; la liste déroulante native, invisible,
+   recouvre la pastille (clic, clavier et menu natif), ce qui évite qu'elle prenne la largeur de sa plus longue option. */
+.cc-pill {
+  position: relative; display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border-radius: 8px;
+  color: var(--cc-fg); white-space: nowrap; max-width: 100%;
+}
+.cc-pill:hover { background: var(--cc-bg-hover); }
+.cc-pill.static { color: var(--cc-dim); }
+.cc-pill.warn { color: var(--cc-yellow); }
+.cc-pill .cc-pill-label { overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.cc-pill .bi-chevron-down { font-size: 10px; color: var(--cc-dim); }
+.cc-pill.warn .bi-chevron-down { color: inherit; opacity: 0.8; }
+.cc-pill:focus-within { box-shadow: 0 0 0 1px var(--cc-border); }
+.cc-pill:has(.cc-select:disabled) { opacity: 0.5; }
+.cc-select {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0;
+  font: inherit; opacity: 0; cursor: pointer; appearance: none; -webkit-appearance: none;
+}
+.cc-select:disabled { cursor: default; }
+.cc-select option { background: var(--cc-bg-elevated); color: var(--cc-fg); }
 /* Fichiers joints en attente d'envoi (zone de saisie, modale de lancement). */
 .cc-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-family: var(--bs-font-sans-serif); font-size: 12.5px; }
 .cc-input .cc-attachments { margin: 0; }
@@ -244,18 +255,20 @@
 /* Fichiers joints d'une instruction dans le transcript. */
 .cc-user-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .cc-user-image img { max-width: 240px; max-height: 160px; border-radius: 4px; border: 1px solid var(--cc-border); display: block; }
-.cc-input .cc-caret { color: var(--cc-dim); }
 .cc-input textarea {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: 0;
   outline: none;
   color: var(--cc-fg);
   font: inherit;
+  line-height: 1.5;
   resize: none;
   min-height: 1.5em;
   max-height: 10em;
+  padding: 0;
 }
+.cc-input textarea::placeholder { color: var(--cc-dim); }
 .cc-hint { padding: 0 16px 8px; color: var(--cc-dimmer); display: flex; justify-content: space-between; font-family: var(--bs-font-sans-serif); }
 .cc-prompt { font-family: var(--bs-font-sans-serif); font-size: 13.5px; }
 .cc-prompt .cc-prompt-body { font-family: var(--bs-font-monospace); font-size: 12.5px; }
@@ -289,14 +302,14 @@
 .cc-changes-file .diff-view { border-top: 1px solid var(--cc-border); max-height: 70vh; overflow: auto; }
 .cc-changes-note { padding: 6px 10px; font-family: var(--bs-font-sans-serif); font-size: 12px; }
 
-/* Bouton d'envoi : discret au clavier, visible sur mobile où Entrée ne suffit pas. */
+/* Bouton d'envoi : rond, à droite de la rangée d'outils ; éteint tant qu'il n'y a rien à envoyer (Entrée envoie aussi). */
 .cc-send {
-  display: none; flex: 0 0 auto; align-self: flex-end; background: none; border: 0; color: var(--cc-accent); font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; margin-left: auto;
+  width: 32px; height: 32px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  background: var(--cc-accent); color: var(--cc-accent-contrast); font-size: 18px; line-height: 1;
 }
-.cc-send:disabled { color: var(--cc-dimmer); cursor: default; }
-@media (hover: none), (max-width: 767.98px) {
-  .cc-send { display: inline-flex; }
-}
+.cc-send:hover { background: var(--cc-accent-hover); }
+.cc-send:disabled { background: var(--cc-border); color: var(--cc-dim); cursor: default; }
 @media (max-width: 767.98px) {
   /* Le conteneur défile au lieu de rogner : avec un en-tête haut (sous-agents, bandeaux) et des demandes en attente,
      la zone de saisie resterait sinon hors de l'écran. */
@@ -311,12 +324,13 @@
   .cc-actions .cc-btn { flex: 1 1 auto; text-align: center; padding: 5px 8px; }
   .cc-transcript { padding: 10px 10px; }
   .cc-toggle { padding: 3px 10px 0; }
-  /* Bas de page : état sur une ligne, modèle et autorisations côte à côte, saisie resserrée. */
-  .cc-status { padding: 3px 10px; flex-direction: column; gap: 0; font-size: 12px; }
+  /* Bas de page : état sur une ligne, saisie resserrée, pastilles bornées pour que la rangée d'outils tienne en largeur. */
+  .cc-status { padding: 6px 10px 2px; flex-direction: column; gap: 0; font-size: 12px; }
   .cc-status > span:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
-  .cc-status .cc-settings { gap: 6px; }
-  .cc-select { max-width: min(48%, 180px); overflow: hidden; text-overflow: ellipsis; padding: 0 2px; }
-  .cc-input { margin: 0 6px 6px; padding: 6px 8px; gap: 6px; }
+  .cc-input { margin: 2px 6px 6px; padding: 10px 10px 8px; gap: 4px; font-size: 13px; }
+  .cc-input-tools { gap: 2px; }
+  .cc-pill { padding: 0 6px; min-width: 0; }
+  .cc-pill .cc-pill-label { max-width: 150px; }
   /* Pas de raccourcis clavier sur mobile : seul le bouton « Ignorer » reste, à droite. */
   .cc-hint { padding: 0 8px 8px; justify-content: flex-end; }
   .cc-hint .cc-hint-text { display: none; }
