@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, ButtonGroup, Col, Form, Nav, Row, Table } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 
@@ -26,6 +27,8 @@ import {
 interface ProjectContext {
   id: string;
   name: string;
+  description: string | null;
+  myRole: 'ADMIN' | 'MEMBER' | 'VIEWER';
   contextFolders: ContextFolder[];
   contextInstructions: ContextInstruction[];
   contextChanges: ContextChange[];
@@ -306,12 +309,9 @@ export default function ContextPage() {
 
   return (
     <>
-      <Link to={`/projects/${id}`} className="small">
-        ← {project.name}
-      </Link>
+      <ProjectHeader project={project} active="context" />
       <div className="d-flex align-items-center justify-content-between mb-2">
-        <h1 className="h3 mb-0">Contexte</h1>
-        <ButtonGroup size="sm">
+        <ButtonGroup size="sm" className="ms-auto">
           <Button variant="outline-primary" onClick={() => newInstruction(null)}>
             Nouvelle instruction
           </Button>
@@ -326,7 +326,7 @@ export default function ContextPage() {
       </p>
       {mutationError && <Alert variant="danger">{mutationError.message}</Alert>}
 
-      <Nav variant="tabs" activeKey={tab} onSelect={(k) => setTab((k as 'library' | 'changes') ?? 'library')} className="mb-3">
+      <Nav variant="underline" activeKey={tab} onSelect={(k) => setTab((k as 'library' | 'changes') ?? 'library')} className="mb-3 small">
         <Nav.Item>
           <Nav.Link eventKey="library">Bibliothèque</Nav.Link>
         </Nav.Item>

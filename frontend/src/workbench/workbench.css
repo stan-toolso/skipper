@@ -790,3 +790,14 @@ button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, tra
   .wb-search-btn kbd { display: none; }
   .wb-menu-icons .wb-menu-item { padding: 8px 0; font-size: 17px; }
 }
+
+/* ---- En-tête des pages d'un projet : barre d'onglets (aperçu, tâches, contexte, coffre…) ------- */
+.project-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.project-tabs::-webkit-scrollbar { display: none; }
+.project-tabs .nav-link { white-space: nowrap; color: var(--cc-dim); padding: 0.45rem 0.7rem; font-size: 0.9rem; }
+.project-tabs .nav-link:hover { color: var(--cc-fg); }
+.project-tabs .nav-link.active { color: var(--cc-fg); font-weight: 500; }
+@media (max-width: 767.98px) {
+  .project-tabs { margin-left: -12px; margin-right: -12px; padding: 0 12px; }
+  .project-tabs .nav-link { padding: 6px 10px; }
+}

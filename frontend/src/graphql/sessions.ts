@@ -42,6 +42,8 @@ export const HISTORY_PROJECT = gql`
     project(id: $id) {
       id
       name
+      description
+      myRole
       gitUrl
       worksessions {
         id

@@ -12,6 +12,7 @@ import { timeAgo } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { emptyDefinition } from '../lib/workflowGraph';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import '../components/automation/automation.css';
 
 function CreateWorkflowModal({ projects, projectId: fixed, onClose, onCreated }: { projects: Project[]; projectId: string | null; onClose: () => void; onCreated: (w: Workflow) => void }) {
@@ -100,14 +101,10 @@ export default function WorkflowsPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   return (
     <>
-      {project && (
-        <Link to={`/projects/${project.id}`} className="small">
-          ← {project.name}
-        </Link>
-      )}
+      {project && <ProjectHeader project={project} active="workflows" />}
       <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-        <h1 className="h3 mb-0">Workflows</h1>
-        <div className="d-flex gap-2 align-items-center">
+        {!project && <h1 className="h3 mb-0">Workflows</h1>}
+        <div className="d-flex gap-2 align-items-center flex-wrap ms-auto">
           {!routeProjectId && (
             <Form.Select size="sm" value={filterProject} onChange={(e) => setFilterProject(e.target.value)} style={{ width: 'auto' }}>
               <option value="">Tous les projets</option>
