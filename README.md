@@ -672,7 +672,11 @@ pour l'historique (progression des outils, compteurs). « Afficher les détails 
 chaque étape et ajoute les lignes de service : démarrage, demandes d'autorisation, audit des
 connexions, erreurs brutes. Les événements
 sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
-seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
+seuls les nouveaux sont demandés à chaque relevé. La réponse en cours d'écriture s'affiche avant d'être
+complète : le provider Claude reçoit les événements de streaming du SDK (`includePartialMessages`), en
+reconstitue le texte en mémoire (`sessions/live.ts`, jamais journalisé) et l'expose en `Session.liveDraft`,
+relevé avec les événements toutes les 400 ms tant que l'agent écrit (1,5 s sinon) ; le transcript le montre
+en bas avec un curseur, puis le message journalisé le remplace. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer, échap pour interrompre, flèche haut et flèche bas pour reprendre une instruction déjà
 envoyée. La barre d'état propose deux listes déroulantes pour changer le modèle et les autorisations

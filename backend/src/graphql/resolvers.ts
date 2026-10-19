@@ -1,6 +1,7 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { accessibleProjectIds, canAccessProject, filterAsync, memberRoleFor, requireAdmin, requireProject, requireSuperAdmin, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { liveBrowserService } from '../browser/live.js';
+import { liveDraftService } from '../sessions/live.js';
 import { apiKeyService } from '../apiKeys/service.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { accountOf, googleAccountService } from '../google/service.js';
@@ -542,6 +543,7 @@ export const resolvers = {
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
     browserActive: (session: Session) => liveBrowserService.isActive(session.id),
+    liveDraft: (session: Session) => liveDraftService.get(session.id),
     queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),

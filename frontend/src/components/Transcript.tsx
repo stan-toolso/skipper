@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { SessionEvent } from '../graphql/operations';
+import type { SessionEvent, SessionLiveDraft } from '../graphql/operations';
 import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
 import { clockTime, dayLabel, describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
 import Markdown from './Markdown';
@@ -469,8 +469,9 @@ const STICK_MARGIN = 80;
  * demandes d'autorisation n'y laissent pas de trace : un refus apparaît comme l'erreur de l'outil.
  * `technical` ajoute les lignes de service (démarrage, autorisations, audit des connexions, erreurs brutes) et
  * montre chaque étape ; sinon les étapes d'un tour sont repliées en une ligne (`WorkGroup`).
+ * `draft` : réponse en cours d'écriture (streaming), affichée en bas avec un curseur jusqu'au message complet.
  */
-export default function Transcript({ events, autoScroll = true, technical = false, loading = false }: { events: SessionEvent[]; autoScroll?: boolean; technical?: boolean; loading?: boolean }) {
+export default function Transcript({ events, draft = null, autoScroll = true, technical = false, loading = false }: { events: SessionEvent[]; draft?: SessionLiveDraft | null; autoScroll?: boolean; technical?: boolean; loading?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -502,7 +503,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
   useEffect(() => {
     const el = containerRef.current;
     if (autoScroll && el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [events.length, autoScroll]);
+  }, [events.length, draft?.text.length, draft?.thinking, autoScroll]);
 
   const nodes: React.ReactNode[] = [];
   // Sans le détail technique, le travail de l'agent entre deux événements affichés (un tour, le plus souvent)
@@ -824,6 +825,21 @@ export default function Transcript({ events, autoScroll = true, technical = fals
     }
   }
   nodes.push(...flushWork(true));
+  // Ce que l'agent écrit en ce moment : le texte grandit à chaque relevé, puis le message journalisé le remplace.
+  if (draft?.text.trim()) {
+    nodes.push(
+      <div key="live" className="cc-assistant cc-live">
+        <span className="cc-dot">⏺</span>
+        <Markdown className="cc-body" text={draft.text} />
+      </div>,
+    );
+  } else if (draft?.thinking) {
+    nodes.push(
+      <div key="live" className="cc-thinking cc-live">
+        <div>∴ Réflexion…</div>
+      </div>,
+    );
+  }
 
   return (
     <div

@@ -42,6 +42,7 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
+import { liveDraftService } from '../live.js';
 import { SESSION_ENV } from '../../runners/stats.js';
 
 interface ClaudeConfig {
@@ -273,6 +274,9 @@ export class ClaudeProvider implements SessionProvider {
       // Reprise de la conversation Claude si la session a déjà tourné et que le CLI la retrouve encore.
       resume: (await this.resumableConversation(ctx)) ?? undefined,
       pathToClaudeCodeExecutable: claudeExecutable,
+      // Événements de streaming de l'API (texte au fil de l'eau) : jamais journalisés, ils alimentent le brouillon
+      // en direct de la session (liveDraftService) que l'interface affiche en attendant le message complet.
+      includePartialMessages: true,
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
@@ -311,6 +315,11 @@ export class ClaudeProvider implements SessionProvider {
       const run: RunState = { rateLimitStatus: null };
       try {
         for await (const message of stream) {
+          if (message.type === 'stream_event') {
+            liveDraftService.apply(ctx.session.id, message.event, message.parent_tool_use_id);
+            continue;
+          }
+          if (message.type === 'assistant' || message.type === 'result') liveDraftService.clear(ctx.session.id);
           await this.handleMessage(ctx, message, run);
           await this.trackRuleUsage(ctx, message, ruleUsage).catch((e) => console.error('[permissions] suivi des règles', e));
           if (message.type === 'assistant' && !message.parent_tool_use_id) {
@@ -336,6 +345,7 @@ export class ClaudeProvider implements SessionProvider {
         if (closedByServer() || err instanceof AbortError) return { exitCode: null, closedByServer: true };
         return { exitCode: 1, error: (err as Error).message };
       } finally {
+        liveDraftService.clear(ctx.session.id);
         await disposeAll();
       }
       if (closedByServer()) return { exitCode: null, closedByServer: true };
