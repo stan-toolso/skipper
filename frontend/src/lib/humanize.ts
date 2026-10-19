@@ -196,6 +196,15 @@ export const permissionModeLabels: Record<string, string> = {
   bypassPermissions: 'Tout est autorisé',
 };
 
+/** Libellés courts des modes d'autorisation, pour la rangée d'outils de la zone de saisie (le libellé complet reste en infobulle). */
+export const permissionModeShortLabels: Record<string, string> = {
+  default: 'Demander avant d\'agir',
+  acceptEdits: 'Modifier les fichiers',
+  plan: 'Plan seulement',
+  dontAsk: 'Ne jamais demander',
+  bypassPermissions: 'Tout autoriser',
+};
+
 /** Avertissement pour le mode « tout autoriser » : les appels aux connexions soumises à approbation passent sans demande. */
 export function bypassConnectionsWarning(connections: string[]): string | null {
   if (!connections.length) return null;
