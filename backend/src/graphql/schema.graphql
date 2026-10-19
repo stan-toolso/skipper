@@ -1127,6 +1127,8 @@ type Session {
   pendingRequestCount: Int!
   "Le navigateur headless de la session est ouvert et l'agent s'en est servi : vue en direct sur le WebSocket /browsers/<id>."
   browserActive: Boolean!
+  "Réponse en cours d'écriture par l'agent (texte reçu en streaming, pas encore journalisé) ; null quand il n'écrit pas."
+  liveDraft: SessionLiveDraft
   "Mise en file d'attente (statut QUEUED)."
   queuedAt: DateTime
   "Rang dans la file d'attente (1 : la prochaine à démarrer), null hors de la file."
@@ -1165,6 +1167,13 @@ type Attachment {
   name: String!
   mediaType: String!
   size: Int!
+}
+
+"Brouillon en direct : ce que l'agent écrit en ce moment, avant le message complet dans les événements."
+type SessionLiveDraft {
+  text: String!
+  "L'agent est dans un bloc de réflexion."
+  thinking: Boolean!
 }
 
 type SessionEvent {

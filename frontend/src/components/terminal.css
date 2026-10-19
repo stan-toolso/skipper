@@ -132,6 +132,10 @@
 .cc-diff-text { flex: 1; min-width: 0; }
 
 .cc-thinking { margin: 10px 0; color: var(--cc-dimmer); font-style: italic; cursor: pointer; }
+/* Réponse en cours d'écriture : curseur clignotant après le dernier bloc reçu. */
+.cc-live .cc-body > :last-child::after,
+.cc-thinking.cc-live > div::after { content: '▍'; margin-left: 2px; color: var(--cc-accent); animation: cc-blink 1s ease-in-out infinite; }
+.cc-thinking.cc-live { cursor: default; }
 .cc-thinking .cc-thinking-text { margin-left: 18px; }
 .cc-note { margin: 4px 0; color: var(--cc-dimmer); }
 .cc-note.error { color: var(--cc-red); }

@@ -810,9 +810,19 @@ export const SESSION_EVENTS = gql`
         payload
         createdAt
       }
+      liveDraft {
+        text
+        thinking
+      }
     }
   }
 `;
+
+/** Réponse en cours d'écriture par l'agent (voir useSessionEvents). */
+export interface SessionLiveDraft {
+  text: string;
+  thinking: boolean;
+}
 
 export const CREATE_SESSION = gql`
   ${SESSION_FIELDS}

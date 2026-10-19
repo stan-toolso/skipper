@@ -72,7 +72,7 @@ type PageTab = 'conversation' | 'changes';
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
   const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
-  const { events, loaded: eventsLoaded } = useSessionEvents(id);
+  const { events, loaded: eventsLoaded, draft } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
   const [resumeSession, { loading: resuming, error: resumeError }] = useMutation(RESUME_SESSION);
@@ -490,7 +490,7 @@ export default function SessionDetailPage() {
         )}
       </div>
       {tab === 'conversation' ? (
-        <Transcript events={events} loading={!eventsLoaded} technical={technical} />
+        <Transcript events={events} draft={draft} loading={!eventsLoaded} technical={technical} />
       ) : (
         <SessionChanges
           sessionId={id}
