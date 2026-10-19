@@ -10,6 +10,7 @@ import { taskPriorityLabels } from '../lib/humanize';
 import { timeAgo } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskActions from '../components/TaskActions';
@@ -302,16 +303,10 @@ export default function TasksPage() {
 
   return (
     <>
+      {routeProjectId && project && <ProjectHeader project={project} active="tasks" />}
       <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-        <div>
-          {routeProjectId && project && (
-            <Link to={`/projects/${project.id}`} className="small">
-              ← {project.name}
-            </Link>
-          )}
-          <h1 className="h3 mb-0">Tâches</h1>
-        </div>
-        <div className="d-flex gap-2 align-items-center flex-wrap">
+        {!(routeProjectId && project) && <h1 className="h3 mb-0">Tâches</h1>}
+        <div className="d-flex gap-2 align-items-center flex-wrap ms-auto">
           {!routeProjectId && (
             <Form.Select size="sm" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ width: 'auto' }}>
               <option value="">Tous les projets</option>

@@ -5,6 +5,7 @@ import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstr
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import ProjectHeader from '../components/ProjectHeader';
 import { useSessionLauncher } from '../components/SessionLauncher';
 
 import { CREATE_PROJECT_API_KEY, DELETE_PROJECT_API_KEY, PROJECT_API_KEYS, type ProjectApiKey } from '../graphql/tasks';
@@ -671,7 +672,6 @@ function ApiKeysCard({ projectId }: { projectId: string }) {
 type ProjectWithSessions = Project & { sessions: Session[] };
 
 export default function ProjectDetailPage() {
-  const { openNewSession } = useSessionLauncher();
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { data, loading, error } = usePollingQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
@@ -694,58 +694,25 @@ export default function ProjectDetailPage() {
 
   return (
     <>
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <div>
-          <Link to="/projects" className="small">
-            ← Projets
-          </Link>
-          <h1 className="h3 mb-0">{project.name}</h1>
-          {project.description && <div className="text-secondary">{project.description}</div>}
-        </div>
-        <div className="d-flex gap-2">
-          {canWrite && (
-            <Button size="sm" onClick={() => openNewSession({ projectId: project.id })}>
-              Nouvelle session
+      <ProjectHeader
+        project={project}
+        active="overview"
+        actions={
+          isAdmin && (
+            <Button
+              size="sm"
+              variant="outline-danger"
+              onClick={async () => {
+                if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
+                  deleteProject({ variables: { id } });
+                }
+              }}
+            >
+              Supprimer
             </Button>
-          )}
-          <Button as={Link as any} to={`/projects/${project.id}/tasks`} size="sm" variant="outline-primary">
-            Tâches
-          </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/context`} size="sm" variant="outline-primary">
-            Contexte
-          </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/vault`} size="sm" variant="outline-primary" title="Serveurs, bases, API, sites et comptes utilisables par les agents">
-            Coffre
-          </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/agents`} size="sm" variant="outline-primary" title="Agents : configurations réutilisables et planifiables">
-            Agents
-          </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/workflows`} size="sm" variant="outline-primary" title="Workflows : enchaînements d'agents, de sessions et de tâches">
-            Workflows
-          </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/history`} size="sm" variant="outline-primary" title="Sessions et work sessions archivées">
-            Historique
-          </Button>
-          {isAdmin && (
-            <>
-              <Button as={Link as any} to={`/projects/${project.id}/edit`} size="sm" variant="outline-secondary">
-                Modifier
-              </Button>
-              <Button
-                size="sm"
-                variant="outline-danger"
-                onClick={async () => {
-                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
-                    deleteProject({ variables: { id } });
-                  }
-                }}
-              >
-                Supprimer
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
 
       {actionError && <Alert variant="danger">{actionError.message}</Alert>}
 

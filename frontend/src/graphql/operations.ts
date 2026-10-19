@@ -1020,6 +1020,8 @@ export const PROJECT_CONTEXT = gql`
     project(id: $id) {
       id
       name
+      description
+      myRole
       contextFolders {
         id
         projectId

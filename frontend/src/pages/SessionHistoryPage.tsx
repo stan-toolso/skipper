@@ -10,12 +10,15 @@ import { DELETE_SESSION, DELETE_WORKSESSION, RESTORE_WORKSESSION, type Session }
 import { ARCHIVED_SESSIONS, HISTORY_PROJECT, UNARCHIVE_SESSION } from '../graphql/sessions';
 import { timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 
 const PAGE = 50;
 
 interface HistoryProject {
   id: string;
   name: string;
+  description: string | null;
+  myRole: 'ADMIN' | 'MEMBER' | 'VIEWER';
   gitUrl: string | null;
   worksessions: { id: string; branch: string; label: string }[];
   archivedWorksessions: { id: string; name: string; branch: string; label: string; archivedAt: string; git: { commit: string } | null }[];
@@ -63,12 +66,9 @@ export default function SessionHistoryPage() {
 
   return (
     <>
-      <Link to={`/projects/${project.id}`} className="small">
-        ← {project.name}
-      </Link>
+      <ProjectHeader project={project} active="history" />
       <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-        <h1 className="h3 mb-0">Historique</h1>
-        <Form.Control type="search" size="sm" placeholder="Chercher dans les noms et les conversations…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 320 }} />
+        <Form.Control type="search" size="sm" placeholder="Chercher dans les noms et les conversations…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 320, maxWidth: '100%' }} className="ms-auto" />
       </div>
 
       {project.archivedWorksessions.length > 0 && (

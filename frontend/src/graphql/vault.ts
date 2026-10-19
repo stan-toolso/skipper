@@ -383,6 +383,7 @@ export const VAULT_PROJECT = gql`
     project(id: $id) {
       id
       name
+      description
       myRole
       runnerConfig
       vaultItems {
