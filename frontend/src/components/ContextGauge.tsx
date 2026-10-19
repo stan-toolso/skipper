@@ -45,7 +45,7 @@ export function ContextGauge({ context, onClick }: { context: Session['context']
     `Contexte de l'agent : ${formatTokens(context.tokens)} tokens au dernier tour`,
     `${pct} % de la fenêtre${model ? ` de ${model}` : ''} (${formatTokens(context.windowTokens)})`,
     context.coldTurnUsd !== null ? `≈ ${formatCost(context.coldTurnUsd)} pour relire ce contexte à froid au prochain tour (cache expiré après une heure d'inactivité)` : null,
-    level ? `Au-delà de ${formatTokens(context.warnTokens)} : pensez à compacter ou à repartir d'une conversation neuve` : null,
+    level && context.warnTokens !== null ? `Au-delà de ${formatTokens(context.warnTokens)} : pensez à compacter ou à repartir d'une conversation neuve` : null,
     'Cliquer : réglages de nettoyage',
   ]
     .filter(Boolean)

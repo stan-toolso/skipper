@@ -1236,6 +1236,8 @@ type ClaudeSettings {
   "Budget par défaut d'une session (USD)."
   sessionBudgetUsd: Float
   defaultMaxTurns: Int
+  "Seuil (tokens) au-delà duquel ses pages signalent le contexte d'une session : jauge en couleur, pastille, bandeau « Compacter / Repartir d'une conversation neuve ». null : ne jamais signaler. Défaut : 150 000."
+  contextWarnTokens: Int
 }
 
 type UsageByModel {
@@ -1597,6 +1599,8 @@ input ClaudeSettingsInput {
   monthlyBudgetUsd: Float
   sessionBudgetUsd: Float
   defaultMaxTurns: Int
+  "Seuil de signalement du contexte (tokens) ; null explicite : ne jamais signaler."
+  contextWarnTokens: Int
 }
 
 "Éléments ouverts dans les onglets du workbench, par type (identifiants non UUID ignorés)."
@@ -2458,8 +2462,8 @@ type SessionCleanup {
 type SessionContext {
   "Tokens du contexte au dernier tour (null : inconnu)."
   tokens: Int
-  "Seuil (constante du serveur) au-delà duquel l'interface propose de compacter ou de repartir d'une conversation neuve ; aucune action automatique."
-  warnTokens: Int!
+  "Seuil au-delà duquel l'interface propose de compacter ou de repartir d'une conversation neuve : celui des réglages Claude de la personne connectée (null : elle a désactivé le signalement). Aucune action automatique."
+  warnTokens: Int
   overThreshold: Boolean!
   "Modèle retenu pour l'estimation : dernier modèle facturé, sinon celui de la configuration."
   model: String

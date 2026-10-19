@@ -30,6 +30,12 @@ describe('contextEstimate', () => {
     expect(contextEstimate(null, 'opus')).toMatchObject({ tokens: null, share: null, coldTurnUsd: null, overThreshold: false });
     expect(contextEstimate(CONTEXT_WARN_TOKENS - 1, 'opus').overThreshold).toBe(false);
   });
+
+  it('applique le seuil de la personne, et ne signale jamais quand il est désactivé (null)', () => {
+    expect(contextEstimate(180_000, 'opus', 300_000)).toMatchObject({ warnTokens: 300_000, overThreshold: false });
+    expect(contextEstimate(300_000, 'opus', 300_000).overThreshold).toBe(true);
+    expect(contextEstimate(900_000, 'opus', null)).toMatchObject({ warnTokens: null, overThreshold: false });
+  });
 });
 
 describe('contextModel', () => {

@@ -99,7 +99,9 @@ export default function SessionSettingsModal({ session, onClose }: { session: Se
             Contexte actuel : {session.contextTokens === null ? 'inconnu (aucun tour depuis cette version)' : `${formatTokens(session.contextTokens)} tokens`}
             {session.context.coldTurnUsd !== null && session.context.coldTurnUsd >= 0.01 ? ` (≈ ${session.context.coldTurnUsd.toFixed(2).replace('.', ',')} $ par tour à froid)` : ''}.
             {' '}
-            Au-delà de {formatTokens(session.context.warnTokens)} tokens, la session propose elle-même de compacter ou de repartir d'une conversation neuve.
+            {session.context.warnTokens === null
+              ? "Le signalement du contexte est désactivé dans vos paramètres Claude : aucun bandeau ne proposera de nettoyage."
+              : `Au-delà de ${formatTokens(session.context.warnTokens)} tokens, la session propose elle-même de compacter ou de repartir d'une conversation neuve (seuil réglable dans vos paramètres Claude).`}
           </Form.Text>
 
           {error && (
