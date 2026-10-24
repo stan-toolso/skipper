@@ -1,4 +1,5 @@
 import { usePollingQuery } from '../lib/usePollingQuery';
+import { useElementWidth } from '../lib/useElementWidth';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -290,22 +291,6 @@ function DailyChart({ days }: { days: { day: string; usd: number }[] }) {
       )}
     </div>
   );
-}
-
-/** Largeur courante d'un élément, suivie par ResizeObserver (le graphique se redessine avec la fenêtre). */
-function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const update = () => setWidth(Math.floor(el.getBoundingClientRect().width));
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 function ProjectsTable({ projects }: { projects: DashboardProject[] }) {

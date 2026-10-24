@@ -13,6 +13,7 @@ import ProjectHeader from '../components/ProjectHeader';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskActions from '../components/TaskActions';
+import TaskDashboard from '../components/TaskDashboard';
 import TaskGrid from '../components/TaskGrid';
 import type { TaskColumnKey, TaskFilters } from '../lib/taskTable';
 import { isOverdue, PersonChip, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
@@ -26,7 +27,7 @@ const columns: { status: TaskStatus; label: string; hint: string }[] = [
 ];
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 const VIEW_KEY = 'skipper.tasks.view';
-type View = 'board' | 'table';
+type View = 'board' | 'table' | 'dashboard';
 
 function useDebounced(value: string, ms: number): string {
   const [v, setV] = useState(value);
@@ -127,8 +128,9 @@ export default function TasksPage() {
   const [filters, setFilters] = useState<TaskFilters>({});
   const [view, setView] = useState<View>(() => {
     try {
-      // Le tableau (liste) est la vue par défaut ; le kanban reste au choix.
-      return localStorage.getItem(VIEW_KEY) === 'board' ? 'board' : 'table';
+      // Le tableau (liste) est la vue par défaut ; le kanban et le pilotage restent au choix.
+      const v = localStorage.getItem(VIEW_KEY);
+      return v === 'board' || v === 'dashboard' ? v : 'table';
     } catch {
       return 'table';
     }
@@ -153,12 +155,14 @@ export default function TasksPage() {
   const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId: projectId || null } });
   const targets = useMemo(() => new Map((targetsData?.projects ?? []).map((p) => [p.id, p])), [targetsData]);
   const table = view === 'table';
+  const dashboard = view === 'dashboard';
   const withCancelled = showCancelled || (table && filters.status === 'CANCELLED');
-  const statuses: TaskStatus[] = mine ? ['TODO', 'IN_PROGRESS'] : withCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : ['TODO', 'IN_PROGRESS', 'DONE'];
+  // Le pilotage a besoin de tout (terminées et annulées comprises, « mes tâches » aussi) pour mesurer débit et délais.
+  const statuses: TaskStatus[] = dashboard || withCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : mine ? ['TODO', 'IN_PROGRESS'] : ['TODO', 'IN_PROGRESS', 'DONE'];
   const { data, loading, error } = usePollingQuery<{ tasks: Task[] }>(TASKS, {
     variables: table
-      ? { projectId: projectId || null, status: statuses, priority: null, assignee: null, reporter: null, tag: null, mine }
-      : { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine },
+      ? { projectId: projectId || null, status: statuses, priority: null, assignee: null, reporter: null, tag: null, mine, limit: null }
+      : { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine, limit: dashboard ? 1000 : null },
     pollInterval: 3000,
   });
 
@@ -250,13 +254,16 @@ export default function TasksPage() {
           <Button size="sm" variant={mine ? 'primary' : 'outline-primary'} disabled={!user} title="Tâches dont je suis responsable et qui ne sont pas terminées" onClick={() => setMine((v) => !v)}>
             <i className="bi bi-person-check me-1" /> Mes tâches ouvertes
           </Button>
-          <Form.Check type="switch" id="showCancelled" label="Voir les annulées" className="small" checked={showCancelled} disabled={mine} onChange={(e) => setShowCancelled(e.target.checked)} />
+          {!dashboard && <Form.Check type="switch" id="showCancelled" label="Voir les annulées" className="small" checked={showCancelled} disabled={mine} onChange={(e) => setShowCancelled(e.target.checked)} />}
           <ButtonGroup size="sm">
             <Button variant={view === 'table' ? 'secondary' : 'outline-secondary'} title="Liste" onClick={() => setViewPersist('table')}>
               <i className="bi bi-list-ul" />
             </Button>
             <Button variant={view === 'board' ? 'secondary' : 'outline-secondary'} title="Kanban" onClick={() => setViewPersist('board')}>
               <i className="bi bi-kanban" />
+            </Button>
+            <Button variant={dashboard ? 'secondary' : 'outline-secondary'} title="Pilotage : indicateurs, avancement, prévision" onClick={() => setViewPersist('dashboard')}>
+              <i className="bi bi-speedometer2" />
             </Button>
           </ButtonGroup>
           <Button size="sm" disabled={!newTaskProjectId} onClick={() => setEditing('new')}>
@@ -265,13 +272,17 @@ export default function TasksPage() {
         </div>
       </div>
       <p className="text-secondary small">
-        Les agents voient ces tâches, peuvent en créer, les commenter et les mettre à jour. « Confier à un agent » lance une session avec la tâche comme consigne.
+        {dashboard
+          ? 'Vue de pilotage : où en est le projet, à quel rythme il avance et quand le reste à faire devrait être terminé. Les filtres de la barre s’appliquent à tous les indicateurs.'
+          : 'Les agents voient ces tâches, peuvent en créer, les commenter et les mettre à jour. « Confier à un agent » lance une session avec la tâche comme consigne.'}
       </p>
 
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
       {loading && !data && <PageLoading />}
 
-      {table ? (
+      {dashboard && data ? (
+        <TaskDashboard tasks={tasks} showProject={showProject && !projectId} onEdit={setEditing} onTag={onTag} targets={targets} />
+      ) : table ? (
         <TaskGrid
           tasks={tasks}
           showProject={showProject}
