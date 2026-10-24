@@ -1,6 +1,7 @@
 import { AppError } from '../errors.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
+import { resultError as claudeResultError } from '../sessions/providers/claudeResult.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
@@ -48,7 +49,7 @@ export async function collectOutput(session: Session): Promise<{ output: string;
   if (result) {
     const payload = result.payload;
     const text = typeof payload.result === 'string' ? payload.result : '';
-    const error = payload.is_error ? (Array.isArray(payload.errors) && payload.errors.length ? payload.errors.join(' ; ') : String(payload.subtype ?? 'erreur')) : null;
+    const error = claudeResultError(payload);
     return { output: text.slice(0, OUTPUT_MAX_CHARS), error };
   }
   if (session.provider === 'shell') {

@@ -42,6 +42,7 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
+import { resultError } from './claudeResult.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -341,10 +342,9 @@ export class ClaudeProvider implements SessionProvider {
       // Le flux s'est terminé de lui-même au milieu d'un tour : le processus Claude Code s'est arrêté
       // (plantage, mémoire épuisée...), ce qui n'a rien à voir avec une fermeture par le serveur.
       if (!lastResult || turnInProgress) return { exitCode: 1, error: "Le processus Claude Code s'est arrêté au milieu d'un tour (flux terminé sans message de résultat)" };
-      if (lastResult.is_error) {
-        const detail = lastResult.subtype === 'success' ? lastResult.result : lastResult.errors.join('\n');
-        return { exitCode: 1, error: `${lastResult.subtype}${detail ? ` : ${detail}` : ''}` };
-      }
+      // Un dernier tour interrompu par l'humain n'est pas une erreur de la session.
+      const error = resultError(lastResult, { interruptedIsError: false });
+      if (error) return { exitCode: 1, error };
       return { exitCode: 0 };
     })();
 
