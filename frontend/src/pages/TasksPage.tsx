@@ -1,20 +1,21 @@
 import { useQuery } from '@apollo/client';
 import PageLoading from '../components/PageLoading';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { PROJECT, PROJECTS, TASKS, TASK_LAUNCH_TARGETS, type Project, type Task, type TaskPerson, type TaskPriority, type TaskStatus } from '../graphql/operations';
 import { TASK_PEOPLE, TASK_TAGS } from '../graphql/tasks';
 import { taskPriorityLabels } from '../lib/humanize';
-import { timeAgo } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useTabTitle } from '../workbench/TabsContext';
 import ProjectHeader from '../components/ProjectHeader';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskActions from '../components/TaskActions';
-import { formatPerson, isOverdue, PersonChip, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
+import TaskGrid from '../components/TaskGrid';
+import type { TaskColumnKey, TaskFilters } from '../lib/taskTable';
+import { isOverdue, PersonChip, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskModal from '../components/TaskModal';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 
@@ -26,7 +27,6 @@ const columns: { status: TaskStatus; label: string; hint: string }[] = [
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 const VIEW_KEY = 'skipper.tasks.view';
 type View = 'board' | 'table';
-type SortKey = 'title' | 'project' | 'status' | 'priority' | 'assignee' | 'reporter' | 'dueDate' | 'comments' | 'createdAt' | 'updatedAt';
 
 function useDebounced(value: string, ms: number): string {
   const [v, setV] = useState(value);
@@ -107,120 +107,10 @@ function TaskCard({ task, showProject, onEdit, target, onTag }: { task: Task; sh
   );
 }
 
-function sortValue(t: Task, key: SortKey): string | number {
-  switch (key) {
-    case 'title':
-      return t.title.toLowerCase();
-    case 'project':
-      return t.project.name.toLowerCase();
-    case 'status':
-      return ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'].indexOf(t.status);
-    case 'priority':
-      return priorities.indexOf(t.priority);
-    case 'assignee':
-      return formatPerson(t.assignee).toLowerCase() || '￿';
-    case 'reporter':
-      return formatPerson(t.reporter).toLowerCase() || '￿';
-    case 'dueDate':
-      return t.dueDate ?? '9999';
-    case 'comments':
-      return -t.commentCount;
-    case 'createdAt':
-      return -new Date(t.createdAt).getTime();
-    case 'updatedAt':
-      return -new Date(t.updatedAt).getTime();
-  }
-}
-
-function TaskTable({ tasks, showProject, onEdit, targets, onTag }: { tasks: Task[]; showProject: boolean; onEdit: (t: Task) => void; targets: Map<string, LaunchTarget>; onTag: (tag: string) => void }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'createdAt', dir: 'asc' });
-  const sorted = useMemo(() => {
-    const list = [...tasks];
-    list.sort((a, b) => {
-      const va = sortValue(a, sort.key);
-      const vb = sortValue(b, sort.key);
-      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-      return sort.dir === 'asc' ? cmp : -cmp;
-    });
-    return list;
-  }, [tasks, sort]);
-  const header = (key: SortKey, label: string, cls = '') => (
-    <th className={cls} role="button" aria-sort={sort.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} onClick={() => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))}>
-      {label}
-      {sort.key === key && <i className={`bi bi-caret-${sort.dir === 'asc' ? 'down' : 'up'}-fill ms-1 small`} />}
-    </th>
-  );
-  return (
-    <Table hover responsive size="sm" className="task-table">
-      <thead>
-        <tr>
-          {header('title', 'Titre')}
-          {showProject && header('project', 'Projet')}
-          {header('status', 'Statut')}
-          {header('priority', 'Priorité')}
-          {header('assignee', 'Responsable', 'd-none d-md-table-cell')}
-          {header('reporter', 'Rapporteur', 'd-none d-md-table-cell')}
-          {header('dueDate', 'Échéance', 'd-none d-md-table-cell')}
-          {header('comments', 'Comm.', 'text-end d-none d-md-table-cell')}
-          {header('createdAt', 'Créée', 'd-none d-md-table-cell')}
-          {header('updatedAt', 'Mise à jour', 'd-none d-md-table-cell')}
-          <th />
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((t) => (
-          <tr key={t.id}>
-            <td>
-              <Link to={`/tasks/${t.id}`} className="fw-semibold text-reset text-decoration-none">
-                {t.title}
-              </Link>
-              {t.session && (
-                <Link to={`/sessions/${t.session.id}`} className="ms-2 text-secondary" title={t.session.name}>
-                  <i className="bi bi-chat-dots" />
-                </Link>
-              )}
-              {t.pullRequest && (
-                <span className="ms-2">
-                  <PullRequestChip projectId={t.project.id} pr={t.pullRequest} />
-                </span>
-              )}
-              <TaskTags tags={t.tags} onSelect={onTag} className="ms-2" />
-            </td>
-            {showProject && (
-              <td className="task-cell-project" title={t.project.name}>
-                <Link to={`/projects/${t.project.id}/tasks`}>{t.project.name}</Link>
-              </td>
-            )}
-            <td>
-              <TaskStatusBadge status={t.status} statusTag={t.statusTag} />
-            </td>
-            <td>
-              <TaskPriorityBadge priority={t.priority} />
-            </td>
-            <td className="d-none d-md-table-cell" title={formatPerson(t.assignee)}>{t.assignee?.name ?? t.assignee?.email ?? ''}</td>
-            <td className="d-none d-md-table-cell" title={formatPerson(t.reporter)}>{t.reporter?.name ?? t.reporter?.email ?? ''}</td>
-            <td className={`d-none d-md-table-cell${isOverdue(t) ? ' text-danger' : ''}`}>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : ''}</td>
-            <td className="text-end d-none d-md-table-cell">{t.commentCount || ''}</td>
-            <td className="d-none d-md-table-cell" title={new Date(t.createdAt).toLocaleString()}>{timeAgo(t.createdAt)}</td>
-            <td className="d-none d-md-table-cell" title={new Date(t.updatedAt).toLocaleString()}>{timeAgo(t.updatedAt)}</td>
-            <td style={{ minWidth: 260 }}>
-              <TaskActions task={t} target={targets.get(t.project.id)} onEdit={() => onEdit(t)} />
-            </td>
-          </tr>
-        ))}
-        {sorted.length === 0 && (
-          <tr>
-            <td colSpan={11} className="text-secondary fst-italic">
-              Aucune tâche ne correspond.
-            </td>
-          </tr>
-        )}
-      </tbody>
-    </Table>
-  );
-}
-
-/** Tâches : d'un projet (/projects/:id/tasks) ou de tous les projets (/tasks), en tableau ou en liste. */
+/**
+ * Tâches : d'un projet (/projects/:id/tasks) ou de tous les projets (/tasks), en liste (TaskGrid : colonnes réglables,
+ * filtres par colonne côté client) ou en kanban (filtres de la barre d'outils, côté serveur).
+ */
 export default function TasksPage() {
   const { id: routeProjectId } = useParams();
   const { user } = useAuth();
@@ -233,6 +123,8 @@ export default function TasksPage() {
   const [reporter, setReporter] = useState('');
   const [mine, setMine] = useState(false);
   const [tag, setTag] = useState('');
+  // Vue liste : filtres par colonne, appliqués côté client sur les tâches chargées (le projet, lui, filtre la requête).
+  const [filters, setFilters] = useState<TaskFilters>({});
   const [view, setView] = useState<View>(() => {
     try {
       // Le tableau (liste) est la vue par défaut ; le kanban reste au choix.
@@ -260,9 +152,13 @@ export default function TasksPage() {
   const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId: projectId || null } });
   const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId: projectId || null } });
   const targets = useMemo(() => new Map((targetsData?.projects ?? []).map((p) => [p.id, p])), [targetsData]);
-  const statuses: TaskStatus[] = mine ? ['TODO', 'IN_PROGRESS'] : showCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : ['TODO', 'IN_PROGRESS', 'DONE'];
+  const table = view === 'table';
+  const withCancelled = showCancelled || (table && filters.status === 'CANCELLED');
+  const statuses: TaskStatus[] = mine ? ['TODO', 'IN_PROGRESS'] : withCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : ['TODO', 'IN_PROGRESS', 'DONE'];
   const { data, loading, error } = usePollingQuery<{ tasks: Task[] }>(TASKS, {
-    variables: { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine },
+    variables: table
+      ? { projectId: projectId || null, status: statuses, priority: null, assignee: null, reporter: null, tag: null, mine }
+      : { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine },
     pollInterval: 3000,
   });
 
@@ -280,10 +176,11 @@ export default function TasksPage() {
       setEditing(found);
       searchParams.delete('task');
       setSearchParams(searchParams, { replace: true });
-    } else if (!showCancelled || mine || assignee || reporter || priority || tag) {
+    } else if (!showCancelled || mine || assignee || reporter || priority || tag || Object.values(filters).some(Boolean)) {
       setShowCancelled(true);
       setMine(false);
       setTag('');
+      setFilters({});
       setAssignee('');
       setReporter('');
       setPriority('');
@@ -298,8 +195,17 @@ export default function TasksPage() {
   }, [tasks]);
   const cols = (mine ? columns.filter((c) => c.status !== 'DONE') : columns).concat(showCancelled && !mine ? [{ status: 'CANCELLED' as TaskStatus, label: 'Annulées', hint: '' }] : []);
   const newTaskProjectId = projectId || projectsData?.projects.find((p) => p.myRole !== 'VIEWER')?.id || '';
-  const showProject = !routeProjectId && !projectId;
+  const showProject = !routeProjectId;
   const people = peopleData?.taskPeople ?? [];
+  const setFilter = (key: TaskColumnKey, value: string) => {
+    if (key === 'project') setProjectId(value);
+    else setFilters((f) => ({ ...f, [key]: value }));
+  };
+  const clearFilters = () => {
+    setFilters({});
+    if (!routeProjectId) setProjectId('');
+  };
+  const onTag = (t: string) => (table ? setFilters((f) => ({ ...f, tags: t })) : setTag(t));
 
   return (
     <>
@@ -307,7 +213,7 @@ export default function TasksPage() {
       <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
         {!(routeProjectId && project) && <h1 className="h3 mb-0">Tâches</h1>}
         <div className="d-flex gap-2 align-items-center flex-wrap ms-auto">
-          {!routeProjectId && (
+          {!routeProjectId && !table && (
             <Form.Select size="sm" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ width: 'auto' }}>
               <option value="">Tous les projets</option>
               {(projectsData?.projects ?? []).map((p) => (
@@ -318,25 +224,29 @@ export default function TasksPage() {
               ))}
             </Form.Select>
           )}
-          <Form.Select size="sm" value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority | '')} style={{ width: 'auto' }}>
-            <option value="">Toutes priorités</option>
-            {priorities.map((p) => (
-              <option key={p} value={p}>
-                {taskPriorityLabels[p].label}
-              </option>
-            ))}
-          </Form.Select>
-          <Form.Control size="sm" placeholder="Responsable" list="task-people" value={assignee} disabled={mine} onChange={(e) => setAssignee(e.target.value)} style={{ width: 150 }} />
-          <Form.Control size="sm" placeholder="Rapporteur" list="task-people" value={reporter} onChange={(e) => setReporter(e.target.value)} style={{ width: 150 }} />
-          <Form.Control size="sm" placeholder="Étiquette" list="task-tags" value={tag} onChange={(e) => setTag(e.target.value)} style={{ width: 130 }} title="Tâches portant cette étiquette" />
-          <datalist id="task-tags">
-            {(tagsData?.taskTags ?? []).map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-          <datalist id="task-people">
-            {people.flatMap((p) => [p.name, p.email]).filter((v): v is string => Boolean(v)).map((v) => <option key={v} value={v} />)}
-          </datalist>
+          {!table && (
+            <>
+              <Form.Select size="sm" value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority | '')} style={{ width: 'auto' }}>
+                <option value="">Toutes priorités</option>
+                {priorities.map((p) => (
+                  <option key={p} value={p}>
+                    {taskPriorityLabels[p].label}
+                  </option>
+                ))}
+              </Form.Select>
+              <Form.Control size="sm" placeholder="Responsable" list="task-people" value={assignee} disabled={mine} onChange={(e) => setAssignee(e.target.value)} style={{ width: 150 }} />
+              <Form.Control size="sm" placeholder="Rapporteur" list="task-people" value={reporter} onChange={(e) => setReporter(e.target.value)} style={{ width: 150 }} />
+              <Form.Control size="sm" placeholder="Étiquette" list="task-tags" value={tag} onChange={(e) => setTag(e.target.value)} style={{ width: 130 }} title="Tâches portant cette étiquette" />
+              <datalist id="task-tags">
+                {(tagsData?.taskTags ?? []).map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <datalist id="task-people">
+                {people.flatMap((p) => [p.name, p.email]).filter((v): v is string => Boolean(v)).map((v) => <option key={v} value={v} />)}
+              </datalist>
+            </>
+          )}
           <Button size="sm" variant={mine ? 'primary' : 'outline-primary'} disabled={!user} title="Tâches dont je suis responsable et qui ne sont pas terminées" onClick={() => setMine((v) => !v)}>
             <i className="bi bi-person-check me-1" /> Mes tâches ouvertes
           </Button>
@@ -361,8 +271,18 @@ export default function TasksPage() {
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
       {loading && !data && <PageLoading />}
 
-      {view === 'table' ? (
-        <TaskTable tasks={tasks} showProject={showProject} onEdit={setEditing} targets={targets} onTag={setTag} />
+      {table ? (
+        <TaskGrid
+          tasks={tasks}
+          showProject={showProject}
+          projects={projectsData?.projects ?? []}
+          filters={{ ...filters, project: routeProjectId ? '' : projectId }}
+          onFilterChange={setFilter}
+          onClearFilters={clearFilters}
+          onEdit={setEditing}
+          onTag={onTag}
+          targets={targets}
+        />
       ) : (
         <Row className="g-3">
           {cols.map((col) => {
@@ -377,7 +297,7 @@ export default function TasksPage() {
                 </div>
                 {col.hint && <div className="small text-secondary mb-2">{col.hint}</div>}
                 {list.map((t) => (
-                  <TaskCard key={t.id} task={t} showProject={showProject} onEdit={() => setEditing(t)} target={targets.get(t.project.id)} onTag={setTag} />
+                  <TaskCard key={t.id} task={t} showProject={showProject && !projectId} onEdit={() => setEditing(t)} target={targets.get(t.project.id)} onTag={onTag} />
                 ))}
                 {list.length === 0 && <div className="text-secondary small fst-italic">Rien ici.</div>}
               </Col>
