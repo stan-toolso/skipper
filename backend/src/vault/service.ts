@@ -8,6 +8,7 @@ import { userService } from '../users/service.js';
 import type { ProjectRole } from '../users/types.js';
 import { atLeast, canLink, hasDirectAccess, permissionOf, revealableFields, type AccessFacts } from './access.js';
 import * as api from './api.js';
+import * as aws from './aws.js';
 import { currentKeyId, openSecrets, rewrapKey, sealSecrets, VaultDecryptError } from './crypto.js';
 import * as postgres from './postgres.js';
 import { vaultRepository, type VaultItemPatch, type VaultItemRecord } from './repository.js';
@@ -17,6 +18,7 @@ import { isTokenService, TOKEN_SERVICES, tokenMismatch, type TokenService } from
 import {
   AGENT_KINDS,
   API_AUTH_SCHEMES,
+  AWS_AUTHS,
   PERMISSION_RANK,
   SKIPPER_KINDS,
   TOOL_KINDS,
@@ -24,6 +26,7 @@ import {
   kindLabels,
   type ApiCredentials,
   type ApiSettings,
+  type AwsSettings,
   type FieldCredentials,
   type GoogleSettings,
   type LangfuseSettings,
@@ -257,7 +260,8 @@ export const vaultService = {
           host: requireText(input.host ?? base.host, "L'hôte est"),
           port: validatePort(input.port ?? base.port ?? null, DEFAULT_PORTS.postgres),
           username: requireText(input.username ?? base.username, "L'utilisateur est"),
-          database: requireText(input.database ?? base.database, 'Le nom de la base est'),
+          // Vide : le serveur entier, l'agent nomme la base à chaque appel.
+          database: input.database !== undefined ? (input.database?.trim() ? postgres.validateDatabaseName(input.database) : null) : (base.database ?? null),
           ssl: input.ssl ?? base.ssl ?? false,
           sslCa: input.sslCa !== undefined ? validateSslCa(input.sslCa) : base.sslCa ?? null,
           viaItemId,
@@ -303,6 +307,52 @@ export const vaultService = {
       }
       case 'google':
         throw new AppError('Un compte Google se relie par Google (bouton « Connecter un compte Google »)');
+      case 'aws': {
+        const base = (current?.settings ?? {}) as Partial<AwsSettings>;
+        const a = input.aws ?? {};
+        const auth = current ? base.auth! : (a.auth ?? 'sso');
+        if (!AWS_AUTHS.includes(auth)) throw new AppError(`Mode d'authentification AWS inconnu : ${auth}`);
+        if (current && a.auth && a.auth !== auth) throw new AppError("Le mode d'authentification d'un compte AWS ne change pas : créez un autre élément");
+        const pick = (next: string | null | undefined, prev: string | null | undefined, validate: (v: string) => string): string | null => (next !== undefined && next !== null ? (next.trim() ? validate(next) : null) : (prev ?? null));
+        const settings: AwsSettings = {
+          auth,
+          region: aws.validateRegion(a.region ?? base.region, 'La région par défaut'),
+          startUrl: null,
+          ssoRegion: null,
+          accountId: null,
+          accountName: null,
+          roleName: null,
+          accessKeyId: null,
+          roleArn: null,
+          tokenExpiresAt: base.tokenExpiresAt ?? null,
+          clientExpiresAt: base.clientExpiresAt ?? null,
+          identity: base.identity ?? null,
+        };
+        if (auth === 'sso') {
+          settings.startUrl = aws.validateStartUrl(a.startUrl ?? base.startUrl);
+          settings.ssoRegion = aws.validateRegion(a.ssoRegion ?? base.ssoRegion, "La région d'IAM Identity Center");
+          settings.accountId = pick(a.accountId, base.accountId, aws.validateAccountId);
+          settings.roleName = pick(a.roleName, base.roleName, aws.validateRoleName);
+          settings.accountName = settings.accountId === null ? null : a.accountName?.trim() || (settings.accountId === (base.accountId ?? null) ? base.accountName ?? null : null);
+          if ((settings.accountId === null) !== (settings.roleName === null)) throw new AppError('Indiquez le compte et le rôle ensemble');
+          // Un autre portail ou une autre région : les jetons obtenus ne valent plus, il faudra se reconnecter.
+          if (current && (settings.startUrl !== base.startUrl || settings.ssoRegion !== base.ssoRegion)) {
+            settings.tokenExpiresAt = null;
+            settings.clientExpiresAt = null;
+            for (const k of ['accessToken', 'refreshToken', 'clientId', 'clientSecret']) delete secrets[k];
+          }
+          if (settings.accountId !== (base.accountId ?? null) || settings.roleName !== (base.roleName ?? null)) settings.identity = null;
+          delete secrets.secretAccessKey;
+        } else {
+          settings.accessKeyId = aws.validateAccessKeyId(a.accessKeyId ?? base.accessKeyId);
+          settings.roleArn = pick(a.roleArn, base.roleArn, aws.validateRoleArn);
+          if (a.secretAccessKey?.trim()) secrets.secretAccessKey = assertSecretSize(a.secretAccessKey.trim(), "Clé d'accès secrète");
+          if (!secrets.secretAccessKey) throw new AppError("La clé d'accès secrète est obligatoire");
+          if (settings.accessKeyId !== (base.accessKeyId ?? null) || settings.roleArn !== (base.roleArn ?? null) || a.secretAccessKey?.trim()) settings.identity = null;
+          for (const k of ['accessToken', 'refreshToken', 'clientId', 'clientSecret']) delete secrets[k];
+        }
+        return { settings, secrets };
+      }
       case 'token': {
         const prev = (current?.settings ?? {}) as Partial<TokenSettings>;
         const service = current ? (prev.service as TokenService) : (input.service ?? '').trim().toLowerCase();
@@ -427,7 +477,7 @@ export const vaultService = {
     }
     const touchesSettings =
       (current.kind !== 'google' &&
-        [input.host, input.port, input.username, input.database, input.ssl, input.sslCa, input.url, input.authScheme, input.fields, input.privateKey, input.password, input.token, input.publicKey].some((v) => v != null)) ||
+        [input.host, input.port, input.username, input.database, input.ssl, input.sslCa, input.url, input.authScheme, input.fields, input.privateKey, input.password, input.token, input.publicKey, input.aws].some((v) => v != null)) ||
       input.viaItemId !== undefined ||
       input.authName !== undefined;
     let secretChanged = false;
@@ -603,6 +653,7 @@ export const vaultService = {
     const project = await projectService.get(projectId);
     if (source.ownerProjectId === projectId) throw new AppError('Cet élément appartient déjà à ce projet');
     if (source.kind === 'google') throw new AppError('Un compte Google se reconnecte depuis le projet plutôt que d\'être copié');
+    if (source.kind === 'aws' && (source.settings as AwsSettings).auth === 'sso') throw new AppError('Un compte AWS connecté par IAM Identity Center se reconnecte depuis le projet plutôt que d\'être copié');
     if (isOauthToken(source)) throw new AppError('Ce jeton a été obtenu par une connexion : il reste personnel (reconnectez le compte plutôt que de le copier)');
     const newName = validateName(name ?? source.name);
     const settings = JSON.parse(JSON.stringify(source.settings)) as VaultItem['settings'];
@@ -643,6 +694,46 @@ export const vaultService = {
       await vaultRepository.deleteLink(l.id);
       await this.audit(source, 'unlinked', actor, `${l.scope === 'project' ? 'tous les agents' : 'sessions personnelles'} (remplacé par la copie)`);
     }
+    return { ...item, permission: 'manage' };
+  },
+
+  /**
+   * Duplique un élément dans le même coffre (même propriétaire), secrets compris, sous un nouveau nom
+   * (`<nom>-copie` par défaut) : pour créer une variante (autre base, autre politique) sans tout ressaisir.
+   * Partages, liens et journal ne sont pas copiés ; un compte Google ou un jeton obtenu par connexion ne se
+   * duplique pas.
+   */
+  async duplicate(actor: VaultActor & { userId: string }, id: string, name?: string | null): Promise<VaultItemWithPermission> {
+    const source = await this.getFor(actor.userId, id, 'manage');
+    if (source.kind === 'google') throw new AppError('Un compte Google ne se duplique pas : reconnectez-le');
+    if (isOauthToken(source)) throw new AppError('Ce jeton a été obtenu par une connexion : il ne se duplique pas (reconnectez le compte)');
+    const newName = validateName(name?.trim() || `${source.name.slice(0, 34)}-copie`);
+    if (newName === source.name) throw new AppError('Donnez un autre nom à la copie');
+    if (source.ownerProjectId) await this.assertNameFree(source.ownerProjectId, null, newName, null);
+    const newId = randomUUID();
+    const item = await vaultRepository.create({
+      id: newId,
+      ownerUserId: source.ownerUserId,
+      ownerProjectId: source.ownerProjectId,
+      name: newName,
+      kind: source.kind,
+      description: source.description,
+      settings: JSON.parse(JSON.stringify(source.settings)) as VaultItem['settings'],
+      ...sealSecrets(newId, source.kind, this.secretsOf(source)),
+      publicKey: source.publicKey,
+      hostKey: source.hostKey,
+      hostKeySeenAt: source.hostKeySeenAt,
+      readOnly: source.readOnly,
+      requireApproval: source.requireApproval,
+      commandAllowlist: source.commandAllowlist,
+      expiresAt: source.expiresAt,
+      createdById: actor.userId,
+    }).catch((err) => {
+      if ((err as { code?: string }).code === '23505') throw new AppError(`Un élément « ${newName} » existe déjà dans ce coffre`);
+      throw err;
+    });
+    await this.audit(item, 'created', actor, `${kindLabels[item.kind]}, copie de « ${source.name} »`);
+    await this.audit(source, 'duplicated', actor, `« ${newName} »`);
     return { ...item, permission: 'manage' };
   },
 
@@ -708,17 +799,30 @@ export const vaultService = {
     return { host: s.host, port: s.port, username: s.username, privateKey };
   },
 
-  async postgresCredentials(item: VaultItem): Promise<PostgresCredentials> {
+  /**
+   * Identifiants d'une base. `database` : base demandée par l'agent ; admise seulement si l'élément couvre le
+   * serveur entier (sinon elle doit être celle de l'élément), à défaut la base de maintenance.
+   */
+  async postgresCredentials(item: VaultItem, database?: string | null): Promise<PostgresCredentials> {
     if (item.kind !== 'postgres') throw new AppError(`« ${item.name} » n'est pas une base PostgreSQL`);
     const s = item.settings as PostgresSettings;
+    const requested = database?.trim() || null;
+    let db: string;
+    if (s.database) {
+      if (requested && requested !== s.database) throw new AppError(`« ${item.name} » est rattaché à la base ${s.database} : la base « ${requested} » n'y est pas accessible`, 'FORBIDDEN');
+      db = s.database;
+    } else {
+      db = requested ? postgres.validateDatabaseName(requested) : postgres.MAINTENANCE_DATABASE;
+    }
     let via: PostgresCredentials['via'] = null;
     if (s.viaItemId) {
       const tunnel = await this.getInternal(s.viaItemId);
       if (tunnel.ownerUserId !== item.ownerUserId || tunnel.ownerProjectId !== item.ownerProjectId) throw new AppError(`Le tunnel de « ${item.name} » n'appartient plus au même propriétaire`, 'FORBIDDEN');
       via = { item: tunnel, credentials: this.sshCredentials(tunnel) };
     }
-    return { host: s.host, port: s.port, username: s.username, database: s.database, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
+    return { host: s.host, port: s.port, username: s.username, database: db, ssl: s.ssl, sslCa: s.sslCa ?? null, password: this.secretsOf(item).password ?? null, via };
   },
+
 
   apiCredentials(item: VaultItem): ApiCredentials {
     if (item.kind !== 'api') throw new AppError(`« ${item.name} » n'est pas une API HTTP`);
@@ -779,7 +883,7 @@ export const vaultService = {
       }
       case 'postgres': {
         const creds = await this.postgresCredentials(item);
-        const probe = await postgres.probe(creds);
+        const probe = await postgres.probe(creds, !(item.settings as PostgresSettings).database);
         if (creds.via) await this.rememberHostKey(creds.via.item, probe.sshHostKey);
         return probe.detail;
       }
@@ -789,6 +893,7 @@ export const vaultService = {
         return (await website.probe((item.settings as WebsiteSettings).url)).detail;
       case 'secret':
         return 'Rien à tester pour un secret : il est utilisé tel quel.';
+      // aws : testeur branché par vault/awsService.ts (probers).
       case 'litellm': {
         const token = this.secretsOf(item).token;
         if (!token) throw new AppError(`« ${item.name} » n'a pas de clé`);
@@ -1003,7 +1108,14 @@ export const vaultService = {
         case 'postgres': {
           const s = i.settings as PostgresSettings;
           const via = s.viaItemId ? byId.get(s.viaItemId)?.name : null;
-          return `- \`${i.name}\` : base PostgreSQL ${s.database} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
+          const scope = s.database ? `base PostgreSQL ${s.database}` : `serveur PostgreSQL entier (toutes ses bases : paramètre \`database\` des outils, \`${postgres.MAINTENANCE_DATABASE}\` par défaut ; \`sql_schema\` sans base les liste)`;
+          return `- \`${i.name}\` : ${scope} sur ${s.host}${s.port !== 5432 ? `:${s.port}` : ''}${via ? ` (via le tunnel SSH \`${via}\`)` : ''}${desc}. ${i.readOnly ? 'Lecture seule.' : 'Écriture autorisée : prudence.'} Outils \`sql_query\`, \`sql_schema\`.`;
+        }
+        case 'aws': {
+          const s = i.settings as AwsSettings;
+          const who = s.auth === 'sso' ? `compte ${s.accountName ?? s.accountId ?? '?'}, rôle ${s.roleName ?? '?'}` : `clé ${s.accessKeyId ?? '?'}${s.roleArn ? `, rôle ${s.roleArn}` : ''}`;
+          const policy = i.commandAllowlist.length ? ` ; commandes limitées aux préfixes ${i.commandAllowlist.map((p) => `\`${p}\``).join(', ')}` : '';
+          return `- \`${i.name}\` : compte AWS (${who}, région ${s.region})${desc}. Outil \`aws_run\` : la commande du CLI sans \`aws\` (ex. \`s3 ls\`), exécutée par le serveur avec les fichiers du dossier de travail${i.readOnly ? ' ; lecture seule (describe, get, list…)' : ''}${policy}.`;
         }
         default:
           return '';

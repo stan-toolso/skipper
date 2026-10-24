@@ -3,7 +3,7 @@ import type { SessionProvider } from '../sessions/providers/provider.js';
 
 // Mode d'autorisation par défaut du projet : appliqué aux sessions de tâches (et à toute session créée sans mode),
 // sans écraser un mode choisi explicitement. Dépôts et services voisins simulés, sans base.
-const state = vi.hoisted(() => ({ created: [] as Record<string, unknown>[], projectMode: 'acceptEdits' }));
+const state = vi.hoisted(() => ({ created: [] as Record<string, unknown>[], projectMode: 'acceptEdits', taskWorksession: null as Record<string, unknown> | null }));
 const repo = vi.hoisted(() => ({
   create: vi.fn(async (input: Record<string, unknown>) => {
     state.created.push(input);
@@ -15,6 +15,7 @@ const tasks = vi.hoisted(() => ({
   update: vi.fn(async (_id: string, patch: Record<string, unknown>) => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', ...patch })),
   describeForPrompt: vi.fn(() => 'Réalise la tâche'),
   comments: vi.fn(async () => []),
+  attachments: vi.fn(async () => []),
 }));
 
 vi.mock('../sessions/repository.js', () => ({ sessionRepository: repo }));
@@ -23,8 +24,15 @@ vi.mock('../projects/service.js', () => ({
   projectService: { get: async () => ({ id: 'p', name: 'Projet', gitUrl: null, defaultPermissionMode: state.projectMode }) },
   slugify: (s: string) => s,
 }));
-vi.mock('../worktrees/service.js', () => ({ worktreeService: { resolveCwd: async () => '/tmp', assertUsable: async () => ({}) } }));
-vi.mock('../worktrees/repository.js', () => ({ worktreeRepository: { listByProject: async () => [] } }));
+vi.mock('../worksessions/service.js', () => ({
+  worksessionService: {
+    resolveCwd: async () => '/tmp',
+    assertUsable: async () => ({}),
+    forTask: async () => state.taskWorksession,
+    create: vi.fn(async (_p: string, input: Record<string, unknown>) => ({ id: 'w-new', name: input.name, branch: input.branch, label: input.label, taskId: input.taskId })),
+  },
+}));
+vi.mock('../worksessions/repository.js', () => ({ worksessionRepository: { listByProject: async () => [] } }));
 vi.mock('../requests/service.js', () => ({ requestService: {} }));
 vi.mock('../notifications/service.js', () => ({ notificationService: { notify: vi.fn() } }));
 vi.mock('../settings/repository.js', () => ({ settingsRepository: { get: vi.fn(async () => null), set: vi.fn() } }));
@@ -38,28 +46,62 @@ vi.mock('../sessions/providers/registry.js', () => ({
 }));
 
 const { sessionService } = await import('../sessions/service.js');
-const { startTaskSession } = await import('./launch.js');
+const { startTaskSession, taskWorksessionNames } = await import('./launch.js');
 
 beforeEach(() => {
   state.created = [];
   state.projectMode = 'acceptEdits';
+  state.taskWorksession = null;
   vi.spyOn(sessionService, 'start').mockImplementation(async (id: string) => ({ id }) as never);
 });
 
 describe("mode d'autorisation par défaut du projet", () => {
   it("lance les sessions de tâche dans le mode du projet", async () => {
-    await startTaskSession('t1', { dedicatedWorktree: false });
+    await startTaskSession('t1');
     expect(state.created[0].config).toEqual({ permissionMode: 'acceptEdits' });
   });
 
   it('ne remplace pas un mode choisi explicitement', async () => {
-    await startTaskSession('t1', { dedicatedWorktree: false, config: { permissionMode: 'plan' } });
+    await startTaskSession('t1', { config: { permissionMode: 'plan' } });
     expect(state.created[0].config).toEqual({ permissionMode: 'plan' });
   });
 
   it('applique le mode du projet à une session créée sans mode', async () => {
     state.projectMode = 'bypassPermissions';
-    await sessionService.create({ projectId: 'p', name: 'x', provider: 'claude', prompt: null, config: { model: 'opus' }, autoStart: false });
+    await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'x', provider: 'claude', prompt: null, config: { model: 'opus' }, autoStart: false });
     expect(state.created[0].config).toEqual({ model: 'opus', permissionMode: 'bypassPermissions' });
+  });
+});
+
+describe('work session de la tâche', () => {
+  it('crée la work session de la tâche à sa première session, nommée d’après son titre', async () => {
+    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title: 'Export CSV des factures', description: '', status: 'todo' });
+    await startTaskSession('t1');
+    expect(state.created[0].worksessionId).toBe('w-new');
+  });
+
+  it('ramène un titre trop long à la longueur admise pour le libellé de la work session', async () => {
+    const title = `Corriger ${'un bug très long à décrire '.repeat(8)}dans le lancement`;
+    expect(title.length).toBeGreaterThan(100);
+    const names = taskWorksessionNames({ title }, []);
+    expect(names.label.length).toBeLessThanOrEqual(100);
+    expect(names.label.startsWith('Corriger un bug')).toBe(true);
+    expect(names.branch).toMatch(/^task\/corriger-un-bug/);
+    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title, description: '', status: 'todo' });
+    await startTaskSession('t1');
+    const { worksessionService } = await import('../worksessions/service.js');
+    const input = (worksessionService.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as { label: string };
+    expect(input.label.length).toBeLessThanOrEqual(100);
+    expect(state.created[0].worksessionId).toBe('w-new');
+  });
+
+  it('réutilise la work session existante de la tâche', async () => {
+    state.taskWorksession = { id: 'w-task', name: 'task-export', branch: 'task/export' };
+    await startTaskSession('t1');
+    expect(state.created[0].worksessionId).toBe('w-task');
+  });
+
+  it('refuse une session sans work session', async () => {
+    await expect(sessionService.create({ projectId: 'p', name: 'x', provider: 'claude', prompt: null, config: {}, autoStart: false })).rejects.toThrow(/work session/);
   });
 });

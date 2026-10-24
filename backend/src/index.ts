@@ -2,25 +2,29 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { createSchema, createYoga, maskError } from 'graphql-yoga';
-import { GraphQLError } from 'graphql';
+import { createSchema, createYoga } from 'graphql-yoga';
 import { createAuthContext } from './auth/access.js';
 import { googleAuth } from './auth/google.js';
 import { handleAuthRoute } from './auth/routes.js';
 import { handleAttachmentRoute } from './sessions/attachmentRoute.js';
+import { handleTaskAttachmentRoute } from './tasks/attachmentRoute.js';
 import { handleSharedPageRoute } from './sharedPages/viewRoute.js';
 import { handleFileViewRoute } from './files/viewRoute.js';
 import { handleTasksApiRoute } from './tasks/api.js';
 import { registerTaskSessionFeed } from './tasks/sessionFeed.js';
 import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
-import { AppError } from './errors.js';
 import { config } from './config.js';
+import { captureProcessWarnings, log } from './log.js';
+import { appErrorLogPlugin, maskGraphQLError, yogaLogger } from './graphql/logging.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
+import { projectService } from './projects/service.js';
+import { runner } from './runners/index.js';
 import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
+import { containerMonitor } from './runners/monitor.js';
 import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
 import { migrateLegacyCredentials } from './settings/legacy.js';
@@ -37,30 +41,37 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const typeDefs = readFileSync(path.join(here, 'graphql/schema.graphql'), 'utf8');
 
 async function main() {
+  captureProcessWarnings();
   const applied = await runMigrations();
-  if (applied.length) console.log(`[db] migrations appliquées : ${applied.join(', ')}`);
+  if (applied.length) log.info(`[db] migrations appliquées : ${applied.join(', ')}`);
 
   await rateLimitService.load();
   await serverSettings.load();
 
   const recovered = await sessionService.recoverAfterRestart();
-  if (recovered.sessions) console.log(`[sessions] ${recovered.sessions} session(s) marquée(s) comme interrompue(s)`);
-  if (recovered.requests) console.log(`[requests] ${recovered.requests} demande(s) expirée(s)`);
+  if (recovered.sessions) log.info(`[sessions] ${recovered.sessions} session(s) marquée(s) comme interrompue(s)`);
+  if (recovered.requests) log.info(`[requests] ${recovered.requests} demande(s) expirée(s)`);
   const vault = await vaultService.startup();
-  if (vault.converted || vault.rewrapped || vault.failed) console.log(`[vault] secrets convertis : ${vault.converted}, clés ré-enveloppées : ${vault.rewrapped}, échecs : ${vault.failed}`);
-  if (vault.pruned) console.log(`[vault] ${vault.pruned} entrée(s) de journal élaguée(s)`);
+  if (vault.converted || vault.rewrapped || vault.failed) log.info(`[vault] secrets convertis : ${vault.converted}, clés ré-enveloppées : ${vault.rewrapped}, échecs : ${vault.failed}`);
+  if (vault.pruned) log.info(`[vault] ${vault.pruned} entrée(s) de journal élaguée(s)`);
   const legacy = await migrateLegacyCredentials();
-  if (legacy.length) console.log(`[settings] identifiants historiques transférés : ${legacy.join(', ')}`);
+  if (legacy.length) log.info(`[settings] identifiants historiques transférés : ${legacy.join(', ')}`);
   registerTaskSessionFeed();
   registerWorkflowTriggers();
   const closedTerminals = await terminalService.recoverAfterRestart();
-  if (closedTerminals) console.log(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
+  if (closedTerminals) log.info(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
+  // Conteneurs créés avec d'anciens paramètres (ou une image depuis reconstruite) : supprimés maintenant que rien n'y
+  // tourne, recréés à la première session. Plus tard, `ensureReady` recrée un conteneur obsolète si le projet est inactif :
+  // aucun processus de session (la session qui démarre occupe sa place mais n'a encore rien lancé), aucun terminal ouvert.
+  runner.setIdleCheck(async (project) => sessionService.runningCountByProject(project.id) === 0 && sessionService.slotsOfProject(project.id) <= 1 && terminalService.liveCountByProject(project.id) === 0);
+  const recreated = await runner.recreateOutdated(await projectService.list());
+  if (recreated.length) log.info(`[runner] conteneur(s) obsolète(s) supprimé(s), recréé(s) à la demande : ${recreated.join(", ")}`);
   const missedRuns = await scheduleService.start();
-  if (missedRuns) console.log(`[schedules] ${missedRuns} échéance(s) manquée(s) pendant l'arrêt, non rattrapée(s)`);
+  if (missedRuns) log.info(`[schedules] ${missedRuns} échéance(s) manquée(s) pendant l'arrêt, non rattrapée(s)`);
   automationScheduler.start();
   const purged = await authSession.purgeExpired();
-  if (purged) console.log(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
-  console.log(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
+  if (purged) log.info(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
+  log.info(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
 
   // Origines autorisées à appeler l'API avec le cookie de session : l'application, et le poste de développement.
   const appOrigin = new URL(config.appUrl).origin;
@@ -70,27 +81,22 @@ async function main() {
     schema: createSchema({ typeDefs, resolvers }),
     graphqlEndpoint: '/graphql',
     landingPage: false,
+    logging: yogaLogger,
+    plugins: [appErrorLogPlugin()],
     cors: (request) => {
       const origin = request.headers.get('origin');
       return isAllowedOrigin(origin) ? { origin: origin!, credentials: true } : { origin: appOrigin, credentials: true };
     },
     // Utilisateur connecté, lu dans le cookie de session ; les résolveurs vérifient ses droits.
     context: async ({ request }) => createAuthContext(await authSession.resolve(readCookie(request.headers.get('cookie'), SESSION_COOKIE))),
-    maskedErrors: {
-      // Les erreurs métier (AppError) sont renvoyées au client avec leur message et leur code.
-      maskError: (error, message, isDev) => {
-        const original = error instanceof GraphQLError ? error.originalError : error;
-        if (original instanceof AppError) {
-          return new GraphQLError(original.message, { extensions: { code: original.code } });
-        }
-        return maskError(error, message, isDev);
-      },
-    },
+    // Les erreurs métier (AppError) sont renvoyées au client avec leur message et leur code, les autres masquées.
+    maskedErrors: { maskError: maskGraphQLError },
   });
 
   const server = createServer((req, res) => {
     handleAuthRoute(req, res)
       .then((handled) => handled || handleAttachmentRoute(req, res))
+      .then((handled) => handled || handleTaskAttachmentRoute(req, res))
       .then((handled) => handled || handleSharedPageRoute(req, res))
       .then((handled) => handled || handleFileViewRoute(req, res))
       .then((handled) => handled || handleTasksApiRoute(req, res))
@@ -98,23 +104,24 @@ async function main() {
         if (!handled) return yoga(req, res);
       })
       .catch((err) => {
-        console.error('[http]', err);
+        log.error('[http]', err);
         if (!res.headersSent) res.writeHead(500);
         res.end();
       });
   });
   attachWebSockets(server, [terminalUpgradeHandler(), browserUpgradeHandler()]);
   server.listen(config.port, () => {
-    console.log(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
+    log.info(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
     // Sessions restées en file d'attente avant l'arrêt d'abord (elles attendaient), puis reprise automatique
     // des sessions coupées en plein tour par l'arrêt précédent (réglage du serveur), elles-mêmes soumises à la limite.
     sessionService.startHousekeeping();
     healthService.startMonitor();
+    containerMonitor.start();
     sessionService
       .drainQueue()
       .then(() => sessionService.resumeInterruptedAfterRestart())
-      .then((ids) => ids.length && console.log(`[sessions] ${ids.length} session(s) interrompue(s) relancée(s)`))
-      .catch((err) => console.error('[sessions] reprise automatique', err));
+      .then((ids) => ids.length && log.info(`[sessions] ${ids.length} session(s) interrompue(s) relancée(s)`))
+      .catch((err) => log.error('[sessions] reprise automatique', err));
   });
 
   let shuttingDown = false;
@@ -124,15 +131,16 @@ async function main() {
     sessionService.beginShutdown();
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[http] ${signal} reçu, arrêt en cours...`);
+    log.info(`[http] ${signal} reçu, arrêt en cours...`);
     // On cesse d'accepter des requêtes avant d'arrêter les sessions et de fermer le pool.
     server.close();
     scheduleService.stop();
     automationScheduler.stop();
     healthService.stopMonitor();
+    containerMonitor.stop();
     loginService.shutdown();
     const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
-    if (interrupted) console.log(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);
+    if (interrupted) log.info(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);
     await pool.end();
     process.exit(0);
   };
@@ -141,6 +149,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[fatal]', err);
+  log.error('[fatal]', err);
   process.exit(1);
 });

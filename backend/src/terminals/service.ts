@@ -4,7 +4,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { runner } from '../runners/index.js';
 import { agentGitEnv } from '../git/agentEnv.js';
-import { worktreeService } from '../worktrees/service.js';
+import { worksessionService } from '../worksessions/service.js';
 import { TerminalHistory } from './history.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
@@ -15,6 +15,7 @@ type ServerMessage = { type: 'data'; data: string } | { type: 'exit'; code: numb
 
 interface LiveTerminal {
   id: string;
+  projectId: string;
   proc: pty.IPty;
   /** Sortie récente, rejouée à chaque connexion (reconnexion, second onglet). */
   scrollback: string;
@@ -41,13 +42,17 @@ export const terminalService = {
   isLive: (id: string) => live.has(id),
   /** Terminaux ouverts sur ce serveur (processus vivants). */
   liveCount: () => live.size,
+  /** Terminaux ouverts (processus vivants) dans le conteneur de ce projet. */
+  liveCountByProject: (projectId: string) => [...live.values()].filter((t) => t.projectId === projectId).length,
 
   /** Ouvre un shell de connexion dans le workspace du projet, avec l'historique des commandes de l'utilisateur. */
-  async create(projectId: string, name?: string | null, worktreeId?: string | null, createdById: string | null = null): Promise<TerminalRecord> {
+  /** Ouvre un shell dans une work session du projet : rien ne s'exécute dans le checkout principal. */
+  async create(projectId: string, name: string | null | undefined, worksessionId: string, createdById: string | null = null): Promise<TerminalRecord> {
+    if (!worksessionId) throw new AppError('Un terminal s\'ouvre dans une work session : choisissez-en une');
     const project = await projectService.get(projectId);
-    const cwd = await worktreeService.resolveCwd(project, worktreeId);
+    const cwd = await worksessionService.resolveCwd(project, worksessionId);
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
-    const record = await terminalRepository.create(projectId, label, worktreeId ?? null, createdById);
+    const record = await terminalRepository.create(projectId, label, worksessionId ?? null, createdById);
 
     const history = createdById ? await TerminalHistory.prepare(project, record.id, createdById) : null;
     const spec = await runner.terminalCommand(project, cwd, history ? { rcfile: history.files.rcfile } : undefined);
@@ -58,7 +63,7 @@ export const terminalService = {
       cwd,
       env: { ...process.env, ...(await agentGitEnv(createdById ?? null, project.gitUrl, { projectId: project.id })), ...spec.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', SKIPPER_PROJECT: project.slug } as Record<string, string>,
     });
-    const t: LiveTerminal = { id: record.id, proc, scrollback: '', clients: new Set(), history };
+    const t: LiveTerminal = { id: record.id, projectId: project.id, proc, scrollback: '', clients: new Set(), history };
     live.set(record.id, t);
     history?.start();
 

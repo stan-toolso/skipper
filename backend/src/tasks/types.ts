@@ -1,4 +1,5 @@
 import type { Actor } from '../context/types.js';
+import type { AttachmentInput } from '../sessions/types.js';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'cancelled';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -26,10 +27,14 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté. */
+  statusTag: string | null;
+  /** Étiquettes libres (uniques sans tenir compte de la casse, dans l'ordre d'affichage). */
+  tags: string[];
   priority: TaskPriority;
   /** Session en charge actuellement (l'historique complet est dans task_sessions). */
   sessionId: string | null;
-  /** Branche git de la tâche (worktree dédié), conservée après suppression du worktree. */
+  /** Branche git de la tâche (work session dédiée), conservée après suppression de la work session. */
   branch: string | null;
   createdByType: Actor['type'];
   createdBySessionId: string | null;
@@ -38,6 +43,8 @@ export interface Task {
   assignee: TaskPerson | null;
   reporter: TaskPerson | null;
   commentCount: number;
+  /** Fichiers joints à la tâche elle-même (ceux de ses commentaires ne comptent pas). */
+  attachmentCount: number;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
@@ -49,6 +56,23 @@ export interface TaskPersonInput {
   email?: string | null;
 }
 
+/** Fichier joint à une tâche (`commentId` null) ou à l'un de ses commentaires : les métadonnées ; le contenu est sur disque (tasks/attachments.ts). */
+export interface TaskAttachment {
+  id: string;
+  taskId: string;
+  commentId: string | null;
+  name: string;
+  mediaType: string;
+  size: number;
+  createdAt: Date;
+}
+
+/** Fichiers d'un commentaire : ajoutés (base64) et retirés (identifiants), en plus de son texte. */
+export interface CommentFiles {
+  attachments?: AttachmentInput[] | null;
+  removeAttachmentIds?: string[] | null;
+}
+
 export interface CreateTaskInput {
   title: string;
   description?: string | null;
@@ -57,8 +81,12 @@ export interface CreateTaskInput {
   sessionId?: string | null;
   dueDate?: string | null;
   customFields?: TaskField[] | null;
+  statusTag?: string | null;
+  tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
+  /** Fichiers joints à la tâche (images collées dans la description, documents…). */
+  attachments?: AttachmentInput[] | null;
 }
 
 export interface UpdateTaskInput {
@@ -71,8 +99,16 @@ export interface UpdateTaskInput {
   dueDate?: string | null;
   /** Remplace la liste complète. */
   customFields?: TaskField[] | null;
+  /** Absent : inchangée ; null ou vide : retirée. */
+  statusTag?: string | null;
+  /** Remplace la liste complète. */
+  tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
+  /** Fichiers ajoutés aux pièces jointes de la tâche (celles déjà là restent). */
+  attachments?: AttachmentInput[] | null;
+  /** Pièces jointes de la tâche (pas de ses commentaires) à retirer. */
+  removeAttachmentIds?: string[] | null;
 }
 
 export interface TaskFilter {
@@ -88,6 +124,8 @@ export interface TaskFilter {
   assigneeEmail?: string;
   /** Tâches traitées sur cette branche. */
   branch?: string;
+  /** Tâches portant cette étiquette (sans tenir compte de la casse). */
+  tag?: string;
   limit?: number;
 }
 
@@ -115,8 +153,8 @@ export interface TaskActor extends Actor {
 
 /** Changement de tâche diffusé aux écouteurs (session en charge, notamment). */
 export type TaskChange =
-  | { kind: 'updated'; before: Task; task: Task; actor: TaskActor | null }
-  | { kind: 'commented'; task: Task; comment: TaskComment };
+  | { kind: 'updated'; before: Task; task: Task; actor: TaskActor | null; addedAttachments: TaskAttachment[] }
+  | { kind: 'commented'; task: Task; comment: TaskComment; attachments: TaskAttachment[] };
 
 export interface ProjectApiKey {
   id: string;

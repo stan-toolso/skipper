@@ -3,10 +3,10 @@ import { Fragment, useState } from 'react';
 import { Alert, Badge, Button, Table } from 'react-bootstrap';
 import { useAuth } from '../../auth/AuthContext';
 import type { Project } from '../../graphql/operations';
-import { DELETE_VAULT_ITEM, TEST_VAULT_ITEM, type VaultItem } from '../../graphql/vault';
+import { DELETE_VAULT_ITEM, DUPLICATE_VAULT_ITEM, TEST_VAULT_ITEM, type VaultItem } from '../../graphql/vault';
 import { useDialogs } from '../Dialogs';
 import VaultItemDetails from './VaultItemDetails';
-import { daysToExpiry, fmtDate, isOauthToken, isSkipperKind, KINDS, ownerLabelOf, targetOf } from './kinds';
+import { daysToExpiry, fmtDate, isOauthToken, isSkipperKind, KINDS, NAME_PATTERN, ownerLabelOf, targetOf } from './kinds';
 
 export interface VaultRow {
   item: VaultItem;
@@ -30,21 +30,22 @@ interface Props {
 
 function PolicyBadges({ item }: { item: VaultItem }) {
   const badges: React.ReactNode[] = [];
-  if (item.kind === 'postgres' || item.kind === 'api') badges.push(item.readOnly ? <Badge key="ro" bg="success">lecture seule</Badge> : <Badge key="rw" bg="warning" text="dark">écriture</Badge>);
-  if (item.kind === 'ssh' || item.kind === 'postgres' || item.kind === 'api') badges.push(item.requireApproval ? <Badge key="ap" bg="primary">avec accord</Badge> : <Badge key="nap" bg="secondary">sans accord</Badge>);
+  if (item.kind === 'postgres' || item.kind === 'api' || item.kind === 'aws') badges.push(item.readOnly ? <Badge key="ro" bg="success">lecture seule</Badge> : <Badge key="rw" bg="warning" text="dark">écriture</Badge>);
+  if (item.kind === 'ssh' || item.kind === 'postgres' || item.kind === 'api' || item.kind === 'aws') badges.push(item.requireApproval ? <Badge key="ap" bg="primary">avec accord</Badge> : <Badge key="nap" bg="secondary">sans accord</Badge>);
+  if (item.kind === 'aws' && item.aws?.auth === 'sso') badges.push(item.aws.connected ? <Badge key="cx" bg="info" text="dark">connecté</Badge> : <Badge key="ncx" bg="danger">à connecter</Badge>);
   if (isSkipperKind(item.kind)) badges.push(<Badge key="sk" bg="secondary" title="Jamais offert aux agents : utilisé par Skipper pour vos réglages">réservé à Skipper</Badge>);
   if (isOauthToken(item)) badges.push(<Badge key="oa" bg="info" text="dark">connexion</Badge>);
   if (item.kind === 'google' && item.google) {
     if (item.google.gmailAccess !== 'NONE') badges.push(<Badge key="gm" bg={item.google.gmailAccess === 'WRITE' ? 'warning' : 'success'} text={item.google.gmailAccess === 'WRITE' ? 'dark' : undefined}>Gmail {item.google.gmailAccess === 'WRITE' ? 'écriture' : 'lecture'}</Badge>);
     if (item.google.driveAccess !== 'NONE') badges.push(<Badge key="dr" bg={item.google.driveAccess === 'WRITE' ? 'warning' : 'success'} text={item.google.driveAccess === 'WRITE' ? 'dark' : undefined}>Drive {item.google.driveAccess === 'WRITE' ? 'écriture' : 'lecture'}</Badge>);
   }
-  return <span className="d-inline-flex gap-1 flex-wrap">{badges}</span>;
+  return <span className="d-inline-flex gap-1 flex-nowrap">{badges}</span>;
 }
 
 /** Tableau des éléments du coffre, commun aux pages personnelle et projet. */
 export default function VaultTable({ rows, projects, openId, onOpenChange, onEdit, projectPage = false, browserDisabled = false, empty }: Props) {
   const { user } = useAuth();
-  const { confirm } = useDialogs();
+  const { confirm, prompt } = useDialogs();
   const [localOpen, setLocalOpen] = useState<string | null>(null);
   const open = openId !== undefined ? openId : localOpen;
   const setOpen = (id: string | null) => {
@@ -61,6 +62,7 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
     });
   const [test, { loading: testing }] = useMutation<{ testVaultItem: { ok: boolean; error: string | null; detail: string | null } }>(TEST_VAULT_ITEM, { refetchQueries: ['VaultItems', 'VaultProject'] });
   const [remove] = useMutation(DELETE_VAULT_ITEM, { refetchQueries: ['VaultItems', 'VaultProject', 'Sidebar'] });
+  const [duplicate] = useMutation<{ duplicateVaultItem: VaultItem }>(DUPLICATE_VAULT_ITEM, { refetchQueries: ['VaultItems', 'VaultProject', 'Sidebar'] });
   const [testingId, setTestingId] = useState<string | null>(null);
 
   const runTest = async (item: VaultItem) => {
@@ -74,6 +76,28 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
       notice(item.id, false, (err as Error).message);
     } finally {
       setTestingId(null);
+    }
+  };
+  /** Copie dans le même coffre, secrets compris, sous le nom demandé ; la copie s'ouvre ensuite dans l'éditeur pour l'ajuster. */
+  const runDuplicate = async (item: VaultItem) => {
+    const name = await prompt({
+      title: `Dupliquer « ${item.name} »`,
+      message: 'Une copie de cet élément, secrets compris, sera créée dans le même coffre sous ce nom (partages, ouvertures aux projets et journal ne sont pas copiés). Vous pourrez ensuite la modifier.',
+      defaultValue: `${item.name.slice(0, 34)}-copie`,
+      placeholder: 'nom de la copie',
+      confirmLabel: 'Dupliquer',
+    });
+    if (name === null) return;
+    if (!NAME_PATTERN.test(name.trim().toLowerCase())) return notice(item.id, false, 'Nom invalide : minuscules, chiffres, tirets et tirets bas, 40 caractères au plus.');
+    try {
+      const res = await duplicate({ variables: { id: item.id, name: name.trim().toLowerCase() } });
+      const copy = res.data?.duplicateVaultItem;
+      if (copy) {
+        setOpen(copy.id);
+        onEdit(copy);
+      }
+    } catch (err) {
+      notice(item.id, false, (err as Error).message);
     }
   };
   const runDelete = async (item: VaultItem) => {
@@ -95,16 +119,16 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
   };
 
   return (
-    <Table hover size="sm" className="align-middle vault-table">
+    <Table hover responsive size="sm" className="align-middle vault-table">
       <thead>
         <tr>
           <th style={{ width: 24 }} />
           <th>Nom</th>
           <th>Type</th>
-          <th>Cible</th>
-          {projectPage ? <th>Accès</th> : <th>Propriétaire</th>}
-          <th>Règles</th>
-          <th>Dernier test</th>
+          <th className="d-none d-md-table-cell">Cible</th>
+          {projectPage ? <th className="d-none d-md-table-cell">Accès</th> : <th className="d-none d-md-table-cell">Propriétaire</th>}
+          <th className="d-none d-md-table-cell">Règles</th>
+          <th className="d-none d-md-table-cell">Dernier test</th>
           <th />
         </tr>
       </thead>
@@ -128,23 +152,29 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
                   <i className={`bi bi-chevron-${expanded ? 'down' : 'right'} small`} />
                 </td>
                 <td>
-                  <strong>{item.name}</strong>
-                  {days !== null && days < 0 && <Badge bg="danger" className="ms-2">expiré</Badge>}
-                  {days !== null && days >= 0 && days < 30 && <Badge bg="warning" text="dark" className="ms-2">expire dans {days} j</Badge>}
-                  {item.description && <div className="small text-secondary text-truncate" style={{ maxWidth: 320 }}>{item.description}</div>}
+                  <div className="vault-cell-name">
+                    <strong>{item.name}</strong>
+                    {days !== null && days < 0 && <Badge bg="danger">expiré</Badge>}
+                    {days !== null && days >= 0 && days < 30 && <Badge bg="warning" text="dark">expire dans {days} j</Badge>}
+                    {item.description && (
+                      <span className="small text-secondary vault-cell-desc" title={item.description}>
+                        {item.description}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="text-nowrap">
-                  <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} />
-                  {KINDS[item.kind].label}
+                  <i className={`bi ${KINDS[item.kind].icon} me-1 text-secondary`} title={KINDS[item.kind].label} />
+                  <span className="d-none d-md-inline">{KINDS[item.kind].label}</span>
                 </td>
-                <td className="small font-monospace text-break" style={{ maxWidth: 320 }}>
+                <td className="small font-monospace vault-cell-target d-none d-md-table-cell" title={targetOf(item)}>
                   {targetOf(item)}
                 </td>
-                <td className="small">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>
-                <td>
+                <td className="small d-none d-md-table-cell">{projectPage ? access : ownerLabelOf(item, user?.id)}</td>
+                <td className="d-none d-md-table-cell">
                   <PolicyBadges item={item} />
                 </td>
-                <td className="small text-nowrap">
+                <td className="small text-nowrap d-none d-md-table-cell">
                   {item.lastTestAt ? (
                     <>
                       {item.lastTestOk ? <Badge bg="success">OK</Badge> : <Badge bg="danger">échec</Badge>} <span className="text-secondary">{fmtDate(item.lastTestAt)}</span>
@@ -163,6 +193,11 @@ export default function VaultTable({ rows, projects, openId, onOpenChange, onEdi
                       <Button size="sm" variant="link" className="p-0 px-1" title="Modifier" onClick={() => onEdit(item)}>
                         <i className="bi bi-pencil" />
                       </Button>
+                      {item.kind !== 'google' && !isOauthToken(item) && (
+                        <Button size="sm" variant="link" className="p-0 px-1" title="Dupliquer dans le même coffre" onClick={() => void runDuplicate(item)}>
+                          <i className="bi bi-copy" />
+                        </Button>
+                      )}
                       <Button size="sm" variant="link" className="p-0 px-1 text-danger" title="Supprimer" onClick={() => void runDelete(item)}>
                         <i className="bi bi-trash" />
                       </Button>

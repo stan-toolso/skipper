@@ -33,7 +33,7 @@ export const TASK_PAGE = gql`
           id
           name
         }
-        worktree {
+        worksession {
           id
           label
         }
@@ -78,6 +78,12 @@ export const TASK_COMMENTS = gql`
         body
         editable
         deletable
+        attachments {
+          id
+          name
+          mediaType
+          size
+        }
         createdAt
         updatedAt
       }
@@ -86,16 +92,16 @@ export const TASK_COMMENTS = gql`
 `;
 
 export const ADD_TASK_COMMENT = gql`
-  mutation AddTaskComment($taskId: ID!, $body: String!) {
-    addTaskComment(taskId: $taskId, body: $body) {
+  mutation AddTaskComment($taskId: ID!, $body: String!, $attachments: [AttachmentInput!]) {
+    addTaskComment(taskId: $taskId, body: $body, attachments: $attachments) {
       id
     }
   }
 `;
 
 export const UPDATE_TASK_COMMENT = gql`
-  mutation UpdateTaskComment($id: ID!, $body: String!) {
-    updateTaskComment(id: $id, body: $body) {
+  mutation UpdateTaskComment($id: ID!, $body: String!, $removeAttachmentIds: [ID!]) {
+    updateTaskComment(id: $id, body: $body, removeAttachmentIds: $removeAttachmentIds) {
       id
       body
       updatedAt
@@ -112,6 +118,13 @@ export const DELETE_TASK_COMMENT = gql`
 export const TASK_PROMPT = gql`
   query TaskPrompt($id: ID!) {
     taskPrompt(id: $id)
+  }
+`;
+
+/** Étiquettes déjà employées (suggestions des formulaires et filtres). */
+export const TASK_TAGS = gql`
+  query TaskTags($projectId: ID) {
+    taskTags(projectId: $projectId)
   }
 `;
 
@@ -171,3 +184,36 @@ export interface ProjectApiKey {
   lastUsedAt: string | null;
   createdBy: { id: string; name: string } | null;
 }
+
+/** Work session consacrée à une tâche : celle où « Confier à un agent » lance la session par défaut. */
+export const TASK_WORKSESSION = gql`
+  query TaskWorksession($id: ID!) {
+    task(id: $id) {
+      id
+      worksession {
+        id
+        name
+        branch
+        label
+        archivedAt
+      }
+    }
+  }
+`;
+
+/** Membres d'un projet (choix du responsable et du rapporteur d'une tâche). */
+export const TASK_PROJECT_MEMBERS = gql`
+  query TaskProjectMembers($id: ID!) {
+    project(id: $id) {
+      id
+      members {
+        pending
+        user {
+          id
+          name
+          email
+        }
+      }
+    }
+  }
+`;

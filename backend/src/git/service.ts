@@ -156,40 +156,48 @@ function tidyDiff(path: string, text: string): GitDiff {
   return { path, staged: false, text: truncated ? `${text.slice(0, DIFF_LIMIT)}\n… (diff tronqué)` : text, binary, truncated };
 }
 
-/** Cache court des modifications de branche (le panneau les relit souvent). */
-const branchCache = new Map<string, { at: number; value: GitBranchChanges }>();
+/** Cache court des modifications de branche (le panneau les relit souvent) ; null : pas de branche de base. */
+const branchCache = new Map<string, { at: number; value: GitBranchChanges | null }>();
 const BRANCH_CACHE_MS = 2000;
-const cacheKey = (ref: WorkspaceRef) => `${ref.projectId}|${ref.worktreeId ?? ''}`;
+const cacheKey = (ref: WorkspaceRef) => `${ref.projectId}|${ref.worksessionId ?? ''}`;
 
 /**
  * Branche de base d'un dossier : la branche du projet (origin/… puis locale), sinon la cible de origin/HEAD,
- * sinon main ou master.
+ * sinon main ou master ; null s'il n'y en a aucune (dépôt local sans remote, par exemple).
  */
-async function resolveBaseBranch(cwd: string, preferred: string | null): Promise<string> {
+async function resolveBaseBranch(cwd: string, preferred: string | null): Promise<string | null> {
   const candidates = [...(preferred ? [`origin/${preferred}`, preferred] : [])];
   const head = (await gitRaw(['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD'], cwd)).stdout.trim();
   if (head) candidates.push(head);
   candidates.push('origin/main', 'origin/master', 'main', 'master');
   for (const c of candidates) if ((await gitRaw(['rev-parse', '--verify', '-q', `${c}^{commit}`], cwd)).code === 0) return c;
-  throw new AppError('Aucune branche de base à comparer (ni la branche du projet, ni origin/HEAD, main ou master)');
+  return null;
 }
 
+const NO_BASE_BRANCH = 'Aucune branche de base à comparer (ni la branche du projet, ni origin/HEAD, main ou master)';
+
 export const gitService = {
-  /** Point de divergence de la branche courante avec sa base. */
-  async branchBase(ref: WorkspaceRef): Promise<{ cwd: string; baseBranch: string; mergeBase: string }> {
+  /** Point de divergence de la branche courante avec sa base ; null sans branche de base (cas normal, pas une erreur). */
+  async branchBase(ref: WorkspaceRef): Promise<{ cwd: string; baseBranch: string; mergeBase: string } | null> {
     const cwd = await resolveRoot(ref);
     const project = await projectService.get(ref.projectId);
     const baseBranch = await resolveBaseBranch(cwd, project.gitBranch);
+    if (!baseBranch) return null;
     const mergeBase = (await gitRaw(['merge-base', 'HEAD', baseBranch], cwd)).stdout.trim();
     if (!mergeBase) throw new AppError(`La branche courante ne partage aucun historique avec ${baseBranch}`);
     return { cwd, baseBranch, mergeBase };
   },
 
-  /** Fichiers modifiés sur la branche depuis sa base, travail non validé compris. */
-  async branchChanges(ref: WorkspaceRef): Promise<GitBranchChanges> {
+  /** Fichiers modifiés sur la branche depuis sa base, travail non validé compris ; null sans branche de base. */
+  async branchChanges(ref: WorkspaceRef): Promise<GitBranchChanges | null> {
     const cached = branchCache.get(cacheKey(ref));
     if (cached && Date.now() - cached.at < BRANCH_CACHE_MS) return cached.value;
-    const { cwd, baseBranch, mergeBase } = await this.branchBase(ref);
+    const base = await this.branchBase(ref);
+    if (!base) {
+      branchCache.set(cacheKey(ref), { at: Date.now(), value: null });
+      return null;
+    }
+    const { cwd, baseBranch, mergeBase } = base;
     const since = await this.changesSince(ref, mergeBase);
     const branch = (await gitRaw(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).stdout.trim();
     const commits = Number((await gitRaw(['rev-list', '--count', `${mergeBase}..HEAD`], cwd)).stdout.trim() || 0);
@@ -200,8 +208,9 @@ export const gitService = {
 
   /** Diff d'un fichier entre la base de la branche et l'arbre de travail. */
   async branchDiff(ref: WorkspaceRef, file: string, origPath?: string | null): Promise<GitDiff> {
-    const { mergeBase } = await this.branchBase(ref);
-    return this.diffSince(ref, mergeBase, file, origPath);
+    const base = await this.branchBase(ref);
+    if (!base) throw new AppError(NO_BASE_BRANCH);
+    return this.diffSince(ref, base.mergeBase, file, origPath);
   },
 
   /** Oublie les lectures en cache (après une écriture git). */

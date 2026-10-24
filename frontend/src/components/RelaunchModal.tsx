@@ -7,8 +7,8 @@ import { canAutoFocus } from '../lib/device';
 
 const NEW = '__new__';
 
-/** Relance d'une session : une nouvelle session reprend sa conversation comme contexte, dans le dossier choisi. */
-export default function RelaunchModal({ session, projectName, worktrees, onClose }: { session: { id: string; name: string }; projectName: string; worktrees: { id: string; label: string }[]; onClose: () => void }) {
+/** Relance d'une session : une nouvelle session reprend sa conversation comme contexte, dans sa propre work session par défaut. */
+export default function RelaunchModal({ session, projectName, worksessions, onClose }: { session: { id: string; name: string }; projectName: string; worksessions: { id: string; label: string }[]; onClose: () => void }) {
   const navigate = useNavigate();
   const [name, setName] = useState(session.name);
   const [where, setWhere] = useState('');
@@ -28,8 +28,9 @@ export default function RelaunchModal({ session, projectName, worktrees, onClose
       variables: {
         id: session.id,
         input: {
-          worktreeId: where && where !== NEW ? where : null,
-          newWorktree: where === NEW ? { branch: branch.trim(), baseRef: baseRef.trim() || null } : null,
+          worksessionId: where && where !== NEW ? where : null,
+          // '' : sa propre work session (restaurée si besoin), ou une nouvelle si elle a disparu — choisi par le serveur.
+          newWorksession: where === NEW ? { branch: branch.trim() || null, label: name.trim() || session.name, baseRef: baseRef.trim() || null } : null,
           name: name.trim() || null,
           instruction: instruction.trim() || null,
         },
@@ -51,22 +52,22 @@ export default function RelaunchModal({ session, projectName, worktrees, onClose
             <Form.Control autoFocus={canAutoFocus()} value={name} onChange={(e) => setName(e.target.value)} />
           </Form.Group>
           <Form.Group className="mb-3">
-            <Form.Label>Worktree</Form.Label>
+            <Form.Label>Work session</Form.Label>
             <Form.Select value={where} onChange={(e) => setWhere(e.target.value)}>
-              <option value="">Dossier principal</option>
-              {worktrees.map((w) => (
+              <option value="">Sa work session (par défaut)</option>
+              {worksessions.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.label}
                 </option>
               ))}
-              <option value={NEW}>Nouveau worktree…</option>
+              <option value={NEW}>Nouvelle work session…</option>
             </Form.Select>
           </Form.Group>
           {where === NEW && (
             <>
               <Form.Group className="mb-3">
                 <Form.Label>Branche</Form.Label>
-                <Form.Control required autoFocus placeholder="ex. feature/contact (créée si elle n'existe pas)" value={branch} onChange={(e) => setBranch(e.target.value)} />
+                <Form.Control autoFocus placeholder="Facultatif : dérivée du nom (créée si elle n'existe pas)" value={branch} onChange={(e) => setBranch(e.target.value)} />
               </Form.Group>
               <Form.Group className="mb-3">
                 <Form.Label>À partir de</Form.Label>

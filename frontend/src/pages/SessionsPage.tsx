@@ -62,7 +62,7 @@ export default function SessionsPage() {
             </Button>
           </ButtonGroup>
           {!mine && (
-            <Form.Select size="sm" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={{ width: 'auto' }} title="Auteur">
+            <Form.Select size="sm" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={{ width: 'auto', maxWidth: 260 }} title="Auteur">
               <option value="">Par n'importe qui</option>
               {(ownersData?.sessionOwners ?? []).map((o) => (
                 <option key={o.id} value={o.id}>
@@ -121,7 +121,8 @@ export default function SessionsPage() {
               <tr key={s.id}>
                 <td>
                   <Link to={`/sessions/${s.id}`}>{s.name}</Link>
-                  {s.worktree && <span className="text-secondary small ms-2"><i className="bi bi-diagram-2" /> {s.worktree.label}</span>}
+                  {s.worksession && <span className="text-secondary small ms-2"><i className="bi bi-layers" /> {s.worksession.label}</span>}
+                  {!s.worksession && s.formerWorksession && <span className="text-secondary small ms-2" title="Worksession supprimé"><i className="bi bi-layers" /> {s.formerWorksession.label} <i className="bi bi-trash3" /></span>}
                   {s.schedule?.enabled && <i className="bi bi-alarm ms-2 text-secondary" title={`Planifiée : ${s.schedule.cron}${s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : ''}`} />}
                 </td>
                 <td>
@@ -140,7 +141,7 @@ export default function SessionsPage() {
                         Arrêter
                       </Button>
                     )}
-                    <Button variant="outline-secondary" title="Archiver : la session quitte la barre latérale et reste consultable dans l'historique du projet" onClick={() => void archiveSession({ id: s.id, name: s.name, worktreeId: s.worktree?.id ?? null })}>
+                    <Button variant="outline-secondary" title="Archiver : la session quitte la barre latérale et reste consultable dans l'historique du projet" onClick={() => void archiveSession({ id: s.id, name: s.name, worksessionId: s.worksession?.id ?? null })}>
                       Archiver
                     </Button>
                   </ButtonGroup>

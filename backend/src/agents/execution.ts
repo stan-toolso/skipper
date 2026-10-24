@@ -5,6 +5,7 @@ import { resultError as claudeResultError } from '../sessions/providers/claudeRe
 import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
+import { namesFromText } from '../worksessions/names.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { vaultService } from '../vault/service.js';
 import type { TokenService } from '../vault/tokens.js';
@@ -32,7 +33,7 @@ export interface RunAgentOptions {
   timeoutMinutes?: number | null;
   /** Appelé à chaque changement d'état (le moteur de workflow les journalise). */
   onUpdate?: (run: AgentRun) => void;
-  /** Tâche que l'agent résout : sa session travaille dans un worktree dédié, la tâche lui est assignée, et la session reste ouverte après le tour (un humain prend le relais). */
+  /** Tâche que l'agent résout : sa session travaille dans une work session dédiée, la tâche lui est assignée, et la session reste ouverte après le tour (un humain prend le relais). */
   taskId?: string | null;
 }
 
@@ -219,7 +220,7 @@ async function executeLlmRun(agent: Agent, prepared: AgentRun, options: RunAgent
 /**
  * Exécute une exécution préparée : une session dédiée est créée avec l'instruction rendue, démarrée, attendue
  * jusqu'à la fin du tour de l'agent (ou du délai), sa réponse lue (parsée quand du JSON est attendu), puis la
- * session est terminée — sauf quand l'agent résout une tâche : sa session (dans le worktree de la tâche) reste
+ * session est terminée — sauf quand l'agent résout une tâche : sa session (dans la work session de la tâche) reste
  * ouverte pour l'humain qui prend le relais. Ne lève jamais pour un échec de l'agent : le statut et l'erreur
  * de l'exécution disent ce qui s'est passé.
  */
@@ -235,7 +236,9 @@ async function executeRun(agent: Agent, prepared: AgentRun, options: RunAgentOpt
       ? await startTaskSession(options.taskId, { ownerId: options.ownerId, provider: agent.provider, config: agent.config, instructions: run.prompt, agentId: agent.id, agentRunId: run.id, workflowRunId: options.workflowRunId ?? null, autoStart: false })
       : await sessionService.create({
           projectId: agent.projectId,
-          worktreeId: agent.worktreeId,
+          worksessionId: agent.worksessionId,
+          // Sans work session à lui, l'agent en reçoit une par exécution.
+          newWorksession: agent.worksessionId ? null : { label: `${agent.name} · ${startedAt.toISOString().slice(0, 16).replace('T', ' ')}`, name: namesFromText(agent.name, 'agent-').name },
           name: `${agent.name} · ${startedAt.toISOString().slice(0, 16).replace('T', ' ')}`,
           provider: agent.provider,
           prompt: run.prompt,

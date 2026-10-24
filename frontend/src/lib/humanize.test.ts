@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
+import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestNote, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
 
 describe('describeTool', () => {
   it('décrit une commande Bash et tronque une longue commande dans la demande', () => {
@@ -19,7 +19,10 @@ describe('describeTool', () => {
     expect(describeTool('mcp__tasks__create', { title: 'Écrire les tests' }).label).toBe('Création de la tâche « Écrire les tests »');
     expect(describeTool('mcp__context__read', { path: 'dev/tests' }).action).toBe("lire l'instruction dev/tests");
     expect(describeTool('mcp__connections__sql_query', { connection: 'base', sql: 'SELECT 1' })).toMatchObject({ label: 'Requête SQL sur base', detail: 'SELECT 1' });
-    expect(describeTool('mcp__worktrees__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression du worktree wt et de sa branche');
+    expect(describeTool('mcp__vault__sql_query', { item: 'rds', sql: 'SELECT 1', database: 'app' })).toMatchObject({ label: 'Requête SQL sur rds (base app)', detail: 'SELECT 1', action: 'exécuter sur rds (base app) : SELECT 1' });
+    expect(describeTool('mcp__vault__http_request', { item: 'stripe', path: 'v1/customers' }).action).toBe('appeler stripe : GET v1/customers');
+    expect(describeTool('mcp__worksessions__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression de la work session wt et de sa branche');
+    expect(describeTool('mcp__worktrees__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression de la work session wt et de sa branche');
   });
 
   it('se rabat sur le nom et les arguments JSON pour un outil inconnu', () => {
@@ -125,5 +128,18 @@ describe('generalizeBashRule / editableRules', () => {
     ];
     expect(editableRules(suggestions)).toEqual(['Bash(git checkout *)', 'Read(//tmp/**)']);
     expect(parseRuleLines(' Bash(git *)\n\n Read \n')).toEqual(['Bash(git *)', 'Read']);
+  });
+});
+
+describe('requestNote', () => {
+  it("retire du message ce que le détail de l'outil montre déjà", () => {
+    const cmd = 'export NVM_DIR=$HOME/.nvm; cd ~/skipper && git pull';
+    expect(requestNote(cmd, cmd)).toBeUndefined();
+    expect(requestNote(`${cmd}\nÉlément personnel : ne vaut que pour cette session.`, cmd)).toBe('Élément personnel : ne vaut que pour cette session.');
+    expect(requestNote('[skipper] select 1', 'select 1')).toBeUndefined();
+    expect(requestNote('[skipper] select 1\nÉlément personnel.', 'select 1')).toBe('Élément personnel.');
+    expect(requestNote('Un motif à part', 'select 1', 'contenu')).toBe('Un motif à part');
+    expect(requestNote(null, cmd)).toBeUndefined();
+    expect(requestNote('', undefined)).toBeUndefined();
   });
 });

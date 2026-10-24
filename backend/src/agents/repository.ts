@@ -14,7 +14,7 @@ interface AgentRow {
   inputs: InputVariable[] | null;
   output_format: 'text' | 'json';
   output_schema: string | null;
-  worktree_id: string | null;
+  worksession_id: string | null;
   timeout_minutes: number;
   cron: string | null;
   timezone: string;
@@ -68,7 +68,7 @@ const toAgent = (r: AgentRow): Agent => ({
   inputs: r.inputs ?? [],
   outputFormat: r.output_format,
   outputSchema: r.output_schema,
-  worktreeId: r.worktree_id,
+  worksessionId: r.worksession_id,
   timeoutMinutes: r.timeout_minutes,
   schedule: scheduleOf(r),
   scheduleInputs: r.schedule_inputs ?? {},
@@ -111,7 +111,7 @@ export interface AgentValues {
   inputs: InputVariable[];
   outputFormat: 'text' | 'json';
   outputSchema: string | null;
-  worktreeId: string | null;
+  worksessionId: string | null;
   timeoutMinutes: number;
 }
 
@@ -153,9 +153,9 @@ const RUN_COLUMNS: Record<keyof RunPatch, { column: string; json?: boolean }> = 
 export const agentRepository = {
   async create(projectId: string, values: AgentValues, createdBy: string | null): Promise<Agent> {
     const { rows } = await pool.query<AgentRow>(
-      `INSERT INTO agents (project_id, name, description, provider, config, system_prompt, prompt_template, inputs, output_format, output_schema, worktree_id, timeout_minutes, created_by)
+      `INSERT INTO agents (project_id, name, description, provider, config, system_prompt, prompt_template, inputs, output_format, output_schema, worksession_id, timeout_minutes, created_by)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9, $10, $11, $12, $13) RETURNING *`,
-      [projectId, values.name, values.description, values.provider, toJson(values.config), values.systemPrompt, values.promptTemplate, toJson(values.inputs), values.outputFormat, values.outputSchema, values.worktreeId, values.timeoutMinutes, createdBy],
+      [projectId, values.name, values.description, values.provider, toJson(values.config), values.systemPrompt, values.promptTemplate, toJson(values.inputs), values.outputFormat, values.outputSchema, values.worksessionId, values.timeoutMinutes, createdBy],
     );
     return toAgent(rows[0]);
   },
@@ -163,8 +163,8 @@ export const agentRepository = {
   async update(id: string, values: AgentValues): Promise<Agent | null> {
     const { rows } = await pool.query<AgentRow>(
       `UPDATE agents SET name = $2, description = $3, provider = $4, config = $5::jsonb, system_prompt = $6, prompt_template = $7, inputs = $8::jsonb, output_format = $9,
-         output_schema = $10, worktree_id = $11, timeout_minutes = $12, updated_at = now() WHERE id = $1 RETURNING *`,
-      [id, values.name, values.description, values.provider, toJson(values.config), values.systemPrompt, values.promptTemplate, toJson(values.inputs), values.outputFormat, values.outputSchema, values.worktreeId, values.timeoutMinutes],
+         output_schema = $10, worksession_id = $11, timeout_minutes = $12, updated_at = now() WHERE id = $1 RETURNING *`,
+      [id, values.name, values.description, values.provider, toJson(values.config), values.systemPrompt, values.promptTemplate, toJson(values.inputs), values.outputFormat, values.outputSchema, values.worksessionId, values.timeoutMinutes],
     );
     return rows[0] ? toAgent(rows[0]) : null;
   },

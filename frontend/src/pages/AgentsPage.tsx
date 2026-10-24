@@ -1,7 +1,7 @@
 import { useQuery } from '@apollo/client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Form } from 'react-bootstrap';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AgentEditor from '../components/automation/AgentEditor';
 import { RunStatusBadge } from '../components/automation/RunBadges';
 import PageLoading from '../components/PageLoading';
@@ -11,6 +11,7 @@ import { fmtDateTime, providerLabel } from '../lib/automation';
 import { timeAgo } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import '../components/automation/automation.css';
 
 /** Liste des agents : de tous les projets accessibles, ou d'un projet (route /projects/:id/agents). */
@@ -22,7 +23,12 @@ export default function AgentsPage() {
   const { data, loading, error } = usePollingQuery<{ agents: Agent[] }>(AGENTS, { variables: { projectId }, pollInterval: 10_000 });
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const [creating, setCreating] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // « ?new=1 » (menu du projet dans la sidebar) : ouvre tout de suite la création, puis s'efface de l'adresse.
+  const [creating, setCreating] = useState(searchParams.has('new'));
+  useEffect(() => {
+    if (searchParams.has('new')) setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [search, setSearch] = useState('');
   const project = routeProjectId ? projectsData?.projects.find((p) => p.id === routeProjectId) : null;
   useTabTitle(project ? `Agents · ${project.name}` : 'Agents');
@@ -37,14 +43,10 @@ export default function AgentsPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   return (
     <>
-      {project && (
-        <Link to={`/projects/${project.id}`} className="small">
-          ← {project.name}
-        </Link>
-      )}
+      {project && <ProjectHeader project={project} active="agents" />}
       <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-        <h1 className="h3 mb-0">Agents</h1>
-        <div className="d-flex gap-2 align-items-center">
+        {!project && <h1 className="h3 mb-0">Agents</h1>}
+        <div className="d-flex gap-2 align-items-center flex-wrap ms-auto">
           {!routeProjectId && (
             <Form.Select size="sm" value={filterProject} onChange={(e) => setFilterProject(e.target.value)} style={{ width: 'auto' }}>
               <option value="">Tous les projets</option>

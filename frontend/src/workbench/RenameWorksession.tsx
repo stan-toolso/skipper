@@ -1,19 +1,19 @@
 import { useMutation } from '@apollo/client';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Button, Form, Modal } from 'react-bootstrap';
-import { RENAME_WORKTREE } from '../graphql/operations';
+import { RENAME_WORKSESSION } from '../graphql/operations';
 import { canAutoFocus } from '../lib/device';
-import type { AddMenuWorktree } from './AddMenu';
+import type { AddMenuWorksession } from './AddMenu';
 
 interface State {
-  openRenameWorktree: (worktree: AddMenuWorktree) => void;
+  openRenameWorksession: (worksession: AddMenuWorksession) => void;
 }
 
 const Ctx = createContext<State | null>(null);
 
-export function useRenameWorktree(): State {
+export function useRenameWorksession(): State {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error('useRenameWorktree doit être utilisé dans un RenameWorktreeProvider');
+  if (!ctx) throw new Error('useRenameWorksession doit être utilisé dans un RenameWorksessionProvider');
   return ctx;
 }
 
@@ -28,29 +28,29 @@ export function slugifyFolder(input: string): string {
     .slice(0, 64);
 }
 
-function RenameModal({ worktree, onClose }: { worktree: AddMenuWorktree; onClose: () => void }) {
-  const [label, setLabel] = useState(worktree.customLabel ?? '');
-  const [folder, setFolder] = useState(worktree.name);
-  const [rename, { loading, error }] = useMutation(RENAME_WORKTREE, { refetchQueries: ['Sidebar', 'ProjectWorktrees', 'Worktree'], onCompleted: onClose });
+function RenameModal({ worksession, onClose }: { worksession: AddMenuWorksession; onClose: () => void }) {
+  const [label, setLabel] = useState(worksession.customLabel ?? '');
+  const [folder, setFolder] = useState(worksession.name);
+  const [rename, { loading, error }] = useMutation(RENAME_WORKSESSION, { refetchQueries: ['Sidebar', 'ProjectWorksessions', 'Worksession'], onCompleted: onClose });
   const slug = slugifyFolder(folder);
-  const folderChanged = slug !== worktree.name;
-  const labelChanged = (label.trim() || null) !== (worktree.customLabel ?? null);
+  const folderChanged = slug !== worksession.name;
+  const labelChanged = (label.trim() || null) !== (worksession.customLabel ?? null);
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!labelChanged && !folderChanged) return onClose();
-    rename({ variables: { id: worktree.id, label: label.trim() || null, name: folderChanged ? slug : null } });
+    rename({ variables: { id: worksession.id, label: label.trim() || null, name: folderChanged ? slug : null } });
   };
   return (
     <Modal show onHide={onClose} centered>
       <Form onSubmit={submit}>
         <Modal.Header closeButton>
-          <Modal.Title className="h6">Renommer le worktree</Modal.Title>
+          <Modal.Title className="h6">Renommer la work session</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           <Form.Group className="mb-3">
             <Form.Label>Libellé</Form.Label>
-            <Form.Control autoFocus={canAutoFocus()} value={label} maxLength={100} placeholder={worktree.branch} onChange={(e) => setLabel(e.target.value)} />
-            <Form.Text>Nom affiché dans Skipper, texte libre. Vide : la branche ({worktree.branch}).</Form.Text>
+            <Form.Control autoFocus={canAutoFocus()} value={label} maxLength={100} placeholder={worksession.branch} onChange={(e) => setLabel(e.target.value)} />
+            <Form.Text>Nom affiché dans Skipper, texte libre. Vide : la branche ({worksession.branch}).</Form.Text>
           </Form.Group>
           <Form.Group>
             <Form.Label>Dossier</Form.Label>
@@ -61,7 +61,7 @@ function RenameModal({ worktree, onClose }: { worktree: AddMenuWorktree; onClose
                   Le dossier (git worktree) devient <code>{slug || '…'}</code>. Possible seulement quand aucune session ni aucun terminal n'y tourne ; les agents le retrouvent sous son nouveau nom.
                 </>
               ) : (
-                <>Nom du dossier et du git worktree. La branche ({worktree.branch}) ne change pas.</>
+                <>Nom du dossier et du git worktree. La branche ({worksession.branch}) ne change pas.</>
               )}
             </Form.Text>
           </Form.Group>
@@ -84,14 +84,14 @@ function RenameModal({ worktree, onClose }: { worktree: AddMenuWorktree; onClose
   );
 }
 
-export function RenameWorktreeProvider({ children }: { children: ReactNode }) {
-  const [worktree, setWorktree] = useState<AddMenuWorktree | null>(null);
-  const openRenameWorktree = useCallback((w: AddMenuWorktree) => setWorktree(w), []);
-  const value = useMemo(() => ({ openRenameWorktree }), [openRenameWorktree]);
+export function RenameWorksessionProvider({ children }: { children: ReactNode }) {
+  const [worksession, setWorksession] = useState<AddMenuWorksession | null>(null);
+  const openRenameWorksession = useCallback((w: AddMenuWorksession) => setWorksession(w), []);
+  const value = useMemo(() => ({ openRenameWorksession }), [openRenameWorksession]);
   return (
     <Ctx.Provider value={value}>
       {children}
-      {worktree && <RenameModal key={worktree.id} worktree={worktree} onClose={() => setWorktree(null)} />}
+      {worksession && <RenameModal key={worksession.id} worksession={worksession} onClose={() => setWorksession(null)} />}
     </Ctx.Provider>
   );
 }

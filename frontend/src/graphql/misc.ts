@@ -16,7 +16,7 @@ export const SEARCH = gql`
           projectId
           projectName
           outsideProjects
-          worktreeBranch
+          worksessionBranch
           status
           activity
           updatedAt
@@ -180,8 +180,8 @@ export const SHARED_PAGE = gql`
 
 export const PUBLISH_SHARED_PAGE = gql`
   ${SHARED_PAGE_FIELDS}
-  mutation PublishSharedPage($projectId: ID!, $worktreeId: ID, $path: String!, $title: String!, $pageId: ID) {
-    publishSharedPage(projectId: $projectId, worktreeId: $worktreeId, path: $path, title: $title, pageId: $pageId) {
+  mutation PublishSharedPage($projectId: ID!, $worksessionId: ID, $path: String!, $title: String!, $pageId: ID) {
+    publishSharedPage(projectId: $projectId, worksessionId: $worksessionId, path: $path, title: $title, pageId: $pageId) {
       ...SharedPageFields
     }
   }

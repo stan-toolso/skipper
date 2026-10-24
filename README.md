@@ -14,18 +14,28 @@ Trois notions :
 - **Environnement d'exécution** : chaque projet a son conteneur Docker (limites de mémoire et de CPU,
   ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
   s'exécute directement sur le serveur avec l'utilisateur de Skipper.
-- **Worktree** : pour un projet relié à un dépôt git, le dossier principal est un checkout de la branche
-  par défaut ; on peut y ajouter des worktrees (`git worktree`), un dossier par branche, dans lesquels
-  on lance sessions et terminaux sans toucher au dossier principal. Créer un worktree propose par
-  défaut d'y lancer aussitôt une session d'agent ; supprimer la dernière session ou le dernier terminal
-  d'un worktree propose (case à cocher) de supprimer aussi le worktree, qui resterait vide.
-- **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans son
-  workspace (ou dans l'un de ses worktrees, existant ou créé pour l'occasion). La consigne de départ est
+- **Work session** : l'unité de travail d'un projet, et le **seul endroit où tournent sessions et
+  terminaux** : rien ne s'exécute dans le dossier principal. C'est un dossier à elle, à côté du checkout
+  principal — un `git worktree` sur sa propre branche pour un projet relié à un dépôt, un simple dossier
+  sinon. Elle est nommée d'après ce dont elle parle : la première ligne de la consigne devient son libellé,
+  un slug de ses premiers mots son dossier et sa branche (modifiables). Une tâche a **sa** work session,
+  créée à sa première session et réutilisée par les suivantes. Archiver ou supprimer la dernière session (ou
+  le dernier terminal) d'une work session propose (case à cocher, cochée d'avance à l'archivage) de
+  l'archiver aussi. Supprimer une work session
+  (interface, fusion d'une PR depuis le panneau git, outil MCP `worksessions.delete`) n'efface jamais ses
+  sessions : elles sont archivées avec leur transcript, leur coût, leur planification et leur lien de tâche,
+  et gardent le nom de la work session disparue (`Session.formerWorksession`) ; seule la mutation
+  `deleteWorksession(deleteSessions: true)` les supprime définitivement. Les work sessions s'appelaient
+  « worksessions » jusqu'à la migration `036_worksessions.sql` ; leurs dossiers restent sous
+  `WORKSPACES_ROOT/<slug>.worktrees/`.
+- **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans une de
+  ses work sessions (existante ou créée pour l'occasion). La consigne de départ est
   facultative : sans consigne, la session est créée sans démarrer et la première instruction envoyée
   depuis sa page la lance. On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
   terminée est relancée (reprise de la conversation) par un simple message. Un agent peut lui-même
-  lancer d'autres sessions (outils MCP `sessions` et `worktrees`) ; elles gardent la trace de la
-  session qui les a lancées.
+  lancer d'autres sessions (outils MCP `sessions` et `worksessions`) ; elles gardent la trace de la
+  session qui les a lancées. Les sessions d'avant les work sessions, sans work session, reprennent
+  dans le dossier principal.
 - **Demande** : intervention humaine attendue par un agent (autorisation d'outil, question, saisie).
   La session reste en cours jusqu'à la réponse.
 - **Contexte** : bibliothèque d'instructions propre à chaque projet, rangée en dossiers, stockée en
@@ -41,7 +51,7 @@ Trois notions :
   qui attend encore. Réservées aux administrateurs de l'application : les limites d'utilisation de
   l'abonnement Claude (fenêtre à 75 % puis 90 %, tours refusés). Notifications natives du navigateur
   activables en option.
-- **Coffre** : serveurs SSH, bases PostgreSQL, API HTTP, sites web, secrets et comptes Google que les
+- **Coffre** : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS, sites web, secrets et comptes Google que les
   agents utilisent sans jamais voir les identifiants : le serveur agit pour eux (outils MCP, saisie dans le
   navigateur headless). Un élément appartient à une personne (coffre personnel, partageable et ouvrable à
   des projets) ou à un projet. Le coffre garde aussi ce que Skipper utilise **lui-même** pour une
@@ -100,7 +110,7 @@ contrôle d'accès par rôle (`auth/access.ts`), confinement de l'explorateur de
 (`files/service.ts` : normalisation, chemins et liens symboliques sortants, `FILE_CONFLICT`),
 chiffrement des secrets (`settings/crypto.ts`), et, côté frontend, les formulations de
 `lib/humanize.ts`. Les dépendances qui touchent la base (services des utilisateurs, projets,
-worktrees) sont simulées avec `vi.mock`.
+worksessions) sont simulées avec `vi.mock`.
 
 Le test des migrations (`db/migrate.test.ts`) a besoin d'un PostgreSQL où le rôle peut créer des
 bases, par exemple celui de `npm run db:up` : il crée une base `skipper_test_*`, y applique toutes
@@ -146,9 +156,10 @@ backend/
       workspace.ts             # dossier du projet, clone git, infos de branche
     requests/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
-    worktrees/
-      service.ts               # worktrees git : création (branche existante ou nouvelle), suppression, cwd
-      mcp.ts                   # serveur MCP `worktrees` (list, create, delete)
+    worksessions/
+      names.ts                 # noms dérivés de la consigne (libellé, dossier, branche), uniques dans le projet
+      service.ts               # work sessions : création (git worktree ou dossier), tâche, archivage, suppression, cwd
+      mcp.ts                   # serveur MCP `worksessions` (list, create, delete)
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     notifications/
@@ -192,14 +203,16 @@ backend/
       website.ts               # sites web et secrets : champs, appartenance d'une page au site
       tokens.ts                # jetons applicatifs : services (claude, anthropic, github, openai…), forme des jetons
       llm.ts                   # proxy LiteLLM et projet Langfuse : adresses, clés, vérification
-      mcp.ts                   # serveur MCP `vault` (list, ssh_exec, ssh_upload, ssh_download, sql_query, sql_schema, http_request, browser_fill)
+      aws.ts                   # comptes AWS : réglages, découpage et politique des commandes, OIDC et portail Identity Center, CLI en conteneur jetable
+      awsService.ts            # comptes AWS : connexion par code, renouvellement des jetons, identifiants temporaires (cache), test
+      mcp.ts                   # serveur MCP `vault` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema, http_request, aws_run, browser_fill)
     google/
       service.ts               # comptes Google du coffre : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
-      gmail.ts                 # client Gmail (recherche, lecture, envoi / réponse)
+      gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     sharedPages/               # pages partagées : publication, versions, membres, route de lecture en bac à sable, MCP `pages`
-    search/                    # recherche globale (projets, sessions, tâches, worktrees, pages, coffre)
+    search/                    # recherche globale (projets, sessions, tâches, work sessions, pages, coffre)
     apiKeys/                   # clés d'API des projets
     context/
       service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
@@ -211,7 +224,7 @@ backend/
     sessions/
       types.ts                 # modèle Session / SessionEvent
       repository.ts            # accès SQL
-      service.ts               # orchestration : création (avec worktree neuf au besoin), démarrage, arrêt, suivi des processus
+      service.ts               # orchestration : création (avec une nouvelle work session au besoin), démarrage, arrêt, suivi des processus
       scheduledRuns.ts         # sessions dont l'exécution en cours vient de leur planification
       cleanup.ts               # nettoyage automatique : purge du transcript, compaction ou remise à zéro de la conversation
       mcp.ts                   # serveur MCP `sessions` (list, get, create, wait, send, end) : sessions lancées par un agent
@@ -247,7 +260,7 @@ frontend/
 - **ProjectMember** : `(projectId, userId)`, `role` et qui a invité. Rôles, du plus au moins
   puissant :
   - `admin` : modifier / supprimer le projet, gérer les membres, et tout ce qui suit ;
-  - `member` : sessions, terminaux, worktrees, tâches, contexte, réponses aux demandes ;
+  - `member` : sessions, terminaux, work sessions, tâches, contexte, réponses aux demandes ;
   - `viewer` : lecture seule.
   Le créateur d'un projet en est administrateur. Un projet garde toujours au moins un
   administrateur. Inviter une adresse crée l'utilisateur s'il n'existe pas (« en attente » jusqu'à sa
@@ -263,8 +276,8 @@ frontend/
 
 Page « Coffre » (`/vault`, menu de la sidebar) : tout ce que l'utilisateur peut voir ; page « Coffre » d'un
 projet (`/projects/:id/vault`, bouton sur la fiche du projet) : ce que les agents de ce projet peuvent
-utiliser. Six types offerts aux agents : **serveur SSH**, **base PostgreSQL** (éventuellement via un
-serveur SSH du même coffre, en tunnel), **API HTTP**, **site web**, **secret** et **compte Google** ;
+utiliser. Sept types offerts aux agents : **serveur SSH**, **base PostgreSQL** (éventuellement via un
+serveur SSH du même coffre, en tunnel), **API HTTP**, **compte AWS**, **site web**, **secret** et **compte Google** ;
 trois types **réservés à Skipper** : **jeton applicatif**, **proxy LiteLLM** et **projet Langfuse**.
 Chaque élément a un nom court (`prod`, `rds-prod`, `stripe`, `admin-site`) que les agents emploient.
 
@@ -275,7 +288,9 @@ personnel se **partage** avec des collègues, avec une permission `utiliser` < `
 administrer le projet) ou seulement pour les sessions que l'on lance soi-même. Les agents d'une session
 voient les éléments du projet, ceux ouverts à tous ses agents, et ceux que l'auteur de la session a
 ouverts pour ses propres sessions ; un nom ne peut pas désigner deux éléments dans une même portée. Un
-élément se **copie** dans un projet (secrets compris) pour une migration.
+élément se **copie** dans un projet (secrets compris) pour une migration, et se **duplique** dans son propre coffre
+(bouton de la ligne, permission `gérer`) sous un nouveau nom, secrets compris, sans ses partages, liens ni journal :
+la copie s'ouvre aussitôt dans l'éditeur pour en faire une variante.
 
 **Chiffrement.** Les secrets d'un élément forment un document chiffré (AES-256-GCM) avec une clé de
 données propre à l'élément, elle-même enveloppée par la clé maîtresse (`SKIPPER_SECRET_KEY` ou
@@ -288,7 +303,10 @@ fréquence, masqué après 30 s) ; la clé privée SSH et le jeton Google ne qui
 avec `restrict,command="…"`), clé d'hôte mémorisée à la première connexion et vérifiée ensuite, liste
 blanche de préfixes de commandes (qui désactive alors enchaînements et transferts). PostgreSQL : rôle
 dédié recommandé, « lecture seule » force des transactions `READ ONLY`, TLS avec certificat d'autorité
-optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. API : l'agent
+optionnel (Cloud SQL), une seule instruction par appel, résultats tronqués à 200 lignes. Le champ « base de
+données » est facultatif : vide, l'élément couvre **le serveur entier** et l'agent nomme la base à chaque
+appel (paramètre `database` de `sql_query` et `sql_schema`, base de maintenance `postgres` par défaut ;
+`sql_schema` sans base liste les bases du serveur). API : l'agent
 donne un chemin relatif à l'adresse de base, la requête ne sort ni de l'origine ni du chemin, le serveur
 ajoute l'authentification (Bearer, en-tête, Basic, paramètre), ne suit pas les redirections, masque le jeton
 dans la réponse ; « lecture seule » limite à GET, HEAD et OPTIONS ; les adresses internes sont refusées
@@ -298,7 +316,9 @@ demande l'accord s'il le faut, puis tape la valeur par CDP ; les outils qui lira
 (`browser_evaluate`, `browser_run_code`) sont retirés quand le coffre a tapé quelque chose. Secret : des
 champs sans site, chaque saisie est soumise à accord avec la page affichée. Google : connecté par OAuth
 (`GET /auth/google/connect?projectId=…|personal=1&gmail=…&drive=…`), accès lecture ou écriture pour Gmail et
-Drive, même serveur MCP `google` qu'auparavant (`account` = nom de l'élément).
+Drive, même serveur MCP `google` qu'auparavant (`account` = nom de l'élément) : `gmail_search`, `gmail_read`,
+`gmail_attachment` (pièce jointe d'un mail téléchargée dans le dossier de travail), `gmail_send`, `drive_search`,
+`drive_read`, `drive_download`, `drive_upload`, `drive_write`.
 
 **Réservés à Skipper.** Un **jeton applicatif** (`backend/src/vault/tokens.ts`) est un identifiant
 que Skipper utilise pour le compte d'une personne : jeton d'abonnement Claude (`claude`, obtenu par
@@ -314,8 +334,25 @@ jeton (permission `utiliser`) permet à un collègue de le choisir dans ses rég
 test d'un élément vérifie le jeton auprès du service (Anthropic, GitHub, LiteLLM `/v1/models`,
 Langfuse `/api/public/projects`).
 
-**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_exec`, `ssh_upload`, `ssh_download`,
-`sql_query`, `sql_schema`, `http_request`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
+**AWS.** Deux modes : **IAM Identity Center** (`sso` : adresse du portail d'accès et région ; connexion par
+code depuis les détails de l'élément, flux OAuth « device » de l'API OIDC, jetons d'accès et de renouvellement
+chiffrés dans l'élément et renouvelés par Skipper, puis choix du compte et du rôle parmi ceux de la personne)
+ou **clés d'accès** (`keys` : identifiant et clé secrète d'un utilisateur IAM, rôle à endosser optionnel par
+`sts assume-role`). L'agent dispose de l'outil `aws_run(item, command)` : la commande du CLI sans `aws`,
+découpée sans shell (guillemets acceptés, ni tube ni substitution), refusée si elle use d'un profil local, du
+mode `--debug`, de `configure`/`sso`/`login` ou d'une session interactive (`ssm start-session`), limitée
+aux opérations de consultation (`describe-*`, `get-*`, `list-*`, `s3 ls`…) quand l'élément est en
+« lecture seule » (défaut), et aux préfixes autorisés s'il en a. Le serveur obtient des identifiants
+temporaires (rôle Identity Center par le portail d'accès, ou rôle endossé ; les clés seules sinon), gardés en
+mémoire jusqu'à cinq minutes avant leur expiration, puis lance `aws …` dans un **conteneur jetable** de l'image
+du runner (`runner.runIsolated`, `vault/aws.ts`) : même uid que l'hôte, dossier personnel en tmpfs, seul le
+dossier de travail de la session monté (chemins relatifs des commandes `s3 cp`, `lambda update-function-code`…),
+identifiants transmis par l'environnement du client `docker` (jamais sur sa ligne de commande), conteneur
+supprimé à la fin ou au délai. Rien ne transite par le conteneur du projet : l'agent n'y voit ni clé ni jeton.
+Le test de l'élément exécute `sts get-caller-identity` et mémorise l'identité (ARN) constatée.
+
+**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`,
+`sql_query`, `sql_schema`, `http_request`, `aws_run`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
@@ -334,7 +371,7 @@ conteneur de l'agent.
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
 - **VaultItem** : `ownerUserId` ou `ownerProjectId` (exactement l'un des deux), `name`, `kind` (ssh,
-  postgres, api, website, secret, google, token, litellm, langfuse), `settings` (champs publics du type), secrets chiffrés par
+  postgres, api, aws, website, secret, google, token, litellm, langfuse), `settings` (champs publics du type), secrets chiffrés par
   enveloppe (`secretCiphertext`, `wrappedKey`), `publicKey`, `hostKey`, `readOnly`, `requireApproval`,
   `commandAllowlist`, `expiresAt` (rappel de rotation), dernier test ; tables `vault_item_shares`,
   `vault_item_links` (portée `project` ou `personal`), `vault_audit_events`.
@@ -342,20 +379,21 @@ conteneur de l'agent.
   `opencode`, `opencode.models`) et **UserGithubAccount** (`user_github_accounts` : `login`, `method`,
   `scopes`, `organizations`, `isDefault`, `vaultItemId` du jeton, expiration).
 - **Agent** (`agents`) : `projectId`, `name`, `provider` (`llm`, `claude`, `opencode`, `shell`), `config`,
-  `systemPrompt`, `promptTemplate`, `inputs`, `outputFormat`, `outputSchema`, `worktreeId`,
+  `systemPrompt`, `promptTemplate`, `inputs`, `outputFormat`, `outputSchema`, `worksessionId`,
   `timeoutMinutes`, planification (`schedule`, `scheduleInputs`, `scheduleOwnerId`). **AgentRun**
   (`agent_runs`) : déclencheur, statut, entrées, prompt rendu, sortie (et JSON), erreur, coût, session.
 - **Workflow** (`workflows`) : `projectId`, `name`, `definition` (nœuds et arêtes), `enabled`,
   planification, `eventOwnerId`. **WorkflowRun** (`workflow_runs`, `workflow_run_nodes`,
   `workflow_run_logs`) : définition figée au lancement, entrées, état de chaque nœud, journal, sortie.
   Une session garde `agentId`, `agentRunId` et `workflowRunId` quand une exécution l'a ouverte.
-- **Worktree** : `projectId`, `name` (dossier), `branch`, `label` (libellé libre, sinon la branche),
-  `archivedAt`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>`,
-  créé par `git worktree add` depuis le checkout principal : branche locale ou distante existante
-  extraite, sinon nouvelle branche depuis `baseRef` (défaut : HEAD). La suppression retire le dossier et
-  conserve la branche sauf demande contraire. Sessions et terminaux portent un `worktreeId` optionnel
-  qui fixe leur dossier de travail.
-- **Session** : `projectId`, `worktreeId`, `ownerId` (auteur ; hérité de la session parente pour une
+- **Work session** (`worksessions`) : `projectId`, `name` (dossier), `branch` (le nom du dossier pour un
+  projet sans dépôt), `label` (libellé libre, sinon la branche), `taskId` (tâche à laquelle elle est
+  consacrée), `archivedAt`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>` ; pour un projet git, créé
+  par `git worktree add` depuis le checkout principal : branche locale ou distante existante extraite,
+  sinon nouvelle branche depuis `baseRef` (défaut : HEAD) ; pour un projet sans dépôt, un dossier vide. La
+  suppression retire le dossier et conserve la branche sauf demande contraire. Sessions et terminaux portent
+  un `worksessionId`, obligatoire à la création, qui fixe leur dossier de travail.
+- **Session** : `projectId`, `worksessionId`, `ownerId` (auteur ; hérité de la session parente pour une
   session lancée par un agent), `archivedAt`, `parentSessionId` (session d'agent qui l'a lancée, null
   pour une session humaine), `name`, `provider`, `status` (`pending`, `queued`, `running`, `completed`, `failed`,
   `stopped`, `interrupted`), `activity` pour une session en cours (`busy` : l'agent travaille, `idle` :
@@ -426,18 +464,18 @@ conteneur de l'agent.
   (`human` ou `agent` avec sa session), `dueDate`. Les sessions Claude reçoivent la liste des tâches
   ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
-  cours ; l'agent la passe en `done` quand il a fini. Les serveurs MCP `worktrees` et `sessions`
-  (voir « Lancer des sessions et des worktrees ») lui permettent de déléguer du travail à d'autres
-  sessions, dans des worktrees séparés.
+  cours ; l'agent la passe en `done` quand il a fini. Les serveurs MCP `worksessions` et `sessions`
+  (voir « Lancer des sessions et des work sessions ») lui permettent de déléguer du travail à d'autres
+  sessions, dans des work sessions séparés.
 
 - **Runner** (`backend/src/runners/`) : un seul, Docker, pour tous les projets (`projects.runner_config`
   = `{ image, memory, cpus, browser }`). Le runner fournit l'exécutable Claude Code donné au SDK, la
   commande du terminal web et celle du provider shell ; aucun de ces processus ne tourne sur l'hôte.
   Un conteneur `skipper-<slug>` est créé à partir de `deploy/runner/Dockerfile` (image `skipper-runner:latest`,
   construite avec `docker build -t skipper-runner deploy/runner`) ; le dossier du projet, ses
-  worktrees et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
+  work sessions et ses skills y sont montés **aux mêmes chemins absolus que sur l'hôte**, avec l'uid/gid
   de l'utilisateur de Skipper, donc aucune traduction de chemin. Le dossier personnel est un tmpfs
-  inscriptible (512 Mo) dans lequel `~/.claude`, `~/.claude.json` et `~/.gitconfig` de l'hôte sont
+  inscriptible (512 Mo) dans lequel `~/.claude` (propre au projet) et `~/.gitconfig` de l'hôte sont
   montés : Chromium (rapports de plantage, profil) et npm (cache) exigent un dossier personnel
   inscriptible. Le SDK reste dans le backend : il
   reçoit un script de relais (`WORKSPACES_ROOT/.runners/<slug>/claude`) qui exécute `docker exec -i`
@@ -448,7 +486,34 @@ conteneur de l'agent.
   ses conversations survivent à la recréation) et seul `~/.gitconfig` vient de l'hôte. Le
   conteneur joint le serveur Skipper par `host.docker.internal` (ponts MCP des sessions OpenCode). Le
   terminal web est un `docker exec -it … bash -l`. Le conteneur démarre à la demande et se pilote depuis la
-  page du projet (démarrer, arrêter, recréer).
+  page du projet (démarrer, arrêter, recréer). Il est lancé avec `--init` (processus init en PID 1, sinon
+  `sleep infinity` laisse s'accumuler des processus zombies à chaque commande d'agent ou lancement de
+  Chromium) et porte un label `skipper.spec` : le JSON de sa configuration de création (image et
+  identifiant de l'image, `--init`, limites, utilisateur, montages, tmpfs, commande ; `runners/spec.ts`).
+  `runnerStatus` compare ce label à la configuration attendue aujourd'hui et à l'image locale :
+  `outdated` et `outdatedReasons` (« option --init ajoutée », « image reconstruite le … », « montage
+  ~/.claude ajouté », « conteneur créé avant le suivi de sa configuration »…) ; la page du projet affiche
+  alors un badge « à recréer » avec les raisons. Un conteneur obsolète est **recréé de lui-même** : au
+  démarrage du backend (rien n'y tourne encore), puis par `ensureReady` dès que le projet est inactif
+  (aucune session dont le processus tourne, aucun terminal ouvert) ; sinon il reste signalé jusqu'au
+  clic « Recréer ». La carte compte aussi les processus zombies du conteneur (`docker top`), à titre de
+  diagnostic : un conteneur recréé avec `--init` n'en a pas.
+
+- **Mémoire et CPU des conteneurs** (`runners/stats.ts`, `runners/monitor.ts`) : `Project.containerStats`
+  lit le cgroup v2 du conteneur par un `docker exec` (`memory.current` moins `inactive_file`, comme
+  `docker stats` ; `memory.max`, swap, `cpu.max`, deux lectures de `cpu.stat` à 0,5 s d'écart,
+  compteur `oom_kill` de `memory.events`) et liste les processus `claude` avec leur mémoire. Chaque CLI
+  de session reçoit `SKIPPER_SESSION_ID` (transmis par le script de relais) : un processus est ainsi
+  relié à sa session, et les commandes qu'il lance (même variable héritée) sont comptées avec elle. Mesure
+  en cache 4 s. La carte « Environnement d'exécution » de la page projet l'affiche toutes les 10 s
+  (jauges, processus par session avec leur activité, processus orphelins) ; un administrateur y
+  modifie les limites, appliquées à chaud par `docker update` (swap = 2 × mémoire, comme `docker run`)
+  comme depuis le formulaire du projet. Toutes les 30 s, la surveillance mesure chaque conteneur : au-delà
+  de 90 % de la limite pendant plus d'une minute, notification `container.memory_high` au projet
+  (réarmée sous 80 %). À la fin d'une session en erreur, `containerMonitor.explainFailure` regarde le
+  code 137 (SIGKILL), la hausse de `oom_kill` depuis la dernière mesure et `State.OOMKilled` : l'erreur
+  du transcript et de la notification devient « le conteneur du projet a dépassé sa limite mémoire… »,
+  suivie du détail d'origine.
 
 - **Navigateur headless** (option « Navigateur headless pour les agents » du projet,
   `runner_config.browser`) : au début de chaque session, Skipper lance un Chromium sans fenêtre dans
@@ -534,18 +599,18 @@ en tâche de fond et gardé 10 minutes). Réglages (clé `server` de `app_settin
 Disposition façon Cursor (`frontend/src/workbench/`) : à gauche une sidebar avec les menus (Accueil,
 Projets, Sessions, Tâches, Demandes, Pages, Coffre…) et un explorateur des projets ; à droite un
 panneau à onglets. L'unité de navigation est le **dossier de travail** : le checkout principal d'un
-projet et chacun de ses worktrees forment une carte dans la sidebar (état de ses sessions, tâche liée,
+projet et chacun de ses work sessions forment une carte dans la sidebar (état de ses sessions, tâche liée,
 pull request colorée selon son état, « absent » si le dossier manque) avec des pastilles pour ses
 sessions, terminaux et navigateurs ; un dossier ouvert occupe **un seul onglet** dans la barre du haut,
 et une **sous-barre** liste ses fichiers, sessions, navigateurs et terminaux (`WorkspaceTabs`). Les
 pages restent montées quand on change d'onglet (React 19 `<Activity>`), les onglets ouverts sont
 mémorisés dans le navigateur, un onglet fermé se rouvre (Alt+Maj+T), et la sidebar se replie. Le filtre
 « Mes sessions / Tout le monde » cache les sessions des autres ; les pastilles portent les initiales de
-leur auteur. Menu « ⋮ » d'un dossier : fichiers, nouvelle session, terminal, worktree, renommer,
+leur auteur. Menu « ⋮ » d'une work session : fichiers, nouvelle session, terminal, renommer,
 archiver, supprimer. **Recherche** (⌘K ou Ctrl+K, `search`) sur les projets, sessions (nom et
-conversation), tâches, worktrees, pages et éléments du coffre ; **raccourcis** listés par « ? »
+conversation), tâches, work sessions, pages et éléments du coffre ; **raccourcis** listés par « ? »
 (`lib/shortcuts.ts`). Le panneau de droite a deux onglets : **Tâche** (la tâche liée à la session ou au
-worktree, modifiable) et **Git** (état, branche comparée à sa base avec diff par fichier, commits, PR).
+worksession, modifiable) et **Git** (état, branche comparée à sa base avec diff par fichier, commits, PR).
 Les listes ne se rafraîchissent plus quand l'onglet du navigateur est caché (`usePollingQuery`).
 
 **Tableau de bord** (page d'accueil, `frontend/src/pages/DashboardPage.tsx`) : ce qui attend
@@ -559,7 +624,7 @@ mois), l'activité récente et une ligne par projet. Tout vient de la query `das
 la page se rafraîchit toutes les dix secondes. Sur mobile, le tableau des projets devient une
 liste de cartes. Sans projet, la page redevient le parcours d'accueil en trois étapes.
 
-Sur les pages d'un projet ou d'un worktree (projet, session, terminal, fichiers, tâches, contexte),
+Sur les pages d'un projet ou d'une work session (projet, session, terminal, fichiers, tâches, contexte),
 un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
 avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,
 abandonner), une zone de commit, les branches (bascule, création) et l'historique (clic : diff du
@@ -574,7 +639,7 @@ compte choisi d'après le propriétaire du dépôt, sinon le compte par défaut)
 commits, base = branche du projet sinon celle du dépôt ; la branche est poussée au besoin), puis les
 autres PR ouvertes avec l'état des checks, des conflits et des revues (API GraphQL de GitHub, une
 requête, cache de 20 s). La fenêtre d'une PR la fusionne (squash, commit de fusion, rebase) et
-propose le nettoyage : branche distante, worktree et branche locale (sessions encore ouvertes
+propose le nettoyage : branche distante, work session et branche locale (sessions encore ouvertes
 arrêtées au choix, historique conservé, terminaux fermés), tâches liées passées à « terminée » ; le
 dossier principal est ensuite mis à jour (fetch, pull s'il est sur la base). API : queries
 `githubPullRequests`, `githubPullRequest`, `githubPullRequestDraft` ; mutations `createPullRequest`,
@@ -598,10 +663,20 @@ réponses `⏺`, appels d'outils `⏺ Outil(arguments)` (`Bash(commande)`, `Upda
 pour les lectures et recherches, diff numéroté pour les modifications, début de la sortie pour les
 commandes. Les chemins sont relatifs au dossier de travail ; les messages internes des sous-agents
 sont résumés sur l'appel qui les lance ; les autorisations accordées ne laissent pas de trace (un
-refus apparaît comme l'erreur de l'outil). « Afficher les détails techniques » ajoute les lignes de
-service : démarrage, demandes d'autorisation, audit des connexions, erreurs brutes. Les événements
+refus apparaît comme l'erreur de l'outil). Pour rester lisible, les étapes d'un tour sont **repliées
+en une ligne** (`⏺ 12 étapes · Read ×4 · Bash ×5`, dépliée au clic) : seuls le dernier message de
+l'agent et ses questions restent en vue ; pendant un tour, la ligne nomme l'étape en cours. Une
+commande sortie en code non nul avec une sortie est un avertissement (code en jaune), pas une erreur.
+Côté serveur, `sessions/providers/claudeNoise.ts` n'enregistre pas les messages du SDK sans intérêt
+pour l'historique (progression des outils, compteurs). « Afficher les détails techniques » montre
+chaque étape et ajoute les lignes de service : démarrage, demandes d'autorisation, audit des
+connexions, erreurs brutes. Les événements
 sont chargés par pages puis au fil de l'eau (`frontend/src/lib/sessionEvents.ts`, curseur `after`) :
-seuls les nouveaux sont demandés à chaque relevé. Prompts d'autorisation et questions à
+seuls les nouveaux sont demandés à chaque relevé. La réponse en cours d'écriture s'affiche avant d'être
+complète : le provider Claude reçoit les événements de streaming du SDK (`includePartialMessages`), en
+reconstitue le texte en mémoire (`sessions/live.ts`, jamais journalisé) et l'expose en `Session.liveDraft`,
+relevé avec les événements toutes les 400 ms tant que l'agent écrit (1,5 s sinon) ; le transcript le montre
+en bas avec un curseur, puis le message journalisé le remplace. Prompts d'autorisation et questions à
 options numérotées (chiffres, flèches et Entrée au clavier), zone de saisie `>` en bas avec Entrée
 pour envoyer, échap pour interrompre, flèche haut et flèche bas pour reprendre une instruction déjà
 envoyée. La barre d'état propose deux listes déroulantes pour changer le modèle et les autorisations
@@ -642,20 +717,30 @@ fichiers SVG dans `frontend/public/` : `favicon.svg` (pastille sombre), `logo-ma
 sombre), `logo-mark-dark.svg` (fond clair), `logo-mark-mono.svg` (masque CSS, utilisé devant les
 titres `h1`). Mot-symbole : « Skipper » en Fraunces 600 pour les supports hors interface.
 
-## Tâches et worktrees
+## Tâches et work sessions
 
-« Confier à un agent » lance la session dans un **worktree créé pour la tâche** quand le projet est
-relié à un dépôt git : dossier `task-<slug du titre>` et branche `task/<slug>` à partir du checkout
-principal (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà). Le menu du
-bouton permet de préférer le dossier principal ou un worktree existant ; un projet sans dépôt git
-travaille dans son dossier principal. Le worktree apparaît dans la sidebar avec sa session, et la
-tâche affiche sa branche (colonne `tasks.branch`, conservée après suppression du worktree) et sa pull
-request GitHub avec ses checks et revues ; un clic ouvre la fenêtre de fusion. Cycle complet sans
-quitter Skipper : tâche → worktree → PR (panneau git) → fusion → nettoyage du worktree et de la branche.
+« Confier à un agent » lance la session dans la **work session de la tâche** : créée à sa première
+session — dossier `task-<slug du titre>`, et branche `task/<slug>` à partir du checkout principal pour un
+projet git (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà) —, puis réutilisée
+par toutes ses sessions suivantes (colonne `worksessions.task_id`, restaurée si elle était archivée). La
+modale permet de préférer une autre work session existante. La work session apparaît dans la sidebar
+avec sa session, et la tâche affiche sa branche (colonne `tasks.branch`, conservée après suppression de
+la work session) et sa pull request GitHub avec ses checks et revues ; un clic ouvre la fenêtre de
+fusion. Cycle complet sans quitter Skipper : tâche → work session → PR (panneau git) → fusion →
+nettoyage de la work session et de la branche.
 
-Une tâche porte aussi un **responsable** et un **rapporteur** (nom et/ou e-mail libres), des **champs
-personnalisés** (clé → valeur), et des **commentaires** (humains ou agents, via l'outil `tasks.comment`).
-Chaque tâche a sa page (`/tasks/:id`, vue tableau ou kanban sur la liste, filtres par statut, priorité,
+Une tâche porte aussi un **responsable** et un **rapporteur** (membre du projet, ou nom et/ou e-mail libres ;
+une nouvelle tâche est rapportée par et assignée à sa créatrice ou son créateur), une **étiquette d'état**
+(court libellé de l'avancement dans le statut, « en revue », « bloquée »…, affiché dans la pastille du statut
+et tenu à jour par la session en charge), des **étiquettes** libres (filtre de la liste, `?tag=` de l'API),
+des **champs personnalisés** (clé → valeur), des **fichiers joints** (captures collées ou fichiers déposés
+dans la description ou un commentaire ; `WORKSPACES_ROOT/.task-attachments/`, route
+`/api/task-attachments/<tâche>/<id>` ; la session à qui l'on confie la tâche les reçoit avec sa consigne,
+`tasks.get` montre les images) et des **commentaires** (humains ou agents, via l'outil `tasks.comment`).
+Les **consignes des sessions de tâches** du projet (fiche du projet) sont ajoutées après le texte de la tâche
+dans l'instruction de toute session qui la réalise. Une tâche se **déplace** dans un autre projet (sa session
+et sa branche restent dans l'ancien).
+Chaque tâche a sa page (`/tasks/:id`, vue liste par défaut ou kanban sur la liste, filtres par statut, priorité,
 responsable, « mes tâches »). La session en charge d'une tâche reçoit les changements faits par d'autres
 (`[Mise à jour de la tâche]`) et les nouveaux commentaires (`[Commentaire sur la tâche]`, qui relancent
 une session terminée) ; son historique de sessions est conservé (`task_sessions`). « Confier à un agent »
@@ -663,17 +748,21 @@ montre la consigne envoyée à l'agent et permet de la modifier avant le lanceme
 (`/api/v1/tasks`, clés `skp_…` créées sur la fiche du projet, haché en base) permet à un outil externe de
 lister et créer des tâches.
 
-## Lancer des sessions et des worktrees
+## Lancer des sessions et des work sessions
 
-**Depuis l'interface.** « Nouvelle session » (sidebar, pages Projets, Sessions, projet, accueil) ouvre une
-modale (`frontend/src/components/SessionLauncher.tsx`, fournie à toute l'application par
-`SessionLauncherProvider` dans le layout) : projet, branche de travail (dossier principal, worktree
-existant ou « Nouveau worktree… » avec branche et point de départ), consigne, nom, options de l'agent.
-« Nouveau worktree » (menu « + » d'un projet git, fiche du projet) ouvre la même modale en mode
-worktree : branche à créer, puis, par défaut, une session d'agent lancée dans ce worktree avec les
-mêmes options ; décocher l'interrupteur crée seulement le worktree. Côté API,
-`CreateSessionInput.newWorktree { branch, name, baseRef }` crée le worktree puis la session dans une
-même mutation (le worktree est retiré si la session ne peut pas être créée).
+**Depuis l'interface.** « Nouvelle session » et « Nouvelle work session » (sidebar, pages Projets,
+Sessions, projet, accueil) ouvrent la même modale (`frontend/src/components/SessionLauncher.tsx`, fournie
+à toute l'application par `SessionLauncherProvider` dans le layout), qui pose une seule question : « que
+voulez-vous faire ? ». Par défaut, une **nouvelle work session** est créée, nommée d'après la consigne
+(dossier et branche affichés sous la zone de texte, modifiables avec le point de départ) ; un sélecteur
+permet de choisir une work session existante, et le menu « ⋮ » d'une work session ouvre la modale sur
+elle. Type d'agent, modèle et autorisations sont des options repliées. Sans consigne, seule la work
+session est créée (on y ouvrira une session ou un terminal). Côté API,
+`CreateSessionInput.worksessionId` ou `CreateSessionInput.newWorksession { name, branch, label, baseRef }`
+est **obligatoire** : la work session est créée puis la session dans la même mutation (la work session est
+retirée si la session ne peut pas être créée) ; sans nom, branche ni libellé, elle est nommée d'après la
+consigne (`backend/src/worksessions/names.ts`, miroir côté front dans `frontend/src/lib/worksessions.ts`).
+`createTerminal` exige aussi un `worksessionId`.
 
 **Fichiers joints.** La consigne (modale de lancement) comme toute instruction envoyée ensuite (zone de
 saisie de la session) peut être accompagnée de fichiers : bouton trombone, collage d'une image depuis le
@@ -692,12 +781,13 @@ fichiers joints. ».
 **Depuis un agent.** Chaque session Claude reçoit deux serveurs MCP supplémentaires, décrits dans son
 prompt système :
 
-- `worktrees` : `list` (branche du dossier principal, worktrees avec commit et sessions en cours),
-  `create(branch, name?, base_ref?)`, `delete(name, delete_branch?)`. Lister et créer sont toujours
+- `worksessions` : `list` (work sessions avec libellé, branche, commit et sessions en cours),
+  `create(name?, branch?, label?, base_ref?)`, `delete(name, delete_branch?)`. Lister et créer sont toujours
   autorisés ; supprimer passe par la demande d'autorisation habituelle.
 - `sessions` : `list`, `get(id)` (état et dernière réponse de l'agent), `create(prompt, name?,
-  worktree? | new_branch?, base_ref?, permission_mode?, model?)` (même provider et même configuration
-  que la session appelante par défaut), `wait(id, timeout_seconds?)` (attend la fin du tour, 120 s par
+  worksession? | new_branch?, base_ref?, permission_mode?, model?)` (même provider et même configuration
+  que la session appelante par défaut ; sans `worksession` ni `new_branch`, une nouvelle work session nommée
+  d'après la consigne), `wait(id, timeout_seconds?)` (attend la fin du tour, 120 s par
   défaut, 600 s au plus, à rappeler si l'agent travaille encore), `send(id, text)`, `end(id)`. Un agent
   ne peut envoyer une instruction ou terminer que les sessions qu'il a lancées. `create` et `send`
   consomment du budget : ils passent par la demande d'autorisation (mode « me demander »), ou sont
@@ -707,8 +797,16 @@ prompt système :
 Garde-fous (`backend/src/sessions/service.ts`) : une session lancée par un agent reste dans le projet de
 l'agent, l'imbrication est limitée à deux niveaux (humain → agent → agent → stop), et au plus trois
 sessions lancées par une même session tournent en même temps. Une session lancée par un agent déclenche
-une notification `session.created` ; sa page indique « lancée par » avec un lien vers la session parente
-(`Session.parentSession`, `Session.childSessions`).
+une notification `session.created`. Dans l'interface ces sessions sont des **sous-agents**, identifiables d'un
+coup d'œil : dans la sidebar (et la sous-barre d'un dossier), une session parente porte un compteur
+« robot N » et ses sous-agents sont repliés derrière une ligne « N sous-agents » (dépliée d'office quand on
+est sur l'un d'eux ou qu'un sous-agent attend une réponse) ; dépliés, ils apparaissent indentés, reliés par
+└ et marqués d'un robot ; un sous-agent dont la parente est dans un autre dossier reste au premier niveau avec
+son robot. La page d'un sous-agent s'ouvre par un bandeau « Sous-agent · lancée par l'agent de la session
+« … » » avec l'état de la parente et un bouton vers elle ; celle de la parente liste ses sous-agents avec leur
+état, un lien et de quoi les terminer (`Session.parentSession`, `Session.childSessions`). Dans le transcript,
+les identifiants de session cités par les outils `sessions` (dont celui renvoyé par `create`) sont des liens.
+Rien ne change pour les sessions lancées par un humain.
 
 ## Sessions planifiées
 
@@ -750,17 +848,34 @@ planifiée qui tourne tous les jours. Deux réglages indépendants (`Session.cle
 - **Purge du transcript** : les événements de plus de N jours sont supprimés (`retentionDays`). La consommation
   enregistrée (`usage_ledger`) n'est pas touchée. Appliquée avant chaque exécution planifiée et par un balayage
   toutes les heures (`cleanupService.sweep`, lancé par l'ordonnanceur).
-- **Conversation de l'agent** : quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter**
-  (`contextAction: compact` : la commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la
-  fin du tour), soit **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain
-  lancement ne reprend plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution
-  planifiée ; une session en cours de travail est laissée tranquille (le nettoyage est reporté).
+- **Conversation de l'agent** : **repartir d'une conversation neuve à chaque exécution planifiée**
+  (`contextAction: fresh`, réglage par défaut d'une nouvelle planification : le contexte reste stable d'un jour à
+  l'autre), ou, quand le contexte du modèle dépasse `contextMaxTokens`, soit **compacter** (`compact` : la
+  commande `/compact` est envoyée à la session, relancée au besoin, et l'on attend la fin du tour), soit
+  **repartir d'une conversation neuve** (`reset` : `externalId` remis à null, le prochain lancement ne reprend
+  plus la conversation ; le transcript affiché est conservé). Appliqué avant chaque exécution planifiée ; une
+  session qui attend des instructions est d'abord terminée, une session au travail est laissée tranquille (le
+  nettoyage est reporté).
+
+La modale de planification porte le même réglage (`SessionScheduleInput.cleanup`) : une nouvelle planification
+part sur « nouvelle conversation à chaque exécution », une planification existante sans nettoyage affiche un
+avertissement et un bouton « Activer le nettoyage par défaut » (rien n'est modifié sans l'accord de l'utilisateur ;
+la migration `034` ne touche pas aux planifications existantes).
 
 La taille du contexte (`Session.contextTokens`) est relevée par le provider Claude sur les messages assistant
 (tokens d'entrée, cache compris, du dernier appel au modèle) et sur les frontières de compaction
-(`compact_boundary`, `post_tokens`). « Nettoyer maintenant » applique les réglages sans attendre
-(`applySessionCleanup`) ; `updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les
-événements `cleanup` (purge, compaction, remise à zéro, report) apparaissent dans le transcript.
+(`compact_boundary`, `post_tokens`). Elle est **visible sans ouvrir les réglages** : jauge dans l'en-tête de la
+page de session (`Session.context` : tokens, part de la fenêtre du modèle, coût approximatif de la relecture du
+contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans la sidebar et les
+onglets au-delà du seuil de signalement. Ce seuil est **propre à chaque personne** (Paramètres › Claude ›
+« Signaler le contexte d'une session à partir de », en milliers de tokens, `ClaudeSettings.contextWarnTokens`) :
+150 000 tokens par défaut (`CONTEXT_WARN_TOKENS`), vide pour ne jamais être signalé. Au-delà de ce seuil, un bandeau propose
+« Compacter » (`compactSessionContext`), « Repartir d'une conversation neuve » (`resetSessionContext`, avec ou
+sans résumé des derniers échanges, transmis au modèle avec la prochaine instruction via `sessions.resume_digest`)
+ou « Ignorer » (jusqu'à 50 000 tokens de plus) ; rien n'est fait automatiquement pour une session manuelle.
+« Nettoyer maintenant » applique les réglages sans attendre (`applySessionCleanup`) ;
+`updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les événements `cleanup` (purge,
+compaction, remise à zéro, report) apparaissent dans le transcript.
 
 ## Explorateur de fichiers et éditeur
 
@@ -780,7 +895,7 @@ Côté serveur (`backend/src/files/service.ts`), tout chemin est normalisé puis
 de la racine du workspace, liens symboliques résolus compris ; les fichiers de plus de 2 Mo ou
 binaires ne sont pas ouverts. API : `workspaceEntries`, `workspaceFile`, `writeWorkspaceFile`,
 `createWorkspaceEntry`, `renameWorkspaceEntry`, `deleteWorkspaceEntry` (arguments `projectId` et
-`worktreeId` optionnel).
+`worksessionId` optionnel : sans lui, le dossier principal).
 
 ## Historique et archives
 
@@ -788,9 +903,11 @@ Une session s'**archive** (bouton sur sa page, menu de la sidebar, liste des ses
 sidebar et reste consultable, restaurable et relançable depuis l'**historique** du projet
 (`/projects/:id/history`, recherche dans les noms, consignes et conversations). « Relancer » crée une
 nouvelle session avec un résumé de la précédente (`<previous_conversation>`, 40 k caractères au plus).
-Un worktree s'archive de même (ses sessions sont archivées, ses terminaux fermés, dossier et branche
-conservés) et se restaure avec ses sessions ; un dossier de worktree disparu est recréé à la prochaine
-utilisation. Un worktree se renomme (libellé libre, et dossier par `git worktree move`).
+Par défaut, la relance travaille dans la work session de la session d'origine (restaurée si besoin).
+Restaurer une session archivée restaure aussi sa work session. Une work session s'archive de même (ses
+sessions sont archivées, ses terminaux fermés, dossier et branche conservés) et se restaure avec ses
+sessions ; un dossier de work session disparue est recréé à la prochaine utilisation. Une work session se
+renomme (libellé libre, et dossier par `git worktree move`).
 
 ## Pages partagées
 
@@ -864,7 +981,7 @@ en choisissant un **jeton personnel** déposé dans le coffre (élément `github
 compte est un jeton applicatif du coffre ; un jeton OAuth expirant est renouvelé par Skipper. Pour
 chaque dépôt, le compte retenu est celui dont l'identifiant ou l'une des organisations possède le
 dépôt, sinon le compte par défaut. Ce compte sert aux actions git de la personne (clone, fetch, pull,
-push, création de worktree), à ses pull requests, et aux agents de ses sessions (credential helper
+push, création de work session), à ses pull requests, et aux agents de ses sessions (credential helper
 par variables d'environnement, jamais écrit sur disque ; identité des commits = celle du compte).
 
 **OpenCode** (`settings/opencode.ts`) : modèle par défaut (`fournisseur/modèle`), budget par session,
@@ -881,7 +998,7 @@ Deuxième type de session d'agent (`backend/src/sessions/providers/opencode.ts`)
 Claude Code : mêmes options (mode d'autorisation, modèle, budget, outils pré-autorisés), même
 transcript (les événements sont émis sous les types `claude.*` que l'interface sait afficher), mêmes
 demandes d'autorisation et questions, mêmes outils MCP de Skipper (contexte, tâches, coffre,
-worktrees, sessions, pages). Le serveur `opencode serve` tourne dans le conteneur du projet
+worksessions, sessions, pages). Le serveur `opencode serve` tourne dans le conteneur du projet
 (`docker exec`, image avec `opencode-ai` installé : reconstruire `deploy/runner`), joint par un tunnel
 TCP ; ses serveurs MCP sont des **ponts** (`opencodeBridge.ts`) : Skipper écoute sur un port de l'hôte,
 OpenCode lance par serveur un relais `node -e` qui s'annonce avec un jeton propre à la session, et
@@ -900,19 +1017,20 @@ LiteLLM, OpenAI ou Anthropic (clé du coffre, température, longueur maximale, t
 Langfuse), ou un type de session (`claude`, `opencode`, `shell`) et ses options —, un prompt système,
 un **modèle d'instruction** à variables (`{{input.ticket}}`, `{{ticket | default: "…"}}`), des
 **entrées** déclarées (clé, libellé, obligatoire, valeur par défaut), une sortie **texte** ou **JSON**
-(schéma montré à l'agent, réponse lue comme JSON), un worktree de travail et un délai. Une
+(schéma montré à l'agent, réponse lue comme JSON), une work session de travail (sinon une nouvelle par
+exécution) et un délai. Une
 **exécution** (`agent_runs`) se lance à la main, en test, par planification (cron et fuseau, entrées
 mémorisées, comptes de la personne qui l'a réglée) ou par un workflow : pour un agent de session, une
 session dédiée est créée avec l'instruction rendue, attendue jusqu'à la fin du tour (ou du délai), sa
 réponse lue, puis terminée — sauf quand l'agent résout une tâche, sa session reste ouverte dans le
-worktree de la tâche. Coût, durée, sortie et erreur sont conservés ; les exécutions perdues au
+work session de la tâche. Coût, durée, sortie et erreur sont conservés ; les exécutions perdues au
 redémarrage sont marquées en échec (`failStaleAgentRuns`).
 
 **Workflows** (`/workflows`, `/projects/:id/workflows`, `backend/src/workflows/`). Un workflow est un
 **graphe** dessiné dans l'interface (canvas `@xyflow/react`, mise en page automatique) : un ou
 plusieurs **déclencheurs** (manuel, avec ses variables, ou « tâche créée » avec un filtre visuel sur
 la tâche), des nœuds **agent** (entrées remplies par des modèles), **tâche** (session qui traite une
-tâche existante, dans un nouveau worktree, un worktree choisi ou le dossier principal), **session**
+tâche existante, dans la work session de la tâche ou une work session choisie), **session**
 (session libre, avec ou sans attente du tour, terminée ou non ensuite), **créer une tâche**,
 **condition** (règles visuelles imbriquées ou formule `nodes.review.json.approved and input.env ==
 "prod"`, voir `expressions.ts`) et **fin** (sortie de l'exécution). Les arêtes d'une condition portent
@@ -952,15 +1070,15 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
-- `createSession(input)` (`input.worktreeId` ou `input.newWorktree { branch, name, baseRef }`), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
-- `sendSessionMessage(id, text, attachments)`, `resumeSession(id)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des worktrees »)
+- `createSession(input)` (`input.worksessionId` ou `input.newWorksession { name, branch, label, baseRef }`, l'un des deux obligatoire), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
+- `sendSessionMessage(id, text, attachments)`, `resumeSession(id)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des work sessions »)
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
 - `notifications(unreadOnly, limit)`, `unreadNotificationCount` ; `markNotificationRead(id)`, `markAllNotificationsRead` ; subscription `notificationCreated`
 - `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
-- `githubPullRequests(projectId, state, limit)`, `githubPullRequest(projectId, number)`, `githubPullRequestDraft(projectId, worktreeId)` ; `createPullRequest(projectId, worktreeId, title, body, base, draft)`, `mergePullRequest(projectId, number, method, cleanup)` ; `Task.branch`, `Task.pullRequest`
-- `Project.worktrees`, `worktree(id)` avec `sessions` et `terminals` ; `createWorktree(projectId, branch, name, baseRef)`, `deleteWorktree(id, deleteBranch)` ; `CreateSessionInput.worktreeId`, `createTerminal(..., worktreeId)`, `startTaskSession(..., worktreeId)`
+- `githubPullRequests(projectId, state, limit)`, `githubPullRequest(projectId, number)`, `githubPullRequestDraft(projectId, worksessionId)` ; `createPullRequest(projectId, worksessionId, title, body, base, draft)`, `mergePullRequest(projectId, number, method, cleanup)` ; `Task.branch`, `Task.pullRequest`
+- `Project.worksessions`, `worksession(id)` avec `sessions` et `terminals` ; `createWorksession(projectId, branch?, name?, baseRef?, label?)`, `deleteWorksession(id, deleteBranch)` ; `CreateSessionInput.worksessionId`, `createTerminal(..., worksessionId)`, `startTaskSession(..., worksessionId)`
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
 

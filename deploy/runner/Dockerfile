@@ -18,6 +18,13 @@ RUN npm install -g @playwright/mcp \
  && cd "$(npm root -g)/@playwright/mcp" && npx playwright install --with-deps chromium \
  && chmod -R a+rX /opt/ms-playwright && npm cache clean --force && rm -rf /var/lib/apt/lists/*
 
+# CLI AWS v2 (outil aws_run du coffre) : lancé par le serveur dans un conteneur jetable de cette image, jamais
+# depuis le conteneur du projet, pour que les identifiants ne soient pas visibles des agents.
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+ && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip \
+ && unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip \
+ && apt-get purge -y unzip && rm -rf /var/lib/apt/lists/* && aws --version
+
 # Les conteneurs sont lancés avec l'uid/gid de l'utilisateur hôte ; ce dossier accueille les caches npm.
 RUN mkdir -p /tmp/home && chmod 1777 /tmp/home
 ENV TERM=xterm-256color LANG=C.UTF-8

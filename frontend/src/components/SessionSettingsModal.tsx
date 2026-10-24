@@ -3,9 +3,11 @@ import { useState } from 'react';
 import { Alert, Button, Form, Modal } from 'react-bootstrap';
 import { APPLY_SESSION_CLEANUP, UPDATE_SESSION, type Session } from '../graphql/operations';
 
-type ContextAction = '' | 'compact' | 'reset';
+import { formatTokens } from '../lib/humanize';
 
-const formatTokens = (n: number) => `${Math.round(n / 1000)} k tokens`;
+type ContextAction = '' | 'compact' | 'reset' | 'fresh';
+/** Les actions qui s'appliquent au-delà d'un seuil (« fresh » n'en a pas). */
+const withThreshold = (a: ContextAction) => a === 'compact' || a === 'reset';
 
 /** Réglages d'une session : nom et nettoyage automatique de l'historique (transcript et conversation de l'agent). */
 export default function SessionSettingsModal({ session, onClose }: { session: Session; onClose: () => void }) {
@@ -26,10 +28,10 @@ export default function SessionSettingsModal({ session, onClose }: { session: Se
     cleanup: {
       retentionDays: retentionOn ? Number(retentionDays) : null,
       contextAction: contextAction || null,
-      contextMaxTokens: contextAction ? Number(contextMaxK) * 1000 : null,
+      contextMaxTokens: withThreshold(contextAction) ? Number(contextMaxK) * 1000 : null,
     },
   });
-  const valid = name.trim().length > 0 && (!retentionOn || Number(retentionDays) >= 1) && (!contextAction || Number(contextMaxK) >= 10);
+  const valid = name.trim().length > 0 && (!retentionOn || Number(retentionDays) >= 1) && (!withThreshold(contextAction) || Number(contextMaxK) >= 10);
   const hasCleanup = cleanup.retentionDays !== null || cleanup.contextAction !== null;
 
   return (
@@ -77,11 +79,12 @@ export default function SessionSettingsModal({ session, onClose }: { session: Se
             <Form.Label className="mb-1">Conversation de l'agent (ce dont le modèle se souvient)</Form.Label>
             <Form.Select value={contextAction} onChange={(e) => setContextAction(e.target.value as ContextAction)}>
               <option value="">Ne rien faire</option>
+              <option value="fresh">Repartir d'une conversation neuve avant chaque exécution planifiée</option>
               <option value="compact">Compacter la conversation quand le contexte dépasse un seuil</option>
               <option value="reset">Repartir d'une conversation neuve quand le contexte dépasse un seuil</option>
             </Form.Select>
           </Form.Group>
-          {contextAction && (
+          {withThreshold(contextAction) && (
             <div className="d-flex align-items-center gap-2 mb-2 ms-4">
               <span>Seuil :</span>
               <Form.Control type="number" min={10} step={10} value={contextMaxK} onChange={(e) => setContextMaxK(e.target.value)} style={{ width: '6rem' }} />
@@ -89,10 +92,16 @@ export default function SessionSettingsModal({ session, onClose }: { session: Se
             </div>
           )}
           <Form.Text className="d-block mb-3">
+            {contextAction === 'fresh' && "Avant chaque exécution planifiée, l'agent repart d'une conversation vide : le contexte reste stable d'une fois sur l'autre ; le transcript affiché est conservé."}
             {contextAction === 'compact' && "Compacter envoie /compact à l'agent : il résume la conversation et repart de ce résumé (comme Claude Code)."}
             {contextAction === 'reset' && "Repartir de zéro oublie la conversation du modèle ; le transcript affiché est conservé, l'agent ne se souvient plus des tours précédents."}
             {' '}
-            Contexte actuel : {session.contextTokens === null ? 'inconnu (aucun tour depuis cette version)' : formatTokens(session.contextTokens)}.
+            Contexte actuel : {session.contextTokens === null ? 'inconnu (aucun tour depuis cette version)' : `${formatTokens(session.contextTokens)} tokens`}
+            {session.context.coldTurnUsd !== null && session.context.coldTurnUsd >= 0.01 ? ` (≈ ${session.context.coldTurnUsd.toFixed(2).replace('.', ',')} $ par tour à froid)` : ''}.
+            {' '}
+            {session.context.warnTokens === null
+              ? "Le signalement du contexte est désactivé dans vos paramètres Claude : aucun bandeau ne proposera de nettoyage."
+              : `Au-delà de ${formatTokens(session.context.warnTokens)} tokens, la session propose elle-même de compacter ou de repartir d'une conversation neuve (seuil réglable dans vos paramètres Claude).`}
           </Form.Text>
 
           {error && (

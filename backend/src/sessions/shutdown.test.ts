@@ -11,7 +11,7 @@ const store = vi.hoisted(() => ({
 }));
 const repo = vi.hoisted(() => ({
   create: vi.fn(async (input: Record<string, unknown>) => {
-    const s = { id: `s${++store.seq}`, projectId: 'p', worktreeId: null, parentSessionId: null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null };
+    const s = { id: `s${++store.seq}`, projectId: 'p', worksessionId: null, parentSessionId: null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null };
     store.sessions.set(s.id, s);
     return { ...s };
   }),
@@ -47,9 +47,11 @@ vi.mock('../requests/service.js', () => ({ requestService: requests }));
 vi.mock('../notifications/service.js', () => ({ notificationService: notifications }));
 vi.mock('../settings/repository.js', () => ({ settingsRepository: settingsRepo }));
 vi.mock('../projects/service.js', () => ({ projectService: { get: async () => ({ id: 'p', name: 'Projet' }) } }));
-vi.mock('../worktrees/service.js', () => ({ worktreeService: { resolveCwd: async () => '/tmp' } }));
+vi.mock('../worksessions/service.js', () => ({ worksessionService: { resolveCwd: async () => '/tmp', assertUsable: async () => ({}) } }));
 vi.mock('../pubsub.js', () => ({ pubSub: { publish: vi.fn() } }));
 vi.mock('./providers/registry.js', () => ({ getProvider: () => providers.current }));
+// Le diagnostic de manque de mémoire interroge Docker : hors sujet ici.
+vi.mock('../runners/monitor.js', () => ({ containerMonitor: { explainFailure: async () => null } }));
 
 /** Flux Claude simulé : il se termine « de lui-même » (die) ou par stop(), comme le provider Claude. */
 function fakeProvider(opts: { stopHangs?: boolean } = {}) {
@@ -100,7 +102,7 @@ describe('fin de session hors arrêt du serveur', () => {
   it("un arrêt demandé par l'utilisateur donne « stopped » sans erreur", async () => {
     const { sessionService } = await load();
     providers.current = fakeProvider().provider;
-    const s = await sessionService.create({ projectId: 'p', name: 'a', provider: 'fake', prompt: 'x' });
+    const s = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
     await sessionService.stop(s.id);
     await settle();
     expect(session(s.id)).toMatchObject({ status: 'stopped', error: null });
@@ -111,7 +113,7 @@ describe('fin de session hors arrêt du serveur', () => {
     const { sessionService } = await load();
     const fake = fakeProvider();
     providers.current = fake.provider;
-    const s = await sessionService.create({ projectId: 'p', name: 'b', provider: 'fake', prompt: 'x' });
+    const s = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'b', provider: 'fake', prompt: 'x' });
     fake.handles.get(s.id)!.die(crash);
     await settle();
     expect(session(s.id)).toMatchObject({ status: 'failed', exitCode: 1, error: crash.error });
@@ -125,7 +127,7 @@ describe('arrêt du serveur', () => {
     const fake = fakeProvider({ stopHangs: true });
     providers.current = fake.provider;
     const ids: string[] = [];
-    for (const name of ['c', 'd', 'e']) ids.push((await sessionService.create({ projectId: 'p', name, provider: 'fake', prompt: 'x' })).id);
+    for (const name of ['c', 'd', 'e']) ids.push((await sessionService.create({ projectId: 'p', worksessionId: 'w1', name, provider: 'fake', prompt: 'x' })).id);
     await repo.update(ids[2], { activity: 'idle' });
     expect(await sessionService.activeSummary()).toEqual({ active: 3, busy: 2, idle: 1 });
 
@@ -158,9 +160,9 @@ describe('mode maintenance', () => {
   it('refuse la création et la relance des sessions, puis les autorise une fois levé', async () => {
     const { sessionService, serverSettings } = await load();
     providers.current = fakeProvider().provider;
-    const s = await sessionService.create({ projectId: 'p', name: 'm', provider: 'fake', prompt: 'x', autoStart: false });
+    const s = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'm', provider: 'fake', prompt: 'x', autoStart: false });
     serverSettings.setMaintenance(true, 'mise à jour vers 18 h', null);
-    await expect(sessionService.create({ projectId: 'p', name: 'n', provider: 'fake', prompt: 'x' })).rejects.toMatchObject({ code: 'MAINTENANCE', message: expect.stringContaining('mise à jour vers 18 h') });
+    await expect(sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'n', provider: 'fake', prompt: 'x' })).rejects.toMatchObject({ code: 'MAINTENANCE', message: expect.stringContaining('mise à jour vers 18 h') });
     await expect(sessionService.sendMessage(s.id, 'reprends')).rejects.toMatchObject({ code: 'MAINTENANCE' });
     serverSettings.setMaintenance(false, null, null);
     await sessionService.sendMessage(s.id, 'reprends');

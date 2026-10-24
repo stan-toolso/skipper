@@ -92,6 +92,8 @@ export const scheduleService = {
       throw err;
     }
     const enabled = input.enabled ?? true;
+    // Le nettoyage de la conversation accompagne la planification : sans lui, le contexte grossit à chaque exécution.
+    if (input.cleanup) await cleanupService.set(sessionId, input.cleanup);
     const schedule = await scheduleRepository.upsert(sessionId, {
       cron: spec.source,
       timezone,

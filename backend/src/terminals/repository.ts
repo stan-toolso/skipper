@@ -4,7 +4,7 @@ import type { TerminalRecord, TerminalStatus } from './types.js';
 interface Row {
   id: string;
   project_id: string;
-  worktree_id: string | null;
+  worksession_id: string | null;
   created_by: string | null;
   name: string;
   status: TerminalStatus;
@@ -16,7 +16,7 @@ interface Row {
 const toRecord = (r: Row): TerminalRecord => ({
   id: r.id,
   projectId: r.project_id,
-  worktreeId: r.worktree_id,
+  worksessionId: r.worksession_id,
   createdById: r.created_by ?? null,
   name: r.name,
   status: r.status,
@@ -29,8 +29,8 @@ const toRecord = (r: Row): TerminalRecord => ({
 export const HISTORY_LIMIT = 5000;
 
 export const terminalRepository = {
-  async create(projectId: string, name: string, worktreeId: string | null = null, createdById: string | null = null): Promise<TerminalRecord> {
-    const { rows } = await pool.query<Row>('INSERT INTO terminals (project_id, name, worktree_id, created_by) VALUES ($1, $2, $3, $4) RETURNING *', [projectId, name, worktreeId, createdById]);
+  async create(projectId: string, name: string, worksessionId: string | null = null, createdById: string | null = null): Promise<TerminalRecord> {
+    const { rows } = await pool.query<Row>('INSERT INTO terminals (project_id, name, worksession_id, created_by) VALUES ($1, $2, $3, $4) RETURNING *', [projectId, name, worksessionId, createdById]);
     return toRecord(rows[0]);
   },
   async findById(id: string): Promise<TerminalRecord | null> {

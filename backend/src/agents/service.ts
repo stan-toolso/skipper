@@ -3,7 +3,7 @@ import { projectService } from '../projects/service.js';
 import { CronError, isValidTimeZone, nextRun, parseCron } from '../schedules/cron.js';
 import { getProvider } from '../sessions/providers/registry.js';
 import type { Session } from '../sessions/types.js';
-import { worktreeService } from '../worktrees/service.js';
+import { worksessionService } from '../worksessions/service.js';
 import { LLM_PROVIDER, parseLlmConfig } from './llm.js';
 import { agentRepository, type AgentValues } from './repository.js';
 import { placeholders, render } from './template.js';
@@ -89,10 +89,10 @@ async function validate(projectId: string, input: AgentInput, current?: Agent): 
   if (outputFormat !== 'text' && outputFormat !== 'json') throw new AppError(`Format de sortie invalide : ${String(outputFormat)}`);
   const timeoutMinutes = input.timeoutMinutes ?? current?.timeoutMinutes ?? 60;
   if (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > MAX_TIMEOUT_MINUTES) throw new AppError(`Le délai doit être entre 1 et ${MAX_TIMEOUT_MINUTES} minutes`);
-  const worktreeId = provider === LLM_PROVIDER ? null : input.worktreeId === undefined ? (current?.worktreeId ?? null) : input.worktreeId;
-  if (worktreeId) {
-    const worktree = await worktreeService.get(worktreeId);
-    if (worktree.projectId !== projectId) throw new AppError('Ce worktree appartient à un autre projet');
+  const worksessionId = provider === LLM_PROVIDER ? null : input.worksessionId === undefined ? (current?.worksessionId ?? null) : input.worksessionId;
+  if (worksessionId) {
+    const worksession = await worksessionService.get(worksessionId);
+    if (worksession.projectId !== projectId) throw new AppError('Cette work session appartient à un autre projet');
   }
   const inputs = input.inputs === undefined ? (current?.inputs ?? []) : normalizeInputs(input.inputs);
   const promptTemplate = input.promptTemplate ?? current?.promptTemplate ?? '';
@@ -111,7 +111,7 @@ async function validate(projectId: string, input: AgentInput, current?: Agent): 
     inputs,
     outputFormat,
     outputSchema: outputFormat === 'json' ? (input.outputSchema === undefined ? (current?.outputSchema ?? null) : input.outputSchema?.trim() || null) : null,
-    worktreeId,
+    worksessionId,
     timeoutMinutes,
   };
 }

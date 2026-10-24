@@ -58,7 +58,7 @@ export default function SessionChanges({
   onRefresh,
 }: {
   sessionId: string;
-  workspace: { projectId: string; worktreeId: string | null };
+  workspace: { projectId: string; worksessionId: string | null };
   changes: Changes | undefined;
   loading: boolean;
   error?: Error;

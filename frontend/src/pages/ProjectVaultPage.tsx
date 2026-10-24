@@ -12,11 +12,13 @@ import { PROJECTS, type Project } from '../graphql/operations';
 import { LINK_VAULT_ITEM, UNLINK_VAULT_ITEM, VAULT_ITEMS, VAULT_PROJECT, type ProjectVaultItem, type VaultItem, type VaultLinkScope } from '../graphql/vault';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import { tunnelsOf } from './VaultPage';
 
 interface VaultProject {
   id: string;
   name: string;
+  description: string | null;
   myRole: 'ADMIN' | 'MEMBER' | 'VIEWER';
   runnerConfig: { browser?: boolean };
   vaultItems: ProjectVaultItem[];
@@ -146,12 +148,9 @@ export default function ProjectVaultPage() {
   const tunnels = tunnelsOf([...project.vaultItems.map((r) => r.item), ...mine.filter((i) => !inScope.has(i.id))]);
   return (
     <>
-      <Link to={`/projects/${project.id}`} className="small">
-        ← {project.name}
-      </Link>
+      <ProjectHeader project={project} active="vault" />
       <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-        <h1 className="h3 mb-0">Coffre</h1>
-        <div className="d-flex gap-2">
+        <div className="d-flex gap-2 flex-wrap ms-auto">
           {project.myRole !== 'VIEWER' && (
             <Button size="sm" variant="outline-primary" onClick={() => setLinking(true)}>
               Utiliser un de mes éléments

@@ -4,6 +4,7 @@ import { displayCombo } from '../lib/shortcuts';
 import { useShortcut } from '../lib/useShortcut';
 import NotificationBell from './NotificationBell';
 import { useTabs, type Tab, type TabKind } from './TabsContext';
+import { useGitPanel } from './GitTargetContext';
 
 const icons: Record<TabKind, string> = {
   dashboard: 'bi-speedometer2',
@@ -24,7 +25,7 @@ const icons: Record<TabKind, string> = {
   users: 'bi-people',
   files: 'bi-folder2-open',
   file: 'bi-file-earmark-code',
-  worktree: 'bi-diagram-2',
+  worksession: 'bi-layers',
   'shared-pages': 'bi-file-earmark-richtext',
   'shared-page': 'bi-file-earmark-richtext',
   agents: 'bi-robot',
@@ -138,6 +139,7 @@ export default function TabBar({ onToggleSidebar, sidebarOpen = false, sidebarCo
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [menuOpen, setMenuOpen] = useState(false);
   const [ctx, setCtx] = useState<{ tab: Tab; index: number; x: number; y: number } | null>(null);
+  const gitPanel = useGitPanel();
 
   // Raccourcis d'onglets, sur Alt/Option : Ctrl/⌘+W et +T appartiennent au navigateur. Alt+W tape ∑ sur un
   // clavier Mac français, d'où l'alternative Alt+< (touche physique à gauche du W ou du X).
@@ -244,6 +246,11 @@ export default function TabBar({ onToggleSidebar, sidebarOpen = false, sidebarCo
           </div>
         )}
         <NotificationBell />
+        {gitPanel.target && !gitPanel.open && (
+          <button type="button" className="wb-bell-btn wb-git-btn" title={gitPanel.target.taskId ? 'Tâche et suivi git' : 'Suivi git'} aria-label="Ouvrir le panneau git" onClick={() => gitPanel.setOpen(true)}>
+            <i className={`bi ${gitPanel.target.taskId ? 'bi-card-checklist' : 'bi-git'}`} />
+          </button>
+        )}
       </div>
       {ctx && <TabContextMenu tab={ctx.tab} index={ctx.index} x={ctx.x} y={ctx.y} onClose={() => setCtx(null)} />}
     </div>

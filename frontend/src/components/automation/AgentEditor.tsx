@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Col, Form, Modal, Row } from 'react-bootstrap';
 import { AGENT_LLM_KEYS, CREATE_AGENT, LLM_PROVIDER, UPDATE_AGENT, type Agent, type AgentLlmKeys, type AgentOutputFormat, type CreateAgentInput, type InputVariableInput, type LlmAgentConfig, type LlmKeyItem } from '../../graphql/automation';
-import { PROJECTS, PROJECT_WORKTREES, PROVIDERS, type Project, type Provider, type Worktree } from '../../graphql/operations';
+import { PROJECTS, PROJECT_WORKSESSIONS, PROVIDERS, type Project, type Provider, type Worksession } from '../../graphql/operations';
 import { VARIABLE_KEY_PATTERN } from '../../lib/automation';
 import { buildConfig, FieldGroup } from '../SessionLauncher';
 import PathChips, { insertAtCursor } from './PathChips';
@@ -32,7 +32,7 @@ const LLM_BACKENDS: { value: LlmAgentConfig['backend']; label: string; hint: str
 
 const ownerOf = (i: LlmKeyItem) => (i.ownerProject ? `projet ${i.ownerProject.name}` : i.ownerUser ? i.ownerUser.name : '');
 
-/** Création ou modification d'un agent : fournisseur et ses réglages, prompts, variables, sortie, worktree, délai. */
+/** Création ou modification d'un agent : fournisseur et ses réglages, prompts, variables, sortie, worksession, délai. */
 export default function AgentEditor({ agent, projectId: fixedProjectId, onClose, onSaved }: Props) {
   const editing = Boolean(agent);
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
@@ -62,13 +62,13 @@ export default function AgentEditor({ agent, projectId: fixedProjectId, onClose,
   const [variables, setVariables] = useState<VariableRow[]>(() => (agent?.inputs ?? []).map((v) => ({ key: v.key, label: v.label, description: v.description ?? '', required: v.required, defaultValue: v.defaultValue ?? '' })));
   const [outputFormat, setOutputFormat] = useState<AgentOutputFormat>(agent?.outputFormat ?? 'TEXT');
   const [outputSchema, setOutputSchema] = useState(agent?.outputSchema ?? '');
-  const [worktreeId, setWorktreeId] = useState(agent?.worktree?.id ?? '');
+  const [worksessionId, setWorksessionId] = useState(agent?.worksession?.id ?? '');
   const [timeoutMinutes, setTimeoutMinutes] = useState(agent ? String(agent.timeoutMinutes) : '30');
   const [error, setError] = useState<string | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
-  const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: projectId }, skip: !projectId });
-  const worktrees = (worktreesData?.project?.worktrees ?? []).filter((w) => !w.archivedAt);
+  const { data: worksessionsData } = useQuery<{ project: { worksessions: Worksession[] } | null }>(PROJECT_WORKSESSIONS, { variables: { id: projectId }, skip: !projectId });
+  const worksessions = (worksessionsData?.project?.worksessions ?? []).filter((w) => !w.archivedAt);
   const sessionProvider = providers.find((p) => p.type === provider);
   const sessionFields = useMemo(() => (sessionProvider?.configFields ?? []).filter((f) => f.key !== 'prompt'), [sessionProvider]);
 
@@ -122,7 +122,7 @@ export default function AgentEditor({ agent, projectId: fixedProjectId, onClose,
       inputs,
       outputFormat,
       outputSchema: outputFormat === 'JSON' ? outputSchema : null,
-      worktreeId: worktreeId || null,
+      worksessionId: worksessionId || null,
       timeoutMinutes: Number.isFinite(timeout) && timeout > 0 ? Math.round(timeout) : null,
     };
     try {
@@ -315,10 +315,10 @@ export default function AgentEditor({ agent, projectId: fixedProjectId, onClose,
             </Col>
             <Col md={4}>
               <Form.Group>
-                <Form.Label>Worktree des exécutions</Form.Label>
-                <Form.Select value={worktreeId} onChange={(e) => setWorktreeId(e.target.value)} disabled={provider === LLM_PROVIDER}>
-                  <option value="">Dossier principal</option>
-                  {worktrees.map((w) => (
+                <Form.Label>Work session des exécutions</Form.Label>
+                <Form.Select value={worksessionId} onChange={(e) => setWorksessionId(e.target.value)} disabled={provider === LLM_PROVIDER}>
+                  <option value="">Une nouvelle à chaque exécution</option>
+                  {worksessions.map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.label}
                     </option>

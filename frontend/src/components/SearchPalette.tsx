@@ -21,11 +21,11 @@ export function useSearchPalette(): State {
 
 type Kind = SearchHit['kind'];
 type Filter = 'ALL' | Kind | 'PAGES';
-const KINDS: Kind[] = ['PROJECT', 'WORKTREE', 'SESSION', 'TERMINAL', 'TASK', 'VAULT_ITEM'];
+const KINDS: Kind[] = ['PROJECT', 'WORKSESSION', 'SESSION', 'TERMINAL', 'TASK', 'VAULT_ITEM'];
 const FILTERS: Filter[] = ['ALL', ...KINDS, 'PAGES'];
 const KIND_LABELS: Record<Kind, { one: string; many: string; icon: string }> = {
   PROJECT: { one: 'Projet', many: 'Projets', icon: 'bi-folder2' },
-  WORKTREE: { one: 'Worktree', many: 'Worktrees', icon: 'bi-diagram-2' },
+  WORKSESSION: { one: 'Work session', many: 'Work sessions', icon: 'bi-layers' },
   SESSION: { one: 'Session', many: 'Sessions', icon: 'bi-chat-dots' },
   TERMINAL: { one: 'Terminal', many: 'Terminaux', icon: 'bi-terminal' },
   TASK: { one: 'Tâche', many: 'Tâches', icon: 'bi-check2-square' },
@@ -51,8 +51,8 @@ function hitUrl(h: SearchHit): string {
   switch (h.kind) {
     case 'PROJECT':
       return `/projects/${h.id}`;
-    case 'WORKTREE':
-      return `/worktrees/${h.id}/files`;
+    case 'WORKSESSION':
+      return `/worksessions/${h.id}/files`;
     case 'SESSION':
       return `/sessions/${h.id}`;
     case 'TERMINAL':
@@ -73,7 +73,7 @@ function hitMeta(h: SearchHit): string {
     else if (h.status) parts.push(h.status);
   } else if (h.kind === 'TERMINAL') parts.push(h.status === 'running' ? 'ouvert' : 'fermé');
   else if (h.kind === 'TASK') parts.push(h.status === 'in_progress' ? 'en cours' : h.status === 'todo' ? 'à faire' : h.status === 'done' ? 'terminée' : 'annulée');
-  else if (h.kind === 'WORKTREE' && h.status === 'archived') parts.push('archivé');
+  else if (h.kind === 'WORKSESSION' && h.status === 'archived') parts.push('archivé');
   parts.push(timeAgo(h.updatedAt));
   if (h.detail && h.kind !== 'SESSION' && h.kind !== 'TASK') parts.push(h.detail);
   return parts.join(' · ');
@@ -117,7 +117,7 @@ function Palette({ onClose }: { onClose: () => void }) {
             icon: label.icon,
             title: h.title,
             meta: hitMeta(h),
-            tags: [...(h.outsideProjects ? ['non membre'] : []), ...(h.projectName && h.kind !== 'PROJECT' ? [h.projectName] : []), ...(h.worktreeBranch && h.kind !== 'WORKTREE' ? [h.worktreeBranch] : [])],
+            tags: [...(h.outsideProjects ? ['non membre'] : []), ...(h.projectName && h.kind !== 'PROJECT' ? [h.projectName] : []), ...(h.worksessionBranch && h.kind !== 'WORKSESSION' ? [h.worksessionBranch] : [])],
             dot: h.kind === 'SESSION' ? (h.status === 'running' ? (h.activity === 'busy' ? 'busy' : 'idle') : h.status === 'queued' ? 'pending' : h.status === 'failed' ? 'failed' : h.status === 'completed' ? 'done' : 'stopped') : undefined,
           });
         }

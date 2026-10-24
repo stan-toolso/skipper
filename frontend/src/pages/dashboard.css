@@ -21,7 +21,7 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 .dash-tile-value small { font-size: 14px; font-weight: 400; color: var(--cc-dim); margin-left: 6px; }
 .dash-tile-sub { font-size: 12px; color: var(--cc-dim); margin-top: 4px; }
 .dash-tile-sub .up { color: var(--cc-red); }
-.dash-tile-sub .down { color: #57ab5a; }
+.dash-tile-sub .down { color: var(--cc-green); }
 
 .dash-section { margin-bottom: 20px; }
 .dash-section-title {
@@ -58,9 +58,10 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 .dash-meter > div.over { background: var(--cc-red); }
 
 .dash-chart { display: block; width: 100%; height: 96px; margin-top: 8px; }
-.dash-chart rect { fill: var(--cc-accent); opacity: 0.85; }
-.dash-chart rect:hover { opacity: 1; }
-.dash-chart rect.today { opacity: 1; }
+.dash-chart rect.bar { fill: var(--cc-accent); opacity: 0.85; }
+.dash-chart g:hover rect.bar { opacity: 1; }
+.dash-chart rect.bar.today { opacity: 1; }
+.dash-chart rect.hit { fill: transparent; }
 .dash-chart text { fill: var(--cc-dim); font-size: 10px; }
 .dash-chart line { stroke: var(--cc-border); stroke-width: 1; }
 
@@ -77,6 +78,7 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 /* ---- Mobile ---------------------------------------------------------------------------------- */
 @media (max-width: 767.98px) {
   .dash-tiles { gap: 8px; }
+  .dash-list .meta.wrap > * { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dash-tile { padding: 10px 12px; min-height: 0; }
   .dash-tile-value { font-size: 22px; }
   .dash-tile-sub { display: none; }

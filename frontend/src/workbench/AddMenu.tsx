@@ -4,10 +4,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useDialogs } from '../components/Dialogs';
 import { useSessionLauncher } from '../components/SessionLauncher';
 import { CREATE_TERMINAL } from '../graphql/operations';
-import { useRenameWorktree } from './RenameWorktree';
+import { useRenameWorksession } from './RenameWorksession';
 import { useDeletions } from './useDeletions';
 
-export interface AddMenuWorktree {
+export interface AddMenuWorksession {
   id: string;
   name: string;
   branch: string;
@@ -15,12 +15,22 @@ export interface AddMenuWorktree {
   customLabel: string | null;
 }
 
+export interface AddMenuProject {
+  id: string;
+  name: string;
+  /** Administrateur du projet : peut le modifier et le supprimer. */
+  canManage: boolean;
+  /** Chemins des onglets à fermer si le projet est supprimé. */
+  paths: string[];
+}
+
 /**
- * Menu « ⋮ » d'un projet ou d'un dossier de travail (et « + » de la sous-barre) : fichiers, nouvelle session,
- * nouveau terminal, nouveau worktree, pages du projet ; pour un worktree : renommer, archiver, supprimer.
+ * Menu « ⋮ » d'un projet ou d'un dossier de travail (et « + » de la sous-barre) : fichiers, tout ce qu'on peut
+ * créer (work session au niveau du projet ; session et terminal dans une work session ; agent, workflow), les pages du projet, puis la gestion :
+ * renommer, archiver, supprimer une work session ; modifier, supprimer un projet (administrateurs).
  */
-export default function AddMenu({ projectId, worktree, canWorktree, onClose }: { projectId: string; worktree?: AddMenuWorktree | null; canWorktree: boolean; onClose: () => void }) {
-  const worktreeId = worktree?.id ?? null;
+export default function AddMenu({ projectId, project, worksession, canWorksession, onClose }: { projectId: string; project?: AddMenuProject | null; worksession?: AddMenuWorksession | null; canWorksession: boolean; onClose: () => void }) {
+  const worksessionId = worksession?.id ?? null;
   const navigate = useNavigate();
   const { showError } = useDialogs();
   const [createTerminal, { loading }] = useMutation<{ createTerminal: { id: string } }>(CREATE_TERMINAL, {
@@ -31,9 +41,9 @@ export default function AddMenu({ projectId, worktree, canWorktree, onClose }: {
     },
     onError: (err) => void showError(err),
   });
-  const { openNewSession, openNewWorktree } = useSessionLauncher();
-  const { openRenameWorktree } = useRenameWorktree();
-  const { deleteWorktree, archiveWorktree } = useDeletions();
+  const { openNewSession, openNewWorksession } = useSessionLauncher();
+  const { openRenameWorksession } = useRenameWorksession();
+  const { deleteWorksession, archiveWorksession, deleteProject } = useDeletions();
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('click', close);
@@ -41,37 +51,48 @@ export default function AddMenu({ projectId, worktree, canWorktree, onClose }: {
   }, [onClose]);
   return (
     <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
-      <Link to={worktreeId ? `/worktrees/${worktreeId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
+      <Link to={worksessionId ? `/worksessions/${worksessionId}/files` : `/projects/${projectId}/files`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-folder2-open wb-icon" /> Fichiers
       </Link>
       <div className="wb-pop-sep" />
-      <button
-        type="button"
-        className="wb-pop-item"
-        onClick={() => {
-          onClose();
-          openNewSession({ projectId, worktreeId });
-        }}
-      >
-        <i className="bi bi-chat-dots wb-icon" /> Nouvelle session
-      </button>
-      <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId, worktreeId } })}>
-        <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal'}
-      </button>
-      {canWorktree && !worktreeId && (
-        <button
-          type="button"
-          className="wb-pop-item"
-          onClick={() => {
-            onClose();
-            openNewWorktree({ projectId });
-          }}
-        >
-          <i className="bi bi-diagram-2 wb-icon" /> Nouveau worktree
-        </button>
-      )}
-      {!worktreeId && (
+      {worksessionId ? (
         <>
+          <button
+            type="button"
+            className="wb-pop-item"
+            onClick={() => {
+              onClose();
+              openNewSession({ projectId, worksessionId });
+            }}
+          >
+            <i className="bi bi-chat-dots wb-icon" /> Nouvelle session ici
+          </button>
+          <button type="button" className="wb-pop-item" disabled={loading} onClick={() => createTerminal({ variables: { projectId, worksessionId } })}>
+            <i className="bi bi-terminal wb-icon" /> {loading ? 'Ouverture…' : 'Nouveau terminal ici'}
+          </button>
+        </>
+      ) : (
+        canWorksession && (
+          <button
+            type="button"
+            className="wb-pop-item"
+            onClick={() => {
+              onClose();
+              openNewWorksession({ projectId });
+            }}
+          >
+            <i className="bi bi-layers wb-icon" /> Nouvelle work session
+          </button>
+        )
+      )}
+      {!worksessionId && (
+        <>
+          <Link to={`/projects/${projectId}/agents?new=1`} className="wb-pop-item" onClick={onClose}>
+            <i className="bi bi-robot wb-icon" /> Nouvel agent
+          </Link>
+          <Link to={`/projects/${projectId}/workflows?new=1`} className="wb-pop-item" onClick={onClose}>
+            <i className="bi bi-diagram-3 wb-icon" /> Nouveau workflow
+          </Link>
           <div className="wb-pop-sep" />
           <Link to={`/projects/${projectId}/tasks`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-check2-square wb-icon" /> Tâches
@@ -82,12 +103,36 @@ export default function AddMenu({ projectId, worktree, canWorktree, onClose }: {
           <Link to={`/projects/${projectId}/context`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-journal-text wb-icon" /> Contexte
           </Link>
+          <Link to={`/projects/${projectId}/agents`} className="wb-pop-item" onClick={onClose}>
+            <i className="bi bi-robot wb-icon" /> Agents
+          </Link>
+          <Link to={`/projects/${projectId}/workflows`} className="wb-pop-item" onClick={onClose}>
+            <i className="bi bi-diagram-3 wb-icon" /> Workflows
+          </Link>
           <Link to={`/projects/${projectId}/history`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-clock-history wb-icon" /> Historique
           </Link>
         </>
       )}
-      {worktree && (
+      {project?.canManage && (
+        <>
+          <div className="wb-pop-sep" />
+          <Link to={`/projects/${projectId}/edit`} className="wb-pop-item" onClick={onClose}>
+            <i className="bi bi-pencil wb-icon" /> Modifier le projet
+          </Link>
+          <button
+            type="button"
+            className="wb-pop-item danger"
+            onClick={() => {
+              onClose();
+              void deleteProject(project);
+            }}
+          >
+            <i className="bi bi-trash wb-icon" /> Supprimer le projet
+          </button>
+        </>
+      )}
+      {worksession && (
         <>
           <div className="wb-pop-sep" />
           <button
@@ -95,30 +140,30 @@ export default function AddMenu({ projectId, worktree, canWorktree, onClose }: {
             className="wb-pop-item"
             onClick={() => {
               onClose();
-              openRenameWorktree(worktree);
+              openRenameWorksession(worksession);
             }}
           >
-            <i className="bi bi-pencil wb-icon" /> Renommer le worktree
+            <i className="bi bi-pencil wb-icon" /> Renommer la work session
           </button>
           <button
             type="button"
             className="wb-pop-item"
             onClick={() => {
               onClose();
-              void archiveWorktree(worktree);
+              void archiveWorksession(worksession);
             }}
           >
-            <i className="bi bi-archive wb-icon" /> Archiver le worktree
+            <i className="bi bi-archive wb-icon" /> Archiver la work session
           </button>
           <button
             type="button"
             className="wb-pop-item danger"
             onClick={() => {
               onClose();
-              void deleteWorktree(worktree);
+              void deleteWorksession(worksession);
             }}
           >
-            <i className="bi bi-trash wb-icon" /> Supprimer le worktree
+            <i className="bi bi-trash wb-icon" /> Supprimer la work session
           </button>
         </>
       )}
