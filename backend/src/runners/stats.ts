@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 import { promisify } from 'node:util';
 import { parseClaudeProcesses } from '../health/processes.js';
 
@@ -31,6 +32,13 @@ export interface ContainerStats {
   cpuPercent: number | null;
   /** Limite CPU en nombre de cœurs ; null si illimitée. */
   cpuLimit: number | null;
+  /** Cœurs de l'hôte : plafond effectif quand `cpuLimit` est null. */
+  hostCpus: number;
+  /**
+   * Pression CPU (PSI `some`, moyenne sur 60 s) : part du temps où au moins un processus du conteneur attendait
+   * le processeur, qu'il soit bridé par `cpu.max` ou en concurrence avec le reste de la machine. null si le noyau ne la fournit pas.
+   */
+  cpuPressurePercent: number | null;
   /** Processus tués par le noyau faute de mémoire depuis la création du conteneur (memory.events, oom_kill). */
   oomKills: number;
   claudeProcesses: ContainerProcess[];
@@ -51,6 +59,7 @@ echo "memory.max $(cat $cg/memory.max 2>/dev/null)"
 echo "inactive_file $(sed -n 's/^inactive_file //p' $cg/memory.stat 2>/dev/null)"
 echo "memory.swap.current $(cat $cg/memory.swap.current 2>/dev/null)"
 echo "cpu.max $(cat $cg/cpu.max 2>/dev/null)"
+echo "cpu.pressure $(sed -n 's/^some //p' $cg/cpu.pressure 2>/dev/null)"
 echo "oom_kill $(sed -n 's/^oom_kill //p' $cg/memory.events 2>/dev/null)"
 for d in /proc/[0-9]*; do
   s=$(tr '\\0' '\\n' 2>/dev/null < $d/environ | sed -n 's/^${SESSION_ENV}=//p')
@@ -65,7 +74,7 @@ const int = (v: string | undefined) => {
 };
 
 /** Analyse la sortie de STATS_SCRIPT. */
-export function parseContainerStats(output: string, sampledAt = new Date()): ContainerStats {
+export function parseContainerStats(output: string, sampledAt = new Date(), hostCpus = os.cpus().length): ContainerStats {
   const [head, ps = ''] = output.split(/^ps$/m);
   const values = new Map<string, string[]>();
   const sessions = new Map<number, { sessionId: string; cwd: string | null }>();
@@ -87,6 +96,8 @@ export function parseContainerStats(output: string, sampledAt = new Date()): Con
   const cpuPercent = [u1, t1, u2, t2].every(Number.isFinite) && t2 > t1 ? Math.round(((u2 - u1) * 1000 * 100) / (t2 - t1)) : null;
   const [quota, period] = values.get('cpu.max') ?? [];
   const cpuLimit = quota && quota !== 'max' && Number(period) > 0 ? Math.round((Number(quota) / Number(period)) * 100) / 100 : null;
+  const pressure = /avg60=(\d+(?:\.\d+)?)/.exec((values.get('cpu.pressure') ?? []).join(' '));
+  const cpuPressurePercent = pressure ? Math.round(Number(pressure[1]) * 10) / 10 : null;
 
   // Mémoire de tous les processus du conteneur, pour rattacher les commandes de l'agent à sa session.
   const rssByPid = new Map<number, number>();
@@ -113,6 +124,8 @@ export function parseContainerStats(output: string, sampledAt = new Date()): Con
     swapUsedMb: swap === null ? null : Math.round(swap / MB),
     cpuPercent,
     cpuLimit,
+    hostCpus,
+    cpuPressurePercent,
     oomKills: int(get('oom_kill')) ?? 0,
     claudeProcesses: claudeProcesses.sort((a, b) => b.rssMb - a.rssMb),
   };

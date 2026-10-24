@@ -10,6 +10,7 @@ import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import { serverSettings } from '../settings/server.js';
 import { terminalService } from '../terminals/service.js';
+import { readContainerStats } from '../runners/stats.js';
 import { parseClaudeProcesses, type ClaudeProcess } from './processes.js';
 
 export { parseClaudeProcesses, type ClaudeProcess };
@@ -36,6 +37,8 @@ export interface ContainerHealth {
   memoryUsage: string | null;
   memoryPercent: number | null;
   cpuPercent: number | null;
+  /** Pression CPU du conteneur (PSI, 60 s) : part du temps où un processus attendait le processeur. */
+  cpuPressurePercent: number | null;
 }
 
 export interface WorkspaceUsage {
@@ -124,7 +127,7 @@ async function readDocker(projects: Map<string, { id: string; name: string }>): 
     for (const lineText of ps.split('\n').filter(Boolean)) {
       const [name, state, status] = lineText.split('\t');
       const project = projects.get(name.replace(/^skipper-/, ''));
-      containers.push({ name, projectId: project?.id ?? null, projectName: project?.name ?? null, state, status, memoryUsage: null, memoryPercent: null, cpuPercent: null });
+      containers.push({ name, projectId: project?.id ?? null, projectName: project?.name ?? null, state, status, memoryUsage: null, memoryPercent: null, cpuPercent: null, cpuPressurePercent: null });
     }
     if (containers.some((c) => c.state === 'running')) {
       const stats = await run(['stats', '--no-stream', '--format', '{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}']);
@@ -136,6 +139,14 @@ async function readDocker(projects: Map<string, { id: string; name: string }>): 
         container.memoryPercent = percent(memPerc);
         container.cpuPercent = percent(cpuPerc);
       }
+      // Pression CPU : lue dans le cgroup du conteneur (mesure partagée avec la page du projet, en cache 4 s).
+      await Promise.all(
+        containers
+          .filter((c) => c.state === 'running')
+          .map(async (c) => {
+            c.cpuPressurePercent = (await readContainerStats(c.name))?.cpuPressurePercent ?? null;
+          }),
+      );
     }
   } catch (err) {
     return { available: true, version, error: (err as Error).message.split('\n')[0], containers };

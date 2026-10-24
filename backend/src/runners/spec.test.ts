@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { containerDrift, countZombies, splitInspect, type ContainerSpec } from './spec.js';
+import { containerDrift, countZombies, cpusArgs, splitInspect, type ContainerSpec } from './spec.js';
 
 const home = '/home/skipper';
 const expected: ContainerSpec = {
@@ -49,11 +49,18 @@ describe('containerDrift', () => {
     expect(containerDrift(expected, facts, image)).toEqual([
       'option --init ajoutée',
       'limite mémoire 768m → 1g',
-      'limite CPU 2 → 1',
+      'plafond CPU 2 → 1',
       'montage ~/.claude ajouté',
       'montage ~/.claude.json retiré',
       'commande modifié',
     ]);
+  });
+
+  it('signale le retrait du plafond CPU (défaut : aucun) ; sans plafond, docker run ne reçoit pas --cpus', () => {
+    expect(containerDrift({ ...expected, cpus: '' }, { specLabel: label(), init: true, imageId: 'sha256:new' }, image)).toEqual(['plafond CPU 1 → aucun']);
+    expect(containerDrift({ ...expected, cpus: '' }, { specLabel: label({ cpus: '' }), init: true, imageId: 'sha256:new' }, image)).toEqual([]);
+    expect(cpusArgs('')).toEqual([]);
+    expect(cpusArgs('0.5')).toEqual(['--cpus', '0.5']);
   });
 
   it("signale un changement d'image par son nom plutôt que par sa reconstruction", () => {

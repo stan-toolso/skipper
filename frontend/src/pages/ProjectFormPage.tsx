@@ -215,7 +215,7 @@ export default function ProjectFormPage() {
                     </Col>
                     <Col sm={3}>
                       <Form.Label className="small mb-1">CPU</Form.Label>
-                      <Form.Control size="sm" value={runnerCpus} onChange={(e) => setRunnerCpus(e.target.value)} placeholder="1" />
+                      <Form.Control size="sm" value={runnerCpus} onChange={(e) => setRunnerCpus(e.target.value)} placeholder="sans plafond" />
                     </Col>
                     <Form.Text>Vides : valeurs par défaut du serveur. Un changement d'image ou de limites s'applique après « Recréer » sur la page du projet.</Form.Text>
                   </Row>
