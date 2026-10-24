@@ -138,9 +138,9 @@ sudo usermod -aG docker skipper        # puis se reconnecter
 cd ~/skipper && docker build -t skipper-runner:latest deploy/runner
 ```
 
-Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, `SKIPPER_RUNNER_CPUS`) se règlent dans le `.env`
-(768m en production), et par projet dans son formulaire (« Mémoire », « CPU »), appliqués à la
-création du conteneur et à chaud au conteneur existant. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
+Les limites par défaut (`SKIPPER_RUNNER_MEMORY`, 768m en production ; `SKIPPER_RUNNER_CPUS`, vide :
+aucun plafond CPU, voir plus bas) se règlent dans le `.env`, et par projet dans son formulaire
+(« Mémoire », « CPU »), appliqués à la création du conteneur et à chaud au conteneur existant. **Un conteneur est partagé par toutes les sessions du projet** : chaque CLI
 Claude Code prend ≈ 250 Mo, et les agents y lancent aussi `npm ci` (≈ 400 Mo), `tsc`, `vite build`.
 Au-delà de la limite, le noyau tue des processus du conteneur : commandes interrompues et sessions
 en erreur ; Skipper l’explique alors dans le transcript (« le conteneur du projet a dépassé sa limite
@@ -174,6 +174,28 @@ navigateur et 3 sessions → 1500m à 2g. Terminer les sessions inutiles libère
 relèvement de limite (la somme des limites peut dépasser la RAM du serveur).
 Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
 projet applique la nouvelle image.
+
+**CPU** : par défaut un conteneur n'a **pas de plafond CPU** : les cœurs du serveur sont partagés
+équitablement (ordonnanceur CFS) entre les conteneurs et le backend, et un projet seul actif dispose
+de toute la machine. Jusqu'au 24/10/2026 le défaut était `--cpus 1` : les cinq sessions du projet
+Skipper et leurs `npm ci`, `tsc` et `vite build` se partageaient un seul cœur sur les deux du
+serveur, bridé 94 % du temps pendant ces commandes, d'où des sessions très lentes. Un plafond (champ
+« CPU » du projet, ex. `1` ou `0.5`) reste possible pour un projet qui ne doit pas gêner les autres ;
+le changer s'applique à chaud (`docker update`) et marque le conteneur « à recréer » (fait dès que le
+projet est inactif). Les conteneurs créés avec l'ancien défaut sont ainsi recréés sans plafond au
+premier déploiement, dès qu'ils sont inactifs. La carte « Environnement d'exécution » montre la
+pression CPU du conteneur (PSI `cpu.pressure` : part du temps où un processus attendait le
+processeur, bridé ou en concurrence) et avertit au-delà de 25 % ; une notification
+`container.cpu_saturated` part quand elle dépasse 50 % pendant plus de cinq minutes. Le vrai plafond
+est alors la machine (t4g.medium : 2 vCPU, 3,7 Go) : si plusieurs sessions en parallèle sont l'usage
+courant, c'est l'instance qu'il faut agrandir. Pour mesurer sur le serveur :
+
+```bash
+CG=/sys/fs/cgroup/system.slice/docker-$(docker inspect skipper-<slug> --format '{{.Id}}').scope
+cat $CG/cpu.pressure                                   # some avg60 = pression CPU affichée par la carte
+grep -E 'nr_periods|nr_throttled' $CG/cpu.stat         # périodes bridées par un plafond --cpus (0 sans plafond)
+cat /proc/pressure/cpu                                 # pression CPU de toute la machine
+```
 
 ## Procédure de déploiement
 

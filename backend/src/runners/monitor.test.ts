@@ -18,6 +18,8 @@ const sample = (memoryPercent: number | null, oomKills = 0): ContainerStats => (
   swapUsedMb: 0,
   cpuPercent: 10,
   cpuLimit: 1,
+  hostCpus: 2,
+  cpuPressurePercent: 5,
   oomKills,
   claudeProcesses: [],
 });
@@ -44,6 +46,26 @@ describe('avertissement mémoire', () => {
     expect(containerMonitor.memoryHighSince('p1')).toBeNull();
     expect(recordSample('p1', sample(95), 300_000)).toBe(false);
     expect(recordSample('p1', sample(95), 360_000)).toBe(true);
+  });
+});
+
+describe('avertissement CPU', () => {
+  it("n'avertit qu'après cinq minutes de pression au-dessus de 50 %, une seule fois, réarmé sous 25 %", () => {
+    const { recordCpuSample } = containerMonitor;
+    const s = (cpuPressurePercent: number | null) => ({ ...sample(50), cpuPressurePercent });
+    expect(recordCpuSample('p1', s(60), 0)).toBe(false);
+    expect(recordCpuSample('p1', s(70), 240_000)).toBe(false);
+    expect(recordCpuSample('p1', s(70), 300_000)).toBe(true);
+    expect(recordCpuSample('p1', s(90), 600_000)).toBe(false);
+    // Sous 50 % : la durée repart de zéro, mais l'alerte n'est réarmée que sous 25 %.
+    expect(recordCpuSample('p1', s(30), 630_000)).toBe(false);
+    expect(recordCpuSample('p1', s(60), 660_000)).toBe(false);
+    expect(recordCpuSample('p1', s(60), 960_000)).toBe(false);
+    expect(recordCpuSample('p1', s(10), 990_000)).toBe(false);
+    expect(recordCpuSample('p1', s(60), 1_000_000)).toBe(false);
+    expect(recordCpuSample('p1', s(60), 1_300_000)).toBe(true);
+    // Mesure indisponible : rien, et réarmement.
+    expect(recordCpuSample('p1', s(null), 1_330_000)).toBe(false);
   });
 });
 

@@ -2238,6 +2238,8 @@ export interface ContainerStats {
   swapUsedMb: number | null;
   cpuPercent: number | null;
   cpuLimit: number | null;
+  hostCpus: number;
+  cpuPressurePercent: number | null;
   oomKills: number;
   memoryHighSince: string | null;
   claudeProcesses: ContainerProcess[];
@@ -2255,6 +2257,8 @@ export const PROJECT_CONTAINER_STATS = gql`
         swapUsedMb
         cpuPercent
         cpuLimit
+        hostCpus
+        cpuPressurePercent
         oomKills
         memoryHighSince
         claudeProcesses {

@@ -910,6 +910,7 @@ type RunnerStatus {
   containerName: String
   image: String
   memory: String
+  "Plafond CPU (--cpus) ; null : aucun, les cœurs du serveur sont partagés équitablement."
   cpus: String
   startedAt: DateTime
   error: String
@@ -933,6 +934,10 @@ type ContainerStats {
   cpuPercent: Float
   "Limite CPU en nombre de cœurs ; null si illimitée."
   cpuLimit: Float
+  "Cœurs du serveur : plafond effectif quand cpuLimit est null."
+  hostCpus: Int!
+  "Pression CPU (PSI, moyenne sur 60 s) : part du temps où au moins un processus du conteneur attendait le processeur. null si le noyau ne la fournit pas."
+  cpuPressurePercent: Float
   "Processus tués par le noyau faute de mémoire depuis la création du conteneur."
   oomKills: Int!
   "Depuis quand la mémoire dépasse 90 % de la limite (null : sous le seuil)."
@@ -1548,6 +1553,8 @@ type ContainerHealth {
   memoryUsage: String
   memoryPercent: Float
   cpuPercent: Float
+  "Pression CPU du conteneur (PSI, 60 s) : part du temps où un processus attendait le processeur."
+  cpuPressurePercent: Float
 }
 
 type DockerHealth {

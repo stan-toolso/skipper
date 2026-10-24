@@ -126,6 +126,9 @@ export default function ServerHealthCard({ memoryAlertThresholdMb }: { memoryAle
                     <th>État</th>
                     <th>Mémoire</th>
                     <th className="text-end">CPU</th>
+                    <th className="text-end" title="Pression CPU (PSI, moyenne sur 60 s) : part du temps où un processus du conteneur attendait le processeur">
+                      Attente CPU
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -140,6 +143,9 @@ export default function ServerHealthCard({ memoryAlertThresholdMb }: { memoryAle
                         {c.memoryPercent !== null && <span className={c.memoryPercent >= 90 ? 'text-danger ms-1' : 'text-secondary ms-1'}>({c.memoryPercent.toFixed(0)} %)</span>}
                       </td>
                       <td className="text-end">{c.cpuPercent !== null ? `${c.cpuPercent.toFixed(1)} %` : '—'}</td>
+                      <td className={`text-end${c.cpuPressurePercent !== null && c.cpuPressurePercent >= 25 ? ' text-warning' : ''}`}>
+                        {c.cpuPressurePercent !== null ? `${c.cpuPressurePercent.toFixed(0)} %` : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -175,7 +175,7 @@ export interface ServerHealth {
     available: boolean;
     version: string | null;
     error: string | null;
-    containers: { name: string; project: { id: string; name: string } | null; state: string; status: string; memoryUsage: string | null; memoryPercent: number | null; cpuPercent: number | null }[];
+    containers: { name: string; project: { id: string; name: string } | null; state: string; status: string; memoryUsage: string | null; memoryPercent: number | null; cpuPercent: number | null; cpuPressurePercent: number | null }[];
   };
   disk: {
     path: string;
@@ -228,6 +228,7 @@ export const SERVER_HEALTH = gql`
           memoryUsage
           memoryPercent
           cpuPercent
+          cpuPressurePercent
         }
       }
       disk {

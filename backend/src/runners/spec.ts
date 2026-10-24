@@ -15,6 +15,7 @@ export interface ContainerSpec {
   /** Processus init (`--init`) : récolte les processus orphelins et terminés. */
   init: boolean;
   memory: string;
+  /** Plafond CPU (`--cpus`) ; chaîne vide : aucun. */
   cpus: string;
   user: string;
   home: string;
@@ -82,7 +83,7 @@ export function containerDrift(expected: ContainerSpec, actual: ContainerFacts, 
   else if (image && recorded.imageId && recorded.imageId !== image.id) reasons.push(`image reconstruite le ${fmtDate(image.createdAt)}`);
   if (!!recorded.init !== expected.init) reasons.push(expected.init ? 'option --init ajoutée' : 'option --init retirée');
   if (recorded.memory !== expected.memory) reasons.push(`limite mémoire ${recorded.memory ?? '?'} → ${expected.memory}`);
-  if (recorded.cpus !== expected.cpus) reasons.push(`limite CPU ${recorded.cpus ?? '?'} → ${expected.cpus}`);
+  if ((recorded.cpus ?? '') !== expected.cpus) reasons.push(`plafond CPU ${recorded.cpus || 'aucun'} → ${expected.cpus || 'aucun'}`);
   reasons.push(...listDiff(recorded.mounts ?? [], expected.mounts, 'montage', expected.home));
   reasons.push(...listDiff(recorded.tmpfs ?? [], expected.tmpfs, 'tmpfs', expected.home));
   const simple: Record<string, string> = { user: 'utilisateur', home: 'dossier personnel', workdir: 'dossier de travail', restart: 'politique de redémarrage', hosts: 'hôtes supplémentaires', command: 'commande' };
@@ -96,6 +97,11 @@ export function containerDrift(expected: ContainerSpec, actual: ContainerFacts, 
     if (JSON.stringify((recorded as Record<string, unknown>)[key] ?? null) !== JSON.stringify((expected as unknown as Record<string, unknown>)[key] ?? null)) reasons.push(`paramètre « ${key} » modifié`);
   }
   return reasons;
+}
+
+/** Arguments `--cpus` de `docker run` ; aucun plafond quand la valeur est vide. */
+export function cpusArgs(cpus: string): string[] {
+  return cpus ? ['--cpus', cpus] : [];
 }
 
 /**

@@ -8,6 +8,7 @@ const sample = [
   'inactive_file 536870912',
   'memory.swap.current 104857600',
   'cpu.max 200000 100000',
+  'cpu.pressure avg10=12.50 avg60=37.26 avg300=8.00 total=1991765548',
   'oom_kill 3',
   'session 101 aaaa-1111 /w/projet.worktrees/branche',
   'session 150 aaaa-1111 /w/projet.worktrees/branche',
@@ -24,7 +25,7 @@ const sample = [
 
 describe('mesure du conteneur', () => {
   it('lit mémoire, CPU, OOM et rattache les processus Claude à leur session', () => {
-    const stats = parseContainerStats(sample, new Date(0));
+    const stats = parseContainerStats(sample, new Date(0), 4);
     expect(stats).toMatchObject({
       // 1,5 Go moins 512 Mo de cache inactif.
       memoryUsedMb: 1024,
@@ -34,6 +35,9 @@ describe('mesure du conteneur', () => {
       // 0,25 s de CPU en 0,5 s.
       cpuPercent: 50,
       cpuLimit: 2,
+      hostCpus: 4,
+      // PSI « some », moyenne sur 60 s.
+      cpuPressurePercent: 37.3,
       oomKills: 3,
     });
     expect(stats.claudeProcesses).toEqual([
@@ -44,8 +48,8 @@ describe('mesure du conteneur', () => {
   });
 
   it('accepte un conteneur sans limite ni mesure CPU', () => {
-    const stats = parseContainerStats('memory.current 1048576\nmemory.max max\ncpu.max max 100000\noom_kill\nps\n');
-    expect(stats).toMatchObject({ memoryUsedMb: 1, memoryLimitMb: null, memoryPercent: null, cpuPercent: null, cpuLimit: null, oomKills: 0, claudeProcesses: [] });
+    const stats = parseContainerStats('memory.current 1048576\nmemory.max max\ncpu.max max 100000\ncpu.pressure\noom_kill\nps\n', new Date(0), 2);
+    expect(stats).toMatchObject({ memoryUsedMb: 1, memoryLimitMb: null, memoryPercent: null, cpuPercent: null, cpuLimit: null, hostCpus: 2, cpuPressurePercent: null, oomKills: 0, claudeProcesses: [] });
   });
 
   it('convertit les tailles Docker', () => {

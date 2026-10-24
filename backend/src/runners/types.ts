@@ -10,7 +10,7 @@ export interface RunnerConfig {
   image?: string;
   /** Limite mémoire, ex. "1g" ; défaut : SKIPPER_RUNNER_MEMORY. */
   memory?: string;
-  /** Limite CPU, ex. "1" ou "0.5". */
+  /** Plafond CPU (`--cpus`), ex. "1" ou "0.5" ; absent : celui de SKIPPER_RUNNER_CPUS, par défaut aucun. */
   cpus?: string;
   /** Navigateur headless (serveur MCP Playwright) mis à disposition des agents. */
   browser?: boolean;
@@ -27,6 +27,7 @@ export interface RunnerStatus {
   containerName: string | null;
   image: string | null;
   memory: string | null;
+  /** Plafond CPU ; null : aucun (tous les cœurs de l'hôte). */
   cpus: string | null;
   startedAt: Date | null;
   error: string | null;

@@ -12,7 +12,7 @@ import { workspacePath } from '../projects/workspace.js';
 import { attachmentsRoot } from '../sessions/attachments.js';
 import { worksessionsRoot } from '../worksessions/service.js';
 import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type IsolatedCommand, type IsolatedResult, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
-import { containerDrift, countZombies, SPEC_LABEL, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
+import { containerDrift, countZombies, cpusArgs, SPEC_LABEL, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
 
@@ -121,8 +121,8 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const s = this.settings(project);
     const memory = parseDockerSize(s.memory);
     if (!memory) throw new AppError(`Limite mémoire illisible : ${s.memory}`);
-    // Même règle que `docker run --memory` sans --memory-swap : autant de swap que de mémoire.
-    await docker(['update', '--memory', String(memory), '--memory-swap', String(memory * 2), '--cpus', s.cpus, this.containerName(project)]);
+    // Même règle que `docker run --memory` sans --memory-swap : autant de swap que de mémoire. `--cpus 0` retire le plafond CPU.
+    await docker(['update', '--memory', String(memory), '--memory-swap', String(memory * 2), '--cpus', s.cpus || '0', this.containerName(project)]);
     invalidateContainerStats(this.containerName(project));
     return true;
   }
@@ -185,7 +185,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   /** Arguments de `docker run` dérivés de la configuration, label compris. */
   private runArgs(name: string, spec: ContainerSpec): string[] {
     return [
-      'run', '-d', '--name', name, '--restart', spec.restart, '--memory', spec.memory, '--cpus', spec.cpus,
+      'run', '-d', '--name', name, '--restart', spec.restart, '--memory', spec.memory, ...cpusArgs(spec.cpus),
       ...(spec.init ? ['--init'] : []),
       '--user', spec.user, '-e', `HOME=${spec.home}`, '-w', spec.workdir,
       ...spec.hosts.flatMap((h) => ['--add-host', h]),
@@ -199,7 +199,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   async status(project: Project): Promise<RunnerStatus> {
     const s = this.settings(project);
     const name = this.containerName(project);
-    const base: RunnerStatus = { kind: 'docker', ready: false, state: 'absent', containerName: name, image: s.image, memory: s.memory, cpus: s.cpus, startedAt: null, error: null, outdated: false, outdatedReasons: [], zombies: null };
+    const base: RunnerStatus = { kind: 'docker', ready: false, state: 'absent', containerName: name, image: s.image, memory: s.memory, cpus: s.cpus || null, startedAt: null, error: null, outdated: false, outdatedReasons: [], zombies: null };
     try {
       const format = `{{.State.Status}}|{{.State.StartedAt}}|{{.Config.Image}}|{{.Image}}|{{.HostConfig.Init}}|{{index .Config.Labels "${SPEC_LABEL}"}}`;
       const { stdout, code } = await docker(['inspect', '--format', format, name], { allowFail: true });
@@ -384,7 +384,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const name = `skipper-run-${randomBytes(6).toString('hex')}`;
     const home = '/tmp/home';
     const args = [
-      'run', '--rm', '-i', '--name', name, '--memory', cmd.memory ?? '512m', '--cpus', s.cpus, '--init',
+      'run', '--rm', '-i', '--name', name, '--memory', cmd.memory ?? '512m', ...cpusArgs(s.cpus), '--init',
       '--user', `${uid}:${gid}`, '-v', '/etc/passwd:/etc/passwd:ro', '-v', '/etc/group:/etc/group:ro',
       '--tmpfs', `${home}:uid=${uid},gid=${gid},mode=0700,size=64m`,
       '-v', `${cmd.cwd}:${cmd.cwd}`, '-w', cmd.cwd,

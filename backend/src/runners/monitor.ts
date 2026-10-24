@@ -6,8 +6,9 @@ import { containerOomKilled, type ContainerStats } from './stats.js';
 
 /**
  * Surveillance des conteneurs des projets : avertissement quand la mémoire dépasse 90 % de la limite
- * pendant plus d'une minute, et suivi du compteur de processus tués faute de mémoire (memory.events),
- * qui permet d'expliquer la fin d'une session tuée par le noyau.
+ * pendant plus d'une minute, quand la pression CPU reste au-dessus de 50 % pendant plus de cinq minutes
+ * (processeur saturé : commandes des agents ralenties), et suivi du compteur de processus tués faute de
+ * mémoire (memory.events), qui permet d'expliquer la fin d'une session tuée par le noyau.
  */
 const INTERVAL_MS = 30_000;
 export const MEMORY_HIGH_PERCENT = 90;
@@ -17,10 +18,18 @@ const MEMORY_HIGH_DURATION_MS = 60_000;
 const MEMORY_REARM_PERCENT = 80;
 /** Un processus tué faute de mémoire dans ce délai avant la fin d'une session en est probablement la cause. */
 const OOM_RECENT_MS = 3 * 60_000;
+/** Pression CPU (PSI `some`, 60 s) au-dessus de laquelle le conteneur est considéré saturé. */
+export const CPU_PRESSURE_HIGH_PERCENT = 50;
+/** Durée de saturation avant l'avertissement : un build ou une installation sature légitimement quelques minutes. */
+const CPU_HIGH_DURATION_MS = 5 * 60_000;
+/** L'avertissement CPU est réarmé quand la pression redescend sous ce seuil. */
+const CPU_REARM_PERCENT = 25;
 
 interface ContainerState {
   highSince: number | null;
   alerted: boolean;
+  cpuHighSince: number | null;
+  cpuAlerted: boolean;
   oomKills: number | null;
   lastOomAt: number | null;
 }
@@ -30,7 +39,7 @@ let timer: NodeJS.Timeout | null = null;
 
 function stateOf(projectId: string): ContainerState {
   let s = states.get(projectId);
-  if (!s) states.set(projectId, (s = { highSince: null, alerted: false, oomKills: null, lastOomAt: null }));
+  if (!s) states.set(projectId, (s = { highSince: null, alerted: false, cpuHighSince: null, cpuAlerted: false, oomKills: null, lastOomAt: null }));
   return s;
 }
 
@@ -54,20 +63,51 @@ export function recordSample(projectId: string, stats: ContainerStats, now = Dat
   return true;
 }
 
+/** Même logique pour la pression CPU : vrai quand l'avertissement « processeur saturé » doit partir. */
+export function recordCpuSample(projectId: string, stats: ContainerStats, now = Date.now()): boolean {
+  const s = stateOf(projectId);
+  const pressure = stats.cpuPressurePercent;
+  if (pressure === null || pressure < CPU_PRESSURE_HIGH_PERCENT) {
+    s.cpuHighSince = null;
+    if (pressure === null || pressure < CPU_REARM_PERCENT) s.cpuAlerted = false;
+    return false;
+  }
+  s.cpuHighSince ??= now;
+  if (s.cpuAlerted || now - s.cpuHighSince < CPU_HIGH_DURATION_MS) return false;
+  s.cpuAlerted = true;
+  return true;
+}
+
+const cpuCapacity = (stats: ContainerStats) =>
+  stats.cpuLimit ? `plafond de ${stats.cpuLimit.toLocaleString('fr-FR')} cœur${stats.cpuLimit > 1 ? 's' : ''}` : `${stats.hostCpus} cœur${stats.hostCpus > 1 ? 's' : ''} du serveur, sans plafond`;
+
 async function sampleProject(project: Project): Promise<void> {
   const stats = await runner.stats(project);
   if (!stats) return;
-  if (!recordSample(project.id, stats)) return;
   const sessions = stats.claudeProcesses.filter((p) => p.sessionId).length;
-  void notificationService.notify({
-    type: 'container.memory_high',
-    title: `Conteneur de « ${project.name} » à ${Math.round(stats.memoryPercent ?? 0)} % de sa limite mémoire`,
-    message: `${formatMb(stats.memoryUsedMb)} / ${formatMb(stats.memoryLimitMb ?? 0)} depuis plus d'une minute · ${stats.claudeProcesses.length} processus Claude (${sessions} de sessions). Au-delà de la limite, le noyau tue des processus : terminez les sessions inutiles ou relevez la limite.`,
-    link: `/projects/${project.id}`,
-    projectId: project.id,
-    payload: { memoryUsedMb: stats.memoryUsedMb, memoryLimitMb: stats.memoryLimitMb, claudeProcesses: stats.claudeProcesses.length },
-  });
-  console.warn(`[conteneurs] ${project.slug} : ${stats.memoryUsedMb} / ${stats.memoryLimitMb} Mo`);
+  if (recordSample(project.id, stats)) {
+    void notificationService.notify({
+      type: 'container.memory_high',
+      title: `Conteneur de « ${project.name} » à ${Math.round(stats.memoryPercent ?? 0)} % de sa limite mémoire`,
+      message: `${formatMb(stats.memoryUsedMb)} / ${formatMb(stats.memoryLimitMb ?? 0)} depuis plus d'une minute · ${stats.claudeProcesses.length} processus Claude (${sessions} de sessions). Au-delà de la limite, le noyau tue des processus : terminez les sessions inutiles ou relevez la limite.`,
+      link: `/projects/${project.id}`,
+      projectId: project.id,
+      payload: { memoryUsedMb: stats.memoryUsedMb, memoryLimitMb: stats.memoryLimitMb, claudeProcesses: stats.claudeProcesses.length },
+    });
+    console.warn(`[conteneurs] ${project.slug} : ${stats.memoryUsedMb} / ${stats.memoryLimitMb} Mo`);
+  }
+  if (recordCpuSample(project.id, stats)) {
+    const pressure = Math.round(stats.cpuPressurePercent ?? 0);
+    void notificationService.notify({
+      type: 'container.cpu_saturated',
+      title: `Processeur saturé dans le conteneur de « ${project.name} »`,
+      message: `Depuis plus de cinq minutes, ses processus attendent le CPU ${pressure} % du temps (${cpuCapacity(stats)} · ${stats.claudeProcesses.length} processus Claude, ${sessions} de sessions). Les commandes des agents sont ralenties : lancez moins de sessions en parallèle${stats.cpuLimit ? ' ou relevez le plafond CPU' : ''}.`,
+      link: `/projects/${project.id}`,
+      projectId: project.id,
+      payload: { cpuPressurePercent: stats.cpuPressurePercent, cpuPercent: stats.cpuPercent, cpuLimit: stats.cpuLimit, hostCpus: stats.hostCpus, claudeProcesses: stats.claudeProcesses.length },
+    });
+    console.warn(`[conteneurs] ${project.slug} : pression CPU ${pressure} % (${cpuCapacity(stats)})`);
+  }
 }
 
 export const containerMonitor = {
@@ -84,6 +124,7 @@ export const containerMonitor = {
   },
 
   recordSample,
+  recordCpuSample,
 
   /**
    * Explique la fin en erreur d'une session quand le conteneur a manqué de mémoire : processus principal

@@ -25,6 +25,11 @@ function processActivity(p: ContainerProcess): { label: string; className: strin
   return { label: `inactive depuis ${timeAgo(s.updatedAt).replace(/^il y a /, '')}`, className: 'text-secondary' };
 }
 
+/** Pression CPU (part du temps d'attente du processeur sur 60 s) à partir de laquelle la carte avertit. */
+const CPU_PRESSURE_WARN_PERCENT = 25;
+
+const plural = (n: number, word: string) => `${n.toLocaleString('fr-FR')} ${word}${n > 1 ? 's' : ''}`;
+
 /** Mémoire, CPU et processus Claude du conteneur en marche, relevés toutes les 10 secondes. */
 function ContainerUsage({ projectId }: { projectId: string }) {
   const { data, error } = usePollingQuery<{ project: { id: string; containerStats: ContainerStats | null } | null }>(PROJECT_CONTAINER_STATS, {
@@ -36,8 +41,17 @@ function ContainerUsage({ projectId }: { projectId: string }) {
   if (error) return <Alert variant="warning" className="py-2">Mesure du conteneur impossible : {error.message}</Alert>;
   if (!c) return null;
   const sessionsMb = c.claudeProcesses.reduce((sum, p) => sum + p.rssMb + p.childrenRssMb, 0);
+  const cpuCapacity = c.cpuLimit ? `plafond de ${plural(c.cpuLimit, 'cœur')}` : `${plural(c.hostCpus, 'cœur')} du serveur, sans plafond`;
   return (
     <div className="mb-3">
+      {c.cpuPressurePercent !== null && c.cpuPressurePercent >= CPU_PRESSURE_WARN_PERCENT && (
+        <Alert variant="warning" className="py-2">
+          <i className="bi bi-speedometer2 me-1" /> Processeur saturé : au cours de la dernière minute, les processus du conteneur ont attendu le CPU{' '}
+          {c.cpuPressurePercent.toLocaleString('fr-FR')} % du temps ({cpuCapacity} · {c.claudeProcesses.length} processus Claude). Les commandes des
+          agents (installations, builds, tests) en sont ralenties : attendez la fin des commandes en cours, lancez moins de sessions en parallèle
+          {c.cpuLimit ? ' ou relevez le plafond CPU' : ''}.
+        </Alert>
+      )}
       {c.memoryHighSince && (
         <Alert variant="danger" className="py-2">
           <i className="bi bi-exclamation-triangle me-1" /> Mémoire au-delà de 90 % de la limite depuis {timeAgo(c.memoryHighSince).replace(/^il y a /, '')} : au-delà de la limite, le noyau
@@ -53,8 +67,8 @@ function ContainerUsage({ projectId }: { projectId: string }) {
         <Gauge
           label="CPU"
           used={c.cpuPercent}
-          total={(c.cpuLimit ?? 1) * 100}
-          detail={`${c.cpuPercent} %${c.cpuLimit ? ` sur ${c.cpuLimit.toLocaleString('fr-FR')} cœur${c.cpuLimit > 1 ? 's' : ''}` : ''}`}
+          total={(c.cpuLimit ?? c.hostCpus) * 100}
+          detail={`${c.cpuPercent} % (${cpuCapacity})${c.cpuPressurePercent !== null ? ` · attente CPU ${c.cpuPressurePercent.toLocaleString('fr-FR')} %` : ''}`}
         />
       )}
       {c.oomKills > 0 && (
@@ -125,7 +139,7 @@ function RunnerLimitsForm({ project, onDone }: { project: Project; onDone: () =>
         </Col>
         <Col xs={3}>
           <Form.Label className="small mb-1">CPU</Form.Label>
-          <Form.Control size="sm" value={cpus} placeholder={project.runnerStatus.cpus ?? '1'} onChange={(e) => setCpus(e.target.value)} />
+          <Form.Control size="sm" value={cpus} placeholder={project.runnerStatus.cpus ?? 'sans plafond'} onChange={(e) => setCpus(e.target.value)} />
         </Col>
         <Col xs="auto">
           <Button size="sm" type="submit" disabled={loading}>
@@ -136,7 +150,10 @@ function RunnerLimitsForm({ project, onDone }: { project: Project; onDone: () =>
           </Button>
         </Col>
       </Row>
-      <Form.Text>Appliquées tout de suite au conteneur, sans couper les sessions. Compter ≈ 250 Mo par session Claude ouverte, plus ≈ 900 Mo pour un build Vite.</Form.Text>
+      <Form.Text>
+        Appliquées tout de suite au conteneur, sans couper les sessions. Compter ≈ 250 Mo par session Claude ouverte, plus ≈ 900 Mo pour un build Vite. CPU vide : aucun
+        plafond, les cœurs du serveur sont partagés équitablement entre conteneurs ; un nombre de cœurs (1, 0.5…) fixe un plafond dur, que toutes les sessions du projet se partagent.
+      </Form.Text>
       {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
     </Form>
   );
@@ -181,7 +198,7 @@ function RunnerCard({ project }: { project: Project }) {
           </dd>
           <dt className="col-3">Limites</dt>
           <dd className="col-9">
-            mémoire {s.memory} · CPU {s.cpus}
+            mémoire {s.memory} · CPU {s.cpus ?? 'sans plafond'}
             {isAdmin && !editingLimits && (
               <Button size="sm" variant="link" className="p-0 ms-2 align-baseline" onClick={() => setEditingLimits(true)}>
                 Modifier

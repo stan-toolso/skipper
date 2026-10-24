@@ -28,7 +28,8 @@ export const config = {
   /** Image Docker des conteneurs de projet (seul environnement d'exécution) et limites par défaut. */
   runnerImage: process.env.SKIPPER_RUNNER_IMAGE || 'skipper-runner:latest',
   runnerMemory: process.env.SKIPPER_RUNNER_MEMORY || '1g',
-  runnerCpus: process.env.SKIPPER_RUNNER_CPUS || '1',
+  /** Plafond CPU par défaut des conteneurs (`--cpus`) ; vide : aucun plafond, les cœurs de l'hôte sont partagés équitablement (CFS) entre conteneurs et backend. */
+  runnerCpus: process.env.SKIPPER_RUNNER_CPUS || '',
   /** Dossier commun contenant un sous-dossier par projet (workspace). */
   workspacesRoot: path.resolve(env('WORKSPACES_ROOT', path.join(os.homedir(), 'skipper-workspaces'))),
   /** URL publique de l'application (front) : cible des redirections après connexion, origine autorisée en CORS. */

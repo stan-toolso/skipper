@@ -11,8 +11,8 @@ Trois notions :
   ce projet (administrateur, membre, lecteur). Il ne voit que les projets dont il est membre.
 - **Projet** : prompt système, dépôt git optionnel, et un dossier de travail (workspace) dédié dans
   `WORKSPACES_ROOT`. Le dépôt y est cloné à la création du projet.
-- **Environnement d'exécution** : chaque projet a son conteneur Docker (limites de mémoire et de CPU,
-  ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
+- **Environnement d'exécution** : chaque projet a son conteneur Docker (limite de mémoire, plafond CPU
+  optionnel, ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
   s'exécute directement sur le serveur avec l'utilisateur de Skipper.
 - **Work session** : l'unité de travail d'un projet, et le **seul endroit où tournent sessions et
   terminaux** : rien ne s'exécute dans le dossier principal. C'est un dossier à elle, à côté du checkout
@@ -502,7 +502,8 @@ conteneur de l'agent.
 - **Mémoire et CPU des conteneurs** (`runners/stats.ts`, `runners/monitor.ts`) : `Project.containerStats`
   lit le cgroup v2 du conteneur par un `docker exec` (`memory.current` moins `inactive_file`, comme
   `docker stats` ; `memory.max`, swap, `cpu.max`, deux lectures de `cpu.stat` à 0,5 s d'écart,
-  compteur `oom_kill` de `memory.events`) et liste les processus `claude` avec leur mémoire. Chaque CLI
+  pression CPU `cpu.pressure` (PSI `some`, moyenne sur 60 s : part du temps où un processus attendait
+  le processeur), compteur `oom_kill` de `memory.events`) et liste les processus `claude` avec leur mémoire. Chaque CLI
   de session reçoit `SKIPPER_SESSION_ID` (transmis par le script de relais) : un processus est ainsi
   relié à sa session, et les commandes qu'il lance (même variable héritée) sont comptées avec elle. Mesure
   en cache 4 s. La carte « Environnement d'exécution » de la page projet l'affiche toutes les 10 s
@@ -510,7 +511,10 @@ conteneur de l'agent.
   modifie les limites, appliquées à chaud par `docker update` (swap = 2 × mémoire, comme `docker run`)
   comme depuis le formulaire du projet. Toutes les 30 s, la surveillance mesure chaque conteneur : au-delà
   de 90 % de la limite pendant plus d'une minute, notification `container.memory_high` au projet
-  (réarmée sous 80 %). À la fin d'une session en erreur, `containerMonitor.explainFailure` regarde le
+  (réarmée sous 80 %) ; pression CPU au-dessus de 50 % pendant plus de cinq minutes, notification
+  `container.cpu_saturated` (réarmée sous 25 %). Par défaut un conteneur n'a pas de plafond CPU
+  (`SKIPPER_RUNNER_CPUS` vide ; `runner_config.cpus` en fixe un) : les cœurs du serveur sont partagés
+  équitablement, et la carte affiche la pression CPU plutôt qu'un taux par rapport à un plafond. À la fin d'une session en erreur, `containerMonitor.explainFailure` regarde le
   code 137 (SIGKILL), la hausse de `oom_kill` depuis la dernière mesure et `State.OOMKilled` : l'erreur
   du transcript et de la notification devient « le conteneur du projet a dépassé sa limite mémoire… »,
   suivie du détail d'origine.
