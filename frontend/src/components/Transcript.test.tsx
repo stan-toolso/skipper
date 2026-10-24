@@ -88,4 +88,23 @@ describe('Transcript', () => {
     expect(out).toContain('cc-dot warn');
     expect(out).not.toContain('cc-result error');
   });
+
+  it('affiche un tour interrompu comme une interruption, pas comme une erreur', () => {
+    // Résultat réel du CLI 2.1.300 après « Interrompre » pendant un appel d'outil (24/10/2026).
+    const interrupted = ev('claude.result', {
+      subtype: 'error_during_execution',
+      is_error: true,
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+      terminal_reason: 'aborted_streaming',
+      duration_ms: 25326,
+    });
+    const out = html([ev('instruction', { text: 'Go' }), ev('claude.user', { message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }), interrupted], true);
+    expect(out).toContain('⏹ Interrompu');
+    expect(out).not.toContain('ede_diagnostic');
+    expect(out).not.toContain('cc-note error');
+    // Une vraie erreur reste signalée en rouge.
+    const failed = html([ev('instruction', { text: 'Go' }), ev('claude.result', { subtype: 'error_during_execution', is_error: true, errors: ['boom'], terminal_reason: 'api_error' })], true);
+    expect(failed).toContain('cc-note error');
+    expect(failed).toContain('boom');
+  });
 });
