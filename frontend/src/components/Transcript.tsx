@@ -617,16 +617,23 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
         }
         break;
       }
-      case 'claude.result':
+      case 'claude.result': {
+        // Tour interrompu par l'humain (bouton « Interrompre », Échap) : depuis le CLI 2.1.300, le résultat est marqué
+        // en erreur avec un diagnostic interne (`[ede_diagnostic] …`). Ce n'est pas une panne : l'agent attend la suite.
+        const interrupted = p.terminal_reason === 'aborted_streaming' || p.terminal_reason === 'aborted_tools';
+        const failed = Boolean(p.is_error) && !interrupted;
         nodes.push(
-          <div key={e.id} className={`cc-note${p.is_error ? ' error' : ''}`}>
+          <div key={e.id} className={`cc-note${failed ? ' error' : ''}`}>
             {stamp(true)}
-            {p.is_error
-              ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
-              : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
+            {interrupted
+              ? `⏹ Interrompu${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`
+              : failed
+                ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
+                : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
           </div>,
         );
         break;
+      }
       case 'cleanup': {
         const action = String(p.action ?? '');
         const k = (v: unknown) => (typeof v === 'number' ? `${Math.round(v / 1000)} k tokens` : '?');
