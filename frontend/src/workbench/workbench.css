@@ -801,3 +801,56 @@ button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, tra
   .project-tabs { margin-left: -12px; margin-right: -12px; padding: 0 12px; }
   .project-tabs .nav-link { padding: 6px 10px; }
 }
+
+/* ---- Vue liste des tâches (components/TaskGrid.tsx) : une tâche par ligne, colonnes réglables ----------------- */
+.task-grid-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.task-grid { overflow: auto; max-height: calc(100vh - 230px); border: 1px solid var(--cc-border); border-radius: 6px; }
+.task-grid-table { table-layout: fixed; width: 100%; margin-bottom: 0; }
+.task-grid-table th, .task-grid-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.task-grid-table thead th { position: sticky; top: 0; z-index: 2; background: var(--cc-bg-elevated); }
+.task-grid-table thead tr.task-grid-filters th { top: 31px; padding: 3px 4px 6px; border-bottom: 1px solid var(--cc-border); }
+/* overflow visible : la poignée de redimensionnement chevauche le filet entre deux colonnes (le libellé, lui, se tronque dans .task-grid-sort). */
+.task-grid-th { position: relative; padding: 0; user-select: none; overflow: visible; }
+.task-grid-th.task-grid-dragging { opacity: 0.45; }
+.task-grid-th.task-grid-drop::before { content: ""; position: absolute; left: -1px; top: 4px; bottom: 4px; width: 2px; background: var(--cc-accent); z-index: 3; }
+.task-grid-sort, .task-grid-th > .task-grid-label {
+  display: flex; align-items: center; gap: 3px; width: 100%; padding: 6px 10px 6px 8px; min-height: 31px;
+  background: none; border: 0; color: var(--cc-dim); font: inherit; font-weight: 500; text-align: left; cursor: pointer; overflow: hidden;
+}
+.task-grid-th > .task-grid-label { cursor: default; }
+.task-grid-th.text-end .task-grid-sort { justify-content: flex-end; }
+.task-grid-sort:hover { color: var(--cc-fg); }
+.task-grid-sort .task-grid-label { overflow: hidden; text-overflow: ellipsis; }
+.task-grid-caret { font-size: 9px; opacity: 0; transition: opacity .15s; flex: none; }
+.task-grid-sort:hover .task-grid-caret { opacity: 0.5; }
+.task-grid-caret.on { opacity: 1; color: var(--cc-accent); }
+/* Poignée entièrement dans sa cellule : chaque th figé a son propre contexte d'empilement, le suivant couvrirait ce qui dépasse. */
+.task-grid-resizer { position: absolute; top: 0; bottom: 0; right: 0; width: 9px; cursor: col-resize; touch-action: none; z-index: 3; }
+.task-grid-resizer::after { content: ""; position: absolute; top: 6px; bottom: 6px; right: 0; width: 1px; background: var(--cc-border); transition: background .15s, width .15s; }
+.task-grid-resizer:hover::after, .task-grid-resizer.dragging::after { background: var(--cc-accent); width: 2px; }
+.task-grid-filter.form-control, .task-grid-filter.form-select { font-size: 12px; padding: 2px 6px; height: 26px; min-height: 0; }
+.task-grid-filter.form-select { padding-right: 24px; background-position: right 4px center; }
+.task-grid-filter.on { border-color: var(--cc-accent); }
+.task-grid-filter::placeholder { color: var(--cc-dimmer); }
+.task-grid-cell { height: 40px; padding: 0 8px; }
+.task-grid-cell .task-tags { flex-wrap: nowrap; max-width: 100%; overflow: hidden; }
+.task-grid-cell .task-status { max-width: 100%; }
+.task-grid-cell > a { display: inline; }
+.task-grid-actions { overflow: visible; }
+.task-actions-compact { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Première colonne figée au défilement horizontal (titre, d'ordinaire). */
+.task-grid-table th:first-child, .task-grid-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--cc-bg); }
+.task-grid-table thead th:first-child { z-index: 4; background: var(--cc-bg-elevated); }
+.task-grid-table tbody tr:hover td:first-child { background: var(--cc-bg-hover); }
+.task-grid-chooser { right: 0; top: calc(100% + 4px); min-width: 230px; padding: 6px 0; }
+.task-grid-chooser-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 12px 6px; font-weight: 600; border-bottom: 1px solid var(--cc-border); margin-bottom: 4px; }
+.task-grid-chooser-row { display: flex; align-items: center; gap: 2px; padding: 2px 12px; }
+.task-grid-chooser-row:hover { background: var(--cc-bg-hover); }
+.task-grid-chooser-row .form-check { min-width: 0; }
+.task-grid-chooser-row .form-check-label { white-space: nowrap; }
+.task-grid-chooser-foot { padding: 6px 12px 2px; color: var(--cc-dimmer); font-size: 11px; border-top: 1px solid var(--cc-border); margin-top: 4px; }
+@media (max-width: 767.98px) {
+  .task-grid { max-height: none; }
+  /* La première colonne (figée) laisse de la place aux suivantes : 180 px au plus, quelle que soit la largeur réglée. */
+  .task-grid-table col:first-child { width: 180px !important; }
+}
