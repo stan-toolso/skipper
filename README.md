@@ -740,8 +740,13 @@ dans la description ou un commentaire ; `WORKSPACES_ROOT/.task-attachments/`, ro
 Les **consignes des sessions de tâches** du projet (fiche du projet) sont ajoutées après le texte de la tâche
 dans l'instruction de toute session qui la réalise. Une tâche se **déplace** dans un autre projet (sa session
 et sa branche restent dans l'ancien).
-Chaque tâche a sa page (`/tasks/:id`, vue liste par défaut ou kanban sur la liste, filtres par statut, priorité,
-responsable, « mes tâches »). La session en charge d'une tâche reçoit les changements faits par d'autres
+Chaque tâche a sa page (`/tasks/:id`). La liste des tâches (`/tasks`, `/projects/:id/tasks`) est par défaut une
+**grille** (`components/TaskGrid.tsx`, logique pure dans `lib/taskTable.ts`) : une tâche par ligne, toujours sur une
+seule ligne, colonnes que l'on réordonne (glisser l'en-tête), redimensionne (poignée, double clic pour la largeur par
+défaut), trie et choisit (bouton « Colonnes », avec flèches pour l'ordre), filtres par colonne sous les en-têtes
+(texte sans accents ni casse, listes pour statut, priorité, échéance, origine, projet) ; la disposition est mémorisée
+dans `localStorage` (`skipper.tasks.table.v1`). Le kanban reste disponible (filtres de la barre d'outils : priorité,
+responsable, rapporteur, étiquette), ainsi que « mes tâches ouvertes » et « voir les annulées » dans les deux vues. La session en charge d'une tâche reçoit les changements faits par d'autres
 (`[Mise à jour de la tâche]`) et les nouveaux commentaires (`[Commentaire sur la tâche]`, qui relancent
 une session terminée) ; son historique de sessions est conservé (`task_sessions`). « Confier à un agent »
 montre la consigne envoyée à l'agent et permet de la modifier avant le lancement. Une **API REST**

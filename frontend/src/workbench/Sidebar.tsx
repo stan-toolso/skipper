@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PopMenu, { type MenuItem } from '../components/PopMenu';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
@@ -104,54 +105,6 @@ function worksessionIcon(ws: Workspace, pr: PullRequestRef | null | undefined): 
   if (!pr) return { cls: '', title: base };
   const state = pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase();
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
-}
-
-interface MenuItem {
-  label: string;
-  icon: string;
-  to?: string;
-  onClick?: () => void;
-  danger?: boolean;
-  separatorBefore?: boolean;
-}
-
-/** Menu contextuel d'une ligne (clic sur ⋯ ou clic droit). */
-function PopMenu({ items, onClose, up }: { items: MenuItem[]; onClose: () => void; up?: boolean }) {
-  useEffect(() => {
-    const close = () => onClose();
-    window.addEventListener('click', close);
-    window.addEventListener('contextmenu', close);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('contextmenu', close);
-    };
-  }, [onClose]);
-  return (
-    <div className={`wb-pop${up ? ' up' : ''}`} onClick={(e) => e.stopPropagation()}>
-      {items.map((it) => (
-        <div key={it.label}>
-          {it.separatorBefore && <div className="wb-pop-sep" />}
-          {it.to ? (
-            <Link to={it.to} className={`wb-pop-item${it.danger ? ' danger' : ''}`} onClick={onClose}>
-              <i className={`bi ${it.icon} wb-icon`} /> {it.label}
-            </Link>
-          ) : (
-            <button
-              type="button"
-              className={`wb-pop-item${it.danger ? ' danger' : ''}`}
-              onClick={(e) => {
-                e.preventDefault();
-                onClose();
-                it.onClick?.();
-              }}
-            >
-              <i className={`bi ${it.icon} wb-icon`} /> {it.label}
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function RowWithMenu({ to, active, indent, title, items, children }: { to: string; active: boolean; indent: number; title: string; items: MenuItem[]; children: React.ReactNode }) {
