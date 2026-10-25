@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { createInterface } from 'node:readline';
 import { createOpencodeClient, type Event as OpencodeEvent, type OpencodeClient, type Part, type PermissionRequest, type QuestionRequest } from '@opencode-ai/sdk/v2';
-import { agentService } from '../../agents/service.js';
 import { liveBrowserService } from '../../browser/live.js';
 import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
@@ -294,7 +293,6 @@ class OpencodeRun {
     const googleAccounts = await googleAccountService.accountsFor(ctx.project.id, this.ownerId);
     this.systemPrompt = [
       ctx.project.systemPrompt.trim(),
-      await agentService.systemPromptFor(ctx.session),
       sessionIdentityPrompt(ctx.session, ctx.project),
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),

@@ -34,7 +34,6 @@ import { taskService } from '../../tasks/service.js';
 import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { claudeSettings } from '../../settings/claude.js';
-import { agentService } from '../../agents/service.js';
 import { usageService } from '../../settings/usage.js';
 import { describeRejection, rateLimitService } from '../../settings/rateLimits.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
@@ -184,7 +183,6 @@ export class ClaudeProvider implements SessionProvider {
     // Prompt système : celui du projet, l'identité de la session, puis la bibliothèque de contexte, les tâches, le coffre et les comptes Google.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
-      await agentService.systemPromptFor(ctx.session),
       sessionIdentityPrompt(ctx.session, ctx.project),
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),

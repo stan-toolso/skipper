@@ -1,12 +1,47 @@
-import type { AutomationSchedule, InputVariable, RunStatus, RunTrigger } from '../agents/types.js';
 import type { ConditionGroup } from './conditions.js';
+import type { LlmBackend } from './llm.js';
 import type { TaskFilterGroup } from './taskFilter.js';
 
-export type WorkflowNodeType = 'trigger' | 'agent' | 'task' | 'session' | 'createTask' | 'condition' | 'end';
-export const WORKFLOW_NODE_TYPES: WorkflowNodeType[] = ['trigger', 'agent', 'task', 'session', 'createTask', 'condition', 'end'];
+/** `queued` : exécution déclenchée par un événement, en attente d'une place. */
+export type RunStatus = 'queued' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+/** `event` : workflow lancé par un événement du projet (une tâche créée). */
+export type RunTrigger = 'manual' | 'schedule' | 'workflow' | 'test' | 'event';
+export type LlmOutputFormat = 'text' | 'json';
+
+export const RUN_STATUSES: RunStatus[] = ['queued', 'pending', 'running', 'succeeded', 'failed', 'cancelled'];
+export const RUN_TRIGGERS: RunTrigger[] = ['manual', 'schedule', 'workflow', 'test', 'event'];
+export const SETTLED_RUN_STATUSES: RunStatus[] = ['succeeded', 'failed', 'cancelled'];
+
+/** Variable déclarée par un déclencheur de workflow : remplie au lancement, disponible comme `{{input.<clé>}}`. */
+export interface InputVariable {
+  key: string;
+  label: string;
+  description: string | null;
+  required: boolean;
+  defaultValue: string | null;
+}
+
+/** Planification d'un workflow : une exécution à chaque échéance de l'expression cron. */
+export interface AutomationSchedule {
+  cron: string;
+  timezone: string;
+  enabled: boolean;
+  nextRunAt: Date | null;
+  lastRunAt: Date | null;
+  lastResult: string | null;
+}
+
+export interface AutomationScheduleInput {
+  cron: string;
+  timezone?: string | null;
+  enabled?: boolean | null;
+}
+
+export type WorkflowNodeType = 'trigger' | 'callLlm' | 'task' | 'session' | 'createTask' | 'condition' | 'end';
+export const WORKFLOW_NODE_TYPES: WorkflowNodeType[] = ['trigger', 'callLlm', 'task', 'session', 'createTask', 'condition', 'end'];
 
 /** Types de nœuds qui peuvent échouer et ont donc une branche « en cas d'erreur ». */
-export const FALLIBLE_NODE_TYPES: WorkflowNodeType[] = ['agent', 'task', 'session', 'createTask'];
+export const FALLIBLE_NODE_TYPES: WorkflowNodeType[] = ['callLlm', 'task', 'session', 'createTask'];
 
 /** Où travaille un nœud « tâche » ou « session » : un nouveau worktree, un worktree existant, ou le dossier principal. */
 export type TaskWorktreeMode = 'new' | 'existing' | 'main';
@@ -21,6 +56,20 @@ export interface NewTaskTemplate {
   assignee: string;
   reporter: string;
   fields: { key: string; value: string }[];
+}
+
+/**
+ * Nœud « appel de modèle » (`callLlm`) : comment joindre le modèle. La clé vient du coffre (un élément
+ * `litellm`, ou un jeton applicatif OpenAI / Anthropic) ; l'appel est tracé dans Langfuse quand le nœud
+ * nomme un élément Langfuse.
+ */
+export interface LlmNodeConfig {
+  backend: LlmBackend;
+  keyItemId: string;
+  model: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  langfuseItemId: string | null;
 }
 
 /** Ce qui démarre un workflow : une personne ou sa planification (`manual`), ou une tâche créée dans le projet. */
@@ -42,13 +91,17 @@ export interface WorkflowNode {
   event?: TriggerEvent;
   /** trigger d'une tâche créée : conditions que la tâche doit remplir (construites visuellement) ; null = toute tâche. */
   taskFilter?: TaskFilterGroup | null;
-  /** agent : l'agent à exécuter et les modèles qui remplissent ses entrées (`{{input.x}}`, `{{nodes.k.output}}`). */
-  agentId?: string | null;
-  inputs?: Record<string, string>;
+  /** callLlm : le modèle à appeler, son prompt système (instructions), la sortie attendue. L'instruction est `prompt`. */
+  llm?: LlmNodeConfig | null;
+  systemPrompt?: string;
+  outputFormat?: LlmOutputFormat;
+  /** callLlm, sortie JSON : la forme attendue, montrée au modèle. */
+  outputSchema?: string;
+  /** callLlm, task, session : délai maximal en minutes (défaut : 60, ou 10 pour un appel de modèle). */
   timeoutMinutes?: number | null;
-  /** agent, task : modèle de l'identifiant d'une tâche à résoudre (`{{input.task.id}}`). */
+  /** task : modèle de l'identifiant d'une tâche à résoudre (`{{input.task.id}}`). */
   taskId?: string;
-  /** task, session : type de session et ses options, instruction, où elle travaille, attente de la fin du tour. */
+  /** task, session : type de session et ses options, instruction, où elle travaille, attente de la fin du tour. callLlm : l'instruction envoyée au modèle. */
   provider?: string;
   config?: Record<string, unknown>;
   prompt?: string;
@@ -148,7 +201,6 @@ export interface WorkflowRunNode {
   input: unknown | null;
   output: unknown | null;
   error: string | null;
-  agentRunId: string | null;
   startedAt: Date | null;
   finishedAt: Date | null;
 }

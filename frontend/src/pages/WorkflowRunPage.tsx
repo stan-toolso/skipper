@@ -25,10 +25,10 @@ function NodeDetail({ node, label }: { node: WorkflowRunNode; label: string }) {
           {nodeStatusLabels[node.status] ?? node.status}
           {duration !== null && ` · ${formatDuration(duration)}`}
         </span>
-        {node.agentRun?.session && (
-          <Link to={`/sessions/${node.agentRun.session.id}`} className="small">
+        {node.session && (
+          <Link to={`/sessions/${node.session.id}`} className="small">
             <i className="bi bi-chat-dots me-1" />
-            {node.agentRun.session.name}
+            {node.session.name}
           </Link>
         )}
       </div>

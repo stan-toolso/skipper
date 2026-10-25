@@ -3,17 +3,17 @@ import type { InputVariable, WorkflowDefinition, WorkflowEdge, WorkflowNode, Wor
 import { nodeTypeInfo } from './automation';
 
 /** Ordre de la palette de l'éditeur. */
-export const PALETTE: WorkflowNodeType[] = ['trigger', 'agent', 'task', 'session', 'createTask', 'condition', 'end'];
+export const PALETTE: WorkflowNodeType[] = ['trigger', 'callLlm', 'task', 'session', 'createTask', 'condition', 'end'];
 
 /** Types de nœuds qui peuvent échouer : ils ont une branche « en cas d'erreur ». */
-export const FALLIBLE_TYPES: WorkflowNodeType[] = ['agent', 'task', 'session', 'createTask'];
+export const FALLIBLE_TYPES: WorkflowNodeType[] = ['callLlm', 'task', 'session', 'createTask'];
 
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 64;
 
 /** Clé stable d'un nouveau nœud : type + numéro libre. */
 export function nextKey(def: WorkflowDefinition, type: WorkflowNodeType): string {
-  const base = type === 'createTask' ? 'newTask' : type;
+  const base = type === 'createTask' ? 'newTask' : type === 'callLlm' ? 'llm' : type;
   let n = 1;
   while (def.nodes.some((node) => node.key === `${base}${n}`)) n++;
   return `${base}${n}`;
@@ -26,8 +26,8 @@ export function newNode(def: WorkflowDefinition, type: WorkflowNodeType, positio
   switch (type) {
     case 'trigger':
       return { ...base, label: def.nodes.some((n) => n.type === 'trigger') ? 'Autre déclencheur' : 'Départ', variables: [], event: 'manual', taskFilter: null };
-    case 'agent':
-      return { ...base, agentId: null, inputs: {}, timeoutMinutes: null, taskId: '' };
+    case 'callLlm':
+      return { ...base, llm: { backend: 'litellm', keyItemId: '', model: '', temperature: null, maxTokens: null, langfuseItemId: null }, systemPrompt: '', prompt: '', outputFormat: 'text', outputSchema: '', timeoutMinutes: null };
     case 'task':
       return { ...base, taskId: '', provider: 'claude', config: {}, prompt: '', includeTask: true, worktreeMode: 'new', worktreeId: null, wait: true, timeoutMinutes: null, sessionOwner: '' };
     case 'session':
@@ -37,7 +37,7 @@ export function newNode(def: WorkflowDefinition, type: WorkflowNodeType, positio
     case 'condition':
       return { ...base, condition: { kind: 'group', match: 'all', items: [{ kind: 'rule', path: '', operator: 'isNotEmpty' }] }, expression: '' };
     case 'end':
-      return { ...base, message: '{{nodes.' + (def.nodes.find((n) => n.type !== 'trigger')?.key ?? 'agent1') + '.output}}' };
+      return { ...base, message: '{{nodes.' + (def.nodes.find((n) => n.type !== 'trigger')?.key ?? 'llm1') + '.output}}' };
   }
 }
 
@@ -85,7 +85,7 @@ export function availablePaths(def: WorkflowDefinition, key: string | null): { p
     const n = def.nodes.find((x) => x.key === k);
     if (!n || n.type === 'trigger' || n.type === 'condition') continue;
     out.push({ path: `nodes.${k}.output`, hint: `sortie de « ${n.label} »` });
-    if (n.type === 'agent') out.push({ path: `nodes.${k}.json`, hint: `sortie JSON de « ${n.label} »` });
+    if (n.type === 'callLlm' && n.outputFormat === 'json') out.push({ path: `nodes.${k}.json`, hint: `sortie JSON de « ${n.label} »` });
   }
   return out;
 }
@@ -125,12 +125,12 @@ export function edgeLabel(e: WorkflowEdge): string | undefined {
 export const edgeId = (source: string, target: string, handle: string | null | undefined) => `${source}${handle && handle !== 'default' ? `:${handle}` : ''}->${target}`;
 
 /** Résumé d'un nœud affiché sur le canevas, sous son libellé. */
-export function nodeSummary(n: WorkflowNode, agents: { id: string; name: string }[] = []): string {
+export function nodeSummary(n: WorkflowNode): string {
   switch (n.type) {
     case 'trigger':
       return n.event === 'task.created' ? 'Tâche créée' : `Manuel · ${(n.variables ?? []).length} variable${(n.variables ?? []).length > 1 ? 's' : ''}`;
-    case 'agent':
-      return agents.find((a) => a.id === n.agentId)?.name ?? (n.agentId ? 'agent inconnu' : 'aucun agent choisi');
+    case 'callLlm':
+      return n.llm?.model ? `${n.llm.model}${n.outputFormat === 'json' ? ' · JSON' : ''}` : 'modèle non choisi';
     case 'task':
       return n.taskId ? `Tâche ${n.taskId}` : 'tâche non précisée';
     case 'session':

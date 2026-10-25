@@ -145,9 +145,7 @@ export interface Session {
   worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
   parentSession: { id: string; name: string } | null;
-  /** Agent (configuration) et exécution qui ont ouvert la session ; null pour une session lancée à la main. */
-  agent: { id: string; name: string } | null;
-  agentRun: { id: string } | null;
+  /** Exécution de workflow qui a ouvert la session ; null pour une session lancée à la main. */
   workflowRun: { id: string; workflow: { id: string; name: string } } | null;
   /** Utilisateur qui a lancé la session (null : session d'avant cette version). */
   owner: Pick<User, 'id' | 'name' | 'email' | 'avatarUrl'> | null;
@@ -528,13 +526,6 @@ export const SESSION_FIELDS = gql`
     parentSession {
       id
       name
-    }
-    agent {
-      id
-      name
-    }
-    agentRun {
-      id
     }
     workflowRun {
       id

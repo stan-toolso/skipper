@@ -300,15 +300,6 @@ export default function SessionDetailPage() {
                 </Link>
               </>
             )}
-            {session.agent && (
-              <>
-                {' '}
-                · exécution de l'agent{' '}
-                <Link to={`/agents/${session.agent.id}${session.agentRun ? `?run=${session.agentRun.id}` : ''}`} className="cc-meta" title="Agent dont une exécution a ouvert cette session">
-                  <i className="bi bi-robot" /> {session.agent.name}
-                </Link>
-              </>
-            )}
             {session.workflowRun && (
               <>
                 {' '}

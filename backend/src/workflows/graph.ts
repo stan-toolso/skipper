@@ -1,13 +1,12 @@
 import { z } from 'zod';
-import { LLM_PROVIDER } from '../agents/llm.js';
-import { placeholders } from '../agents/template.js';
-import type { Agent, InputVariable } from '../agents/types.js';
 import { AppError } from '../errors.js';
 import { TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskPerson } from '../tasks/types.js';
 import { conditionPaths, conditionProblems, conditionSchema, type ConditionGroup } from './conditions.js';
 import { ExpressionError, expressionPaths } from './expressions.js';
+import { LLM_BACKENDS, parseLlmConfig, type LlmBackend } from './llm.js';
 import { taskFilterProblems, taskFilterSchema, type TaskFilterGroup } from './taskFilter.js';
-import { FALLIBLE_NODE_TYPES, TRIGGER_EVENTS, WORKFLOW_NODE_TYPES, type EdgeHandle, type NewTaskTemplate, type NodeRunStatus, type TriggerEvent, type WorkflowDefinition, type WorkflowEdge, type WorkflowIssue, type WorkflowNode, type WorkflowNodeType } from './types.js';
+import { placeholders } from './template.js';
+import { FALLIBLE_NODE_TYPES, TRIGGER_EVENTS, WORKFLOW_NODE_TYPES, type EdgeHandle, type InputVariable, type LlmNodeConfig, type NewTaskTemplate, type NodeRunStatus, type TriggerEvent, type WorkflowDefinition, type WorkflowEdge, type WorkflowIssue, type WorkflowNode, type WorkflowNodeType } from './types.js';
 
 /** Aides de graphe des workflows : lecture, validation, parcours. Fonctions pures (testées). */
 
@@ -27,8 +26,20 @@ const nodeSchema = z.object({
   variables: z.array(variableSchema).optional(),
   event: z.enum(TRIGGER_EVENTS as [TriggerEvent, ...TriggerEvent[]]).optional(),
   taskFilter: taskFilterSchema.nullable().optional(),
-  agentId: z.string().nullable().optional(),
-  inputs: z.record(z.string(), z.string()).optional(),
+  llm: z
+    .object({
+      backend: z.enum(LLM_BACKENDS as [LlmBackend, ...LlmBackend[]]).optional(),
+      keyItemId: z.string().max(100).nullable().optional(),
+      model: z.string().max(200).optional(),
+      temperature: z.number().nullable().optional(),
+      maxTokens: z.number().nullable().optional(),
+      langfuseItemId: z.string().max(100).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  systemPrompt: z.string().max(50_000).optional(),
+  outputFormat: z.enum(['text', 'json']).optional(),
+  outputSchema: z.string().max(20_000).optional(),
   timeoutMinutes: z.number().int().positive().max(24 * 60).nullable().optional(),
   taskId: z.string().max(500).optional(),
   provider: z.string().max(50).optional(),
@@ -81,7 +92,16 @@ export function parseDefinition(raw: unknown): WorkflowDefinition {
     label: n.label,
     position: n.position,
     ...(n.type === 'trigger' ? { variables: (n.variables ?? []) as InputVariable[], event: n.event ?? 'manual', taskFilter: (n.taskFilter ?? null) as TaskFilterGroup | null } : {}),
-    ...(n.type === 'agent' ? { agentId: n.agentId ?? null, inputs: n.inputs ?? {}, timeoutMinutes: n.timeoutMinutes ?? null, taskId: n.taskId ?? '' } : {}),
+    ...(n.type === 'callLlm'
+      ? {
+          llm: { backend: n.llm?.backend ?? 'litellm', keyItemId: n.llm?.keyItemId ?? '', model: n.llm?.model ?? '', temperature: n.llm?.temperature ?? null, maxTokens: n.llm?.maxTokens ?? null, langfuseItemId: n.llm?.langfuseItemId || null } satisfies LlmNodeConfig,
+          systemPrompt: n.systemPrompt ?? '',
+          prompt: n.prompt ?? '',
+          outputFormat: n.outputFormat ?? 'text',
+          outputSchema: n.outputFormat === 'json' ? (n.outputSchema ?? '') : '',
+          timeoutMinutes: n.timeoutMinutes ?? null,
+        }
+      : {}),
     ...(n.type === 'task' ? { taskId: n.taskId ?? '', provider: n.provider ?? 'claude', config: n.config ?? {}, prompt: n.prompt ?? '', includeTask: n.includeTask ?? true, worktreeMode: n.worktreeMode ?? 'new', worktreeId: n.worktreeId ?? null, wait: n.wait ?? true, timeoutMinutes: n.timeoutMinutes ?? null, sessionOwner: n.sessionOwner ?? '' } : {}),
     ...(n.type === 'session'
       ? { sessionName: n.sessionName ?? '', provider: n.provider ?? 'claude', config: n.config ?? {}, prompt: n.prompt ?? '', worktreeMode: n.worktreeMode ?? 'main', worktreeId: n.worktreeId ?? null, branch: n.branch ?? '', wait: n.wait ?? true, endAfterTurn: n.endAfterTurn ?? false, timeoutMinutes: n.timeoutMinutes ?? null, sessionOwner: n.sessionOwner ?? '' }
@@ -231,8 +251,8 @@ export function cycleNodes(def: WorkflowDefinition): Set<string> {
 
 const handleOf = (e: WorkflowEdge): EdgeHandle => e.sourceHandle ?? 'default';
 
-/** Valide une définition : erreurs de structure (l'exécution est refusée) et avertissements. `agents` : les agents du projet par identifiant. */
-export function validateDefinition(def: WorkflowDefinition, agents: Map<string, Agent>, options: { providers?: Set<string> } = {}): WorkflowIssue[] {
+/** Valide une définition : erreurs de structure (l'exécution est refusée) et avertissements. `providers` : les types de session connus. */
+export function validateDefinition(def: WorkflowDefinition, options: { providers?: Set<string> } = {}): WorkflowIssue[] {
   const issues: WorkflowIssue[] = [];
   const error = (nodeKey: string | null, message: string, edgeId?: string) => issues.push({ nodeKey, edgeId: edgeId ?? null, severity: 'error', message });
   const warning = (nodeKey: string | null, message: string, edgeId?: string) => issues.push({ nodeKey, edgeId: edgeId ?? null, severity: 'warning', message });
@@ -244,7 +264,7 @@ export function validateDefinition(def: WorkflowDefinition, agents: Map<string, 
   }
   const triggers = triggersOf(def);
   if (triggers.length === 0) error(null, "Le workflow a besoin d'un nœud déclencheur (son départ)");
-  if (def.nodes.length && !def.nodes.some((n) => FALLIBLE_NODE_TYPES.includes(n.type))) warning(null, 'Le workflow ne fait rien : ajoutez une étape agent, session ou tâche');
+  if (def.nodes.length && !def.nodes.some((n) => FALLIBLE_NODE_TYPES.includes(n.type))) warning(null, 'Le workflow ne fait rien : ajoutez un appel de modèle, une session ou une tâche');
 
   for (const e of def.edges) {
     const source = byKey.get(e.source);
@@ -257,7 +277,7 @@ export function validateDefinition(def: WorkflowDefinition, agents: Map<string, 
     const handle = handleOf(e);
     if (source.type === 'condition' && handle !== 'true' && handle !== 'false') error(source.key, "Les arêtes qui quittent une condition prennent sa branche « oui » ou « non »", e.id);
     if (source.type !== 'condition' && (handle === 'true' || handle === 'false')) error(source.key, 'Seule une condition a des branches « oui » / « non »', e.id);
-    if (handle === 'error' && !FALLIBLE_NODE_TYPES.includes(source.type)) error(source.key, "Seuls un agent, une tâche, une session ou une création de tâche ont une branche « en cas d'erreur »", e.id);
+    if (handle === 'error' && !FALLIBLE_NODE_TYPES.includes(source.type)) error(source.key, "Seuls un appel de modèle, une tâche, une session ou une création de tâche ont une branche « en cas d'erreur »", e.id);
     if (target.type === 'trigger') error(target.key, "Rien ne peut mener au déclencheur : c'est le départ", e.id);
     if (source.type === 'end') error(source.key, "Un nœud de fin n'a pas d'arête sortante", e.id);
   }
@@ -314,29 +334,24 @@ export function validateDefinition(def: WorkflowDefinition, agents: Map<string, 
           if (n.taskFilter) for (const problem of [...new Set(taskFilterProblems(n.taskFilter))]) error(n.key, problem);
         } else if (n.taskFilter?.items.length) warning(n.key, "Le filtre ne s'applique qu'aux tâches créées : il est ignoré");
         break;
-      case 'agent': {
-        const agent = n.agentId ? agents.get(n.agentId) : undefined;
-        if (!n.agentId) error(n.key, "Choisissez l'agent à exécuter");
-        else if (!agent) error(n.key, "L'agent de ce nœud n'existe plus (ou appartient à un autre projet)");
-        else {
-          for (const v of agent.inputs) {
-            const template = n.inputs?.[v.key];
-            if (v.required && v.defaultValue === null && !template?.trim()) warning(n.key, `L'entrée « ${v.label || v.key} » de l'agent est obligatoire mais vide`);
-          }
-          for (const key of Object.keys(n.inputs ?? {})) if (!agent.inputs.some((v) => v.key === key)) warning(n.key, `L'agent ne déclare aucune entrée « ${key} » : cette valeur est ignorée`);
+      case 'callLlm': {
+        try {
+          parseLlmConfig((n.llm ?? {}) as Record<string, unknown>);
+        } catch (err) {
+          if (err instanceof AppError) error(n.key, err.message);
+          else throw err;
         }
-        checkTemplates(n, upstream, Object.entries(n.inputs ?? {}).map(([key, t]): [string, string] => [`L'entrée « ${key} »`, t]));
-        if (n.taskId?.trim()) {
-          if (agent?.provider === LLM_PROVIDER) error(n.key, "Un agent qui appelle le modèle directement n'a pas de session : il ne peut pas résoudre une tâche (choisissez un agent de session)");
-          checkTemplates(n, upstream, [['La tâche', n.taskId]]);
-        }
-        if (!outgoing.length && !n.taskId?.trim()) warning(n.key, "Cet agent ne mène nulle part : le workflow s'arrête après lui");
+        if (!n.prompt?.trim()) error(n.key, "Écrivez l'instruction envoyée au modèle");
+        checkTemplates(n, upstream, [
+          ['Les instructions', n.systemPrompt ?? ''],
+          ["L'instruction", n.prompt ?? ''],
+        ]);
+        if (!outgoing.length) warning(n.key, "Cet appel de modèle ne mène nulle part : le workflow s'arrête après lui");
         break;
       }
       case 'task': {
         if (!n.taskId?.trim()) error(n.key, startsOf(upstream).some((t) => triggerEvent(t) === 'task.created') ? 'Nommez la tâche à traiter (ex. {{input.task.id}})' : 'Nommez la tâche à traiter (son identifiant, ou {{input.…}})');
-        if (n.provider === LLM_PROVIDER) error(n.key, "Une tâche s'exécute dans une session : choisissez un type de session");
-        else if (n.provider && options.providers && !options.providers.has(n.provider)) error(n.key, `Type de session inconnu « ${n.provider} »`);
+        if (n.provider && options.providers && !options.providers.has(n.provider)) error(n.key, `Type de session inconnu « ${n.provider} »`);
         if (n.worktreeMode === 'existing' && !n.worktreeId) error(n.key, 'Choisissez le worktree où travailler');
         if (n.includeTask === false && !n.prompt?.trim()) error(n.key, "Écrivez l'instruction : le texte de la tâche n'est pas inclus");
         checkTemplates(n, upstream, [
@@ -348,8 +363,7 @@ export function validateDefinition(def: WorkflowDefinition, agents: Map<string, 
       }
       case 'session': {
         if (!n.prompt?.trim()) error(n.key, "Écrivez l'instruction de la session");
-        if (n.provider === LLM_PROVIDER) error(n.key, 'Choisissez un type de session');
-        else if (n.provider && options.providers && !options.providers.has(n.provider)) error(n.key, `Type de session inconnu « ${n.provider} »`);
+        if (n.provider && options.providers && !options.providers.has(n.provider)) error(n.key, `Type de session inconnu « ${n.provider} »`);
         if (n.worktreeMode === 'existing' && !n.worktreeId) error(n.key, 'Choisissez le worktree où travailler');
         if (n.endAfterTurn && n.wait === false) warning(n.key, "La session n'est terminée après son premier tour que si l'exécution l'attend");
         checkTemplates(n, upstream, [

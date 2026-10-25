@@ -1,4 +1,4 @@
-import { resolve } from '../agents/template.js';
+import { resolve } from './template.js';
 
 /**
  * Formules de condition des workflows : un petit langage booléen sûr, évalué contre le contexte de

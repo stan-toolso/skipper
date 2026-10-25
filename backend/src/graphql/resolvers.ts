@@ -39,13 +39,9 @@ import { githubService } from '../settings/github.js';
 import { githubDeviceAvailable, githubDeviceService } from '../settings/githubDevice.js';
 import { claudeSettings, type ClaudeSettingsPatch } from '../settings/claude.js';
 import { opencodeProviders, opencodeSettings, type OpencodeSettingsPatch } from '../settings/opencode.js';
-import { agentService } from '../agents/service.js';
-import { cancelAgentRun, startAgentRun } from '../agents/execution.js';
-import { agentRepository } from '../agents/repository.js';
-import type { Agent, AgentInput, AgentRun, AutomationScheduleInput, InputVariable, RunStatus, RunTrigger } from '../agents/types.js';
 import { workflowService } from '../workflows/service.js';
 import { workflowVariables } from '../workflows/graph.js';
-import type { Workflow, WorkflowInput, WorkflowRun, WorkflowRunNode } from '../workflows/types.js';
+import type { AutomationScheduleInput, RunStatus, RunTrigger, Workflow, WorkflowInput, WorkflowRun, WorkflowRunNode } from '../workflows/types.js';
 import { TOKEN_SERVICES, TOKEN_SERVICE_IDS, tokenServiceLabel } from '../vault/tokens.js';
 import { serverSettings } from '../settings/server.js';
 import { sessionRepository } from '../sessions/repository.js';
@@ -178,25 +174,10 @@ const appSettings = (ctx: Ctx) => {
   };
 };
 
-// ---- Agents et workflows : accès par le projet de l'objet visé -------------------------------
-const guardAgent = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await agentService.get(id)).projectId, min);
+// ---- Workflows : accès par le projet de l'objet visé -----------------------------------------
 const guardWorkflow = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await workflowService.get(id)).projectId, min);
 const toGqlRunStatus = (s: RunStatus) => s.toUpperCase();
 const toGqlTrigger = (t: RunTrigger) => t.toUpperCase();
-const fromGqlOutputFormat = (f?: string | null) => (f ? (f.toLowerCase() as 'text' | 'json') : undefined);
-const toAgentInput = (i: Record<string, unknown>): AgentInput => ({
-  name: i.name as string | undefined,
-  description: i.description as string | null | undefined,
-  provider: i.provider as string | undefined,
-  config: i.config as Record<string, unknown> | null | undefined,
-  systemPrompt: i.systemPrompt as string | null | undefined,
-  promptTemplate: i.promptTemplate as string | null | undefined,
-  inputs: i.inputs === undefined ? undefined : ((i.inputs ?? []) as InputVariable[]),
-  outputFormat: fromGqlOutputFormat(i.outputFormat as string | null | undefined),
-  outputSchema: i.outputSchema as string | null | undefined,
-  worktreeId: i.worktreeId as string | null | undefined,
-  timeoutMinutes: i.timeoutMinutes as number | null | undefined,
-});
 /** Éléments du coffre d'un type, utilisables par la personne (choix dans un formulaire). */
 const usableItems = async (ctx: Ctx, kinds: VaultItemKind[]) => vaultService.listAccessible(requireUser(ctx).id, kinds);
 
@@ -341,29 +322,9 @@ export const resolvers = {
     method: (a: { method: string }) => a.method.toUpperCase(),
   },
 
-  Agent: {
-    project: (a: Agent) => projectService.get(a.projectId),
-    outputFormat: (a: Agent) => a.outputFormat.toUpperCase(),
-    worktree: (a: Agent) => (a.worktreeId ? worktreeService.get(a.worktreeId).catch(() => null) : null),
-    runs: (a: Agent, args: { limit?: number | null }) => agentRepository.listRuns({ agentId: a.id, limit: args.limit ?? 20 }),
-    lastRun: (a: Agent) => agentRepository.lastRun(a.id),
-    workflows: (a: Agent) => workflowService.listUsingAgent(a.id),
-    createdBy: (a: Agent) => userOrNull(a.createdById),
-  },
-
-  AgentRun: {
-    agent: (r: AgentRun) => agentService.get(r.agentId),
-    project: (r: AgentRun) => projectService.get(r.projectId),
-    session: (r: AgentRun) => (r.sessionId ? sessionService.get(r.sessionId) : null),
-    workflowRun: (r: AgentRun) => (r.workflowRunId ? workflowService.findRun(r.workflowRunId) : null),
-    trigger: (r: AgentRun) => toGqlTrigger(r.trigger),
-    status: (r: AgentRun) => toGqlRunStatus(r.status),
-    owner: (r: AgentRun) => userOrNull(r.ownerId),
-  },
-
   Workflow: {
     project: (w: Workflow) => projectService.get(w.projectId),
-    issues: (w: Workflow) => workflowService.issues(w.projectId, w.definition),
+    issues: (w: Workflow) => workflowService.issues(w.definition),
     variables: (w: Workflow, args: { triggerKey?: string | null }) => workflowVariables(w.definition, args.triggerKey),
     eventOwner: (w: Workflow) => userOrNull(w.eventOwnerId),
     runs: (w: Workflow, args: { limit?: number | null }) => workflowService.listRuns({ workflowId: w.id, limit: args.limit ?? 20 }),
@@ -382,7 +343,10 @@ export const resolvers = {
   },
 
   WorkflowRunNode: {
-    agentRun: (n: WorkflowRunNode) => (n.agentRunId ? agentRepository.findRun(n.agentRunId) : null),
+    session: (n: WorkflowRunNode) => {
+      const sessionId = (n.output as { sessionId?: unknown } | null)?.sessionId;
+      return typeof sessionId === 'string' ? sessionService.get(sessionId).catch(() => null) : null;
+    },
   },
 
   SharedPage: {
@@ -472,8 +436,6 @@ export const resolvers = {
     task: (session: Session) => taskService.forSession(session.id),
     parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
     childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
-    agent: (session: Session) => (session.agentId ? agentService.find(session.agentId) : null),
-    agentRun: (session: Session) => (session.agentRunId ? agentRepository.findRun(session.agentRunId) : null),
     workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
@@ -600,34 +562,8 @@ export const resolvers = {
       requireUser(ctx);
       return TOKEN_SERVICE_IDS.map((id) => ({ id, label: TOKEN_SERVICES[id].label, prefix: TOKEN_SERVICES[id].prefix, opencode: Boolean((TOKEN_SERVICES[id] as { opencode?: boolean }).opencode) }));
     },
-    // ---- Agents et workflows ------------------------------------------------------------------
-    agents: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
-      if (args.projectId) {
-        await requireProject(ctx, args.projectId);
-        return agentService.list({ projectId: args.projectId });
-      }
-      return agentService.list({ projectIds: await accessibleProjectIds(ctx) });
-    },
-    agent: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      const agent = await agentService.find(args.id);
-      if (!agent || !(await roleFor(ctx, agent.projectId))) return null;
-      return agent;
-    },
-    agentRuns: async (_: unknown, args: { agentId?: string | null; projectId?: string | null; limit?: number | null }, ctx: Ctx) => {
-      if (args.agentId) await guardAgent(ctx, args.agentId, 'viewer');
-      if (args.projectId) await requireProject(ctx, args.projectId);
-      return agentRepository.listRuns({ agentId: args.agentId ?? undefined, projectId: args.projectId ?? undefined, projectIds: args.agentId || args.projectId ? undefined : await accessibleProjectIds(ctx), limit: args.limit ?? 50 });
-    },
-    agentRun: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      const run = await agentRepository.findRun(args.id);
-      if (!run || !(await roleFor(ctx, run.projectId))) return null;
-      return run;
-    },
-    agentPromptPreview: async (_: unknown, args: { id: string; inputs?: Record<string, unknown> | null }, ctx: Ctx) => {
-      await guardAgent(ctx, args.id, 'viewer');
-      return agentService.renderPrompt(await agentService.get(args.id), args.inputs);
-    },
-    agentLlmKeys: async (_: unknown, __: unknown, ctx: Ctx) => ({
+    // ---- Workflows ----------------------------------------------------------------------------
+    llmKeys: async (_: unknown, __: unknown, ctx: Ctx) => ({
       litellm: await usableItems(ctx, ['litellm']),
       langfuse: await usableItems(ctx, ['langfuse']),
       tokens: (await usableItems(ctx, ['token'])).filter((i) => ['openai', 'anthropic'].includes((i.settings as TokenSettings).service) && !isOauthToken(i)),
@@ -656,7 +592,7 @@ export const resolvers = {
     },
     validateWorkflow: async (_: unknown, args: { projectId: string; definition: unknown }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
-      return workflowService.issues(args.projectId, args.definition);
+      return workflowService.issues(args.definition);
     },
     serverHealth: async (_: unknown, __: unknown, ctx: Ctx) => {
       requireAdmin(ctx);
@@ -899,40 +835,7 @@ export const resolvers = {
       await githubService.disconnect(requireUser(ctx).id, args.accountId ?? null);
       return appSettings(ctx);
     },
-    // ---- Agents et workflows ------------------------------------------------------------------
-    createAgent: async (_: unknown, { input }: { input: Record<string, unknown> & { projectId: string } }, ctx: Ctx) => {
-      const user = requireUser(ctx);
-      await requireProject(ctx, input.projectId, 'member');
-      return agentService.create(input.projectId, toAgentInput(input), user.id);
-    },
-    updateAgent: async (_: unknown, { id, input }: { id: string; input: Record<string, unknown> }, ctx: Ctx) => {
-      await guardAgent(ctx, id, 'member');
-      return agentService.update(id, toAgentInput(input));
-    },
-    deleteAgent: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardAgent(ctx, args.id, 'member');
-      return agentService.delete(args.id);
-    },
-    runAgent: async (_: unknown, args: { id: string; inputs?: Record<string, unknown> | null; test?: boolean | null }, ctx: Ctx) => {
-      const user = requireUser(ctx);
-      await guardAgent(ctx, args.id, 'member');
-      return startAgentRun(await agentService.get(args.id), { inputs: args.inputs, trigger: args.test ? 'test' : 'manual', ownerId: user.id });
-    },
-    cancelAgentRun: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      const run = await agentRepository.findRun(args.id);
-      if (!run) throw new NotFoundError('Exécution introuvable');
-      await requireProject(ctx, run.projectId, 'member');
-      return cancelAgentRun(args.id);
-    },
-    setAgentSchedule: async (_: unknown, args: { id: string; input: AutomationScheduleInput; inputs?: Record<string, unknown> | null }, ctx: Ctx) => {
-      const user = requireUser(ctx);
-      await guardAgent(ctx, args.id, 'member');
-      return agentService.setSchedule(args.id, args.input, args.inputs, user.id);
-    },
-    clearAgentSchedule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardAgent(ctx, args.id, 'member');
-      return agentService.clearSchedule(args.id);
-    },
+    // ---- Workflows ----------------------------------------------------------------------------
     createWorkflow: async (_: unknown, { input }: { input: WorkflowInput & { projectId: string } }, ctx: Ctx) => {
       const user = requireUser(ctx);
       await requireProject(ctx, input.projectId, 'member');

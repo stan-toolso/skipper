@@ -1,5 +1,3 @@
-import { agentService, normalizeInputs, prepareSchedule, resolveInputs } from '../agents/service.js';
-import type { AutomationScheduleInput, RunTrigger } from '../agents/types.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { getProvider, providerTypes } from '../sessions/providers/registry.js';
@@ -7,20 +5,17 @@ import { serverSettings } from '../settings/server.js';
 import { taskService } from '../tasks/service.js';
 import { cancelWorkflowRun, executeWorkflowRun, onRunSettled } from './engine.js';
 import { parseDefinition, TASK_ID_INPUT, taskContext, triggerEvent, triggerOf, triggersOf, validateDefinition, workflowVariables } from './graph.js';
+import { normalizeInputs, prepareSchedule, resolveInputs } from './inputs.js';
 import { workflowRepository, type WorkflowValues } from './repository.js';
-import type { Workflow, WorkflowDefinition, WorkflowInput, WorkflowIssue, WorkflowRun, WorkflowRunFilter } from './types.js';
+import type { AutomationScheduleInput, RunTrigger, Workflow, WorkflowDefinition, WorkflowInput, WorkflowIssue, WorkflowRun, WorkflowRunFilter } from './types.js';
 
 const DEFAULT_TIMEZONE = 'UTC';
 /** Exécutions simultanées d'un même workflow (une planification n'empile jamais d'exécutions). */
 const MAX_ACTIVE_RUNS = 5;
 
-async function agentsOf(projectId: string) {
-  return new Map((await agentService.list({ projectId })).map((a) => [a.id, a]));
-}
-
 /** Problèmes d'un graphe : la structure (graph.ts), plus les options de session de ses nœuds « tâche » et « session ». */
-async function issuesOf(def: WorkflowDefinition, projectId: string): Promise<WorkflowIssue[]> {
-  const issues = validateDefinition(def, await agentsOf(projectId), { providers: new Set(providerTypes()) });
+async function issuesOf(def: WorkflowDefinition): Promise<WorkflowIssue[]> {
+  const issues = validateDefinition(def, { providers: new Set(providerTypes()) });
   for (const node of def.nodes) {
     if ((node.type !== 'task' && node.type !== 'session') || !node.provider || issues.some((i) => i.nodeKey === node.key && i.severity === 'error')) continue;
     try {
@@ -101,7 +96,6 @@ onRunSettled((run) => void dispatchQueue(run.workflowId).catch((err) => console.
 export const workflowService = {
   list: (filter?: { projectId?: string; projectIds?: string[] }) => workflowRepository.list(filter),
   find: (id: string) => workflowRepository.findById(id),
-  listUsingAgent: (agentId: string) => workflowRepository.listUsingAgent(agentId),
 
   async get(id: string): Promise<Workflow> {
     const workflow = await workflowRepository.findById(id);
@@ -126,22 +120,22 @@ export const workflowService = {
     return workflowRepository.delete(id);
   },
 
-  /** Problèmes d'un graphe (les erreurs bloquent les exécutions, pas les avertissements), vérifiés contre les agents du projet. */
-  async issues(projectId: string, definition: unknown): Promise<WorkflowIssue[]> {
+  /** Problèmes d'un graphe (les erreurs bloquent les exécutions, pas les avertissements). */
+  async issues(definition: unknown): Promise<WorkflowIssue[]> {
     let def: WorkflowDefinition;
     try {
       def = normalizeDefinition(definition);
     } catch (err) {
       return [{ nodeKey: null, severity: 'error', message: (err as Error).message }];
     }
-    return issuesOf(def, projectId);
+    return issuesOf(def);
   },
 
   /** Lance une exécution en tâche de fond et la renvoie aussitôt (l'interface la suit par sondage). `triggerKey` : déclencheur de départ. */
   async run(id: string, opts: { inputs?: Record<string, unknown> | null; trigger: RunTrigger; ownerId: string | null; triggerKey?: string | null }): Promise<WorkflowRun> {
     const workflow = await this.get(id);
     const start = startTrigger(workflow, opts.triggerKey);
-    const errors = (await issuesOf(workflow.definition, workflow.projectId)).filter((i) => i.severity === 'error');
+    const errors = (await issuesOf(workflow.definition)).filter((i) => i.severity === 'error');
     if (errors.length) throw new AppError(`Le workflow ne peut pas s'exécuter : ${errors.map((e) => e.message).join(' · ')}`);
     if ((await workflowRepository.countActive(id)) >= MAX_ACTIVE_RUNS) throw new AppError(`Au plus ${MAX_ACTIVE_RUNS} exécutions de ce workflow peuvent être actives en même temps`);
     const inputs = await runInputs(workflow, opts.inputs, start.key);
@@ -155,7 +149,7 @@ export const workflowService = {
     let inputs: Record<string, unknown> = opts.inputs;
     let problem: string | null = null;
     try {
-      const errors = (await issuesOf(workflow.definition, workflow.projectId)).filter((i) => i.severity === 'error');
+      const errors = (await issuesOf(workflow.definition)).filter((i) => i.severity === 'error');
       if (errors.length) throw new AppError(`Le workflow ne peut pas s'exécuter : ${errors.map((e) => e.message).join(' · ')}`);
       if (!opts.ownerId) throw new AppError("Personne ne possède le déclencheur : enregistrez le workflow à nouveau pour que ses exécutions utilisent vos comptes");
       inputs = await runInputs(workflow, opts.inputs, opts.triggerKey);

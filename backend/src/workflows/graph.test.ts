@@ -1,96 +1,105 @@
 import { describe, expect, it } from 'vitest';
-import type { Agent } from '../agents/types.js';
-import { edgeActive, nextSteps, parseDefinition, triggerOf, validateDefinition, workflowVariables, type NodeState } from './graph.js';
+import { cycleNodes, edgeActive, nextSteps, parseDefinition, upstreamOf, validateDefinition, type NodeState } from './graph.js';
 import type { WorkflowDefinition } from './types.js';
 
-const agent = { id: 'a1', projectId: 'p1', name: 'Relecteur', inputs: [{ key: 'ticket', label: 'Ticket', required: true, defaultValue: null }], outputFormat: 'json' } as unknown as Agent;
-const agents = new Map([[agent.id, agent]]);
+const KEY = '11111111-2222-4333-8444-555555555555';
+const llm = { backend: 'litellm', keyItemId: KEY, model: 'gpt-5', temperature: null, maxTokens: null, langfuseItemId: null } as const;
 
-const raw = {
+const def: WorkflowDefinition = parseDefinition({
   nodes: [
-    { key: 'start', type: 'trigger', label: 'Départ', position: { x: 0, y: 0 }, variables: [{ key: 'ticket', label: 'Ticket', required: true, defaultValue: null }] },
-    { key: 'review', type: 'agent', label: 'Relecture', position: { x: 100, y: 0 }, agentId: 'a1', inputs: { ticket: '{{input.ticket}}' } },
+    { key: 'start', type: 'trigger', label: 'Départ', position: { x: 0, y: 0 }, variables: [{ key: 'ticket', label: 'Ticket', required: true }] },
+    { key: 'review', type: 'callLlm', label: 'Relecture', position: { x: 100, y: 0 }, llm, systemPrompt: 'Tu relis des tickets.', prompt: 'Relis {{input.ticket}}', outputFormat: 'json', outputSchema: '{ "approved": true }' },
     { key: 'ok', type: 'condition', label: 'Approuvé ?', position: { x: 200, y: 0 }, expression: 'nodes.review.json.approved' },
-    { key: 'fix', type: 'task', label: 'Corriger', position: { x: 300, y: 0 }, taskId: '{{input.taskId}}', prompt: 'Corrige' },
-    { key: 'done', type: 'end', label: 'Fin', position: { x: 400, y: 0 }, message: '{{nodes.review.output}}' },
+    { key: 'fix', type: 'session', label: 'Correction', position: { x: 300, y: 0 }, provider: 'claude', prompt: 'Corrige {{nodes.review.output}}' },
+    { key: 'done', type: 'end', label: 'Fin', position: { x: 300, y: 100 }, message: '{{nodes.review.output}}' },
   ],
   edges: [
     { id: 'e1', source: 'start', target: 'review' },
     { id: 'e2', source: 'review', target: 'ok' },
-    { id: 'e3', source: 'ok', target: 'fix', sourceHandle: 'false' },
-    { id: 'e4', source: 'ok', target: 'done', sourceHandle: 'true' },
-    { id: 'e5', source: 'fix', target: 'done' },
+    { id: 'e3', source: 'ok', target: 'fix', sourceHandle: 'true' },
+    { id: 'e4', source: 'ok', target: 'done', sourceHandle: 'false' },
+    { id: 'e5', source: 'review', target: 'done', sourceHandle: 'error' },
   ],
-};
+});
 
 describe('parseDefinition', () => {
-  it('normalise les nœuds avec leurs valeurs par défaut', () => {
-    const def = parseDefinition(raw);
-    expect(def.nodes.find((n) => n.key === 'start')).toMatchObject({ event: 'manual', taskFilter: null });
-    expect(def.nodes.find((n) => n.key === 'fix')).toMatchObject({ provider: 'claude', includeTask: true, worktreeMode: 'new', wait: true });
-    expect(def.edges[2].sourceHandle).toBe('false');
-    expect(parseDefinition(null)).toEqual({ nodes: [], edges: [] });
+  it('normalise un nœud « appel de modèle » avec ses défauts', () => {
+    const node = def.nodes.find((n) => n.key === 'review')!;
+    expect(node.llm).toEqual(llm);
+    expect(node.outputFormat).toBe('json');
+    expect(node.timeoutMinutes).toBeNull();
+    const minimal = parseDefinition({ nodes: [{ key: 'a', type: 'callLlm' }], edges: [] }).nodes[0];
+    expect(minimal.llm).toEqual({ backend: 'litellm', keyItemId: '', model: '', temperature: null, maxTokens: null, langfuseItemId: null });
+    expect(minimal.outputFormat).toBe('text');
+    expect(minimal.outputSchema).toBe('');
   });
-  it('refuse une définition malformée', () => {
-    expect(() => parseDefinition({ nodes: [{ key: '', type: 'agent' }], edges: [] })).toThrow(/invalide/);
+  it('refuse un type de nœud inconnu', () => {
+    expect(() => parseDefinition({ nodes: [{ key: 'a', type: 'agent' }], edges: [] })).toThrow(/invalide/);
   });
 });
 
 describe('validateDefinition', () => {
-  it('un graphe cohérent ne remonte aucune erreur', () => {
-    const issues = validateDefinition(parseDefinition(raw), agents, { providers: new Set(['claude']) });
+  it('accepte un graphe correct', () => {
+    const issues = validateDefinition(def, { providers: new Set(['claude', 'shell']) });
     expect(issues.filter((i) => i.severity === 'error')).toEqual([]);
   });
-  it('signale déclencheur absent, arête orpheline, agent inconnu et branches mal utilisées', () => {
-    const def: WorkflowDefinition = parseDefinition({
+  it('signale un appel de modèle incomplet, les arêtes orphelines et les cycles', () => {
+    const broken = parseDefinition({
       nodes: [
-        { key: 'a', type: 'agent', label: 'A', position: { x: 0, y: 0 }, agentId: 'absent' },
-        { key: 'b', type: 'end', label: 'B', position: { x: 0, y: 0 } },
+        { key: 'start', type: 'trigger', label: 'Départ', position: { x: 0, y: 0 } },
+        { key: 'a', type: 'callLlm', label: 'A', position: { x: 0, y: 0 }, llm: { backend: 'openai', keyItemId: '', model: 'gpt-5' }, prompt: '' },
+        { key: 'b', type: 'session', label: 'B', position: { x: 0, y: 0 }, provider: 'claude', prompt: 'x' },
       ],
       edges: [
-        { id: 'x', source: 'a', target: 'b', sourceHandle: 'true' },
-        { id: 'y', source: 'a', target: 'zz' },
+        { id: 'e1', source: 'start', target: 'a' },
+        { id: 'e2', source: 'a', target: 'b' },
+        { id: 'e3', source: 'b', target: 'a' },
+        { id: 'e4', source: 'b', target: 'zz' },
       ],
     });
-    const messages = validateDefinition(def, agents).map((i) => i.message);
-    expect(messages.some((m) => /déclencheur/.test(m))).toBe(true);
-    expect(messages.some((m) => /n'existe plus/.test(m))).toBe(true);
-    expect(messages.some((m) => /condition/.test(m))).toBe(true);
-    expect(messages.some((m) => /L'agent de ce nœud n'existe plus/.test(m))).toBe(true);
+    const messages = validateDefinition(broken).filter((i) => i.severity === 'error').map((i) => i.message);
+    expect(messages).toContain('Choisissez la clé OpenAI dans le coffre');
+    expect(messages).toContain("Écrivez l'instruction envoyée au modèle");
+    expect(messages).toContain("Une arête pointe vers un nœud qui n'existe plus");
+    expect(messages.some((m) => m.includes('boucle'))).toBe(true);
+    expect([...cycleNodes(broken)].sort()).toEqual(['a', 'b']);
   });
-});
-
-describe('déclencheurs et variables', () => {
-  it("le déclencheur par défaut est le premier manuel ; un déclencheur de tâche ajoute l'identifiant de tâche", () => {
-    const def = parseDefinition({
+  it('avertit quand un modèle référence une variable inconnue ou un nœud qui ne précède pas', () => {
+    const warned = parseDefinition({
       nodes: [
-        { key: 'ev', type: 'trigger', label: 'Tâche créée', position: { x: 0, y: 0 }, event: 'task.created', variables: [{ key: 'extra', label: 'Extra', required: false, defaultValue: null }] },
-        { key: 'man', type: 'trigger', label: 'Manuel', position: { x: 0, y: 0 } },
+        { key: 'start', type: 'trigger', label: 'Départ', position: { x: 0, y: 0 } },
+        { key: 'a', type: 'callLlm', label: 'A', position: { x: 0, y: 0 }, llm, prompt: '{{input.absent}} {{nodes.b.output}}' },
+        { key: 'b', type: 'end', label: 'Fin', position: { x: 0, y: 0 } },
       ],
-      edges: [],
+      edges: [
+        { id: 'e1', source: 'start', target: 'a' },
+        { id: 'e2', source: 'a', target: 'b' },
+      ],
     });
-    expect(triggerOf(def)?.key).toBe('man');
-    expect(workflowVariables(def, 'ev').map((v) => v.key)).toEqual(['taskId', 'extra']);
-    expect(workflowVariables(def)).toEqual([]);
+    const warnings = validateDefinition(warned).filter((i) => i.severity === 'warning' && i.nodeKey === 'a').map((i) => i.message);
+    expect(warnings.some((m) => m.includes('absent'))).toBe(true);
+    expect(warnings.some((m) => m.includes("ne s'exécute pas avant"))).toBe(true);
   });
 });
 
-describe('nextSteps / edgeActive', () => {
-  const def = parseDefinition(raw);
-  const states = (entries: Record<string, NodeState>) => new Map(Object.entries(entries));
-
-  it('seul le déclencheur de départ démarre de lui-même', () => {
-    expect(nextSteps(def, states({}))).toEqual({ run: ['start'], skip: [] });
+describe('parcours', () => {
+  it('remonte les prédécesseurs', () => {
+    expect([...upstreamOf(def, 'fix')].sort()).toEqual(['ok', 'review', 'start']);
   });
-  it('suit la branche de la condition et saute l’autre', () => {
-    const s = states({ start: { status: 'succeeded' }, review: { status: 'succeeded' }, ok: { status: 'succeeded', branch: true } });
-    expect(nextSteps(def, s)).toEqual({ run: [], skip: ['fix'] });
-    s.set('fix', { status: 'skipped' });
-    expect(nextSteps(def, s)).toEqual({ run: ['done'], skip: [] });
+  it('suit les branches oui / non et « en cas d\'erreur »', () => {
+    const states = new Map<string, NodeState>([
+      ['start', { status: 'succeeded' }],
+      ['review', { status: 'succeeded' }],
+      ['ok', { status: 'succeeded', branch: false }],
+    ]);
+    const next = nextSteps(def, states);
+    expect(next.run).toEqual(['done']);
+    expect(next.skip).toEqual(['fix']);
+    states.set('review', { status: 'failed' });
+    expect(edgeActive(def, def.edges[4], states)).toBe(true);
+    expect(edgeActive(def, def.edges[1], states)).toBe(false);
   });
-  it("un échec n'active que la branche « en cas d'erreur »", () => {
-    const s = states({ start: { status: 'succeeded' }, review: { status: 'failed' } });
-    expect(edgeActive(def, def.edges[1], s)).toBe(false);
-    expect(nextSteps(def, s)).toEqual({ run: [], skip: ['ok'] });
+  it('ne démarre que le déclencheur de départ', () => {
+    expect(nextSteps(def, new Map()).run).toEqual(['start']);
   });
 });

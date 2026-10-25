@@ -442,10 +442,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
         <NavLink to="/vault" end className="wb-menu-item" title="Coffre">
           <i className="bi bi-shield-lock wb-icon" /> <span>Coffre</span>
         </NavLink>
-        <NavLink to="/agents" end className="wb-menu-item" title="Agents : configurations réutilisables, planifiables">
-          <i className="bi bi-robot wb-icon" /> <span>Agents</span>
-        </NavLink>
-        <NavLink to="/workflows" end className="wb-menu-item" title="Workflows : enchaînements d'agents, de sessions et de tâches">
+        <NavLink to="/workflows" end className="wb-menu-item" title="Workflows : enchaînements d'appels de modèle, de sessions et de tâches">
           <i className="bi bi-diagram-3 wb-icon" /> <span>Workflows</span>
         </NavLink>
         <NavLink to="/requests" className="wb-menu-item" title="Demandes">

@@ -935,10 +935,7 @@ type Session {
   parentSession: Session
   "Sessions lancées par l'agent de cette session."
   childSessions: [Session!]!
-  "Agent (configuration réutilisable) pour lequel la session tourne, et l'exécution qui l'a lancée ; null pour une session lancée à la main."
-  agent: Agent
-  agentRun: AgentRun
-  "Exécution de workflow qui a ouvert la session (nœud tâche ou session)."
+  "Exécution de workflow qui a ouvert la session (nœud tâche ou session) ; null pour une session lancée à la main."
   workflowRun: WorkflowRun
   name: String!
   provider: String!
@@ -1542,9 +1539,9 @@ input RelaunchSessionInput {
   instruction: String
 }
 
-# ---- Agents et workflows ---------------------------------------------------------------------
+# ---- Workflows -------------------------------------------------------------------------------
 
-"Statut d'une exécution d'agent ou de workflow ; QUEUED : exécution de workflow déclenchée par un événement, en attente d'une place."
+"Statut d'une exécution de workflow ; QUEUED : exécution déclenchée par un événement, en attente d'une place."
 enum RunStatus {
   QUEUED
   PENDING
@@ -1563,12 +1560,7 @@ enum RunTrigger {
   EVENT
 }
 
-enum AgentOutputFormat {
-  TEXT
-  JSON
-}
-
-"Variable déclarée par un agent ou un workflow, remplie au lancement (disponible comme {{input.<clé>}})."
+"Variable déclarée par un déclencheur de workflow, remplie au lancement (disponible comme {{input.<clé>}})."
 type InputVariable {
   key: String!
   label: String!
@@ -1577,15 +1569,7 @@ type InputVariable {
   defaultValue: String
 }
 
-input InputVariableInput {
-  key: String!
-  label: String
-  description: String
-  required: Boolean
-  defaultValue: String
-}
-
-"Planification d'un agent ou d'un workflow."
+"Planification d'un workflow."
 type AutomationSchedule {
   cron: String!
   timezone: String!
@@ -1602,105 +1586,8 @@ input AutomationScheduleInput {
   enabled: Boolean
 }
 
-"""
-Un agent : configuration réutilisable et paramétrée. Fournisseur `llm` : appel direct d'un modèle (LiteLLM,
-OpenAI ou Anthropic, clé du coffre, trace Langfuse optionnelle) ; sinon un type de session (claude, opencode,
-shell) et ses options, chaque exécution étant une session dédiée.
-"""
-type Agent {
-  id: ID!
-  project: Project!
-  name: String!
-  description: String!
-  "llm, claude, opencode ou shell."
-  provider: String!
-  "Réglages du modèle (backend, keyItemId, model, temperature, maxTokens, langfuseItemId) ou de la session (model, permissionMode…)."
-  config: JSON!
-  "Rôle et consignes : prompt système du modèle, ou ajouté au prompt système du projet dans les sessions."
-  systemPrompt: String!
-  "Instruction envoyée à chaque exécution ; les {{input.<clé>}} sont remplis par les entrées."
-  promptTemplate: String!
-  inputs: [InputVariable!]!
-  outputFormat: AgentOutputFormat!
-  "Forme JSON attendue, montrée à l'agent (sortie JSON seulement)."
-  outputSchema: String
-  "Worktree où travaillent les exécutions (null : dossier principal)."
-  worktree: Worktree
-  timeoutMinutes: Int!
-  schedule: AutomationSchedule
-  "Entrées des exécutions planifiées."
-  scheduleInputs: JSON!
-  runs(limit: Int): [AgentRun!]!
-  lastRun: AgentRun
-  "Workflows dont le graphe exécute cet agent."
-  workflows: [Workflow!]!
-  createdBy: User
-  createdAt: DateTime!
-  updatedAt: DateTime!
-}
-
-input CreateAgentInput {
-  projectId: ID!
-  name: String!
-  description: String
-  provider: String!
-  config: JSON
-  systemPrompt: String
-  promptTemplate: String
-  inputs: [InputVariableInput!]
-  outputFormat: AgentOutputFormat
-  outputSchema: String
-  worktreeId: ID
-  timeoutMinutes: Int
-}
-
-input UpdateAgentInput {
-  name: String
-  description: String
-  provider: String
-  config: JSON
-  systemPrompt: String
-  promptTemplate: String
-  inputs: [InputVariableInput!]
-  outputFormat: AgentOutputFormat
-  outputSchema: String
-  worktreeId: ID
-  timeoutMinutes: Int
-}
-
-"Une exécution d'un agent : sa session, l'instruction rendue, la réponse."
-type AgentRun {
-  id: ID!
-  agent: Agent!
-  project: Project!
-  session: Session
-  workflowRun: WorkflowRun
-  "Nœud de l'exécution de workflow (déclencheur workflow)."
-  nodeKey: String
-  trigger: RunTrigger!
-  status: RunStatus!
-  inputs: JSON!
-  prompt: String!
-  output: String
-  "La réponse lue comme JSON (format de sortie JSON)."
-  outputJson: JSON
-  error: String
-  costUsd: Float!
-  durationMs: Int
-  owner: User
-  createdAt: DateTime!
-  startedAt: DateTime
-  finishedAt: DateTime
-}
-
-"Aperçu de l'instruction qu'un agent recevrait."
-type AgentPromptPreview {
-  inputs: JSON!
-  prompt: String!
-}
-
-"Éléments du coffre utilisables par la personne pour les agents à appel direct : proxys LiteLLM, projets Langfuse, jetons OpenAI et Anthropic."
-type AgentLlmKeys {
+"Éléments du coffre utilisables par la personne pour les nœuds « appel de modèle » des workflows : proxys LiteLLM, projets Langfuse, jetons OpenAI et Anthropic."
+type LlmKeys {
   litellm: [VaultItem!]!
   langfuse: [VaultItem!]!
   tokens: [VaultItem!]!
@@ -1715,8 +1602,8 @@ type WorkflowIssue {
 }
 
 """
-Un workflow : un graphe de nœuds (déclencheur, agent, tâche, session, création de tâche, condition, fin) et
-d'arêtes à branches (oui / non, en cas d'erreur), lancé à la main, par planification ou par une tâche créée.
+Un workflow : un graphe de nœuds (déclencheur, appel de modèle, tâche, session, création de tâche, condition,
+fin) et d'arêtes à branches (oui / non, en cas d'erreur), lancé à la main, par planification ou par une tâche créée.
 La définition est enregistrée telle que l'éditeur la dessine :
 { nodes: [{ key, type, label, position, … }], edges: [{ id, source, target, sourceHandle? }] }.
 """
@@ -1790,9 +1677,11 @@ type WorkflowRunNode {
   "pending, running, succeeded, failed, skipped, cancelled."
   status: String!
   input: JSON
+  "Sortie du nœud : { output, json, task?, sessionId?, branch?, model? … }."
   output: JSON
   error: String
-  agentRun: AgentRun
+  "Session ouverte par un nœud « tâche » ou « session »."
+  session: Session
   startedAt: DateTime
   finishedAt: DateTime
 }
@@ -1855,17 +1744,9 @@ type Query {
   vaultTokenServices: [VaultTokenService!]!
   "Types de session, avec les formulaires adaptés aux réglages de la personne connectée."
   providers: [Provider!]!
-  # ---- Agents et workflows ------------------------------------------------------------------
-  "Agents d'un projet, ou de tous les projets accessibles."
-  agents(projectId: ID): [Agent!]!
-  agent(id: ID!): Agent
-  "Exécutions d'un agent (ou des agents d'un projet), les plus récentes d'abord."
-  agentRuns(agentId: ID, projectId: ID, limit: Int): [AgentRun!]!
-  agentRun(id: ID!): AgentRun
-  "L'instruction qu'un agent recevrait avec ces entrées (défauts appliqués, obligatoires vérifiées)."
-  agentPromptPreview(id: ID!, inputs: JSON): AgentPromptPreview!
-  "Éléments du coffre utilisables par la personne connectée pour configurer un agent à appel direct."
-  agentLlmKeys: AgentLlmKeys!
+  # ---- Workflows ----------------------------------------------------------------------------
+  "Éléments du coffre utilisables par la personne connectée pour configurer un nœud « appel de modèle »."
+  llmKeys: LlmKeys!
   workflows(projectId: ID): [Workflow!]!
   workflow(id: ID!): Workflow
   workflowRuns(workflowId: ID, projectId: ID, limit: Int): [WorkflowRun!]!
@@ -2022,16 +1903,7 @@ type Mutation {
   setDefaultGithubAccount(accountId: ID!): AppSettings!
   "GitHub : oublie un compte (tous sans accountId)."
   disconnectGithub(accountId: ID): AppSettings!
-  # ---- Agents et workflows ------------------------------------------------------------------
-  createAgent(input: CreateAgentInput!): Agent!
-  updateAgent(id: ID!, input: UpdateAgentInput!): Agent!
-  deleteAgent(id: ID!): Boolean!
-  "Exécute l'agent maintenant (en tâche de fond) et renvoie l'exécution ; test : true la marque comme un essai."
-  runAgent(id: ID!, inputs: JSON, test: Boolean = false): AgentRun!
-  cancelAgentRun(id: ID!): AgentRun!
-  "Planifie l'agent avec ces entrées ; les exécutions planifiées utilisent les comptes de l'appelant."
-  setAgentSchedule(id: ID!, input: AutomationScheduleInput!, inputs: JSON): Agent!
-  clearAgentSchedule(id: ID!): Agent!
+  # ---- Workflows ----------------------------------------------------------------------------
   createWorkflow(input: CreateWorkflowInput!): Workflow!
   updateWorkflow(id: ID!, input: UpdateWorkflowInput!): Workflow!
   deleteWorkflow(id: ID!): Boolean!

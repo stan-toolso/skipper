@@ -23,8 +23,6 @@ const icons: Record<string, string> = {
   'schedule.run': 'bi-alarm',
   'schedule.skipped': 'bi-alarm',
   'schedule.failed': 'bi-alarm',
-  'agent.run': 'bi-robot',
-  'agent.failed': 'bi-robot',
   'workflow.run': 'bi-diagram-3',
   'workflow.failed': 'bi-diagram-3',
 };

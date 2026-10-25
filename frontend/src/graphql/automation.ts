@@ -1,27 +1,18 @@
 import { gql } from '@apollo/client';
 import type { User } from './operations';
 
-// ---- Agents et workflows -------------------------------------------------------------------------
+// ---- Workflows -----------------------------------------------------------------------------------
 
 export type RunStatus = 'QUEUED' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
 export type RunTrigger = 'MANUAL' | 'SCHEDULE' | 'WORKFLOW' | 'TEST' | 'EVENT';
-export type AgentOutputFormat = 'TEXT' | 'JSON';
 
-/** Variable d'un agent ou d'un déclencheur de workflow, remplie au lancement ({{input.<clé>}}). */
+/** Variable d'un déclencheur de workflow, remplie au lancement ({{input.<clé>}}). */
 export interface InputVariable {
   key: string;
   label: string;
   description: string | null;
   required: boolean;
   defaultValue: string | null;
-}
-
-export interface InputVariableInput {
-  key: string;
-  label?: string | null;
-  description?: string | null;
-  required?: boolean | null;
-  defaultValue?: string | null;
 }
 
 export interface AutomationSchedule {
@@ -39,77 +30,17 @@ export interface AutomationScheduleInput {
   enabled?: boolean | null;
 }
 
-/** Appel direct d'un modèle (fournisseur `llm`) : réglages rangés dans `Agent.config`. */
-export interface LlmAgentConfig {
-  backend: 'litellm' | 'openai' | 'anthropic';
+/** Nœud « appel de modèle » : comment joindre le modèle (clé du coffre, modèle, réglages, trace Langfuse). */
+export type LlmBackend = 'litellm' | 'openai' | 'anthropic';
+export interface LlmNodeConfig {
+  backend: LlmBackend;
   keyItemId: string;
   model: string;
-  temperature?: number | null;
-  maxTokens?: number | null;
-  langfuseItemId?: string | null;
+  temperature: number | null;
+  maxTokens: number | null;
+  langfuseItemId: string | null;
 }
-
-export const LLM_PROVIDER = 'llm';
-
-export interface AgentRunSummary {
-  id: string;
-  status: RunStatus;
-  trigger: RunTrigger;
-  costUsd: number;
-  durationMs: number | null;
-  error: string | null;
-  createdAt: string;
-  finishedAt: string | null;
-}
-
-export interface Agent {
-  id: string;
-  project: { id: string; name: string };
-  name: string;
-  description: string;
-  provider: string;
-  config: Record<string, unknown>;
-  systemPrompt: string;
-  promptTemplate: string;
-  inputs: InputVariable[];
-  outputFormat: AgentOutputFormat;
-  outputSchema: string | null;
-  worktree: { id: string; name: string; branch: string } | null;
-  timeoutMinutes: number;
-  schedule: AutomationSchedule | null;
-  scheduleInputs: Record<string, unknown>;
-  lastRun: AgentRunSummary | null;
-  createdBy: Pick<User, 'id' | 'name'> | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AgentRun {
-  id: string;
-  agent: { id: string; name: string; outputFormat: AgentOutputFormat };
-  project: { id: string; name: string };
-  session: { id: string; name: string; status: string } | null;
-  workflowRun: { id: string; workflow: { id: string; name: string } } | null;
-  nodeKey: string | null;
-  trigger: RunTrigger;
-  status: RunStatus;
-  inputs: Record<string, unknown>;
-  prompt: string;
-  output: string | null;
-  outputJson: unknown | null;
-  error: string | null;
-  costUsd: number;
-  durationMs: number | null;
-  owner: Pick<User, 'id' | 'name'> | null;
-  createdAt: string;
-  startedAt: string | null;
-  finishedAt: string | null;
-}
-
-export interface AgentPromptPreview {
-  inputs: Record<string, unknown>;
-  prompt: string;
-}
+export type LlmOutputFormat = 'text' | 'json';
 
 export interface LlmKeyItem {
   id: string;
@@ -121,32 +52,15 @@ export interface LlmKeyItem {
   token: { service: string; serviceLabel: string } | null;
 }
 
-export interface AgentLlmKeys {
+export interface LlmKeys {
   litellm: LlmKeyItem[];
   langfuse: LlmKeyItem[];
   tokens: LlmKeyItem[];
 }
 
-export interface CreateAgentInput {
-  projectId: string;
-  name: string;
-  description?: string | null;
-  provider: string;
-  config?: Record<string, unknown> | null;
-  systemPrompt?: string | null;
-  promptTemplate?: string | null;
-  inputs?: InputVariableInput[] | null;
-  outputFormat?: AgentOutputFormat | null;
-  outputSchema?: string | null;
-  worktreeId?: string | null;
-  timeoutMinutes?: number | null;
-}
-
-export type UpdateAgentInput = Partial<Omit<CreateAgentInput, 'projectId'>>;
-
 // ---- Définition d'un workflow (miroir du backend, enregistrée telle que l'éditeur la dessine) ----
 
-export type WorkflowNodeType = 'trigger' | 'agent' | 'task' | 'session' | 'createTask' | 'condition' | 'end';
+export type WorkflowNodeType = 'trigger' | 'callLlm' | 'task' | 'session' | 'createTask' | 'condition' | 'end';
 export type TriggerEvent = 'manual' | 'task.created';
 export type EdgeHandle = 'default' | 'true' | 'false' | 'error';
 export type TaskWorktreeMode = 'new' | 'existing' | 'main';
@@ -199,8 +113,11 @@ export interface WorkflowNode {
   variables?: InputVariable[];
   event?: TriggerEvent;
   taskFilter?: TaskFilterGroup | null;
-  agentId?: string | null;
-  inputs?: Record<string, string>;
+  /** callLlm : modèle, instructions (prompt système), format de la réponse ; l'instruction est `prompt`. */
+  llm?: LlmNodeConfig | null;
+  systemPrompt?: string;
+  outputFormat?: LlmOutputFormat;
+  outputSchema?: string;
   timeoutMinutes?: number | null;
   taskId?: string;
   provider?: string;
@@ -274,7 +191,8 @@ export interface WorkflowRunNode {
   input: unknown | null;
   output: unknown | null;
   error: string | null;
-  agentRun: { id: string; status: RunStatus; session: { id: string; name: string } | null } | null;
+  /** Session ouverte par un nœud « tâche » ou « session ». */
+  session: { id: string; name: string } | null;
   startedAt: string | null;
   finishedAt: string | null;
 }
@@ -342,106 +260,6 @@ export const INPUT_VARIABLE_FIELDS = gql`
     description
     required
     defaultValue
-  }
-`;
-
-export const AGENT_RUN_SUMMARY_FIELDS = gql`
-  fragment AgentRunSummaryFields on AgentRun {
-    id
-    status
-    trigger
-    costUsd
-    durationMs
-    error
-    createdAt
-    finishedAt
-  }
-`;
-
-export const AGENT_FIELDS = gql`
-  ${SCHEDULE_FIELDS}
-  ${INPUT_VARIABLE_FIELDS}
-  ${AGENT_RUN_SUMMARY_FIELDS}
-  fragment AgentFields on Agent {
-    id
-    project {
-      id
-      name
-    }
-    name
-    description
-    provider
-    config
-    systemPrompt
-    promptTemplate
-    inputs {
-      ...InputVariableFields
-    }
-    outputFormat
-    outputSchema
-    worktree {
-      id
-      name
-      branch
-    }
-    timeoutMinutes
-    schedule {
-      ...AutomationScheduleFields
-    }
-    scheduleInputs
-    lastRun {
-      ...AgentRunSummaryFields
-    }
-    createdBy {
-      id
-      name
-    }
-    createdAt
-    updatedAt
-  }
-`;
-
-export const AGENT_RUN_FIELDS = gql`
-  fragment AgentRunFields on AgentRun {
-    id
-    agent {
-      id
-      name
-      outputFormat
-    }
-    project {
-      id
-      name
-    }
-    session {
-      id
-      name
-      status
-    }
-    workflowRun {
-      id
-      workflow {
-        id
-        name
-      }
-    }
-    nodeKey
-    trigger
-    status
-    inputs
-    prompt
-    output
-    outputJson
-    error
-    costUsd
-    durationMs
-    owner {
-      id
-      name
-    }
-    createdAt
-    startedAt
-    finishedAt
   }
 `;
 
@@ -535,13 +353,9 @@ export const WORKFLOW_RUN_NODE_FIELDS = gql`
     input
     output
     error
-    agentRun {
+    session {
       id
-      status
-      session {
-        id
-        name
-      }
+      name
     }
     startedAt
     finishedAt
@@ -561,62 +375,9 @@ export const WORKFLOW_RUN_LOG_FIELDS = gql`
 
 // ---- Requêtes -------------------------------------------------------------------------------------
 
-export const AGENTS = gql`
-  ${AGENT_FIELDS}
-  query Agents($projectId: ID) {
-    agents(projectId: $projectId) {
-      ...AgentFields
-    }
-  }
-`;
-
-export const AGENT = gql`
-  ${AGENT_FIELDS}
-  ${AGENT_RUN_SUMMARY_FIELDS}
-  query Agent($id: ID!) {
-    agent(id: $id) {
-      ...AgentFields
-      runs(limit: 30) {
-        ...AgentRunSummaryFields
-      }
-      workflows {
-        id
-        name
-      }
-    }
-  }
-`;
-
-export const AGENT_RUNS = gql`
-  ${AGENT_RUN_FIELDS}
-  query AgentRuns($agentId: ID, $projectId: ID, $limit: Int) {
-    agentRuns(agentId: $agentId, projectId: $projectId, limit: $limit) {
-      ...AgentRunFields
-    }
-  }
-`;
-
-export const AGENT_RUN = gql`
-  ${AGENT_RUN_FIELDS}
-  query AgentRun($id: ID!) {
-    agentRun(id: $id) {
-      ...AgentRunFields
-    }
-  }
-`;
-
-export const AGENT_PROMPT_PREVIEW = gql`
-  query AgentPromptPreview($id: ID!, $inputs: JSON) {
-    agentPromptPreview(id: $id, inputs: $inputs) {
-      inputs
-      prompt
-    }
-  }
-`;
-
-export const AGENT_LLM_KEYS = gql`
-  query AgentLlmKeys {
-    agentLlmKeys {
+export const LLM_KEYS = gql`
+  query LlmKeys {
+    llmKeys {
       litellm {
         id
         name
@@ -751,66 +512,6 @@ export const VALIDATE_WORKFLOW = gql`
 `;
 
 // ---- Mutations ------------------------------------------------------------------------------------
-
-export const CREATE_AGENT = gql`
-  ${AGENT_FIELDS}
-  mutation CreateAgent($input: CreateAgentInput!) {
-    createAgent(input: $input) {
-      ...AgentFields
-    }
-  }
-`;
-
-export const UPDATE_AGENT = gql`
-  ${AGENT_FIELDS}
-  mutation UpdateAgent($id: ID!, $input: UpdateAgentInput!) {
-    updateAgent(id: $id, input: $input) {
-      ...AgentFields
-    }
-  }
-`;
-
-export const DELETE_AGENT = gql`
-  mutation DeleteAgent($id: ID!) {
-    deleteAgent(id: $id)
-  }
-`;
-
-export const RUN_AGENT = gql`
-  ${AGENT_RUN_FIELDS}
-  mutation RunAgent($id: ID!, $inputs: JSON, $test: Boolean) {
-    runAgent(id: $id, inputs: $inputs, test: $test) {
-      ...AgentRunFields
-    }
-  }
-`;
-
-export const CANCEL_AGENT_RUN = gql`
-  ${AGENT_RUN_FIELDS}
-  mutation CancelAgentRun($id: ID!) {
-    cancelAgentRun(id: $id) {
-      ...AgentRunFields
-    }
-  }
-`;
-
-export const SET_AGENT_SCHEDULE = gql`
-  ${AGENT_FIELDS}
-  mutation SetAgentSchedule($id: ID!, $input: AutomationScheduleInput!, $inputs: JSON) {
-    setAgentSchedule(id: $id, input: $input, inputs: $inputs) {
-      ...AgentFields
-    }
-  }
-`;
-
-export const CLEAR_AGENT_SCHEDULE = gql`
-  ${AGENT_FIELDS}
-  mutation ClearAgentSchedule($id: ID!) {
-    clearAgentSchedule(id: $id) {
-      ...AgentFields
-    }
-  }
-`;
 
 export const CREATE_WORKFLOW = gql`
   ${WORKFLOW_FIELDS}

@@ -9,7 +9,7 @@ import RunWorkflowModal from '../components/automation/workflow/RunWorkflowModal
 import WorkflowCanvas, { dragNodeType } from '../components/automation/workflow/WorkflowCanvas';
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
-import { AGENTS, CLEAR_WORKFLOW_SCHEDULE, DELETE_WORKFLOW, SET_WORKFLOW_SCHEDULE, UPDATE_WORKFLOW, VALIDATE_WORKFLOW, WORKFLOW, type Agent, type InputVariable, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNodeType, type WorkflowRunSummary } from '../graphql/automation';
+import { CLEAR_WORKFLOW_SCHEDULE, DELETE_WORKFLOW, SET_WORKFLOW_SCHEDULE, UPDATE_WORKFLOW, VALIDATE_WORKFLOW, WORKFLOW, type InputVariable, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNodeType, type WorkflowRunSummary } from '../graphql/automation';
 import { PROJECT_WORKTREES, PROVIDERS, type Provider, type Worktree } from '../graphql/operations';
 import { fmtDateTime, nodeTypeInfo, runDurationMs } from '../lib/automation';
 import { formatCost, formatDuration } from '../lib/humanize';
@@ -94,10 +94,8 @@ export default function WorkflowPage() {
   const { data, loading, error } = usePollingQuery<{ workflow: WorkflowDetail | null }>(WORKFLOW, { variables: { id }, pollInterval: 10_000 });
   const workflow = data?.workflow;
   useTabTitle(workflow ? workflow.name : null);
-  const { data: agentsData } = useQuery<{ agents: Agent[] }>(AGENTS, { variables: { projectId: workflow?.project.id }, skip: !workflow });
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: workflow?.project.id }, skip: !workflow });
-  const agents = agentsData?.agents ?? [];
   const providers = providersData?.providers ?? [];
   const worktrees = (worktreesData?.project?.worktrees ?? []).filter((w) => !w.archivedAt);
 
@@ -147,7 +145,6 @@ export default function WorkflowPage() {
   const [remove] = useMutation(DELETE_WORKFLOW, { refetchQueries: ['Workflows'] });
 
   const selectedNode = useMemo(() => def?.nodes.find((n) => n.key === selected) ?? null, [def, selected]);
-  const canvasAgents = useMemo(() => agents.map((a) => ({ id: a.id, name: a.name })), [agents]);
 
   const onSave = async () => {
     if (!workflow || !def) return;
@@ -244,7 +241,7 @@ export default function WorkflowPage() {
           ))}
           <div className="small text-secondary px-1 mt-2">Reliez la sortie d'un nœud à l'entrée du suivant. Suppr retire la sélection.</div>
         </div>
-        <WorkflowCanvas definition={def} selectedKey={selected} onSelect={setSelected} onChange={change} issues={issues} agents={canvasAgents} />
+        <WorkflowCanvas definition={def} selectedKey={selected} onSelect={setSelected} onChange={change} issues={issues} />
         <div className="wf-inspector">
           {selectedNode ? (
             <NodeInspector
@@ -255,7 +252,6 @@ export default function WorkflowPage() {
                 change({ ...def, nodes: def.nodes.filter((n) => n.key !== selectedNode.key), edges: def.edges.filter((e) => e.source !== selectedNode.key && e.target !== selectedNode.key) });
                 setSelected(null);
               }}
-              agents={agents}
               providers={providers}
               worktrees={worktrees}
               issues={issues.filter((i) => i.nodeKey === selectedNode.key)}

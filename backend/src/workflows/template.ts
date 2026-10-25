@@ -1,6 +1,6 @@
 /**
  * Modèles de prompt : des emplacements `{{ chemin }}` résolus contre un objet de contexte, pour les modèles
- * d'instruction des agents et les entrées des nœuds de workflow. Fonctions pures, sans dépendance.
+ * des nœuds de workflow (instructions, prompts, champs d'une tâche à créer). Fonctions pures, sans dépendance.
  *
  * Les chemins sont pointés : `input.ticket`, `nodes.review.output`, `nodes.review.json.approved`. Une clé nue
  * (`{{ticket}}`) retombe sur `input.<clé>`. Objets et tableaux sont rendus en JSON, une valeur absente en
@@ -71,7 +71,7 @@ export function placeholders(template: string): string[] {
   return out;
 }
 
-/** Extrait une valeur JSON de la réponse d'un agent : tout le texte, un bloc ```json, ou le premier objet/tableau équilibré. Null si rien ne se lit. */
+/** Extrait une valeur JSON de la réponse d'un modèle ou d'une session : tout le texte, un bloc ```json, ou le premier objet/tableau équilibré. Null si rien ne se lit. */
 export function extractJson(text: string): unknown | null {
   const trimmed = text.trim();
   if (!trimmed) return null;

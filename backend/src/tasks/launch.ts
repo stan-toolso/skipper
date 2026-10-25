@@ -22,9 +22,7 @@ export interface StartTaskOptions {
   /** Automatisation : instruction ajoutée après le texte de la tâche (ou seule si `includeTask` est faux). */
   instructions?: string | null;
   includeTask?: boolean | null;
-  /** Session lancée par une exécution d'agent ou de workflow. */
-  agentId?: string | null;
-  agentRunId?: string | null;
+  /** Session lancée par une exécution de workflow. */
   workflowRunId?: string | null;
   /** false : la session est créée sans démarrer (l'appelant la démarre). */
   autoStart?: boolean | null;
@@ -85,8 +83,6 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
     prompt,
     config: options.config ?? {},
     ownerId: options.ownerId ?? null,
-    agentId: options.agentId ?? null,
-    agentRunId: options.agentRunId ?? null,
     workflowRunId: options.workflowRunId ?? null,
     autoStart: false,
   });

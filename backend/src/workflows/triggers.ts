@@ -1,4 +1,3 @@
-import { agentRepository } from '../agents/repository.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { taskService } from '../tasks/service.js';
 import type { Task, TaskActor } from '../tasks/types.js';
@@ -36,11 +35,6 @@ async function workflowsBehind(sessionId: string): Promise<Set<string>> {
     if (!session) break;
     if (session.workflowRunId) {
       const workflowRun = await workflowRepository.findRun(session.workflowRunId);
-      if (workflowRun) out.add(workflowRun.workflowId);
-    }
-    if (session.agentRunId) {
-      const agentRun = await agentRepository.findRun(session.agentRunId);
-      const workflowRun = agentRun?.workflowRunId ? await workflowRepository.findRun(agentRun.workflowRunId) : null;
       if (workflowRun) out.add(workflowRun.workflowId);
     }
     id = session.parentSessionId;

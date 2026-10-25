@@ -536,10 +536,7 @@ export default function ProjectDetailPage() {
           <Button as={Link as any} to={`/projects/${project.id}/vault`} size="sm" variant="outline-primary" title="Serveurs, bases, API, sites et comptes utilisables par les agents">
             Coffre
           </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/agents`} size="sm" variant="outline-primary" title="Agents : configurations réutilisables et planifiables">
-            Agents
-          </Button>
-          <Button as={Link as any} to={`/projects/${project.id}/workflows`} size="sm" variant="outline-primary" title="Workflows : enchaînements d'agents, de sessions et de tâches">
+          <Button as={Link as any} to={`/projects/${project.id}/workflows`} size="sm" variant="outline-primary" title="Workflows : enchaînements d'appels de modèle, de sessions et de tâches">
             Workflows
           </Button>
           <Button as={Link as any} to={`/projects/${project.id}/history`} size="sm" variant="outline-primary" title="Sessions et worktrees archivés">

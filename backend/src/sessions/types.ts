@@ -44,10 +44,7 @@ export interface Session {
   archivedAt: Date | null;
   /** Session d'agent qui a lancé celle-ci (outil `sessions.create`), null pour une session lancée par un humain. */
   parentSessionId: string | null;
-  /** Agent (configuration réutilisable) pour lequel la session tourne, et l'exécution qui l'a lancée ; null pour une session lancée à la main. */
-  agentId: string | null;
-  agentRunId: string | null;
-  /** Exécution de workflow qui a ouvert la session (nœud « tâche » ou « session »). */
+  /** Exécution de workflow qui a ouvert la session (nœud « tâche » ou « session ») ; null pour une session lancée à la main. */
   workflowRunId: string | null;
   name: string;
   provider: string;
@@ -99,9 +96,7 @@ export interface CreateSessionInput {
   newWorktree?: NewWorktreeInput | null;
   parentSessionId?: string | null;
   ownerId?: string | null;
-  /** Session lancée par une exécution d'agent ou de workflow. */
-  agentId?: string | null;
-  agentRunId?: string | null;
+  /** Session lancée par une exécution de workflow. */
   workflowRunId?: string | null;
   name: string;
   provider: string;
