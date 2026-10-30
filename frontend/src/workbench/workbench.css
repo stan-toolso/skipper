@@ -80,9 +80,6 @@
 .wb-row-label { flex: 1; min-width: 40%; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
 .wb-project-row { color: var(--cc-fg); }
 .wb-session-row { padding-left: 30px; }
-.wb-worksession-row { padding-left: 22px; color: var(--cc-dim); }
-.wb-worksession-row .wb-row-label { color: var(--cc-fg); }
-.wb-worksession-row:hover .wb-row-actions, .wb-worksession-row .wb-row-actions.open { visibility: visible; }
 .wb-empty { padding-left: 30px; font-style: italic; color: var(--cc-dimmer); }
 .wb-chevron { background: none; border: 0; color: var(--cc-dim); padding: 0; width: 14px; font: inherit; cursor: pointer; }
 .wb-row-actions { visibility: hidden; display: flex; gap: 6px; }
@@ -506,7 +503,7 @@
   .fe-meta { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: 0; }
   .fe-meta .fx-muted { display: none; }
   .fx-header-actions .btn { white-space: nowrap; }
-  /* Tableaux « contenu + actions » (worksessions, membres, règles, comptes…) : chaque ligne devient un bloc et les
+  /* Tableaux « contenu + actions » (membres, règles, comptes…) : chaque ligne devient un bloc et les
      actions passent sous le contenu plutôt que d'être repoussées hors de l'écran. */
   .table-stack thead { display: none; }
   .table-stack tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--cc-border); }
@@ -557,7 +554,7 @@
 .wb-filter { background: none; border: 0; font: inherit; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
 .wb-filter.active { color: var(--cc-accent); }
 
-/* ---- Dossiers de travail (projet principal, worksessions) --------------------------------------- */
+/* ---- Cartes des sessions (et du dossier principal pour les sessions d'avant) --------------------- */
 .wb-project { margin-bottom: 2px; }
 /* L'espace personnel, en tête de l'explorateur, séparé des projets. */
 .wb-project.wb-personal { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--cc-border); }
@@ -758,7 +755,7 @@ button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, tra
 .task-comment:hover .task-comment-actions { display: inline-flex; }
 .task-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* ---- Worksessions : état de la PR, dossier absent ----------------------------------------------- */
+/* ---- Branche d'une session : état de la PR, dossier absent -------------------------------------- */
 .wt-pr-open { color: var(--cc-green); }
 .wt-pr-draft { color: var(--cc-dim); }
 .wt-pr-merged { color: var(--cc-purple); }

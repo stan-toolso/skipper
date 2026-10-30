@@ -3,8 +3,10 @@ import type { SessionProvider } from '../sessions/providers/provider.js';
 
 // Mode d'autorisation par défaut du projet : appliqué aux sessions de tâches (et à toute session créée sans mode),
 // sans écraser un mode choisi explicitement. Dépôts et services voisins simulés, sans base.
-const state = vi.hoisted(() => ({ created: [] as Record<string, unknown>[], projectMode: 'acceptEdits', taskWorksession: null as Record<string, unknown> | null }));
+const state = vi.hoisted(() => ({ created: [] as Record<string, unknown>[], projectMode: 'acceptEdits', taskWorksession: null as Record<string, unknown> | null, active: [] as { id: string; name: string; worksessionId: string }[] }));
 const repo = vi.hoisted(() => ({
+  // Sessions actives d'une work session (règle « une seule session active par work session »).
+  list: vi.fn(async (filter: { worksessionId?: string }) => state.active.filter((s) => s.worksessionId === filter.worksessionId)),
   create: vi.fn(async (input: Record<string, unknown>) => {
     state.created.push(input);
     return { id: `s${state.created.length}`, projectId: 'p', name: input.name, provider: input.provider, status: 'pending', prompt: input.prompt, promptAttachments: [], config: input.config ?? {} };
@@ -27,7 +29,7 @@ vi.mock('../projects/service.js', () => ({
 vi.mock('../worksessions/service.js', () => ({
   worksessionService: {
     resolveCwd: async () => '/tmp',
-    assertUsable: async () => ({}),
+    assertUsable: async (_p: unknown, id: string) => ({ id, branch: 'task/x' }),
     forTask: async () => state.taskWorksession,
     create: vi.fn(async (_p: string, input: Record<string, unknown>) => ({ id: 'w-new', name: input.name, branch: input.branch, label: input.label, taskId: input.taskId })),
   },
@@ -52,7 +54,12 @@ beforeEach(() => {
   state.created = [];
   state.projectMode = 'acceptEdits';
   state.taskWorksession = null;
+  state.active = [];
   vi.spyOn(sessionService, 'start').mockImplementation(async (id: string) => ({ id }) as never);
+  vi.spyOn(sessionService, 'archive').mockImplementation(async (id: string) => {
+    state.active = state.active.filter((s) => s.id !== id);
+    return { id } as never;
+  });
 });
 
 describe("mode d'autorisation par défaut du projet", () => {
@@ -99,6 +106,19 @@ describe('work session de la tâche', () => {
     state.taskWorksession = { id: 'w-task', name: 'task-export', branch: 'task/export' };
     await startTaskSession('t1');
     expect(state.created[0].worksessionId).toBe('w-task');
+  });
+
+  it('archive la session précédente de la tâche : la nouvelle reprend seule le dossier et la branche', async () => {
+    state.taskWorksession = { id: 'w-task', name: 'task-export', branch: 'task/export' };
+    state.active = [{ id: 's-prev', name: 'Tâche', worksessionId: 'w-task' }];
+    await startTaskSession('t1');
+    expect(sessionService.archive).toHaveBeenCalledWith('s-prev');
+    expect(state.created[0].worksessionId).toBe('w-task');
+  });
+
+  it('refuse une session dans une work session où une autre session travaille déjà', async () => {
+    state.active = [{ id: 's-prev', name: 'Première', worksessionId: 'w-busy' }];
+    await expect(sessionService.create({ projectId: 'p', worksessionId: 'w-busy', name: 'x', provider: 'claude', prompt: null, config: {}, autoStart: false })).rejects.toThrow(/« Première » travaille déjà/);
   });
 
   it('refuse une session sans work session', async () => {

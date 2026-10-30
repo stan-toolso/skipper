@@ -1,12 +1,12 @@
 import { useApolloClient, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
-import { Alert, Badge, Button, Form, Table } from 'react-bootstrap';
+import { Alert, Button, Form, Table } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
 import RelaunchModal from '../components/RelaunchModal';
 import StatusBadge from '../components/StatusBadge';
-import { DELETE_SESSION, DELETE_WORKSESSION, RESTORE_WORKSESSION, type Session } from '../graphql/operations';
+import { DELETE_SESSION, type Session } from '../graphql/operations';
 import { ARCHIVED_SESSIONS, HISTORY_PROJECT, UNARCHIVE_SESSION } from '../graphql/sessions';
 import { timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -20,20 +20,20 @@ interface HistoryProject {
   description: string | null;
   myRole: 'ADMIN' | 'MEMBER' | 'VIEWER';
   gitUrl: string | null;
-  worksessions: { id: string; branch: string; label: string }[];
-  archivedWorksessions: { id: string; name: string; branch: string; label: string; archivedAt: string; git: { commit: string } | null }[];
 }
 
 const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 
-/** Historique d'un projet : worksessions archivés (restaurer, supprimer) et sessions archivées (relire, relancer, restaurer, supprimer). */
+/**
+ * Historique d'un projet : les sessions archivées (relire, relancer, restaurer, supprimer). Le dossier de travail
+ * d'une session (sa branche) l'accompagne : archivé avec elle, restauré avec elle, supprimé avec elle.
+ */
 export default function SessionHistoryPage() {
   const { id = '' } = useParams();
   const client = useApolloClient();
   const { confirm, showError } = useDialogs();
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
-  const [worksessionId, setWorksessionId] = useState<string | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const [relaunch, setRelaunch] = useState<Session | null>(null);
   useEffect(() => {
@@ -45,14 +45,12 @@ export default function SessionHistoryPage() {
   }, [search]);
 
   const projectQ = useQuery<{ project: HistoryProject | null }>(HISTORY_PROJECT, { variables: { id } });
-  const sessionsQ = useQuery<{ archivedSessions: Session[] }>(ARCHIVED_SESSIONS, { variables: { projectId: id, worksessionId, search: query || null, limit, offset: 0 }, fetchPolicy: 'cache-and-network' });
+  const sessionsQ = useQuery<{ archivedSessions: Session[] }>(ARCHIVED_SESSIONS, { variables: { projectId: id, search: query || null, limit, offset: 0 }, fetchPolicy: 'cache-and-network' });
   const project = projectQ.data?.project;
   useTabTitle(project ? `Historique · ${project.name}` : null);
   const refetch = { refetchQueries: ['ArchivedSessions', 'HistoryProject', 'Sidebar'] };
   const [unarchive] = useMutation(UNARCHIVE_SESSION, { ...refetch, onError: (e) => void showError(e) });
   const [deleteSession] = useMutation(DELETE_SESSION, { ...refetch, onError: (e) => void showError(e) });
-  const [restoreWorksession] = useMutation(RESTORE_WORKSESSION, { ...refetch, onError: (e) => void showError(e) });
-  const [deleteWorksession] = useMutation(DELETE_WORKSESSION, { ...refetch, onError: (e) => void showError(e) });
   const evict = (typename: string, objId: string) => {
     client.cache.evict({ id: client.cache.identify({ __typename: typename, id: objId }) });
     client.cache.gc();
@@ -62,7 +60,6 @@ export default function SessionHistoryPage() {
   if (projectQ.error) return <Alert variant="danger">Erreur : {projectQ.error.message}</Alert>;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const rows = sessionsQ.data?.archivedSessions ?? [];
-  const filterLabel = worksessionId ? project.archivedWorksessions.find((w) => w.id === worksessionId)?.label ?? project.worksessions.find((w) => w.id === worksessionId)?.label : null;
 
   return (
     <>
@@ -71,83 +68,17 @@ export default function SessionHistoryPage() {
         <Form.Control type="search" size="sm" placeholder="Chercher dans les noms et les conversations…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 320, maxWidth: '100%' }} className="ms-auto" />
       </div>
 
-      {project.archivedWorksessions.length > 0 && (
-        <>
-          <h2 className="h5">Work sessions archivées</h2>
-          <p className="small text-secondary">Une work session archivée garde son dossier (commits, modifications non validées) et ses sessions. Le restaurer ramène ses sessions ; son dossier est recréé au besoin à la prochaine utilisation.</p>
-          <Table size="sm" hover responsive className="mb-4">
-            <thead>
-              <tr>
-                <th>Work session</th>
-                <th className="d-none d-md-table-cell">Branche</th>
-                <th className="d-none d-md-table-cell">Commit</th>
-                <th>Archivé</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {project.archivedWorksessions.map((w) => (
-                <tr key={w.id} className={worksessionId === w.id ? 'table-active' : ''}>
-                  <td>
-                    <i className="bi bi-layers me-1" />
-                    {w.label}
-                    {w.label !== w.name && <span className="text-secondary ms-2 small">{w.name}</span>}
-                  </td>
-                  <td className="font-monospace d-none d-md-table-cell">{w.branch}</td>
-                  <td className="font-monospace d-none d-md-table-cell">{w.git?.commit ?? '—'}</td>
-                  <td title={fmt(w.archivedAt)}>{timeAgo(w.archivedAt)}</td>
-                  <td className="text-end">
-                    <Button size="sm" variant="link" className="p-0 px-1" onClick={() => setWorksessionId(worksessionId === w.id ? null : w.id)}>
-                      Sessions
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="link"
-                      className="p-0 px-1"
-                      onClick={() => {
-                        if (worksessionId === w.id) setWorksessionId(null);
-                        restoreWorksession({ variables: { id: w.id } });
-                      }}
-                    >
-                      Restaurer
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="link"
-                      className="p-0 px-1 text-danger"
-                      onClick={async () => {
-                        const res = await confirm({ title: 'Supprimer la work session archivée', message: `Supprimer définitivement la work session « ${w.label} » ? Son dossier (travail non validé et non poussé) est perdu ; ses sessions restent dans l'historique, sans leur work session.`, confirmLabel: 'Supprimer définitivement', danger: true, checkbox: { label: 'Supprimer aussi la branche locale' } });
-                        if (!res) return;
-                        await deleteWorksession({ variables: { id: w.id, deleteBranch: res.checked } });
-                        evict('Worksession', w.id);
-                      }}
-                    >
-                      Supprimer
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </>
-      )}
-
-      <h2 className="h5">
-        Sessions archivées
-        {filterLabel && (
-          <Badge bg="secondary" className="ms-2 fw-normal" role="button" onClick={() => setWorksessionId(null)}>
-            Work session : {filterLabel} ×
-          </Badge>
-        )}
-      </h2>
-      <p className="small text-secondary">Une session archivée garde toute sa conversation. Rouvrez-la pour la lire, restaurez-la parmi les sessions actives, ou relancez une nouvelle session à partir d'elle.</p>
+      <h2 className="h5">Sessions archivées</h2>
+      <p className="small text-secondary">
+        Une session archivée garde toute sa conversation et son dossier de travail (commits, modifications non validées, branche). Rouvrez-la pour la lire, restaurez-la parmi les sessions actives, ou relancez une nouvelle session à partir d'elle, sur la même branche.
+      </p>
       {sessionsQ.error && <Alert variant="danger">{sessionsQ.error.message}</Alert>}
       <Table size="sm" hover responsive>
         <thead>
           <tr>
             <th>Nom</th>
             <th>État</th>
-            <th className="d-none d-md-table-cell">Work session</th>
+            {project.gitUrl && <th className="d-none d-md-table-cell">Branche</th>}
             <th className="d-none d-md-table-cell">Par</th>
             <th className="d-none d-md-table-cell">Créée</th>
             <th className="d-none d-md-table-cell">Archivée</th>
@@ -164,7 +95,11 @@ export default function SessionHistoryPage() {
               <td>
                 <StatusBadge status={s.status} />
               </td>
-              <td className="d-none d-md-table-cell">{s.worksession?.label ?? (s.formerWorksession ? <span className="text-secondary" title="Worksession supprimé">{s.formerWorksession.label} <i className="bi bi-trash3" /></span> : '—')}</td>
+              {project.gitUrl && (
+                <td className="d-none d-md-table-cell font-monospace">
+                  {s.worksession?.branch ?? (s.formerWorksession ? <span className="text-secondary" title="Dossier de travail supprimé : la branche a pu être supprimée aussi">{s.formerWorksession.branch} <i className="bi bi-trash3" /></span> : '—')}
+                </td>
+              )}
               <td className="d-none d-md-table-cell">{s.owner?.name ?? '—'}</td>
               <td className="d-none d-md-table-cell" title={fmt(s.createdAt)}>{timeAgo(s.createdAt)}</td>
               <td className="d-none d-md-table-cell" title={s.archivedAt ? fmt(s.archivedAt) : ''}>{s.archivedAt ? timeAgo(s.archivedAt) : ''}</td>
@@ -172,7 +107,7 @@ export default function SessionHistoryPage() {
                 <Button size="sm" variant="link" className="p-0 px-1" onClick={() => setRelaunch(s)}>
                   Relancer
                 </Button>
-                <Button size="sm" variant="link" className="p-0 px-1" onClick={() => unarchive({ variables: { id: s.id } })}>
+                <Button size="sm" variant="link" className="p-0 px-1" title="Remet la session parmi les sessions actives, avec son dossier de travail" onClick={() => unarchive({ variables: { id: s.id } })}>
                   Restaurer
                 </Button>
                 <Button
@@ -180,10 +115,16 @@ export default function SessionHistoryPage() {
                   variant="link"
                   className="p-0 px-1 text-danger"
                   onClick={async () => {
-                    if (await confirm({ title: 'Supprimer la session', message: `Supprimer définitivement la session archivée « ${s.name} » et tout son historique ? Cette action est irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
-                      await deleteSession({ variables: { id: s.id } });
-                      evict('Session', s.id);
-                    }
+                    const opts = {
+                      title: 'Supprimer la session',
+                      message: `Supprimer définitivement la session archivée « ${s.name} » et tout son historique ? Son dossier de travail est supprimé avec elle (travail non validé et non poussé perdu). Cette action est irréversible.`,
+                      confirmLabel: 'Supprimer définitivement',
+                      danger: true,
+                    };
+                    const res = s.worksession && project.gitUrl ? await confirm({ ...opts, checkbox: { label: `Supprimer aussi la branche ${s.worksession.branch}` } }) : (await confirm(opts)) ? { checked: false } : null;
+                    if (!res) return;
+                    await deleteSession({ variables: { id: s.id, deleteBranch: res.checked } });
+                    evict('Session', s.id);
                   }}
                 >
                   Supprimer
@@ -194,7 +135,7 @@ export default function SessionHistoryPage() {
           {rows.length === 0 && (
             <tr>
               <td colSpan={7} className="text-secondary fst-italic">
-                {sessionsQ.loading ? 'Chargement…' : query || worksessionId ? 'Aucune session archivée ne correspond.' : 'Aucune session archivée.'}
+                {sessionsQ.loading ? 'Chargement…' : query ? 'Aucune session archivée ne correspond.' : 'Aucune session archivée.'}
               </td>
             </tr>
           )}
@@ -207,7 +148,7 @@ export default function SessionHistoryPage() {
           </Button>
         </div>
       )}
-      {relaunch && <RelaunchModal session={relaunch} projectName={project.name} worksessions={project.worksessions} onClose={() => setRelaunch(null)} />}
+      {relaunch && <RelaunchModal session={relaunch} projectName={project.name} onClose={() => setRelaunch(null)} />}
     </>
   );
 }

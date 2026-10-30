@@ -1,5 +1,5 @@
 import { Spinner } from 'react-bootstrap';
-import { Navigate, Route, Routes, useLocation, type Location } from 'react-router-dom';
+import { Navigate, Route, Routes, type Location } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import Layout from './components/Layout';
 import { DialogProvider } from './components/Dialogs';
@@ -66,9 +66,10 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       {isAdmin && <Route path="/users" element={<UsersPage />} />}
       <Route path="/projects/:id/files" element={<FilesPage />} />
       <Route path="/projects/:id/files/*" element={<FilesPage />} />
-      <Route path="/worksessions/:wid/files" element={<FilesPage />} />
-      <Route path="/worksessions/:wid/files/*" element={<FilesPage />} />
-      <Route path="/worktrees/*" element={<RedirectWorktree />} />
+      <Route path="/sessions/:id/files" element={<FilesPage />} />
+      <Route path="/sessions/:id/files/*" element={<FilesPage />} />
+      <Route path="/worktrees/*" element={<Navigate to="/" replace />} />
+      <Route path="/worksessions/*" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -112,10 +113,4 @@ export default function App() {
       </DialogProvider>
     </AuthProvider>
   );
-}
-
-/** Anciennes adresses /worktrees/… (favoris, liens partagés) : même page sous /worksessions/…. */
-function RedirectWorktree() {
-  const location = useLocation();
-  return <Navigate to={location.pathname.replace(/^\/worktrees\//, '/worksessions/') + location.search} replace />;
 }

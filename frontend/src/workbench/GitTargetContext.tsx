@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 
-/** Workspace suivi par le panneau de droite : projet (checkout principal) ou worksession, et tâche éventuelle. */
+/** Workspace suivi par le panneau de droite : projet (checkout principal) ou dossier d'une session (sa work session, identifiant technique), et tâche éventuelle. */
 export interface GitTarget {
   projectId: string;
   worksessionId: string | null;

@@ -484,14 +484,14 @@ export const pullRequestService = {
           const running = await sessionService.list({ worksessionId: wt.id, status: 'running', limit: 200 });
           if (running.length && cleanup.stopSessions) for (const s of running) await sessionService.stop(s.id).catch(() => undefined);
           else if (running.length) {
-            warnings.push(`Worksession ${wt.name} conservé : ${running.length} session(s) y tournent encore`);
+            warnings.push(`Dossier de travail ${wt.name} conservé : ${running.length} session(s) y tournent encore`);
             continue;
           }
           // Les sessions sont archivées avec le souvenir de la work session (historique de la tâche) ; ses terminaux sont fermés.
           await removeWorksessionKeepingSessions(wt.id, { deleteBranch: true, stopSessions: Boolean(cleanup.stopSessions) });
           deletedWorksessionIds.push(wt.id);
         } catch (err) {
-          warnings.push(`Worksession ${wt.name} conservé : ${(err as Error).message}`);
+          warnings.push(`Dossier de travail ${wt.name} conservé : ${(err as Error).message}`);
         }
       }
       // Branche locale sans worksession dans le checkout principal (sauf si c'est la branche extraite).

@@ -13,8 +13,6 @@ import type { Task, TaskAttachment, TaskComment } from './types.js';
 export interface StartTaskOptions {
   provider?: string | null;
   config?: Record<string, unknown> | null;
-  /** Work session existante où travailler (nœud de workflow) ; par défaut, celle de la tâche. */
-  worksessionId?: string | null;
   /** Consigne relue par l'humain ; sinon le texte de la tâche. */
   prompt?: string | null;
   /** Utilisateur qui lance la session (propriétaire). */
@@ -72,8 +70,10 @@ export async function taskWorksession(task: Task, actorId?: string | null): Prom
 
 /**
  * Confie une tâche à un nouvel agent : crée la session dans la work session de la tâche (créée avec sa
- * première session, gardée pour les suivantes), l'assigne à la tâche et passe celle-ci en cours. Pour une
- * automatisation, le texte de la tâche ouvre l'instruction, suivi de la consigne de l'agent ou du nœud.
+ * première session, gardée pour les suivantes), l'assigne à la tâche et passe celle-ci en cours. Une work
+ * session n'héberge qu'une session active : la session précédente de la tâche est arrêtée et archivée, la
+ * nouvelle reprend le dossier et la branche. Pour une automatisation, le texte de la tâche ouvre
+ * l'instruction, suivi de la consigne de l'agent ou du nœud.
  */
 export async function startTaskSession(taskId: string, options: StartTaskOptions = {}): Promise<Session> {
   const task = await taskService.get(taskId);
@@ -82,11 +82,12 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
 
   let worksession: Worksession;
   try {
-    worksession = options.worksessionId ? await worksessionService.assertUsable(project, options.worksessionId) : await taskWorksession(task, options.ownerId);
+    worksession = await taskWorksession(task, options.ownerId);
   } catch (err) {
-    throw new AppError(`Impossible de préparer la work session de la tâche : ${(err as Error).message}`);
+    throw new AppError(`Impossible de préparer le dossier de travail de la tâche : ${(err as Error).message}`);
   }
   const worksessionId = worksession.id;
+  await sessionService.vacateWorksession(worksessionId);
   const branch = project.gitUrl ? worksession.branch : null;
 
   // La tâche passe en cours avant le démarrage pour que l'agent la voie déjà comme la sienne.

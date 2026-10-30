@@ -63,7 +63,6 @@ export interface LlmKeys {
 export type WorkflowNodeType = 'trigger' | 'callLlm' | 'task' | 'session' | 'createTask' | 'condition' | 'end';
 export type TriggerEvent = 'manual' | 'task.created';
 export type EdgeHandle = 'default' | 'true' | 'false' | 'error';
-export type TaskWorksessionMode = 'new' | 'existing';
 
 export type ConditionOperator = 'is' | 'isNot' | 'contains' | 'notContains' | 'startsWith' | 'endsWith' | 'matches' | 'isEmpty' | 'isNotEmpty' | 'isTrue' | 'isFalse' | 'greaterThan' | 'atLeast' | 'lessThan' | 'atMost';
 export interface ConditionRule {
@@ -124,8 +123,6 @@ export interface WorkflowNode {
   config?: Record<string, unknown>;
   prompt?: string;
   includeTask?: boolean;
-  worksessionMode?: TaskWorksessionMode;
-  worksessionId?: string | null;
   wait?: boolean;
   sessionName?: string;
   branch?: string;

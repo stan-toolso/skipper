@@ -272,7 +272,7 @@ class Execution {
     const taskId = render(node.taskId ?? '', this.context).trim();
     const instructions = render(node.prompt ?? '', this.context).trim();
     const ownerRefs = peopleRefs(render(node.sessionOwner ?? '', this.context));
-    await workflowRepository.upsertNode(this.run.id, node.key, 'task', { input: { taskId, instructions, provider: node.provider, worksession: node.worksessionMode, ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
+    await workflowRepository.upsertNode(this.run.id, node.key, 'task', { input: { taskId, instructions, provider: node.provider, ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
     const taken = await this.takeableTask(taskId);
     if (taken.error) return { ok: false, ctx: { status: 'failed', output: null, error: taken.error, task: this.snapshot(taken.task) } };
     const people = await this.sessionOwner(node.key, ownerRefs);
@@ -283,7 +283,6 @@ class Execution {
         ownerId: people.ownerId,
         provider: node.provider || 'claude',
         config: node.config ?? {},
-        worksessionId: node.worksessionMode === 'existing' ? (node.worksessionId ?? null) : null,
         instructions,
         includeTask: node.includeTask !== false,
         workflowRunId: this.run.id,
@@ -333,24 +332,18 @@ class Execution {
     const name = render(node.sessionName ?? '', this.context).trim().slice(0, 80) || this.label(node);
     const instructions = render(node.prompt ?? '', this.context).trim();
     const ownerRefs = peopleRefs(render(node.sessionOwner ?? '', this.context));
-    const mode = node.worksessionMode === 'existing' ? 'existing' : 'new';
-    const branch = mode === 'new' ? render(node.branch ?? '', this.context).trim() || `workflow/${slugify(this.label(node)).slice(0, 40) || node.key}-${this.run.id.slice(0, 8)}` : null;
-    await workflowRepository.upsertNode(this.run.id, node.key, 'session', { input: { name, instructions, provider: node.provider, worksession: mode, ...(branch ? { branch } : {}), ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
+    // La session travaille sur la branche du nœud (dossier repris s'il existe, sa session précédente archivée), sinon sur une branche propre à l'exécution.
+    const branch = render(node.branch ?? '', this.context).trim() || `workflow/${slugify(this.label(node)).slice(0, 40) || node.key}-${this.run.id.slice(0, 8)}`;
+    await workflowRepository.upsertNode(this.run.id, node.key, 'session', { input: { name, instructions, provider: node.provider, branch, ...(ownerRefs.length ? { owner: ownerRefs[0] } : {}) } });
     if (!instructions) return { ok: false, ctx: { status: 'failed', output: null, error: "L'instruction est vide" } };
     const people = await this.sessionOwner(node.key, ownerRefs);
 
     let session: Session;
     let worksessionBranch: string | null = null;
     try {
-      let worksessionId: string | null = null;
-      if (mode === 'existing') {
-        worksessionId = node.worksessionId ?? null;
-        worksessionBranch = worksessionId ? (await worksessionService.get(worksessionId)).branch : null;
-      } else if (branch) {
-        const worksession = await this.branchWorksession(node, branch, name, people.ownerId);
-        worksessionId = worksession.id;
-        worksessionBranch = worksession.branch;
-      }
+      const worksession = await this.branchWorksession(node, branch, name, people.ownerId);
+      const worksessionId = worksession.id;
+      worksessionBranch = worksession.branch;
       const created = await sessionService.create({ projectId: this.workflow.projectId, worksessionId, name, provider: node.provider || 'claude', prompt: instructions, config: node.config ?? {}, ownerId: people.ownerId, workflowRunId: this.run.id, autoStart: false });
       session = await sessionService.start(created.id);
     } catch (err) {
@@ -382,7 +375,9 @@ class Execution {
     const wanted = project.gitUrl ? branch : slugify(branch);
     const existing = (await worksessionService.listByProject(project.id)).find((w) => w.branch === wanted);
     if (existing) {
-      await this.log('info', `Travail dans la work session existante ${project.gitUrl ? `de la branche ${branch}` : `« ${existing.name} »`}`, node.key, { worksessionId: existing.id });
+      // Une work session n'héberge qu'une session active : la précédente (exécution antérieure) est archivée.
+      const archived = await sessionService.vacateWorksession(existing.id);
+      await this.log('info', `Travail dans le dossier existant ${project.gitUrl ? `de la branche ${branch}` : `« ${existing.name} »`}${archived.length ? ` (${archived.length} session(s) précédente(s) archivée(s))` : ''}`, node.key, { worksessionId: existing.id });
       return existing;
     }
     try {

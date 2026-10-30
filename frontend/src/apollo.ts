@@ -26,7 +26,7 @@ export const apolloClient = new ApolloClient({
     typePolicies: {
       Query: {
         fields: {
-          // Une work session déjà chargé par la sidebar se lit directement dans le cache, sans aller-retour.
+          // Un dossier de travail (work session) déjà chargé par la sidebar se lit directement dans le cache, sans aller-retour.
           worksession: { read: (existing, { args, toReference }) => existing ?? toReference({ __typename: 'Worksession', id: args?.id }) },
         },
       },

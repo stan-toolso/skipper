@@ -10,6 +10,7 @@ const store = vi.hoisted(() => ({
   seq: 0,
 }));
 const repo = vi.hoisted(() => ({
+  list: vi.fn(async () => []),
   create: vi.fn(async (input: Record<string, unknown>) => {
     const s = { id: `s${++store.seq}`, projectId: 'p', worksessionId: null, parentSessionId: null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null };
     store.sessions.set(s.id, s);

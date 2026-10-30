@@ -1,22 +1,31 @@
 import { useQuery } from '@apollo/client';
-import { useParams } from 'react-router-dom';
-import { PROJECT, WORKSESSION, type Project } from '../graphql/operations';
+import { useLocation, useParams } from 'react-router-dom';
+import { PROJECT, SESSION_WORKSPACE, type Project } from '../graphql/operations';
 
-/** Workspace visé par l'explorateur : checkout principal d'un projet, ou une work session. */
+/** Workspace visé par l'explorateur (requêtes git et fichiers) : checkout principal d'un projet, ou le dossier d'une session (sa work session). */
 export interface WorkspaceRef {
   projectId: string;
   worksessionId: string | null;
 }
 
+/** Ce qu'il faut pour adresser l'explorateur : les fichiers d'une session sont sous sa page, ceux du projet sous la sienne. */
+export interface FilesTarget {
+  projectId: string;
+  sessionId?: string | null;
+}
+
 /** URL de l'explorateur (path vide) ou de l'éditeur d'un fichier, chaque segment encodé. */
-export function filesUrl(ref: WorkspaceRef, path = ''): string {
-  const base = ref.worksessionId ? `/worksessions/${ref.worksessionId}/files` : `/projects/${ref.projectId}/files`;
+export function filesUrl(ref: FilesTarget, path = ''): string {
+  const base = ref.sessionId ? `/sessions/${ref.sessionId}/files` : `/projects/${ref.projectId}/files`;
   if (!path) return base;
   return `${base}/${path.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 export interface WorkspaceInfo extends WorkspaceRef {
-  /** Libellé : nom du projet, ou "projet · branche" pour une work session. */
+  /** Session dont c'est le dossier ; null pour le checkout principal. */
+  sessionId: string | null;
+  sessionName: string | null;
+  /** Libellé : nom du projet, ou "projet · branche" pour le dossier d'une session. */
   label: string;
   projectName: string;
   branch: string | null;
@@ -25,28 +34,30 @@ export interface WorkspaceInfo extends WorkspaceRef {
 }
 
 /**
- * Résout le workspace depuis l'URL courante (/projects/:id/files/* ou /worksessions/:wid/files/*),
- * avec le chemin du fichier demandé (splat).
+ * Résout le workspace depuis l'URL courante (/projects/:id/files/* ou /sessions/:id/files/*), avec le chemin du
+ * fichier demandé (splat). Une session d'avant les work sessions (sans dossier à elle) ouvre le checkout principal.
  */
 export function useWorkspaceFromRoute(): { info: WorkspaceInfo | null; loading: boolean; error: Error | undefined; filePath: string } {
   const params = useParams();
-  const projectId = params.id;
-  const worksessionId = params.wid;
+  const { pathname } = useLocation();
+  const sessionId = pathname.startsWith('/sessions/') ? params.id : undefined;
+  const projectId = sessionId ? undefined : params.id;
   const filePath = params['*'] ?? '';
   const { data: pData, loading: pLoading, error: pError } = useQuery<{ project: (Project & { workspaceExists: boolean }) | null }>(PROJECT, { variables: { id: projectId }, skip: !projectId });
-  const { data: wData, loading: wLoading, error: wError } = useQuery<{
-    worksession: { id: string; name: string; branch: string; path: string; exists: boolean; project: { id: string; name: string; slug: string } } | null;
-  }>(WORKSESSION, { variables: { id: worksessionId }, skip: !worksessionId });
+  const { data: sData, loading: sLoading, error: sError } = useQuery<{
+    session: { id: string; name: string; project: { id: string; name: string; slug: string; workspacePath: string }; worksession: { id: string; name: string; branch: string; path: string; exists: boolean } | null } | null;
+  }>(SESSION_WORKSPACE, { variables: { id: sessionId }, skip: !sessionId });
 
   let info: WorkspaceInfo | null = null;
-  if (worksessionId && wData?.worksession) {
-    const w = wData.worksession;
-    info = { projectId: w.project.id, worksessionId: w.id, label: `${w.project.name} · ${w.branch}`, projectName: w.project.name, branch: w.branch, path: w.path, exists: w.exists };
+  if (sessionId && sData?.session) {
+    const s = sData.session;
+    const w = s.worksession;
+    info = { projectId: s.project.id, worksessionId: w?.id ?? null, sessionId: s.id, sessionName: s.name, label: `${s.project.name} · ${w?.branch ?? s.name}`, projectName: s.project.name, branch: w?.branch ?? null, path: w?.path ?? s.project.workspacePath, exists: w?.exists ?? true };
   } else if (projectId && pData?.project) {
     const p = pData.project;
-    info = { projectId: p.id, worksessionId: null, label: p.name, projectName: p.name, branch: p.git?.branch ?? null, path: p.workspacePath, exists: p.workspaceExists };
+    info = { projectId: p.id, worksessionId: null, sessionId: null, sessionName: null, label: p.name, projectName: p.name, branch: p.git?.branch ?? null, path: p.workspacePath, exists: p.workspaceExists };
   }
-  return { info, loading: pLoading || wLoading, error: pError ?? wError, filePath };
+  return { info, loading: pLoading || sLoading, error: pError ?? sError, filePath };
 }
 
 export function formatSize(bytes: number | null | undefined): string {

@@ -66,7 +66,7 @@ export default function TerminalPage() {
   const [connection, setConnection] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const terminal = data?.terminal;
   useTabTitle(terminal ? `${terminal.name} · ${terminal.project.name}` : cachedName);
-  useGitTarget(terminal ? { projectId: terminal.project.id, worksessionId: terminal.worksession?.id ?? null, label: terminal.worksession ? `${terminal.project.name} · ${terminal.worksession.label}` : terminal.project.name } : null);
+  useGitTarget(terminal ? { projectId: terminal.project.id, worksessionId: terminal.worksession?.id ?? null, label: terminal.worksession ? `${terminal.project.name} · ${terminal.worksession.branch}` : terminal.project.name } : null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -154,7 +154,7 @@ export default function TerminalPage() {
             {terminal.worksession && (
               <>
                 {' '}
-                · <i className="bi bi-layers" /> {terminal.worksession.label}
+                · <i className="bi bi-git" /> {terminal.worksession.branch}
               </>
             )}{' '}
             · {terminal.worksession?.path ?? terminal.project.workspacePath}
@@ -171,7 +171,7 @@ export default function TerminalPage() {
           <button
             type="button"
             className="cc-btn danger"
-            onClick={() => void deleteTerminal({ id, name: terminal.name, worksessionId: terminal.worksession?.id ?? null })}
+            onClick={() => void deleteTerminal({ id, name: terminal.name })}
           >
             Supprimer
           </button>

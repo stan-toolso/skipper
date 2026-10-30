@@ -74,18 +74,11 @@ function TaskCard({ task, showProject, onEdit, target, onTag }: { task: Task; sh
               {task.session.status === 'RUNNING' && (task.session.activity === 'BUSY' ? ' · travaille' : ' · attend')}
             </Link>
           )}
-          {task.worksession && !task.worksession.archivedAt ? (
-            <Link to={`/worksessions/${task.worksession.id}/files`} title="Work session de la tâche : ses sessions y travaillent toutes">
-              <i className="bi bi-layers me-1" />
-              {task.worksession.label}
-            </Link>
-          ) : (
-            task.branch && (
-              <span className="font-monospace" title="Branche de la tâche (work session supprimée)">
-                <i className="bi bi-layers me-1" />
-                {task.branch}
-              </span>
-            )
+          {(task.worksession?.branch ?? task.branch) && (
+            <span className="font-monospace" title="Branche de la tâche : ses sessions y travaillent toutes">
+              <i className="bi bi-git me-1" />
+              {task.worksession?.branch ?? task.branch}
+            </span>
           )}
           {task.pullRequest && <PullRequestChip projectId={task.project.id} pr={task.pullRequest} />}
           <PersonChip person={task.assignee} />

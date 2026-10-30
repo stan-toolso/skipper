@@ -97,7 +97,7 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
       if (name.startsWith('mcp__sessions__')) {
         const op = name.slice('mcp__sessions__'.length);
         const short = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
-        const target = `${str(input, 'new_branch') ? ` dans une nouvelle work session (${str(input, 'new_branch')})` : str(input, 'worksession') ? ` dans la work session ${str(input, 'worksession')}` : ''}${inProject}`;
+        const target = `${str(input, 'new_branch') ? ` sur la branche ${str(input, 'new_branch')}` : str(input, 'worksession') ? ` dans le dossier ${str(input, 'worksession')}` : ''}${inProject}`;
         const verbs: Record<string, [string, string | undefined, string]> = {
           list: [`Consultation des sessions${inProject || ' du projet'}`, undefined, `consulter les sessions${inProject || ' du projet'}`],
           get: ["Consultation d'une session", undefined, 'consulter une session'],
@@ -113,11 +113,11 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
         const op = name.slice('mcp__worksessions__'.length);
         const branch = str(input, 'branch') ?? str(input, 'name') ?? '';
         const verbs: Record<string, [string, string]> = {
-          list: [`Consultation des work sessions${inProject || ' du projet'}`, `consulter les work sessions${inProject}`],
-          create: [`Création de la work session ${branch}${inProject}`, `créer la work session ${branch}${inProject}`],
-          delete: [`Suppression de la work session ${branch}${input.delete_branch ? ' et de sa branche' : ''}${inProject}`, `supprimer la work session ${branch}${input.delete_branch ? ' et sa branche' : ''}${inProject}`],
+          list: [`Consultation des dossiers de travail${inProject || ' du projet'}`, `consulter les dossiers de travail${inProject}`],
+          create: [`Création du dossier de travail ${branch}${inProject}`, `créer le dossier de travail ${branch}${inProject}`],
+          delete: [`Suppression du dossier de travail ${branch}${input.delete_branch ? ' et de sa branche' : ''}${inProject}`, `supprimer le dossier de travail ${branch}${input.delete_branch ? ' et sa branche' : ''}${inProject}`],
         };
-        const [label, action] = verbs[op] ?? [`Work sessions : ${op}`, `utiliser les work sessions (${op})`];
+        const [label, action] = verbs[op] ?? [`Dossiers de travail : ${op}`, `utiliser les dossiers de travail (${op})`];
         return { label, action };
       }
       if (name.startsWith('mcp__connections__') || name.startsWith('mcp__vault__')) {

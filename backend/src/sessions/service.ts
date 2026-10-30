@@ -261,7 +261,13 @@ export const sessionService = {
       // Une session s'exécute toujours dans une work session : rien ne tourne dans le checkout principal.
       throw new AppError('Une session travaille dans une work session : choisissez-en une ou créez-en une');
     }
-    if (input.worksessionId) await worksessionService.assertUsable(project, input.worksessionId); // vérifie l'appartenance et l'archivage
+    if (input.worksessionId) {
+      // Vérifie l'appartenance et l'archivage, puis la règle « une seule session active par work session » :
+      // le dossier (et sa branche) appartient à sa session ; une autre doit être archivée avant d'y travailler.
+      const wt = await worksessionService.assertUsable(project, input.worksessionId);
+      const [busy] = await sessionRepository.list({ worksessionId: wt.id, archived: 'exclude', limit: 1 });
+      if (busy) throw new AppError(`La session « ${busy.name} » travaille déjà sur la branche ${wt.branch} : archivez-la d'abord, ou lancez la nouvelle session sur une autre branche`);
+    }
 
     let parentSessionId: string | null = null;
     let ownerId = input.ownerId ?? null;
@@ -613,13 +619,35 @@ export const sessionService = {
     return publishSession(await sessionRepository.update(id, { archivedAt: new Date() }));
   },
 
-  /** Restaure une session archivée, dans sa propre work session : restaurée avec elle si elle était archivée (seule : ses autres sessions restent archivées). */
+  /**
+   * Restaure une session archivée avec son dossier de travail (sa work session, restaurée si elle l'était). Refusé
+   * si une autre session y a été ouverte entre-temps (relance, nouvelle session de la tâche) : une work session
+   * n'héberge qu'une session active.
+   */
   async unarchive(id: string): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (!session.archivedAt) return session;
-    if (session.worksessionId) await worksessionService.restore(session.worksessionId);
+    if (session.worksessionId) {
+      const [other] = (await sessionRepository.list({ worksessionId: session.worksessionId, archived: 'exclude', limit: 2 })).filter((s) => s.id !== id);
+      if (other) throw new AppError(`La session « ${other.name} » travaille déjà dans le dossier de cette session : archivez-la d'abord, ou relancez celle-ci`);
+      await worksessionService.restore(session.worksessionId);
+    }
     return publishSession(await sessionRepository.update(id, { archivedAt: null }));
+  },
+
+  /**
+   * Libère une work session pour une nouvelle session : ses sessions actives (celle qu'on relance, la précédente
+   * session d'une tâche) sont arrêtées et archivées. Une work session n'héberge qu'une session active ; la nouvelle
+   * reprend le dossier et la branche. Renvoie les identifiants des sessions archivées.
+   */
+  async vacateWorksession(worksessionId: string): Promise<string[]> {
+    const ids: string[] = [];
+    for (const s of await sessionRepository.list({ worksessionId, archived: 'exclude', limit: 50 })) {
+      await this.archive(s.id);
+      ids.push(s.id);
+    }
+    return ids;
   },
 
   /** Nouvelle session qui reprend la conversation d'une session (archivée ou non) comme contexte. */
@@ -627,12 +655,17 @@ export const sessionService = {
     const source = await sessionRepository.findById(id);
     if (!source) throw new NotFoundError('Session introuvable');
     const prompt = await relaunchPrompt(source, input.instruction);
-    // Par défaut dans sa propre work session (restaurée si elle était archivée), sinon dans une nouvelle nommée d'après la session.
-    // Un chat relancé reste un chat : sans work session.
+    // La nouvelle session reprend le dossier et la branche de la session d'origine (sa work session, libérée de
+    // toute session active — l'origine comprise — et restaurée si elle était archivée) ; si ce dossier a été
+    // supprimé, une nouvelle work session nommée d'après la session. Un chat relancé reste un chat : sans work session.
     const chat = source.kind === 'chat';
-    const worksessionId = chat || input.newWorksession ? null : (input.worksessionId ?? source.worksessionId ?? null);
-    if (worksessionId) await worksessionService.restore(worksessionId);
-    const newWorksession = chat ? null : input.newWorksession ?? (worksessionId ? null : { label: source.name, name: namesFromText(source.name).name });
+    let worksessionId = chat ? null : (source.worksessionId ?? null);
+    if (worksessionId && !(await worksessionService.get(worksessionId).catch(() => null))) worksessionId = null;
+    if (worksessionId) {
+      await this.vacateWorksession(worksessionId);
+      await worksessionService.restore(worksessionId);
+    }
+    const newWorksession = chat || worksessionId ? null : { label: source.name, name: namesFromText(source.name).name };
     return this.create({
       projectId: source.projectId,
       kind: source.kind,

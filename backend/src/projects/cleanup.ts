@@ -6,6 +6,7 @@ import { contextPluginDir } from '../context/skills.js';
 import { runner } from '../runners/index.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
+import type { Session } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worksessionService, worksessionsRoot } from '../worksessions/service.js';
 import { worksessionLabel, type Worksession } from '../worksessions/types.js';
@@ -74,6 +75,46 @@ export async function archiveWorksessionCascade(id: string): Promise<Worksession
     await sessionRepository.archiveByWorksession(worksessionId, at);
     await deleteTerminals(wt.projectId, worksessionId);
   });
+}
+
+/** Sessions actives (non archivées) d'une work session, hors `exceptId`. */
+async function activeSessionsIn(worksessionId: string, exceptId: string | null = null): Promise<Session[]> {
+  return (await sessionService.list({ worksessionId, archived: 'exclude', limit: 50 })).filter((s) => s.id !== exceptId);
+}
+
+/**
+ * Archive une session et, avec elle, son dossier de travail : une work session n'héberge qu'une session, elle est
+ * donc archivée (terminaux fermés, dossier et branche conservés) dès qu'aucune autre session active n'y reste.
+ * Restaurer la session (`sessionService.unarchive`) restaure la work session.
+ */
+export async function archiveSessionCascade(id: string): Promise<Session> {
+  const session = await sessionService.archive(id);
+  if (session.worksessionId && !(await activeSessionsIn(session.worksessionId)).length) {
+    await archiveWorksessionCascade(session.worksessionId).catch((err) => console.warn('[sessions] work session non archivée avec sa session', session.worksessionId, err));
+  }
+  return session;
+}
+
+/**
+ * Supprime une session (historique compris) et son dossier de travail quand il ne lui reste aucune session, même
+ * archivée : la work session est supprimée (terminaux fermés ; branche conservée sauf `deleteBranch`). S'il y reste
+ * des sessions archivées (relances successives), la work session est archivée avec elles.
+ */
+export async function deleteSessionCascade(id: string, deleteBranch = false): Promise<boolean> {
+  const session = await sessionService.get(id);
+  const ok = await sessionService.delete(id);
+  const worksessionId = session?.worksessionId ?? null;
+  if (!ok || !worksessionId) return ok;
+  const wt = await worksessionService.get(worksessionId).catch(() => null);
+  if (!wt) return ok;
+  const remaining = await sessionService.list({ worksessionId, archived: 'all', limit: 1 });
+  if (!remaining.length) {
+    await deleteTerminals(wt.projectId, worksessionId);
+    await worksessionService.delete(worksessionId, deleteBranch).catch((err) => console.warn('[sessions] dossier non supprimé avec sa session', wt.name, err));
+  } else if (!wt.archivedAt && !(await activeSessionsIn(worksessionId)).length) {
+    await archiveWorksessionCascade(worksessionId).catch((err) => console.warn('[sessions] work session non archivée', wt.name, err));
+  }
+  return ok;
 }
 
 /** Restaure une work session archivée et les sessions archivées avec elle. */

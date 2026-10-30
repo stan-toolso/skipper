@@ -100,7 +100,7 @@ function DetailsLine({ pr }: { pr: PullRequest }) {
 
 /**
  * Détail d'une PR : checks, revues, possibilité de fusion ; fusion (merge, squash, rebase) avec
- * nettoyage de la work session, des branches et des tâches liées.
+ * nettoyage du dossier de travail, des branches et des tâches liées.
  */
 export function PullRequestModal({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose: () => void; onMerged?: (deletedWorksessionIds: string[]) => void }) {
   const q = usePollingQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
@@ -210,7 +210,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                   <Form.Check id="pr-del-remote" label={`Supprimer la branche ${pr.headRefName} sur GitHub`} checked={deleteRemoteBranch} disabled={pr.isCrossRepository} onChange={(e) => setDeleteRemoteBranch(e.target.checked)} />
                   <Form.Check
                     id="pr-del-wt"
-                    label={pr.worksession ? `Supprimer la work session ${pr.worksession.name} et la branche locale` : 'Supprimer la branche locale'}
+                    label={pr.worksession ? `Supprimer la branche locale et le dossier de travail de la branche (ses sessions sont archivées)` : 'Supprimer la branche locale'}
                     checked={deleteWorksession}
                     disabled={pr.isCrossRepository}
                     onChange={(e) => setDeleteWorksession(e.target.checked)}
@@ -219,7 +219,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                     <Form.Check
                       className="ms-4"
                       id="pr-stop-sessions"
-                      label={`Arrêter ${runningSessions.length > 1 ? `les ${runningSessions.length} sessions encore ouvertes` : `la session encore ouverte (${runningSessions[0].name})`} dans cette work session (historique conservé)`}
+                      label={`Arrêter ${runningSessions.length > 1 ? `les ${runningSessions.length} sessions encore ouvertes` : `la session encore ouverte (${runningSessions[0].name})`} sur cette branche (historique conservé)`}
                       checked={stopSessions}
                       onChange={(e) => setStopSessions(e.target.checked)}
                     />
@@ -241,7 +241,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                 <div>
                   <i className="bi bi-check2-circle me-1" />
                   Pull request fusionnée{result.sha ? ` (${result.sha.slice(0, 7)})` : ''}.
-                  {result.deletedWorksessionIds.length > 0 && ' Work session supprimée.'}
+                  {result.deletedWorksessionIds.length > 0 && ' Dossier de travail supprimé.'}
                   {result.completedTaskIds.length > 0 && ` ${result.completedTaskIds.length > 1 ? 'Tâches terminées' : 'Tâche terminée'}.`}
                 </div>
                 {result.warnings.map((w) => (

@@ -155,10 +155,8 @@ export interface SessionFilter {
   offset?: number;
 }
 
-/** Relance d'une session à partir de sa conversation. */
+/** Relance d'une session à partir de sa conversation, dans son dossier de travail (ou un nouveau s'il a disparu). */
 export interface RelaunchInput {
-  worksessionId?: string | null;
-  newWorksession?: NewWorksessionInput | null;
   name?: string | null;
   instruction?: string | null;
   ownerId?: string | null;

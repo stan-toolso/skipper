@@ -1,8 +1,8 @@
 import { useQuery } from '@apollo/client';
 import { useRef, useState } from 'react';
 import { Button, Col, Form, Row } from 'react-bootstrap';
-import { LLM_KEYS, type ConditionGroup, type InputVariable, type LlmBackend, type LlmKeyItem, type LlmKeys, type LlmNodeConfig, type LlmOutputFormat, type NewTaskTemplate, type TaskWorksessionMode, type TriggerEvent, type WorkflowDefinition, type WorkflowIssue, type WorkflowNode } from '../../../graphql/automation';
-import type { Provider, Worksession } from '../../../graphql/operations';
+import { LLM_KEYS, type ConditionGroup, type InputVariable, type LlmBackend, type LlmKeyItem, type LlmKeys, type LlmNodeConfig, type LlmOutputFormat, type NewTaskTemplate, type TriggerEvent, type WorkflowDefinition, type WorkflowIssue, type WorkflowNode } from '../../../graphql/automation';
+import type { Provider } from '../../../graphql/operations';
 import { nodeTypeInfo, VARIABLE_KEY_PATTERN } from '../../../lib/automation';
 import { availablePaths } from '../../../lib/workflowGraph';
 import { buildConfig, FieldGroup } from '../../SessionLauncher';
@@ -16,7 +16,6 @@ interface Props {
   onChange: (node: WorkflowNode) => void;
   onDelete: () => void;
   providers: Provider[];
-  worksessions: Worksession[];
   issues: WorkflowIssue[];
 }
 
@@ -165,40 +164,10 @@ function SessionConfig({ node, providers, onChange }: { node: WorkflowNode; prov
   );
 }
 
-function WorksessionChoice({ node, worksessions, onChange, modes }: { node: WorkflowNode; worksessions: Worksession[]; onChange: (patch: Partial<WorkflowNode>) => void; modes: { value: TaskWorksessionMode; label: string }[] }) {
-  return (
-    <>
-      <Form.Group className="mb-2">
-        <Form.Label>Où travailler</Form.Label>
-        <Form.Select value={node.worksessionMode ?? modes[0].value} onChange={(e) => onChange({ worksessionMode: e.target.value as TaskWorksessionMode })}>
-          {modes.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </Form.Select>
-      </Form.Group>
-      {node.worksessionMode === 'existing' && (
-        <Form.Group className="mb-2">
-          <Form.Label>Work session</Form.Label>
-          <Form.Select value={node.worksessionId ?? ''} onChange={(e) => onChange({ worksessionId: e.target.value || null })}>
-            <option value="">Choisir…</option>
-            {worksessions.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.label}
-              </option>
-            ))}
-          </Form.Select>
-        </Form.Group>
-      )}
-    </>
-  );
-}
-
 const EXPRESSION_HELP = 'Opérateurs : == != > >= < <= contains matches startsWith endsWith in, and / or / not, « is empty », parenthèses. Ex. : nodes.review.json.approved and input.env == "prod"';
 
 /** Panneau de droite de l'éditeur : les réglages du nœud sélectionné, selon son type. */
-export default function NodeInspector({ node, definition, onChange, onDelete, providers, worksessions, issues }: Props) {
+export default function NodeInspector({ node, definition, onChange, onDelete, providers, issues }: Props) {
   const paths = availablePaths(definition, node.key);
   const patch = (p: Partial<WorkflowNode>) => onChange({ ...node, ...p });
   const info = nodeTypeInfo[node.type];
@@ -288,15 +257,7 @@ export default function NodeInspector({ node, definition, onChange, onDelete, pr
           <SessionConfig node={node} providers={providers} onChange={patch} />
           <TemplateField label="Instruction" value={node.prompt ?? ''} onChange={(prompt) => patch({ prompt })} paths={paths} rows={4} placeholder="Consignes supplémentaires…" />
           <Form.Check type="switch" id="wf-include-task" className="mb-2" label="Inclure le texte de la tâche dans l'instruction" checked={node.includeTask ?? true} onChange={(e) => patch({ includeTask: e.target.checked })} />
-          <WorksessionChoice
-            node={node}
-            worksessions={worksessions}
-            onChange={patch}
-            modes={[
-              { value: 'new', label: 'La work session de la tâche (créée à sa première session)' },
-              { value: 'existing', label: 'Une work session existante' },
-            ]}
-          />
+          <Form.Text className="d-block mb-2">L'agent travaille dans le dossier de la tâche (sa branche task/…), créé à sa première session et repris ensuite ; la session précédente de la tâche est archivée.</Form.Text>
           <Form.Check type="switch" id="wf-task-wait" className="mb-2" label="Attendre la fin du tour avant de continuer" checked={node.wait ?? true} onChange={(e) => patch({ wait: e.target.checked })} />
           <Form.Group className="mb-2">
             <Form.Label>Délai maximal (minutes)</Form.Label>
@@ -311,16 +272,7 @@ export default function NodeInspector({ node, definition, onChange, onDelete, pr
           <TemplateField label="Nom de la session" value={node.sessionName ?? ''} onChange={(sessionName) => patch({ sessionName })} paths={paths} placeholder="Revue de {{input.ticket}}" />
           <SessionConfig node={node} providers={providers} onChange={patch} />
           <TemplateField label="Instruction *" value={node.prompt ?? ''} onChange={(prompt) => patch({ prompt })} paths={paths} rows={5} />
-          <WorksessionChoice
-            node={node}
-            worksessions={worksessions}
-            onChange={patch}
-            modes={[
-              { value: 'new', label: 'Une nouvelle work session' },
-              { value: 'existing', label: 'Une work session existante' },
-            ]}
-          />
-          {node.worksessionMode === 'new' && <TemplateField label="Branche de la nouvelle work session" value={node.branch ?? ''} onChange={(branch) => patch({ branch })} paths={paths} placeholder="feat/{{input.ticket}}" />}
+          <TemplateField label="Branche" value={node.branch ?? ''} onChange={(branch) => patch({ branch })} paths={paths} placeholder="feat/{{input.ticket}}" hint="La session travaille dans le dossier de cette branche (créé s'il n'existe pas, sa session précédente archivée) ; vide : une branche propre à l'exécution." />
           <Form.Check type="switch" id="wf-session-wait" className="mb-2" label="Attendre la fin du tour avant de continuer" checked={node.wait ?? true} onChange={(e) => patch({ wait: e.target.checked })} />
           <Form.Check type="switch" id="wf-session-end" className="mb-2" label="Terminer la session après son tour" checked={node.endAfterTurn ?? false} onChange={(e) => patch({ endAfterTurn: e.target.checked })} />
           <Form.Group className="mb-2">

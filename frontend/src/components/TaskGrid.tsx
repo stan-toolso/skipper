@@ -335,15 +335,8 @@ function Cell({ task: t, col, onEdit, onTag, target }: { task: Task; col: TaskCo
           {t.session.name}
         </Link>
       ) : null;
-    case 'worksession':
-      return t.worksession && !t.worksession.archivedAt ? (
-        <Link to={`/worksessions/${t.worksession.id}/files`} className="text-reset text-decoration-none">
-          <i className="bi bi-layers me-1 text-secondary" />
-          {t.worksession.label}
-        </Link>
-      ) : t.branch ? (
-        <span className="font-monospace small">{t.branch}</span>
-      ) : null;
+    case 'branch':
+      return t.worksession?.branch || t.branch ? <span className="font-monospace small">{t.worksession?.branch ?? t.branch}</span> : null;
     case 'pullRequest':
       return t.pullRequest ? <PullRequestChip projectId={t.project.id} pr={t.pullRequest} /> : null;
     case 'comments':

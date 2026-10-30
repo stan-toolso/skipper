@@ -307,8 +307,8 @@ function PullRequestsSection({ projectId, worksessionId, branch }: { projectId: 
           number={openNumber}
           onClose={() => setOpenNumber(null)}
           onMerged={(deleted) => {
-            // La work session affiché vient d'être supprimé : retour au projet.
-            if (worksessionId && deleted.includes(worksessionId) && location.pathname.startsWith('/worksessions/')) navigate(`/projects/${projectId}`);
+            // Le dossier de travail affiché (fichiers d'une session) vient d'être supprimé : retour au projet.
+            if (worksessionId && deleted.includes(worksessionId) && /^\/sessions\/[^/]+\/files/.test(location.pathname)) navigate(`/projects/${projectId}`);
           }}
         />
       )}
@@ -468,7 +468,7 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
       </div>
       {tab === 'session' && sessionId && <SessionPanel sessionId={sessionId} />}
       {tab === 'changes' && sessionId && (
-        <SessionChanges sessionId={sessionId} workspace={{ projectId: target.projectId, worksessionId: target.worksessionId }} changes={changes.changes} loading={changes.loading} error={changes.error} onRefresh={changes.refresh} />
+        <SessionChanges sessionId={sessionId} workspace={{ projectId: target.projectId, sessionId: target.worksessionId ? sessionId : null }} changes={changes.changes} loading={changes.loading} error={changes.error} onRefresh={changes.refresh} />
       )}
       {tab === 'task' && taskId && (
         <div className="git-body">

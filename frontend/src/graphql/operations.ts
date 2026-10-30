@@ -307,10 +307,10 @@ export interface Task {
   attachmentCount: number;
   attachments: { id: string; name: string; mediaType: string; size: number }[];
   branch: string | null;
-  /** Work session consacrée à la tâche (active, sinon la dernière archivée). */
-  worksession: { id: string; label: string; archivedAt: string | null } | null;
+  /** Dossier de travail de la tâche (notion technique : seule sa branche est montrée), actif ou le dernier archivé. */
+  worksession: { id: string; branch: string; archivedAt: string | null } | null;
   project: { id: string; name: string };
-  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worksession: { id: string; branch: string; label: string } | null } | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worksession: { id: string; branch: string } | null } | null;
   createdBySession: { id: string; name: string } | null;
   /** Présent seulement dans la query TASKS. */
   pullRequest?: PullRequestSummary | null;
@@ -328,7 +328,7 @@ export interface AppNotification {
 }
 
 export interface SearchHit {
-  kind: 'PROJECT' | 'WORKSESSION' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
+  kind: 'PROJECT' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
   id: string;
   title: string;
   detail: string | null;
@@ -896,8 +896,8 @@ export const UPDATE_SESSION_CONFIG = gql`
 `;
 
 export const DELETE_SESSION = gql`
-  mutation DeleteSession($id: ID!) {
-    deleteSession(id: $id)
+  mutation DeleteSession($id: ID!, $deleteBranch: Boolean) {
+    deleteSession(id: $id, deleteBranch: $deleteBranch)
   }
 `;
 
@@ -1131,7 +1131,10 @@ export const RESTORE_CONTEXT_INSTRUCTION_VERSION = gql`
   }
 `;
 
-/** Explorateur de la sidebar : projets, dossiers de travail (checkout principal et worksessions) et leur contenu. */
+/**
+ * Explorateur de la sidebar : projets, leurs sessions (chacune avec son dossier de travail — la work session, notion
+ * technique que l'interface ne montre pas) et leurs terminaux.
+ */
 export const SIDEBAR = gql`
   query Sidebar($open: OpenItemsInput) {
     chats(limit: 12) {
@@ -1150,6 +1153,15 @@ export const SIDEBAR = gql`
         ...SidebarSession
         worksession {
           id
+          name
+          branch
+          exists
+          task {
+            id
+            title
+            status
+            statusTag
+          }
         }
       }
       terminals {
@@ -1158,28 +1170,6 @@ export const SIDEBAR = gql`
         status
         worksession {
           id
-        }
-      }
-      worksessions {
-        id
-        name
-        branch
-        label
-        customLabel
-        exists
-        task {
-          id
-          title
-          status
-          statusTag
-        }
-        sessions {
-          ...SidebarSession
-        }
-        terminals {
-          id
-          name
-          status
         }
       }
     }
@@ -1206,9 +1196,9 @@ export const SIDEBAR = gql`
   }
 `;
 
-/** Pull requests des work sessions (requête lente : GitHub), interrogée moins souvent que la sidebar. */
-export const SIDEBAR_WORKSESSION_PULL_REQUESTS = gql`
-  query SidebarWorksessionPullRequests($open: OpenItemsInput) {
+/** Pull requests des branches des sessions (requête lente : GitHub), interrogée moins souvent que la sidebar. */
+export const SIDEBAR_PULL_REQUESTS = gql`
+  query SidebarPullRequests($open: OpenItemsInput) {
     projects: sidebarProjects(open: $open) {
       id
       worksessions {
@@ -1240,8 +1230,9 @@ export const SESSION_BROWSER = gql`
   }
 `;
 
-export const PROJECT_WORKSESSIONS = gql`
-  query ProjectWorksessions($id: ID!) {
+/** Ce que la modale de lancement doit savoir d'un projet : dépôt, branche principale, autorisations par défaut. */
+export const PROJECT_LAUNCH_INFO = gql`
+  query ProjectLaunchInfo($id: ID!) {
     project(id: $id) {
       id
       gitUrl
@@ -1250,85 +1241,6 @@ export const PROJECT_WORKSESSIONS = gql`
       git {
         branch
         commit
-      }
-      worksessions {
-        id
-        name
-        branch
-        label
-        customLabel
-        path
-        exists
-        archivedAt
-        git {
-          branch
-          commit
-        }
-        createdAt
-      }
-    }
-  }
-`;
-
-export const CREATE_WORKSESSION = gql`
-  mutation CreateWorksession($projectId: ID!, $branch: String, $name: String, $baseRef: String, $label: String) {
-    createWorksession(projectId: $projectId, branch: $branch, name: $name, baseRef: $baseRef, label: $label) {
-      id
-      name
-      branch
-      label
-    }
-  }
-`;
-
-export const RENAME_WORKSESSION = gql`
-  mutation RenameWorksession($id: ID!, $label: String, $name: String) {
-    renameWorksession(id: $id, label: $label, name: $name) {
-      id
-      name
-      branch
-      label
-      customLabel
-    }
-  }
-`;
-
-export const ARCHIVE_WORKSESSION = gql`
-  mutation ArchiveWorksession($id: ID!) {
-    archiveWorksession(id: $id) {
-      id
-      archivedAt
-    }
-  }
-`;
-
-export const RESTORE_WORKSESSION = gql`
-  mutation RestoreWorksession($id: ID!) {
-    restoreWorksession(id: $id) {
-      id
-      archivedAt
-    }
-  }
-`;
-
-export const DELETE_WORKSESSION = gql`
-  mutation DeleteWorksession($id: ID!, $deleteBranch: Boolean) {
-    deleteWorksession(id: $id, deleteBranch: $deleteBranch)
-  }
-`;
-
-/** Ce qui reste dans une work session (sessions, terminaux) : sert à proposer sa suppression quand on en retire le dernier élément. */
-export const WORKSESSION_CONTENTS = gql`
-  query WorksessionContents($id: ID!) {
-    worksession(id: $id) {
-      id
-      branch
-      label
-      sessions {
-        id
-      }
-      terminals {
-        id
       }
     }
   }
@@ -1422,7 +1334,7 @@ export const TASK_FIELDS = gql`
     branch
     worksession {
       id
-      label
+      branch
       archivedAt
     }
     project {
@@ -1437,7 +1349,6 @@ export const TASK_FIELDS = gql`
       worksession {
         id
         branch
-        label
       }
     }
     createdBySession {
@@ -1503,8 +1414,8 @@ export const DELETE_TASK = gql`
 `;
 
 export const START_TASK_SESSION = gql`
-  mutation StartTaskSession($id: ID!, $worksessionId: ID, $provider: String, $config: JSON, $prompt: String) {
-    startTaskSession(id: $id, worksessionId: $worksessionId, provider: $provider, config: $config, prompt: $prompt) {
+  mutation StartTaskSession($id: ID!, $provider: String, $config: JSON, $prompt: String) {
+    startTaskSession(id: $id, provider: $provider, config: $config, prompt: $prompt) {
       id
     }
   }
@@ -1518,12 +1429,6 @@ export const TASK_LAUNCH_TARGETS = gql`
       gitUrl
       defaultPermissionMode
       approvalConnections
-      worksessions {
-        id
-        branch
-        label
-        exists
-      }
     }
   }
 `;
@@ -1584,20 +1489,24 @@ export interface FileContent {
   content: string | null;
 }
 
-export const WORKSESSION = gql`
-  query Worksession($id: ID!) {
-    worksession(id: $id) {
+/** Dossier de travail d'une session (explorateur de fichiers). */
+export const SESSION_WORKSPACE = gql`
+  query SessionWorkspace($id: ID!) {
+    session(id: $id) {
       id
       name
-      branch
-      label
-      path
-      exists
-      archivedAt
       project {
         id
         name
         slug
+        workspacePath
+      }
+      worksession {
+        id
+        name
+        branch
+        path
+        exists
       }
     }
   }

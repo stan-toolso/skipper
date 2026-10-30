@@ -15,8 +15,20 @@ const worksessionService = vi.hoisted(() => ({
     return true;
   }),
   listByProject: vi.fn(async () => []),
+  archive: vi.fn(async (id: string, archiveSessions: (worksessionId: string, at: Date) => Promise<void>) => {
+    calls.log.push(`worksession.archive ${id}`);
+    await archiveSessions(id, new Date());
+    return { ...state.worksession, archivedAt: new Date() };
+  }),
 }));
 const sessionService = vi.hoisted(() => ({
+  get: vi.fn(async (id: string) => state.sessions.find((s) => s.id === id) ?? null),
+  archive: vi.fn(async (id: string) => {
+    calls.log.push(`session.archive ${id}`);
+    const s = state.sessions.find((x) => x.id === id)!;
+    s.archivedAt = new Date();
+    return s;
+  }),
   list: vi.fn(async (filter: { worksessionId?: string; archived?: string }) => state.sessions.filter((s) => s.worksessionId === filter.worksessionId && (filter.archived === 'all' || !s.archivedAt))),
   stop: vi.fn(async (id: string) => {
     calls.log.push(`session.stop ${id}`);
@@ -63,7 +75,7 @@ vi.mock('../worksessions/service.js', () => ({ worksessionService, worksessionsR
 vi.mock('./service.js', () => ({ projectService: { get: vi.fn(), delete: vi.fn() } }));
 vi.mock('./workspace.js', () => ({ workspacePath: () => '/tmp/ws/p' }));
 
-const { deleteWorksessionCascade, removeWorksessionKeepingSessions } = await import('./cleanup.js');
+const { archiveSessionCascade, deleteSessionCascade, deleteWorksessionCascade, removeWorksessionKeepingSessions } = await import('./cleanup.js');
 
 beforeEach(() => {
   calls.log = [];
@@ -108,6 +120,46 @@ describe('removeWorksessionKeepingSessions', () => {
     const { archivedSessionIds } = await removeWorksessionKeepingSessions('w1', { stopSessions: true });
     expect(calls.log[0]).toBe('session.stop s-live');
     expect(archivedSessionIds).toEqual(['s-done', 's-old', 's-live']);
+  });
+});
+
+describe('archiveSessionCascade', () => {
+  it('archive la session puis sa work session (terminaux fermés) quand aucune autre session active n’y reste', async () => {
+    await archiveSessionCascade('s-done');
+    expect(calls.log).toEqual(['session.archive s-done', 'worksession.archive w1', 'terminal.delete t1']);
+    expect(sessionRepository.archiveByWorksession).toHaveBeenCalledWith('w1', expect.any(Date));
+  });
+
+  it('laisse la work session active tant qu’une autre session y travaille (données d’avant la règle « une session par work session »)', async () => {
+    state.sessions.push({ id: 's-live', worksessionId: 'w1', status: 'running', archivedAt: null });
+    await archiveSessionCascade('s-done');
+    expect(calls.log).toEqual(['session.archive s-done']);
+  });
+
+  it('archive simplement une session sans work session', async () => {
+    state.sessions.push({ id: 's-main', worksessionId: null, status: 'completed', archivedAt: null });
+    await archiveSessionCascade('s-main');
+    expect(calls.log).toEqual(['session.archive s-main']);
+  });
+});
+
+describe('deleteSessionCascade', () => {
+  it('supprime la work session (terminaux fermés, branche gardée sauf demande) quand il ne lui reste aucune session', async () => {
+    state.sessions = state.sessions.filter((s) => s.id !== 's-old');
+    expect(await deleteSessionCascade('s-done', true)).toBe(true);
+    expect(calls.log).toEqual(['session.delete s-done', 'terminal.delete t1', 'worksession.delete w1 branch=true']);
+  });
+
+  it('archive la work session quand il n’y reste que des sessions archivées', async () => {
+    expect(await deleteSessionCascade('s-done')).toBe(true);
+    expect(calls.log).toEqual(['session.delete s-done', 'worksession.archive w1', 'terminal.delete t1']);
+    expect(worksessionService.delete).not.toHaveBeenCalled();
+  });
+
+  it('ne touche pas à une work session où une autre session travaille encore', async () => {
+    state.sessions.push({ id: 's-live', worksessionId: 'w1', status: 'running', archivedAt: null });
+    await deleteSessionCascade('s-done');
+    expect(calls.log).toEqual(['session.delete s-done']);
   });
 });
 

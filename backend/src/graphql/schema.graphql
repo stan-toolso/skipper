@@ -1668,7 +1668,6 @@ input OpenItemsInput {
 
 enum SearchKind {
   PROJECT
-  WORKSESSION
   SESSION
   TERMINAL
   TASK
@@ -1755,9 +1754,8 @@ input PushSubscriptionInput {
   userAgent: String
 }
 
+"Relance : la nouvelle session reprend le dossier et la branche de la session d'origine (archivée), ou un nouveau dossier s'il a disparu."
 input RelaunchSessionInput {
-  worksessionId: ID
-  newWorksession: NewWorksessionInput
   name: String
   instruction: String
 }
@@ -2192,13 +2190,14 @@ type Mutation {
   startSession(id: ID!): Session!
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
-  "Archive la session (arrêtée si elle tourne) : cachée des listes, historique conservé, relançable depuis l'historique du projet."
+  "Archive la session et, avec elle, son dossier de travail (terminaux fermés, dossier et branche conservés) : consultable, restaurable et relançable depuis l'historique du projet."
   archiveSession(id: ID!): Session!
+  "Restaure une session archivée avec son dossier de travail ; refusé si une autre session y travaille depuis."
   unarchiveSession(id: ID!): Session!
   "Nouvelle session qui reprend la conversation de celle-ci comme contexte."
   relaunchSession(id: ID!, input: RelaunchSessionInput!): Session!
-  "Suppression définitive de la session et de son historique."
-  deleteSession(id: ID!): Boolean!
+  "Supprime définitivement la session (historique compris) et son dossier de travail s'il ne lui reste aucune session ; la branche est conservée sauf deleteBranch."
+  deleteSession(id: ID!, deleteBranch: Boolean = false): Boolean!
   "Envoie une instruction (texte et fichiers joints ; l'un des deux au moins). Une session terminée est relancée."
   sendSessionMessage(id: ID!, text: String!, attachments: [AttachmentInput!]): Session!
   "Fin propre : l'agent termine son tour, puis la session se termine."
@@ -2231,8 +2230,8 @@ type Mutation {
   updateTaskComment(id: ID!, body: String!, attachments: [AttachmentInput!], removeAttachmentIds: [ID!]): TaskComment!
   "Ses propres commentaires, ou administrateur du projet."
   deleteTaskComment(id: ID!): Boolean!
-  "Confie la tâche à un agent, dans la work session de la tâche (créée à sa première session, task/<slug> pour un projet git ; réutilisée ensuite), sauf worksessionId. prompt : consigne relue (sinon le texte de la tâche)."
-  startTaskSession(id: ID!, provider: String, config: JSON, worksessionId: ID, prompt: String): Session!
+  "Confie la tâche à un agent, dans le dossier de la tâche (créé à sa première session, branche task/<slug> pour un projet git, repris ensuite : la session précédente de la tâche est archivée). prompt : consigne relue (sinon le texte de la tâche)."
+  startTaskSession(id: ID!, provider: String, config: JSON, prompt: String): Session!
   "Crée une clé d'API du projet (administrateurs) ; le secret n'est montré qu'une fois."
   createProjectApiKey(projectId: ID!, name: String!): CreatedProjectApiKey!
   deleteProjectApiKey(id: ID!): Boolean!

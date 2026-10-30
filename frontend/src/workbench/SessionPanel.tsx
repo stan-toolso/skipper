@@ -12,7 +12,7 @@ const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 
 
 /**
  * Onglet « Session » du panneau de droite, à côté d'une page de session : ce que l'en-tête de la page montrait
- * (projet, work session, personne, tâche, workflow, planification, jauge de contexte), le bandeau de contexte au-delà du
+ * (projet, branche, personne, tâche, workflow, planification, jauge de contexte), le bandeau de contexte au-delà du
  * seuil (compacter, repartir d'une conversation neuve, ignorer) et toutes ses actions.
  * La requête est celle de la page, qui la sonde : le panneau lit le cache.
  */
@@ -57,20 +57,19 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
         </div>
         {session.worksession && (
           <div>
-            <dt>Work session</dt>
-            <dd>
-              <i className="bi bi-layers me-1" />
-              {session.worksession.label}
-              <div className="font-monospace cc-dimmer">{session.worksession.branch}</div>
+            <dt>Branche</dt>
+            <dd className="font-monospace">
+              <i className="bi bi-git me-1" />
+              {session.worksession.branch}
             </dd>
           </div>
         )}
         {!session.worksession && session.formerWorksession && (
           <div>
-            <dt>Work session</dt>
-            <dd title={`La session a travaillé dans la work session ${session.formerWorksession.name} (branche ${session.formerWorksession.branch}), supprimée depuis`}>
-              <i className="bi bi-layers me-1" />
-              {session.formerWorksession.label} <span className="cc-dimmer">(supprimée)</span>
+            <dt>Branche</dt>
+            <dd className="font-monospace" title="La session a travaillé sur cette branche ; son dossier de travail a été supprimé depuis">
+              <i className="bi bi-git me-1" />
+              {session.formerWorksession.branch} <span className="cc-dimmer">(dossier supprimé)</span>
             </dd>
           </div>
         )}
