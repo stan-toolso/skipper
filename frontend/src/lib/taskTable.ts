@@ -2,7 +2,7 @@ import type { Task, TaskPriority, TaskStatus } from '../graphql/operations';
 import type { PullRequestStage } from '../graphql/pullRequests';
 
 /** Étape d'une PR suivie telle qu'elle se lit et se filtre dans la grille. */
-export const PR_STAGE_TEXT: Record<PullRequestStage, string> = { DRAFT: 'brouillon', TO_MERGE: 'à fusionner', TO_DEPLOY: 'à déployer', DEPLOYED: 'déployée', CANCELLED: 'annulée' };
+export const PR_STAGE_TEXT: Record<PullRequestStage, string> = { DRAFT: 'brouillon', TO_MERGE: 'à fusionner', MERGED: 'fusionnée', CANCELLED: 'annulée' };
 
 /**
  * Vue liste des tâches : définition des colonnes, disposition choisie par la personne (ordre, largeurs, colonnes

@@ -80,7 +80,7 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
           pr_list: ['Consultation des pull requests suivies', 'consulter les pull requests suivies'],
           pr_open: [`Ouverture de la pull request « ${title ?? ''} » sur GitHub (branche poussée avec votre compte)`, `ouvrir la pull request « ${title ?? ''} » sur GitHub`],
           pr_register: ["Suivi d'une pull request existante", 'suivre une pull request existante'],
-          pr_update: [`Mise à jour d'une pull request suivie${str(input, 'status') ? ` (${str(input, 'status')})` : input.deployed === true ? ' (déployée)' : ''}`, 'mettre à jour une pull request suivie'],
+          pr_update: [`Mise à jour d'une pull request suivie${str(input, 'status') ? ` (${str(input, 'status')})` : ''}`, 'mettre à jour une pull request suivie'],
         };
         const [label, action] = verbs[op] ?? [`Tâches : ${op}`, `utiliser les tâches (${op})`];
         return { label, action };
@@ -263,6 +263,18 @@ export function sessionStateHint(status: string, activity: string | null, pendin
   if (status === 'QUEUED') return 'attend une place pour démarrer';
   if (status === 'INTERRUPTED' && activity === 'BUSY') return 'interrompue en plein travail';
   return null;
+}
+
+/**
+ * Puce de la tâche d'une session (sidebar). Une tâche marquée terminée alors que sa session y travaille encore (nouvelle
+ * instruction, finitions après coup) ne s'affiche pas « terminée » mais « reprise » : son étiquette d'état (souvent
+ * « PR #n à fusionner ») ne vaut plus tant que le tour n'est pas fini ; elle reste lisible dans l'infobulle (`note`).
+ */
+export function taskChipOf(task: { status: string; statusTag?: string | null }, session: { status: string; activity: string | null } | null): { text: string; cls: string; tag: string | null; note: string | null } {
+  const working = session != null && (session.status === 'QUEUED' || (session.status === 'RUNNING' && session.activity === 'BUSY'));
+  if (task.status === 'DONE' && working) return { text: 'reprise', cls: 'in_progress', tag: null, note: `marquée terminée${task.statusTag ? ` (« ${task.statusTag} »)` : ''}, mais l'agent y travaille encore` };
+  const text = task.status === 'IN_PROGRESS' ? 'en cours' : task.status === 'DONE' ? 'terminée' : task.status === 'CANCELLED' ? 'annulée' : 'à faire';
+  return { text, cls: task.status.toLowerCase(), tag: task.statusTag ?? null, note: null };
 }
 
 export const taskStatusLabels: Record<string, string> = { TODO: 'À faire', IN_PROGRESS: 'En cours', DONE: 'Terminée', CANCELLED: 'Annulée' };

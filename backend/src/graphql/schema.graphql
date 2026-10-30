@@ -1166,16 +1166,14 @@ enum TrackedPullRequestStatus {
   CLOSED
 }
 
-"Étape d'une pull request suivie, dérivée de son statut, de son brouillon et de son déploiement."
+"Étape d'une pull request suivie, dérivée de son statut et de son brouillon."
 enum PullRequestStage {
   "Ouverte en brouillon."
   DRAFT
   "Ouverte : à relire et fusionner."
   TO_MERGE
-  "Fusionnée, pas encore en production."
-  TO_DEPLOY
-  "Fusionnée et déployée."
-  DEPLOYED
+  "Fusionnée."
+  MERGED
   "Fermée sans fusion."
   CANCELLED
 }
@@ -1183,7 +1181,7 @@ enum PullRequestStage {
 """
 Pull request suivie : l'objet qui matérialise une PR GitHub dans Skipper, rattaché à un projet et le plus souvent à une
 tâche. Créée par une session d'agent (outils tasks.pr_open / pr_register), par l'interface ou par la synchronisation
-avec GitHub ; son statut et son instantané GitHub sont rafraîchis à la synchronisation ; le déploiement est noté à part.
+avec GitHub ; son statut et son instantané GitHub sont rafraîchis à la synchronisation.
 """
 type TrackedPullRequest {
   id: ID!
@@ -1206,12 +1204,6 @@ type TrackedPullRequest {
   syncedAt: DateTime
   "Commit de fusion, quand la fusion a été faite depuis Skipper."
   mergeSha: String
-  deployedAt: DateTime
-  "'human' ou 'agent'."
-  deployedByType: String
-  deployedBy: User
-  deployedBySession: Session
-  deployNote: String!
   "Note libre de suivi (« attend la CI », « revue demandée »…)."
   note: String!
   "'human', 'agent' ou 'system' (synchronisation GitHub)."
@@ -1240,9 +1232,6 @@ input UpdateTrackedPullRequestInput {
   note: String
   "Tâche reliée ; null pour détacher."
   taskId: ID
-  "true : marquée déployée (PR fusionnée seulement) ; false : plus déployée."
-  deployed: Boolean
-  deployNote: String
 }
 
 "Souvenir d'une work session supprimée, gardé par les sessions archivées avec elle."
@@ -1586,8 +1575,6 @@ type DashboardCounts {
   unreadNotifications: Int!
   "Pull requests suivies ouvertes (à fusionner, brouillons compris)."
   openPullRequests: Int!
-  "Pull requests suivies fusionnées, pas encore déployées."
-  toDeployPullRequests: Int!
 }
 
 type DashboardUsageDay {
@@ -1645,7 +1632,7 @@ type Dashboard {
   recentSessions: [Session!]!
   "Tâches ouvertes à surveiller : en retard, urgentes ou hautes."
   attentionTasks: [Task!]!
-  "Pull requests suivies qui attendent une action : à fusionner puis à déployer."
+  "Pull requests suivies qui attendent une action : ouvertes (à fusionner, brouillons)."
   pullRequests: [TrackedPullRequest!]!
 }
 
@@ -2164,8 +2151,8 @@ type Query {
   "Titre, description et base proposés pour une pull request de la branche courante du workspace."
   githubPullRequestDraft(projectId: ID!, worksessionId: ID): PullRequestDraft!
   """
-  Pull requests suivies : d'un projet (synchronisées avec GitHub au passage, au plus toutes les 30 s) ou de tous les projets
-  de l'utilisateur ; filtres par tâche, statut et étape. Celles qui attendent une action d'abord (à fusionner, à déployer).
+  Pull requests suivies : d'un projet (synchronisées avec GitHub au passage, au plus toutes les 20 s) ou de tous les projets
+  de l'utilisateur ; filtres par tâche, statut et étape. Celles qui attendent une action d'abord (ouvertes), puis les fusionnées.
   """
   pullRequests(projectId: ID, taskId: ID, status: [TrackedPullRequestStatus!], stage: [PullRequestStage!], limit: Int): [TrackedPullRequest!]!
   pullRequest(id: ID!): TrackedPullRequest

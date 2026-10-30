@@ -303,11 +303,12 @@ interface CacheEntry {
   refreshing?: boolean;
 }
 const cache = new Map<string, CacheEntry>();
-function cached<T>(key: string, load: () => Promise<T>, opts: { stale?: boolean } = {}): Promise<T> {
+/** `fresh` : relit sans attendre l'expiration, et le résultat remplace l'entrée du cache ; `stale` : voir STALE_TTL_MS. */
+function cached<T>(key: string, load: () => Promise<T>, opts: { fresh?: boolean; stale?: boolean } = {}): Promise<T> {
   const hit = cache.get(key);
   const age = hit ? Date.now() - hit.at : Infinity;
-  if (hit && age < CACHE_TTL_MS) return hit.value as Promise<T>;
-  if (hit && opts.stale && hit.settled && age < STALE_TTL_MS) {
+  if (!opts.fresh && hit && age < CACHE_TTL_MS) return hit.value as Promise<T>;
+  if (!opts.fresh && hit && opts.stale && hit.settled && age < STALE_TTL_MS) {
     if (!hit.refreshing) {
       hit.refreshing = true;
       load().then(
@@ -377,9 +378,9 @@ export const pullRequestService = {
   isGithubProject: async (projectId: string) => Boolean(parseGithubRepo((await projectService.get(projectId)).gitUrl)),
 
   /** PR du dépôt du projet, les plus récemment mises à jour d'abord. */
-  /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt. */
-  /** `stale` : accepte la dernière liste connue (jusqu'à STALE_TTL_MS) pendant son rafraîchissement, pour l'affichage. */
-  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50, opts: { stale?: boolean } = {}): Promise<PullRequest[]> {
+  /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt ; `fresh` : sans le cache de 20 s ;
+   * `stale` : accepte la dernière liste connue (jusqu'à STALE_TTL_MS) pendant son rafraîchissement, pour l'affichage. */
+  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50, opts: { fresh?: boolean; stale?: boolean } = {}): Promise<PullRequest[]> {
     const project = await projectService.get(projectId);
     // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
     if (!project.gitUrl) return [];

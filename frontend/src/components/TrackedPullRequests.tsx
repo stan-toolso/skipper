@@ -86,12 +86,6 @@ export function useTrackedPullRequestActions() {
         }),
       );
     },
-    markDeployed: async (pr: TrackedPullRequest) => {
-      const note = await prompt({ title: `Marquer #${pr.number} comme déployée`, message: 'Où et comment a-t-elle été mise en production ? (facultatif)', placeholder: 'ex. skipper-1, 30/10 18:40', required: false });
-      if (note === null) return;
-      await run(update({ variables: { id: pr.id, input: { deployed: true, deployNote: note } } }));
-    },
-    undeploy: (pr: TrackedPullRequest) => run(update({ variables: { id: pr.id, input: { deployed: false } } })),
     setStatus: async (pr: TrackedPullRequest, status: 'OPEN' | 'MERGED' | 'CLOSED') => {
       const labels = { OPEN: 'rouvrir', MERGED: 'marquer comme fusionnée', CLOSED: 'marquer comme annulée (fermée sans fusion)' };
       if (!(await confirm({ title: `Pull request #${pr.number}`, message: `Voulez-vous ${labels[status]} le suivi de « ${pr.title} » ? La PR sur GitHub n'est pas modifiée.`, confirmLabel: 'Oui' }))) return;
@@ -117,8 +111,6 @@ function ActionsMenu({ pr, onOpen }: { pr: TrackedPullRequest; onOpen: () => voi
   if (canResolveConflicts(pr)) items.push({ label: 'Résoudre les conflits', icon: 'bi-robot', onClick: () => void actions.resolveConflicts(pr) });
   if (pr.session) items.push({ label: `Session : ${pr.session.name}`, icon: 'bi-terminal', to: `/sessions/${pr.session.id}` });
   items.push({ label: 'Ouvrir sur GitHub', icon: 'bi-box-arrow-up-right', onClick: () => window.open(pr.url, '_blank', 'noopener') }, { label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) });
-  if (pr.status === 'MERGED' && !pr.deployedAt) items.push({ label: 'Marquer comme déployée', icon: 'bi-box-arrow-up', onClick: () => void actions.markDeployed(pr) });
-  if (pr.deployedAt) items.push({ label: 'Annuler le déploiement', icon: 'bi-arrow-counterclockwise', onClick: () => void actions.undeploy(pr) });
   if (pr.status === 'OPEN') {
     items.push({ label: 'Marquer comme fusionnée', icon: 'bi-check2-circle', onClick: () => void actions.setStatus(pr, 'MERGED') });
     items.push({ label: 'Marquer comme annulée', icon: 'bi-x-circle', onClick: () => void actions.setStatus(pr, 'CLOSED') });
@@ -173,10 +165,9 @@ function useConflictResolver(pr: TrackedPullRequest | null) {
 
 /**
  * Barre d'actions d'une PR suivie (fiche de tâche) : détail et fusion (fenêtre GitHub), résolution des conflits,
- * déploiement, puis le menu des autres actions. Sans droit d'écriture, seul le détail reste.
+ * puis le menu des autres actions. Sans droit d'écriture, seul le détail reste.
  */
 export function TrackedPullRequestActions({ pr, canWrite }: { pr: TrackedPullRequest; canWrite: boolean }) {
-  const actions = useTrackedPullRequestActions();
   const [open, setOpen] = useState(false);
   const resolver = useConflictResolver(canWrite ? pr : null);
   return (
@@ -186,12 +177,6 @@ export function TrackedPullRequestActions({ pr, canWrite }: { pr: TrackedPullReq
         {pr.status === 'OPEN' && canWrite ? 'Détail et fusion' : 'Détail'}
       </Button>
       {canWrite && <ResolveConflictsButton pr={pr} />}
-      {canWrite && pr.status === 'MERGED' && !pr.deployedAt && (
-        <Button size="sm" variant="outline-success" className="py-0" onClick={() => void actions.markDeployed(pr)}>
-          <i className="bi bi-box-arrow-up me-1" />
-          Marquer comme déployée
-        </Button>
-      )}
       {canWrite && <ActionsMenu pr={pr} onOpen={() => setOpen(true)} />}
       {open && <PullRequestModal projectId={pr.project.id} number={pr.number} onClose={() => setOpen(false)} onResolveConflicts={resolver} related={relatedOf(pr)} />}
     </div>
@@ -233,7 +218,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
         <tbody>
           {prs.map((pr) => {
             const when =
-              pr.stage === 'DEPLOYED' && pr.deployedAt ? { label: 'déployée', at: pr.deployedAt } : pr.mergedAt ? { label: 'fusionnée', at: pr.mergedAt } : pr.closedAt ? { label: 'fermée', at: pr.closedAt } : { label: 'ouverte', at: pr.openedAt };
+              pr.mergedAt ? { label: 'fusionnée', at: pr.mergedAt } : pr.closedAt ? { label: 'fermée', at: pr.closedAt } : { label: 'ouverte', at: pr.openedAt };
             return (
               <tr key={pr.id} className="pr-row" onClick={() => setOpen(pr)} role="button">
                 <td className="pr-cell-title">
@@ -257,11 +242,6 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                 </td>
                 <td className="pr-cell-stage">
                   <PullRequestStageBadge stage={pr.stage} />
-                  {pr.deployNote && pr.stage === 'DEPLOYED' && (
-                    <div className="small text-secondary text-truncate" title={pr.deployNote}>
-                      {pr.deployNote}
-                    </div>
-                  )}
                 </td>
                 {showProject && (
                   <td className="d-none d-lg-table-cell">
@@ -294,12 +274,6 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                 )}
                 <td className="pr-cell-when small text-secondary" title={fmt(when.at)}>
                   {when.label} {timeAgo(when.at)}
-                  {pr.stage === 'DEPLOYED' && (pr.deployedBy || pr.deployedBySession) && (
-                    <>
-                      {' par '}
-                      <By type={pr.deployedByType} user={pr.deployedBy} session={pr.deployedBySession} />
-                    </>
-                  )}
                 </td>
                 <td className="pr-cell-actions text-end text-nowrap" onClick={(e) => e.stopPropagation()}>
                   <ActionsMenu pr={pr} onOpen={() => setOpen(pr)} />
