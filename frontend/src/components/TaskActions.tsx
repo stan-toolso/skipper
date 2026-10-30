@@ -4,7 +4,7 @@ import { Button, Form, Modal } from 'react-bootstrap';
 import { DELETE_TASK, MOVE_TASK, PROJECTS, UPDATE_TASK, type Project, type Task, type TaskStatus } from '../graphql/operations';
 import { useDialogs } from './Dialogs';
 import PopMenu, { type MenuItem } from './PopMenu';
-import TaskLaunchModal, { type LaunchTarget } from './TaskLaunchModal';
+import { useTaskLauncher, type LaunchTarget } from './TaskLaunchModal';
 
 const REFETCH = ['Tasks', 'TaskPage', 'TaskDetail', 'Sidebar'];
 
@@ -62,7 +62,7 @@ export default function TaskActions({ task, target, onEdit, onDeleted, compact =
   const { confirm, showError } = useDialogs();
   const [updateTask] = useMutation(UPDATE_TASK, { refetchQueries: REFETCH, onError: (e) => void showError(e) });
   const [deleteTask] = useMutation(DELETE_TASK, { refetchQueries: REFETCH, onCompleted: onDeleted, onError: (e) => void showError(e) });
-  const [launching, setLaunching] = useState(false);
+  const { launchTask } = useTaskLauncher();
   const [moving, setMoving] = useState(false);
   const [menuAt, setMenuAt] = useState<{ top: number; right: number } | null>(null);
   const move = (status: TaskStatus) => updateTask({ variables: { id: task.id, input: { status } } });
@@ -70,12 +70,7 @@ export default function TaskActions({ task, target, onEdit, onDeleted, compact =
   const remove = async () => {
     if (await confirm({ title: 'Supprimer la tâche', message: `Supprimer la tâche « ${task.title} » ?`, confirmLabel: 'Supprimer', danger: true })) deleteTask({ variables: { id: task.id } });
   };
-  const modals = (
-    <>
-      {moving && <TaskMoveModal task={task} onClose={() => setMoving(false)} />}
-      {launching && <TaskLaunchModal task={task} target={target} onClose={() => setLaunching(false)} />}
-    </>
-  );
+  const modals = moving && <TaskMoveModal task={task} onClose={() => setMoving(false)} />;
 
   if (compact) {
     const items: MenuItem[] = [];
@@ -92,7 +87,7 @@ export default function TaskActions({ task, target, onEdit, onDeleted, compact =
     return (
       <div className="task-actions-compact">
         {open ? (
-          <Button size="sm" variant="primary" className="text-nowrap" onClick={() => setLaunching(true)} title="Choisir la consigne, l'agent et l'endroit où il travaille, puis lancer une session">
+          <Button size="sm" variant="primary" className="text-nowrap" onClick={() => launchTask(task, target)} title="Choisir la consigne, l'agent et l'endroit où il travaille, puis lancer une session">
             <i className="bi bi-play-fill" /> Confier
           </Button>
         ) : (
@@ -125,7 +120,7 @@ export default function TaskActions({ task, target, onEdit, onDeleted, compact =
   return (
     <div className="d-flex flex-wrap gap-1 align-items-center">
       {open && (
-        <Button size="sm" variant="primary" onClick={() => setLaunching(true)} title="Choisir la consigne, l'agent et l'endroit où il travaille, puis lancer une session">
+        <Button size="sm" variant="primary" onClick={() => launchTask(task, target)} title="Choisir la consigne, l'agent et l'endroit où il travaille, puis lancer une session">
           <i className="bi bi-play-fill" /> Confier à un agent
         </Button>
       )}

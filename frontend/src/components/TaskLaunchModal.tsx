@@ -30,7 +30,7 @@ export function useTaskLauncher(): TaskLauncherState {
  * Hôte de la modale « Confier à un agent », au niveau du workbench et non dans la carte ou la ligne de la tâche :
  * le serveur passe la tâche en cours dès le début du lancement, si bien qu'au sondage suivant la carte change de
  * colonne (kanban) ou sort du filtre (liste). Rendue dans la carte, la modale disparaissait alors en plein
- * « Lancement… » : plus d'erreur affichée, et l'on restait sur la page au lieu d'aller sur la session créée.
+ * « Lancement… », sans plus pouvoir afficher d'erreur.
  */
 export function TaskLauncherProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{ task: Task; target: LaunchTarget | undefined; key: number } | null>(null);

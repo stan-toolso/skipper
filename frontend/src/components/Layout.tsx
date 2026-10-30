@@ -8,6 +8,7 @@ import GitPanel from '../workbench/GitPanel';
 import { GitTargetProvider } from '../workbench/GitTargetContext';
 import { RenameSessionProvider } from '../workbench/RenameSession';
 import { SessionLauncherProvider } from './SessionLauncher';
+import { TaskLauncherProvider } from './TaskLaunchModal';
 import { SearchPaletteProvider } from './SearchPalette';
 import { ShortcutsHelpProvider } from './ShortcutsHelp';
 import StatusBanners from './StatusBanners';
@@ -112,6 +113,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <TabsProvider>
       <GitTargetProvider>
         <SessionLauncherProvider>
+        <TaskLauncherProvider>
           <RenameSessionProvider>
             <SearchPaletteProvider>
               <ShortcutsHelpProvider>
@@ -153,6 +155,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               </ShortcutsHelpProvider>
             </SearchPaletteProvider>
           </RenameSessionProvider>
+        </TaskLauncherProvider>
         </SessionLauncherProvider>
       </GitTargetProvider>
     </TabsProvider>
