@@ -934,7 +934,8 @@ page de session (`Session.context` : tokens, part de la fenêtre du modèle, co�
 contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans la sidebar et les
 onglets au-delà du seuil de signalement. Ce seuil est **propre à chaque personne** (Paramètres › Claude ›
 « Signaler le contexte d'une session à partir de », en milliers de tokens, `ClaudeSettings.contextWarnTokens`) :
-150 000 tokens par défaut (`CONTEXT_WARN_TOKENS`), vide pour ne jamais être signalé. Au-delà de ce seuil, un bandeau propose
+150 000 tokens par défaut (`CONTEXT_WARN_TOKENS`), vide pour ne jamais être signalé. Au-delà de ce seuil, un bandeau dans l'onglet
+« Session » du panneau de droite (dans la page elle-même pour un chat, qui n'a pas de panneau) propose
 « Compacter » (`compactSessionContext`), « Repartir d'une conversation neuve » (`resetSessionContext`, avec ou
 sans résumé des derniers échanges, transmis au modèle avec la prochaine instruction via `sessions.resume_digest`)
 ou « Ignorer » (jusqu'à 50 000 tokens de plus) ; rien n'est fait automatiquement pour une session manuelle.

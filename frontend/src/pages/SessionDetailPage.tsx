@@ -334,7 +334,8 @@ export default function SessionDetailPage() {
         </div>
       )}
 
-      <ContextBanner session={session} busy={Boolean(busy)} />
+      {/* Le bandeau de contexte vit dans l'onglet « Session » du panneau de droite ; un chat n'a pas de panneau, il le garde ici. */}
+      {chat && <ContextBanner session={session} busy={Boolean(busy)} />}
 
       <div className="cc-toggle">
         <label>

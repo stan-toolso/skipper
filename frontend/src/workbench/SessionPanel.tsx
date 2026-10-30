@@ -1,7 +1,7 @@
 import { useQuery } from '@apollo/client';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { ContextGauge } from '../components/ContextGauge';
+import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import { SessionChildren, SessionParentNote, useSessionActions, type ControlledSession } from '../components/SessionControls';
 import { SESSION } from '../graphql/operations';
 import { formatCost, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
@@ -12,7 +12,8 @@ const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 
 
 /**
  * Onglet « Session » du panneau de droite, à côté d'une page de session : ce que l'en-tête de la page montrait
- * (projet, work session, personne, tâche, workflow, planification, jauge de contexte) et toutes ses actions.
+ * (projet, work session, personne, tâche, workflow, planification, jauge de contexte), le bandeau de contexte au-delà du
+ * seuil (compacter, repartir d'une conversation neuve, ignorer) et toutes ses actions.
  * La requête est celle de la page, qui la sonde : le panneau lit le cache.
  */
 export default function SessionPanel({ sessionId }: { sessionId: string }) {
@@ -25,6 +26,7 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
   const schedule = session.schedule;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
+  const busy = session.status === 'RUNNING' && session.activity === 'BUSY';
   return (
     <div className="git-body session-panel">
       <div className="session-panel-head">
@@ -42,6 +44,7 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
           </span>
         )}
       </div>
+      <ContextBanner session={session} busy={busy} />
       <div className="cc-actions stacked">{actions.buttons}</div>
 
       <div className="git-subhead">Détail</div>
