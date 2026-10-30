@@ -722,8 +722,7 @@
 .pr-stage-to_merge { color: var(--cc-green); border-color: var(--cc-green); }
 .pr-stage-draft { color: var(--cc-dim); border-color: var(--cc-border); }
 .pr-stage-pending { color: var(--cc-dim); border-color: var(--cc-border); border-style: dashed; }
-.pr-stage-to_deploy { color: var(--cc-yellow); border-color: var(--cc-yellow); }
-.pr-stage-deployed { color: var(--cc-blue); border-color: var(--cc-blue); }
+.pr-stage-merged { color: var(--cc-purple); border-color: var(--cc-purple); }
 .pr-stage-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
 .pr-table .pr-row { cursor: pointer; }
 .pr-table td { vertical-align: middle; }

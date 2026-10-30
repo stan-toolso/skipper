@@ -2,13 +2,13 @@ import { gql } from '@apollo/client';
 import type { TaskStatus } from './operations';
 
 /**
- * Pull requests suivies : l'objet Skipper qui matérialise une PR GitHub (statut, étape, déploiement, note),
+ * Pull requests suivies : l'objet Skipper qui matérialise une PR GitHub (statut, étape, note),
  * rattaché à un projet et le plus souvent à une tâche. La PR GitHub en direct reste `PullRequest` (operations.ts).
  */
 
 export type TrackedPullRequestStatus = 'PENDING' | 'OPEN' | 'MERGED' | 'CLOSED';
-export type PullRequestStage = 'PENDING' | 'DRAFT' | 'TO_MERGE' | 'TO_DEPLOY' | 'DEPLOYED' | 'CANCELLED';
-export const PR_STAGES: PullRequestStage[] = ['PENDING', 'DRAFT', 'TO_MERGE', 'TO_DEPLOY', 'DEPLOYED', 'CANCELLED'];
+export type PullRequestStage = 'PENDING' | 'DRAFT' | 'TO_MERGE' | 'MERGED' | 'CANCELLED';
+export const PR_STAGES: PullRequestStage[] = ['PENDING', 'DRAFT', 'TO_MERGE', 'MERGED', 'CANCELLED'];
 
 export interface TrackedPullRequest {
   id: string;
@@ -33,9 +33,6 @@ export interface TrackedPullRequest {
   mergeable: string | null;
   syncedAt: string | null;
   mergeSha: string | null;
-  deployedAt: string | null;
-  deployedByType: 'human' | 'agent' | null;
-  deployNote: string;
   note: string;
   createdByType: 'human' | 'agent' | 'system';
   openedAt: string;
@@ -47,8 +44,6 @@ export interface TrackedPullRequest {
   task: { id: string; title: string; status: TaskStatus } | null;
   createdBy: { id: string; name: string } | null;
   createdBySession: { id: string; name: string } | null;
-  deployedBy: { id: string; name: string } | null;
-  deployedBySession: { id: string; name: string } | null;
   /** Session d'agent rattachée (dossier de la branche, sinon session qui a ouvert la PR) : reçoit la demande de résolution des conflits. */
   session: { id: string; name: string; status: string } | null;
 }
@@ -57,7 +52,7 @@ export interface TrackedPullRequest {
 export const canResolveConflicts = (pr: Pick<TrackedPullRequest, 'status' | 'mergeable' | 'session'>) => pr.status === 'OPEN' && pr.mergeable === 'CONFLICTING' && pr.session != null;
 
 /** Sous-ensemble porté par une tâche (listes, grille, carte). */
-export type TrackedPullRequestSummary = Pick<TrackedPullRequest, 'id' | 'repo' | 'foreignRepo' | 'number' | 'url' | 'title' | 'status' | 'isDraft' | 'stage' | 'checksState' | 'reviewDecision' | 'mergeable' | 'headBranch' | 'baseBranch' | 'note' | 'deployedAt' | 'worksession' | 'localCommits' | 'localChanges'>;
+export type TrackedPullRequestSummary = Pick<TrackedPullRequest, 'id' | 'repo' | 'foreignRepo' | 'number' | 'url' | 'title' | 'status' | 'isDraft' | 'stage' | 'checksState' | 'reviewDecision' | 'mergeable' | 'headBranch' | 'baseBranch' | 'note' | 'mergedAt' | 'worksession' | 'localCommits' | 'localChanges'>;
 
 /** Référence courte : « #42 », « owner/name#42 » dans un autre dépôt, la branche pour une PR en préparation. */
 export function prRef(pr: Pick<TrackedPullRequest, 'number' | 'repo' | 'foreignRepo' | 'headBranch'>): string {
@@ -98,9 +93,6 @@ export const TRACKED_PULL_REQUEST_FIELDS = gql`
     mergeable
     syncedAt
     mergeSha
-    deployedAt
-    deployedByType
-    deployNote
     note
     createdByType
     openedAt
@@ -122,14 +114,6 @@ export const TRACKED_PULL_REQUEST_FIELDS = gql`
       name
     }
     createdBySession {
-      id
-      name
-    }
-    deployedBy {
-      id
-      name
-    }
-    deployedBySession {
       id
       name
     }
@@ -166,7 +150,7 @@ export const TASK_PULL_REQUEST_FIELDS = gql`
     headBranch
     baseBranch
     note
-    deployedAt
+    mergedAt
   }
 `;
 
@@ -240,13 +224,12 @@ export const PULL_REQUESTS_PROJECT = gql`
 export const TRACKED_PR_REFETCH = ['PullRequests', 'TaskPage', 'Tasks', 'Dashboard'];
 
 /** Ordre d'affichage des étapes : ce qui attend une action d'abord. */
-export const STAGE_ORDER: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'PENDING', 'TO_DEPLOY', 'DEPLOYED', 'CANCELLED'];
+export const STAGE_ORDER: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'PENDING', 'MERGED', 'CANCELLED'];
 
 export const STAGE_LABELS: Record<PullRequestStage, { label: string; plural: string; icon: string; cls: string; hint: string }> = {
   TO_MERGE: { label: 'à fusionner', plural: 'À fusionner', icon: 'bi-git', cls: 'pr-stage-to_merge', hint: 'Ouverte : à relire et fusionner' },
   DRAFT: { label: 'brouillon', plural: 'Brouillons', icon: 'bi-pencil', cls: 'pr-stage-draft', hint: 'Ouverte en brouillon sur GitHub' },
   PENDING: { label: 'en préparation', plural: 'En préparation', icon: 'bi-code-slash', cls: 'pr-stage-pending', hint: 'La branche porte des modifications, aucune pull request n’est ouverte' },
-  TO_DEPLOY: { label: 'à déployer', plural: 'À déployer', icon: 'bi-box-arrow-up', cls: 'pr-stage-to_deploy', hint: 'Fusionnée, pas encore en production' },
-  DEPLOYED: { label: 'déployée', plural: 'Déployées', icon: 'bi-check2-circle', cls: 'pr-stage-deployed', hint: 'Fusionnée et mise en production' },
+  MERGED: { label: 'fusionnée', plural: 'Fusionnées', icon: 'bi-check2-circle', cls: 'pr-stage-merged', hint: 'Fusionnée dans la base' },
   CANCELLED: { label: 'annulée', plural: 'Annulées', icon: 'bi-x-circle', cls: 'pr-stage-cancelled', hint: 'Fermée sans fusion' },
 };

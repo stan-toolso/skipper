@@ -48,8 +48,6 @@ const applyUpdate = (pr: TrackedPullRequest, input: UpdateTrackedPullRequestInpu
     if (input.status === 'closed' && input.closedAt === undefined) next.closedAt = next.closedAt ?? now();
     if (input.status === 'open') Object.assign(next, { mergedAt: null, closedAt: null, mergeSha: null });
   }
-  if (input.deployed === true) Object.assign(next, { deployedAt: next.deployedAt ?? now(), deployedByType: input.deployedBy?.type === 'agent' ? 'agent' : 'human', deployedByUserId: input.deployedBy?.userId ?? null, deployedBySessionId: input.deployedBy?.sessionId ?? null, deployNote: input.deployNote ?? '' });
-  else if (input.deployed === false) Object.assign(next, { deployedAt: null, deployedByType: null, deployedByUserId: null, deployedBySessionId: null, deployNote: '' });
   return next;
 };
 const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -77,11 +75,6 @@ vi.mock('./repository.js', () => ({
         mergeable: input.mergeable ?? null,
         syncedAt: null,
         mergeSha: null,
-        deployedAt: null,
-        deployedByType: null,
-        deployedByUserId: null,
-        deployedBySessionId: null,
-        deployNote: '',
         note: input.note ?? '',
         createdByType: actor.type,
         createdByUserId: actor.userId ?? null,
@@ -114,7 +107,7 @@ vi.mock('./repository.js', () => ({
           (!f.headBranch || r.headBranch === f.headBranch) &&
           (!f.worksessionId || r.worksessionId === f.worksessionId),
       ),
-    countPending: async () => ({ open: 0, pending: 0, toDeploy: 0 }),
+    countPending: async () => ({ open: 0, pending: 0 }),
     update: async (id: string, input: UpdateTrackedPullRequestInput) => {
       const i = m.rows.findIndex((r) => r.id === id);
       if (i < 0) return null;
@@ -240,13 +233,12 @@ beforeEach(() => {
 });
 
 describe('étapes et références', () => {
-  it('dérive l’étape du statut, du brouillon et du déploiement', () => {
-    expect(stageOf({ status: 'pending', isDraft: false, deployedAt: null })).toBe('pending');
-    expect(stageOf({ status: 'open', isDraft: true, deployedAt: null })).toBe('draft');
-    expect(stageOf({ status: 'open', isDraft: false, deployedAt: null })).toBe('to_merge');
-    expect(stageOf({ status: 'merged', isDraft: false, deployedAt: null })).toBe('to_deploy');
-    expect(stageOf({ status: 'merged', isDraft: false, deployedAt: new Date() })).toBe('deployed');
-    expect(stageOf({ status: 'closed', isDraft: false, deployedAt: null })).toBe('cancelled');
+  it('dérive l’étape du statut et du brouillon', () => {
+    expect(stageOf({ status: 'pending', isDraft: false })).toBe('pending');
+    expect(stageOf({ status: 'open', isDraft: true })).toBe('draft');
+    expect(stageOf({ status: 'open', isDraft: false })).toBe('to_merge');
+    expect(stageOf({ status: 'merged', isDraft: false })).toBe('merged');
+    expect(stageOf({ status: 'closed', isDraft: false })).toBe('cancelled');
   });
 
   it('lit le numéro d’une URL GitHub ou d’une référence libre', () => {
@@ -297,7 +289,7 @@ describe('recordGithub', () => {
     await trackedPullRequestService.sync('p', 'u1', { force: true });
     const pending = m.rows[0];
     expect(pending).toMatchObject({ status: 'pending', number: null, taskId: 't7', worksessionId: 'w1', title: 'Sept', localCommits: 2, localChanges: 1 });
-    await trackedPullRequestService.update(pending.id, { note: 'presque prête' }, human);
+    await trackedPullRequestService.update(pending.id, { note: 'presque prête' });
     const opened = await trackedPullRequestService.recordGithub('p', gh(7, 'OPEN'), agent);
     expect(m.rows).toHaveLength(1);
     expect(opened.id).toBe(pending.id);
@@ -342,18 +334,12 @@ describe('register', () => {
 });
 
 describe('update', () => {
-  it('n’accepte le déploiement que d’une PR fusionnée, et le retire quand elle est rouverte', async () => {
+  it('marque fusionnée puis rouvre une PR', async () => {
     const pr = await trackedPullRequestService.recordGithub('p', gh(1, 'OPEN'), human);
-    await expect(trackedPullRequestService.update(pr.id, { deployed: true }, human)).rejects.toThrow(/fusionnée/);
-    const merged = await trackedPullRequestService.update(pr.id, { status: 'merged' }, agent);
+    const merged = await trackedPullRequestService.update(pr.id, { status: 'merged' });
     expect(merged.mergedAt).toBeTruthy();
-    const deployed = await trackedPullRequestService.update(pr.id, { deployed: true, deployNote: 'skipper-1' }, agent);
-    expect(deployed.deployedAt).toBeTruthy();
-    expect(deployed.deployedByType).toBe('agent');
-    expect(deployed.deployNote).toBe('skipper-1');
-    expect(stageOf(deployed)).toBe('deployed');
-    const reopened = await trackedPullRequestService.update(pr.id, { status: 'open' }, human);
-    expect(reopened.deployedAt).toBeNull();
+    expect(stageOf(merged)).toBe('merged');
+    const reopened = await trackedPullRequestService.update(pr.id, { status: 'open' });
     expect(stageOf(reopened)).toBe('to_merge');
   });
 
@@ -362,9 +348,9 @@ describe('update', () => {
     m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 0, changes: 3 };
     await trackedPullRequestService.sync('p', 'u1', { force: true });
     const pending = m.rows[0];
-    await expect(trackedPullRequestService.update(pending.id, { status: 'merged' }, human)).rejects.toThrow(/pas encore ouverte/);
-    await expect(trackedPullRequestService.update(pending.id, { status: 'pending' }, human)).rejects.toThrow(/Statut invalide/);
-    expect((await trackedPullRequestService.update(pending.id, { note: 'wip' }, human)).note).toBe('wip');
+    await expect(trackedPullRequestService.update(pending.id, { status: 'merged' })).rejects.toThrow(/pas encore ouverte/);
+    await expect(trackedPullRequestService.update(pending.id, { status: 'pending' })).rejects.toThrow(/Statut invalide/);
+    expect((await trackedPullRequestService.update(pending.id, { note: 'wip' })).note).toBe('wip');
   });
 
   it('résout une PR par identifiant, numéro ou URL dans son projet, le dépôt du projet d’abord', async () => {
@@ -387,7 +373,7 @@ describe('sync', () => {
     const one = after.find((r) => r.id === tracked.id)!;
     expect(one.status).toBe('merged');
     expect(one.mergedAt).toEqual(new Date('2026-10-02T10:00:00Z'));
-    expect(stageOf(one)).toBe('to_deploy');
+    expect(stageOf(one)).toBe('merged');
     expect(m.notifications.map((n) => n.type)).toEqual(['pull_request.merged']);
     const adopted = after.find((r) => r.number === 3)!;
     expect(adopted).toBeTruthy();

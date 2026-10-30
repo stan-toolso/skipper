@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import PageLoading from '../components/PageLoading';
 import ProjectHeader from '../components/ProjectHeader';
 import { RegisterPullRequestModal, TrackedPullRequestTable } from '../components/TrackedPullRequests';
-import { prRef, PULL_REQUESTS, PULL_REQUESTS_PROJECT, STAGE_LABELS, STAGE_ORDER, SYNC_PULL_REQUESTS, type PullRequestStage, type TrackedPullRequest } from '../graphql/pullRequests';
+import { PR_STAGES, prRef, PULL_REQUESTS, PULL_REQUESTS_PROJECT, STAGE_LABELS, STAGE_ORDER, SYNC_PULL_REQUESTS, type PullRequestStage, type TrackedPullRequest } from '../graphql/pullRequests';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -21,22 +21,26 @@ interface PageProject {
 
 type Filter = 'pending' | 'all' | PullRequestStage;
 /** Étapes « à traiter » : ce qui attend une action, PR en préparation comprises (à ouvrir). */
-const PENDING: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'PENDING', 'TO_DEPLOY'];
+const PENDING: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'PENDING'];
 const FILTER_KEY = 'skipper.pullRequests.filter';
 
 const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /**
  * Pull requests suivies d'un projet, par étape : à fusionner, brouillons, en préparation (branches avec des modifications
- * sans PR ouverte), à déployer, déployées, annulées. La liste est synchronisée avec le travail local des branches et avec
- * GitHub au chargement (au plus toutes les 30 s) ; « Rafraîchir » force la synchronisation.
+ * sans PR ouverte), fusionnées, annulées. La liste est synchronisée avec le travail local des branches et avec GitHub au
+ * chargement (au plus toutes les 20 s) ; « Rafraîchir » force la synchronisation.
  */
 export default function ProjectPullRequestsPage() {
   const { id = '' } = useParams();
   const projectQ = useQuery<{ project: PageProject | null }>(PULL_REQUESTS_PROJECT, { variables: { id } });
   const prsQ = usePollingQuery<{ pullRequests: TrackedPullRequest[] }>(PULL_REQUESTS, { variables: { projectId: id, limit: 500 }, pollInterval: 30_000, fetchPolicy: 'cache-and-network' });
   const [sync, { loading: syncing }] = useMutation(SYNC_PULL_REQUESTS, { refetchQueries: ['PullRequests'] });
-  const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem(FILTER_KEY) as Filter | null) ?? 'pending');
+  const [filter, setFilter] = useState<Filter>(() => {
+    // Une étape mémorisée qui n'existe plus (anciennes « à déployer », « déployées ») revient à « À traiter ».
+    const saved = localStorage.getItem(FILTER_KEY) as Filter | null;
+    return saved === 'all' || (saved && PR_STAGES.includes(saved as PullRequestStage)) ? saved : 'pending';
+  });
   const [search, setSearch] = useState('');
   const [registering, setRegistering] = useState(false);
   const project = projectQ.data?.project;
@@ -63,7 +67,7 @@ export default function ProjectPullRequestsPage() {
   if (projectQ.error) return <Alert variant="danger">Erreur : {projectQ.error.message}</Alert>;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const canWrite = project.myRole === 'ADMIN' || project.myRole === 'MEMBER';
-  const pending = counts.TO_MERGE + counts.DRAFT + counts.PENDING + counts.TO_DEPLOY;
+  const pending = counts.TO_MERGE + counts.DRAFT + counts.PENDING;
 
   return (
     <>
@@ -80,7 +84,7 @@ export default function ProjectPullRequestsPage() {
           <option value="all">Toutes{all.length > 0 ? ` (${all.length})` : ''}</option>
         </Form.Select>
         <ButtonGroup size="sm" className="flex-wrap d-none d-md-flex">
-          <Button variant={filter === 'pending' ? 'secondary' : 'outline-secondary'} onClick={() => pick('pending')} title="À fusionner, brouillons, en préparation et à déployer">
+          <Button variant={filter === 'pending' ? 'secondary' : 'outline-secondary'} onClick={() => pick('pending')} title="À fusionner, brouillons et en préparation">
             À traiter {pending > 0 && <Badge bg="light" text="dark" className="ms-1">{pending}</Badge>}
           </Button>
           {STAGE_ORDER.map((s) => (

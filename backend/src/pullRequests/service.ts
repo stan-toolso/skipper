@@ -25,7 +25,7 @@ import {
 
 /**
  * Pull requests suivies : création (depuis GitHub, depuis une URL, ou en ouvrant la PR sur GitHub), mise à jour
- * (statut, note, déploiement), synchronisation avec GitHub (statut, brouillon, checks, revue, conflits, et adoption
+ * (statut, note, tâche), synchronisation avec GitHub (statut, brouillon, checks, revue, conflits, et adoption
  * des PR ouvertes sur la branche d'une tâche), PR « en préparation » (branche qui porte des modifications sans PR
  * ouverte), PR d'autres dépôts GitHub que celui du projet, notifications et textes pour les agents.
  */
@@ -34,8 +34,12 @@ export const SYSTEM: PullRequestActor = { type: 'system' };
 
 const MAX_NOTE = 2000;
 const MAX_TITLE = 500;
-/** Une synchronisation (GitHub et travail local des branches) par projet au plus toutes les 30 s (les pages sondent). */
-const SYNC_INTERVAL_MS = 30_000;
+/**
+ * Une synchronisation (GitHub et travail local des branches) par projet au plus toutes les 20 s : sous la période de
+ * sondage des pages (30 s), pour qu'un relevé sur deux ne soit pas sauté ; la liste GitHub est alors relue sans cache
+ * (une fusion faite hors de Skipper apparaît au relevé suivant).
+ */
+const SYNC_INTERVAL_MS = 20_000;
 /** PR suivies absentes des 100 dernières du dépôt (ou d'un autre dépôt) : interrogées une à une, au plus ce nombre par synchronisation. */
 const MAX_INDIVIDUAL_FETCHES = 10;
 
@@ -238,10 +242,10 @@ export const trackedPullRequestService = {
   },
 
   /**
-   * Statut, note, tâche reliée, déploiement. Une PR marquée fusionnée ou fermée garde son instantané GitHub. Une PR en
-   * préparation ne change pas de statut ici : elle le reçoit en étant ouverte sur GitHub (open, pr_open) ou déclarée.
+   * Statut, note, tâche reliée. Une PR marquée fusionnée ou fermée garde son instantané GitHub. Une PR en préparation
+   * ne change pas de statut ici : elle le reçoit en étant ouverte sur GitHub (open, pr_open) ou déclarée.
    */
-  async update(id: string, input: { status?: TrackedPullRequestStatus | null; note?: string | null; taskId?: string | null; deployed?: boolean | null; deployNote?: string | null; isDraft?: boolean | null }, actor: PullRequestActor): Promise<TrackedPullRequest> {
+  async update(id: string, input: { status?: TrackedPullRequestStatus | null; note?: string | null; taskId?: string | null; isDraft?: boolean | null }): Promise<TrackedPullRequest> {
     const before = await this.get(id);
     if (input.status != null && !SETTABLE_PR_STATUSES.includes(input.status)) throw new AppError(`Statut invalide : ${input.status}`);
     if (input.status != null && before.status === 'pending') throw new AppError("Cette pull request n'est pas encore ouverte sur GitHub : ouvre-la (pr_open, ou « Créer la pull request ») ou déclare-la (pr_register) plutôt que de changer son statut");
@@ -249,19 +253,12 @@ export const trackedPullRequestService = {
       const task = await taskService.get(input.taskId);
       if (task.projectId !== before.projectId) throw new AppError('La tâche n’appartient pas à ce projet');
     }
-    const status = input.status ?? before.status;
-    if (input.deployed && status !== 'merged') throw new AppError('Seule une pull request fusionnée peut être marquée déployée');
     const patch: UpdateTrackedPullRequestInput = {
       status: input.status ?? undefined,
       note: validateNote(input.note),
       taskId: input.taskId,
       isDraft: input.isDraft ?? undefined,
-      deployed: input.deployed ?? undefined,
-      deployedBy: input.deployed ? actor : undefined,
-      deployNote: validateNote(input.deployNote, 'La note de déploiement'),
     };
-    // Repasser « ouverte » annule le déploiement.
-    if (input.status === 'open' && before.deployedAt) patch.deployed = false;
     const after = await pullRequestRepository.update(id, patch);
     if (!after) throw new NotFoundError('Pull request suivie introuvable');
     if (input.taskId && after.taskId) await this.linkTaskBranch(after.taskId, after.headBranch);
@@ -283,7 +280,7 @@ export const trackedPullRequestService = {
    * Rafraîchit les PR suivies d'un projet : travail local des work sessions (PR en préparation créées, mises à jour
    * ou retirées), puis GitHub (avec le compte de `userId`) : statut, brouillon, titre, checks, revue, conflits ; une
    * PR fusionnée hors de Skipper est notifiée. Les PR ouvertes du dépôt sur la branche d'une tâche ou d'une work
-   * session sont adoptées. Au plus une fois toutes les 30 s par projet, sauf `force`. Sans GitHub (dépôt ailleurs,
+   * session sont adoptées. Au plus une fois toutes les 20 s par projet, sauf `force`. Sans GitHub (dépôt ailleurs,
    * compte absent, panne), la partie GitHub est passée et la liste est rendue telle quelle.
    */
   async sync(projectId: string, userId: string | null | undefined, opts: { force?: boolean } = {}): Promise<TrackedPullRequest[]> {
@@ -305,7 +302,7 @@ export const trackedPullRequestService = {
     const projectRepoName = repoFullName(projectRepo);
     let github: PullRequest[];
     try {
-      github = await pullRequestService.list(projectId, userId, 'ALL', 100);
+      github = await pullRequestService.list(projectId, userId, 'ALL', 100, { fresh: true });
     } catch {
       return;
     }
@@ -402,7 +399,7 @@ export const trackedPullRequestService = {
       void notificationService.notify({
         type: status === 'merged' ? 'pull_request.merged' : 'pull_request.closed',
         title: status === 'merged' ? 'Pull request fusionnée' : 'Pull request fermée sans fusion',
-        message: `${ref} ${updated.title}${project ? ` · ${project.name}` : ''}${status === 'merged' ? ' · à déployer' : ''}`,
+        message: `${ref} ${updated.title}${project ? ` · ${project.name}` : ''}`,
         link: `/projects/${tracked.projectId}/pull-requests`,
         projectId: tracked.projectId,
         payload: { pullRequestId: updated.id, number: updated.number, repo: updated.repo, taskId: updated.taskId },
@@ -413,7 +410,7 @@ export const trackedPullRequestService = {
 
   /** Paragraphe du prompt système : les outils de suivi des PR du serveur `tasks`. */
   promptSummary(): string {
-    return "Les pull requests se suivent au niveau de la tâche avec les outils `tasks` : dès qu'une branche porte des modifications, Skipper y voit une PR « en préparation » (pr_list stage pending) ; `pr_open` pousse la branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session (soumis à son autorisation ; paramètre `path` pour un autre dépôt cloné dans un sous-dossier), `pr_register` déclare une PR déjà ouverte (URL, du dépôt du projet ou d'un autre dépôt GitHub, ou numéro), `pr_update` tient à jour son statut (open, merged, closed), sa note et son déploiement (deployed), `pr_list` les liste par étape (en préparation, brouillon, à fusionner, à déployer, déployée, annulée). Quand tu ouvres une PR par un autre moyen, déclare-la avec `pr_register` pour qu'elle apparaisse dans le suivi ; quand tu mets une PR fusionnée en production, marque-la déployée.";
+    return "Les pull requests se suivent au niveau de la tâche avec les outils `tasks` : dès qu'une branche porte des modifications, Skipper y voit une PR « en préparation » (pr_list stage pending) ; `pr_open` pousse la branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session (soumis à son autorisation ; paramètre `path` pour un autre dépôt cloné dans un sous-dossier), `pr_register` déclare une PR déjà ouverte (URL, du dépôt du projet ou d'un autre dépôt GitHub, ou numéro), `pr_update` tient à jour son statut (open, merged, closed), sa note et sa tâche, `pr_list` les liste par étape (en préparation, brouillon, à fusionner, fusionnée, annulée). Quand tu ouvres une PR par un autre moyen, déclare-la avec `pr_register` pour qu'elle apparaisse dans le suivi. Le statut suit GitHub tout seul (synchronisation).";
   },
 
   stages: PR_STAGES,

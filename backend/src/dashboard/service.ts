@@ -36,8 +36,6 @@ export interface DashboardCounts {
   unreadNotifications: number;
   /** Pull requests suivies ouvertes (à fusionner, brouillons compris). */
   openPullRequests: number;
-  /** Pull requests suivies fusionnées, pas encore déployées. */
-  toDeployPullRequests: number;
   /** Pull requests en préparation : branches avec des modifications, sans pull request ouverte. */
   pendingPullRequests: number;
 }
@@ -143,7 +141,7 @@ async function projectStats(projectIds: string[], monthStart: Date): Promise<Map
   return new Map(rows.map((r) => [r.project_id, r]));
 }
 
-async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests' | 'toDeployPullRequests' | 'pendingPullRequests'>> {
+async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests' | 'pendingPullRequests'>> {
   if (!projectIds.length) return { failedSessions24h: 0, endedSessions24h: 0, doneTasks7d: 0 };
   const { rows } = await pool.query<{ failed: string; ended: string; done: string }>(
     `SELECT
@@ -247,7 +245,7 @@ export const dashboardService = {
       recentSessions(projectIds),
       attentionTasks(projectIds),
       notificationService.countUnread({ projectIds, admin: isAdmin }),
-      projectIds.length ? trackedPullRequestService.list({ projectIds, stage: ['to_merge', 'draft', 'to_deploy'], limit: 20 }) : Promise.resolve([]),
+      projectIds.length ? trackedPullRequestService.list({ projectIds, stage: ['to_merge', 'draft'], limit: 20 }) : Promise.resolve([]),
       trackedPullRequestService.countPending(projectIds),
     ]);
 
@@ -278,7 +276,6 @@ export const dashboardService = {
         overdueTasks: sum('overdueTasks'),
         unreadNotifications: unread,
         openPullRequests: prCounts.open,
-        toDeployPullRequests: prCounts.toDeploy,
         pendingPullRequests: prCounts.pending,
         ...extra,
       },

@@ -1169,7 +1169,7 @@ enum TrackedPullRequestStatus {
   CLOSED
 }
 
-"Étape d'une pull request suivie, dérivée de son statut, de son brouillon et de son déploiement."
+"Étape d'une pull request suivie, dérivée de son statut et de son brouillon."
 enum PullRequestStage {
   "En préparation : la branche porte des modifications, aucune pull request n'est ouverte."
   PENDING
@@ -1177,10 +1177,8 @@ enum PullRequestStage {
   DRAFT
   "Ouverte : à relire et fusionner."
   TO_MERGE
-  "Fusionnée, pas encore en production."
-  TO_DEPLOY
-  "Fusionnée et déployée."
-  DEPLOYED
+  "Fusionnée."
+  MERGED
   "Fermée sans fusion."
   CANCELLED
 }
@@ -1190,7 +1188,7 @@ Pull request suivie : l'objet qui matérialise une PR dans Skipper, rattaché à
 Elle existe avant GitHub (« en préparation » : une branche porte des modifications sans PR ouverte) et peut viser un
 autre dépôt que celui du projet. Créée par la synchronisation (travail local des branches, PR GitHub adoptées), par une
 session d'agent (outils tasks.pr_open / pr_register) ou par l'interface ; son statut et son instantané GitHub sont
-rafraîchis à la synchronisation ; le déploiement est noté à part.
+rafraîchis à la synchronisation.
 """
 type TrackedPullRequest {
   id: ID!
@@ -1225,12 +1223,6 @@ type TrackedPullRequest {
   syncedAt: DateTime
   "Commit de fusion, quand la fusion a été faite depuis Skipper."
   mergeSha: String
-  deployedAt: DateTime
-  "'human' ou 'agent'."
-  deployedByType: String
-  deployedBy: User
-  deployedBySession: Session
-  deployNote: String!
   "Note libre de suivi (« attend la CI », « revue demandée »…)."
   note: String!
   "'human', 'agent' ou 'system' (synchronisation GitHub)."
@@ -1259,9 +1251,6 @@ input UpdateTrackedPullRequestInput {
   note: String
   "Tâche reliée ; null pour détacher."
   taskId: ID
-  "true : marquée déployée (PR fusionnée seulement) ; false : plus déployée."
-  deployed: Boolean
-  deployNote: String
 }
 
 "Souvenir d'une work session supprimée, gardé par les sessions archivées avec elle."
@@ -1605,8 +1594,6 @@ type DashboardCounts {
   unreadNotifications: Int!
   "Pull requests suivies ouvertes (à fusionner, brouillons compris)."
   openPullRequests: Int!
-  "Pull requests suivies fusionnées, pas encore déployées."
-  toDeployPullRequests: Int!
   "Pull requests en préparation : branches avec des modifications, sans pull request ouverte."
   pendingPullRequests: Int!
 }

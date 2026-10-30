@@ -230,7 +230,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       // ---- Pull requests suivies ----------------------------------------------------------------------------
       tool(
         'pr_list',
-        "Liste les pull requests suivies du projet, ou celles d'une tâche, par étape (pending = en préparation : branche avec des modifications sans PR ouverte ; draft, to_merge, to_deploy, deployed, cancelled ; défaut : toutes).",
+        "Liste les pull requests suivies du projet, ou celles d'une tâche, par étape (pending = en préparation : branche avec des modifications sans PR ouverte ; draft, to_merge, merged, cancelled ; défaut : toutes).",
         {
           task_id: z.string().optional().describe("Tâche dont on veut les PR ; absent : tout le projet"),
           stage: z.array(prStageSchema).optional().describe('Étapes gardées ; défaut : toutes'),
@@ -285,20 +285,18 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       ),
       tool(
         'pr_update',
-        "Met à jour une pull request suivie : statut (open, merged, closed = annulée), note, déploiement (deployed true quand elle est en production, avec deploy_note), tâche reliée. Une PR en préparation (pas encore ouverte) n'accepte que la note et la tâche : ouvre-la avec pr_open.",
+        "Met à jour une pull request suivie : statut (open, merged, closed = annulée), note, tâche reliée. Le statut suit aussi GitHub tout seul. Une PR en préparation (pas encore ouverte) n'accepte que la note et la tâche : ouvre-la avec pr_open.",
         {
           id: z.string().describe("Identifiant de la PR suivie (donné par pr_list ou get), son numéro GitHub dans le dépôt du projet (« 42 », « #42 ») ou son URL"),
           status: prStatusSchema.optional(),
           note: z.string().optional().describe('Remplace la note ; chaîne vide pour la retirer'),
-          deployed: z.boolean().optional().describe('true : mise en production (PR fusionnée seulement) ; false : annule'),
-          deploy_note: z.string().optional().describe('Où et comment elle a été déployée (version, cellule, heure)'),
           task_id: z.string().optional().describe('Relie la PR à cette tâche'),
         },
-        async ({ id, status, note, deployed, deploy_note, task_id }) =>
+        async ({ id, status, note, task_id }) =>
           run(async () => {
             const current = await trackedPullRequestService.resolve(project.id, id);
             if (task_id) await own(task_id);
-            const pr = await trackedPullRequestService.update(current.id, { status: status as TrackedPullRequestStatus | undefined, note, deployed, deployNote: deploy_note, taskId: task_id }, prActor);
+            const pr = await trackedPullRequestService.update(current.id, { status: status as TrackedPullRequestStatus | undefined, note, taskId: task_id });
             return `Pull request mise à jour :\n${describePullRequest(pr, projectRepo)}`;
           }),
       ),

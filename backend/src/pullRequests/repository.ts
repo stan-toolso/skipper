@@ -21,11 +21,6 @@ interface Row {
   mergeable: string | null;
   synced_at: Date | null;
   merge_sha: string | null;
-  deployed_at: Date | null;
-  deployed_by_type: 'human' | 'agent' | null;
-  deployed_by_user_id: string | null;
-  deployed_by_session_id: string | null;
-  deploy_note: string;
   note: string;
   created_by_type: 'human' | 'agent' | 'system';
   created_by_user_id: string | null;
@@ -57,11 +52,6 @@ const toPr = (r: Row): TrackedPullRequest => ({
   mergeable: r.mergeable,
   syncedAt: r.synced_at,
   mergeSha: r.merge_sha,
-  deployedAt: r.deployed_at,
-  deployedByType: r.deployed_by_type,
-  deployedByUserId: r.deployed_by_user_id,
-  deployedBySessionId: r.deployed_by_session_id,
-  deployNote: r.deploy_note,
   note: r.note,
   createdByType: r.created_by_type,
   createdByUserId: r.created_by_user_id,
@@ -78,13 +68,12 @@ const STAGE_SQL: Record<string, string> = {
   pending: `(status = 'pending')`,
   draft: `(status = 'open' AND is_draft)`,
   to_merge: `(status = 'open' AND NOT is_draft)`,
-  to_deploy: `(status = 'merged' AND deployed_at IS NULL)`,
-  deployed: `(status = 'merged' AND deployed_at IS NOT NULL)`,
+  merged: `(status = 'merged')`,
   cancelled: `(status = 'closed')`,
 };
 
-/** Ordre des listes : ce qui attend une action d'abord (à fusionner, en préparation, à déployer), puis les plus récentes. */
-const ORDER = `ORDER BY CASE WHEN status = 'open' THEN 0 WHEN status = 'pending' THEN 1 WHEN status = 'merged' AND deployed_at IS NULL THEN 2 WHEN status = 'merged' THEN 3 ELSE 4 END, opened_at DESC, number DESC NULLS LAST`;
+/** Ordre des listes : ce qui attend une action d'abord (à fusionner, en préparation), puis les fusionnées, puis les plus récentes. */
+const ORDER = `ORDER BY CASE WHEN status = 'open' THEN 0 WHEN status = 'pending' THEN 1 WHEN status = 'merged' THEN 2 ELSE 3 END, opened_at DESC, number DESC NULLS LAST`;
 
 export const pullRequestRepository = {
   async create(projectId: string, input: CreateTrackedPullRequestInput, actor: PullRequestActor): Promise<TrackedPullRequest> {
@@ -165,16 +154,15 @@ export const pullRequestRepository = {
     return rows.map(toPr);
   },
 
-  /** Nombre de PR par étape « à traiter » pour des projets : ouvertes (à fusionner, brouillons compris), en préparation, et à déployer. */
-  async countPending(projectIds: string[]): Promise<{ open: number; pending: number; toDeploy: number }> {
-    if (!projectIds.length) return { open: 0, pending: 0, toDeploy: 0 };
-    const { rows } = await pool.query<{ open: string; pending: string; to_deploy: string }>(
-      `SELECT count(*) FILTER (WHERE status = 'open')::text AS open, count(*) FILTER (WHERE status = 'pending')::text AS pending,
-              count(*) FILTER (WHERE status = 'merged' AND deployed_at IS NULL)::text AS to_deploy
+  /** Nombre de PR « à traiter » pour des projets : ouvertes (à fusionner, brouillons compris) et en préparation. */
+  async countPending(projectIds: string[]): Promise<{ open: number; pending: number }> {
+    if (!projectIds.length) return { open: 0, pending: 0 };
+    const { rows } = await pool.query<{ open: string; pending: string }>(
+      `SELECT count(*) FILTER (WHERE status = 'open')::text AS open, count(*) FILTER (WHERE status = 'pending')::text AS pending
        FROM pull_requests WHERE project_id = ANY($1::uuid[])`,
       [projectIds],
     );
-    return { open: Number(rows[0]?.open ?? 0), pending: Number(rows[0]?.pending ?? 0), toDeploy: Number(rows[0]?.to_deploy ?? 0) };
+    return { open: Number(rows[0]?.open ?? 0), pending: Number(rows[0]?.pending ?? 0) };
   },
 
   async update(id: string, input: UpdateTrackedPullRequestInput): Promise<TrackedPullRequest | null> {
@@ -211,17 +199,6 @@ export const pullRequestRepository = {
         if (input.closedAt === undefined) sets.push('closed_at = NULL');
         if (input.mergeSha === undefined) sets.push('merge_sha = NULL');
       }
-    }
-    if (input.deployed === true) {
-      sets.push('deployed_at = COALESCE(deployed_at, now())');
-      sets.push(`deployed_by_type = $${params.push(input.deployedBy?.type === 'agent' ? 'agent' : 'human')}`);
-      sets.push(`deployed_by_user_id = $${params.push(input.deployedBy?.userId ?? null)}`);
-      sets.push(`deployed_by_session_id = $${params.push(input.deployedBy?.sessionId ?? null)}`);
-      sets.push(`deploy_note = $${params.push(input.deployNote ?? '')}`);
-    } else if (input.deployed === false) {
-      sets.push('deployed_at = NULL', 'deployed_by_type = NULL', 'deployed_by_user_id = NULL', 'deployed_by_session_id = NULL', `deploy_note = ''`);
-    } else if (input.deployNote != null) {
-      sets.push(`deploy_note = $${params.push(input.deployNote)}`);
     }
     const { rows } = await pool.query<Row>(`UPDATE pull_requests SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, params);
     return rows[0] ? toPr(rows[0]) : null;

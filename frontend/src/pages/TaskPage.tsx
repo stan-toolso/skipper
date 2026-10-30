@@ -302,7 +302,6 @@ export default function TaskPage() {
                           {pr.createdBy && ` · par ${pr.createdBy.name}`}
                           {pr.status === 'PENDING' ? ` · en préparation depuis ${timeAgo(pr.openedAt)}` : ` · ouverte ${timeAgo(pr.openedAt)}`}
                           {pr.mergedAt && ` · fusionnée ${timeAgo(pr.mergedAt)}`}
-                          {pr.deployedAt && ` · déployée ${timeAgo(pr.deployedAt)}${pr.deployNote ? ` (${pr.deployNote})` : ''}`}
                         </div>
                         {pr.note && (
                           <div className="text-secondary" title="Note de suivi">

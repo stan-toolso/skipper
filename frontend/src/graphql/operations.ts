@@ -1914,7 +1914,6 @@ export interface DashboardCounts {
   doneTasks7d: number;
   unreadNotifications: number;
   openPullRequests: number;
-  toDeployPullRequests: number;
   pendingPullRequests: number;
 }
 
@@ -1975,7 +1974,6 @@ export const DASHBOARD = gql`
         doneTasks7d
         unreadNotifications
         openPullRequests
-        toDeployPullRequests
         pendingPullRequests
       }
       usage {
