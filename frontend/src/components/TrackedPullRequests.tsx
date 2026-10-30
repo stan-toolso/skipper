@@ -1,10 +1,12 @@
 import { useMutation } from '@apollo/client';
 import { useState } from 'react';
 import { Alert, Button, Form, Modal, Table } from 'react-bootstrap';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
+  canResolveConflicts,
   DELETE_PULL_REQUEST,
   REGISTER_PULL_REQUEST,
+  RESOLVE_PULL_REQUEST_CONFLICTS,
   STAGE_LABELS,
   TRACKED_PR_REFETCH,
   UPDATE_PULL_REQUEST,
@@ -15,7 +17,7 @@ import {
 import { timeAgo } from '../lib/humanize';
 import { useDialogs } from './Dialogs';
 import PopMenu, { type MenuItem } from './PopMenu';
-import { PullRequestIndicators, PullRequestModal } from './PullRequests';
+import { PullRequestIndicators, PullRequestModal, type PullRequestRelated } from './PullRequests';
 
 /**
  * Pull requests suivies : pastille d'étape, puce compacte (cartes et grilles de tâches), tableau avec actions
@@ -60,11 +62,30 @@ export function TrackedPullRequestChip({ projectId, pr, showTitle = false }: { p
 /** Actions d'une PR suivie (menu « ⋮ ») : les mutations avec leurs confirmations et saisies. */
 export function useTrackedPullRequestActions() {
   const { confirm, prompt, showError } = useDialogs();
+  const navigate = useNavigate();
   const [update] = useMutation(UPDATE_PULL_REQUEST, { refetchQueries: TRACKED_PR_REFETCH });
   const [remove] = useMutation(DELETE_PULL_REQUEST, { refetchQueries: TRACKED_PR_REFETCH });
+  const [resolveConflicts] = useMutation<{ resolvePullRequestConflicts: { id: string; name: string } }>(RESOLVE_PULL_REQUEST_CONFLICTS, { refetchQueries: TRACKED_PR_REFETCH });
   const run = (p: Promise<unknown>) => p.catch((err) => void showError(err));
 
   return {
+    /** Demande à la session rattachée de résoudre les conflits avec la base (la session est relancée si elle était terminée). */
+    resolveConflicts: async (pr: TrackedPullRequest) => {
+      if (!pr.session) return;
+      const answer = await confirm({
+        title: `Résoudre les conflits de #${pr.number}`,
+        message: `Demander à la session « ${pr.session.name} » de résoudre les conflits de « ${pr.title} » avec ${pr.baseBranch || 'la base'} ? L'instruction lui est envoyée ; si elle est terminée, elle est relancée.`,
+        confirmLabel: 'Envoyer la demande',
+        checkbox: { label: 'Ouvrir la session', defaultChecked: true },
+      });
+      if (!answer) return;
+      await run(
+        resolveConflicts({ variables: { id: pr.id } }).then((res) => {
+          const session = res.data?.resolvePullRequestConflicts;
+          if (answer.checked && session) navigate(`/sessions/${session.id}`);
+        }),
+      );
+    },
     markDeployed: async (pr: TrackedPullRequest) => {
       const note = await prompt({ title: `Marquer #${pr.number} comme déployée`, message: 'Où et comment a-t-elle été mise en production ? (facultatif)', placeholder: 'ex. skipper-1, 30/10 18:40', required: false });
       if (note === null) return;
@@ -92,11 +113,10 @@ export function useTrackedPullRequestActions() {
 function ActionsMenu({ pr, onOpen }: { pr: TrackedPullRequest; onOpen: () => void }) {
   const actions = useTrackedPullRequestActions();
   const [at, setAt] = useState<{ top: number; right: number } | null>(null);
-  const items: MenuItem[] = [
-    { label: 'Détail et fusion', icon: 'bi-git', onClick: onOpen },
-    { label: 'Ouvrir sur GitHub', icon: 'bi-box-arrow-up-right', onClick: () => window.open(pr.url, '_blank', 'noopener') },
-    { label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) },
-  ];
+  const items: MenuItem[] = [{ label: 'Détail et fusion', icon: 'bi-git', onClick: onOpen }];
+  if (canResolveConflicts(pr)) items.push({ label: 'Résoudre les conflits', icon: 'bi-robot', onClick: () => void actions.resolveConflicts(pr) });
+  if (pr.session) items.push({ label: `Session : ${pr.session.name}`, icon: 'bi-terminal', to: `/sessions/${pr.session.id}` });
+  items.push({ label: 'Ouvrir sur GitHub', icon: 'bi-box-arrow-up-right', onClick: () => window.open(pr.url, '_blank', 'noopener') }, { label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) });
   if (pr.status === 'MERGED' && !pr.deployedAt) items.push({ label: 'Marquer comme déployée', icon: 'bi-box-arrow-up', onClick: () => void actions.markDeployed(pr) });
   if (pr.deployedAt) items.push({ label: 'Annuler le déploiement', icon: 'bi-arrow-counterclockwise', onClick: () => void actions.undeploy(pr) });
   if (pr.status === 'OPEN') {
@@ -127,19 +147,45 @@ function ActionsMenu({ pr, onOpen }: { pr: TrackedPullRequest; onOpen: () => voi
   );
 }
 
+/** Bouton « Résoudre les conflits » : visible quand GitHub signale des conflits et qu'une session est rattachée à la PR. */
+export function ResolveConflictsButton({ pr, className = '' }: { pr: TrackedPullRequest; className?: string }) {
+  const actions = useTrackedPullRequestActions();
+  if (!canResolveConflicts(pr) || !pr.session) return null;
+  return (
+    <Button size="sm" variant="outline-danger" className={`py-0 ${className}`} title={`Demander à la session « ${pr.session.name} » de résoudre les conflits avec ${pr.baseBranch}`} onClick={() => void actions.resolveConflicts(pr)}>
+      <i className="bi bi-robot me-1" />
+      Résoudre les conflits
+    </Button>
+  );
+}
+
+/** Tâche et sessions reliées à une PR suivie, pour les liens de la fenêtre GitHub (session rattachée, puis celle qui l'a ouverte). */
+const relatedOf = (pr: TrackedPullRequest): PullRequestRelated => ({
+  tasks: pr.task ? [pr.task] : [],
+  sessions: [pr.session, pr.createdBySession].filter((x): x is { id: string; name: string } => x != null),
+});
+
+/** Ce que la fenêtre GitHub d'une PR suivie sait faire de plus : demander la résolution des conflits à la session rattachée. */
+function useConflictResolver(pr: TrackedPullRequest | null) {
+  const actions = useTrackedPullRequestActions();
+  return pr && canResolveConflicts(pr) && pr.session ? { sessionName: pr.session.name, run: () => void actions.resolveConflicts(pr) } : undefined;
+}
+
 /**
- * Barre d'actions d'une PR suivie (fiche de tâche) : détail et fusion (fenêtre GitHub), déploiement, puis le menu des
- * autres actions. Sans droit d'écriture, seul le détail reste.
+ * Barre d'actions d'une PR suivie (fiche de tâche) : détail et fusion (fenêtre GitHub), résolution des conflits,
+ * déploiement, puis le menu des autres actions. Sans droit d'écriture, seul le détail reste.
  */
 export function TrackedPullRequestActions({ pr, canWrite }: { pr: TrackedPullRequest; canWrite: boolean }) {
   const actions = useTrackedPullRequestActions();
   const [open, setOpen] = useState(false);
+  const resolver = useConflictResolver(canWrite ? pr : null);
   return (
     <div className="d-flex align-items-center gap-2 flex-wrap">
       <Button size="sm" variant="outline-secondary" className="py-0" onClick={() => setOpen(true)}>
         <i className="bi bi-git me-1" />
         {pr.status === 'OPEN' && canWrite ? 'Détail et fusion' : 'Détail'}
       </Button>
+      {canWrite && <ResolveConflictsButton pr={pr} />}
       {canWrite && pr.status === 'MERGED' && !pr.deployedAt && (
         <Button size="sm" variant="outline-success" className="py-0" onClick={() => void actions.markDeployed(pr)}>
           <i className="bi bi-box-arrow-up me-1" />
@@ -147,7 +193,7 @@ export function TrackedPullRequestActions({ pr, canWrite }: { pr: TrackedPullReq
         </Button>
       )}
       {canWrite && <ActionsMenu pr={pr} onOpen={() => setOpen(true)} />}
-      {open && <PullRequestModal projectId={pr.project.id} number={pr.number} onClose={() => setOpen(false)} />}
+      {open && <PullRequestModal projectId={pr.project.id} number={pr.number} onClose={() => setOpen(false)} onResolveConflicts={resolver} related={relatedOf(pr)} />}
     </div>
   );
 }
@@ -162,14 +208,16 @@ function By({ type, user, session }: { type: string | null; user: { id: string; 
 
 /**
  * Tableau des PR suivies. `showProject` (vue multi-projets), `showTask` (hors fiche de tâche). Chaque ligne ouvre la
- * fenêtre GitHub (checks, revues, fusion avec nettoyage) ; le menu porte les actions de suivi.
+ * fenêtre GitHub (checks, revues, fusion avec nettoyage) ; le menu porte les actions de suivi. Sur mobile (règles
+ * `.pr-table` de workbench.css), chaque ligne devient une carte : titre, puis étape, date et menu sur une ligne.
  */
 export function TrackedPullRequestTable({ prs, showProject = false, showTask = true, compact = false }: { prs: TrackedPullRequest[]; showProject?: boolean; showTask?: boolean; compact?: boolean }) {
   const [open, setOpen] = useState<TrackedPullRequest | null>(null);
+  const resolver = useConflictResolver(open);
   if (prs.length === 0) return null;
   return (
     <>
-      <Table size="sm" hover responsive className={`mb-0 table-stack pr-table${compact ? ' pr-table-compact' : ''}`}>
+      <Table size="sm" hover responsive className={`mb-0 pr-table${compact ? ' pr-table-compact' : ''}`}>
         <thead>
           <tr>
             <th>Pull request</th>
@@ -178,7 +226,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
             {showTask && <th className="d-none d-md-table-cell">Tâche</th>}
             {!compact && <th className="d-none d-lg-table-cell">Branche</th>}
             {!compact && <th className="d-none d-lg-table-cell">Par</th>}
-            <th className="d-none d-md-table-cell">Quand</th>
+            <th>Quand</th>
             <th className="text-end"> </th>
           </tr>
         </thead>
@@ -198,8 +246,16 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                       {pr.note}
                     </div>
                   )}
+                  {showTask && pr.task && (
+                    <div className="small text-truncate d-md-none">
+                      <i className="bi bi-check2-square me-1 text-secondary" />
+                      <Link to={`/tasks/${pr.task.id}`} title={pr.task.title} onClick={(e) => e.stopPropagation()}>
+                        {pr.task.title}
+                      </Link>
+                    </div>
+                  )}
                 </td>
-                <td>
+                <td className="pr-cell-stage">
                   <PullRequestStageBadge stage={pr.stage} />
                   {pr.deployNote && pr.stage === 'DEPLOYED' && (
                     <div className="small text-secondary text-truncate" title={pr.deployNote}>
@@ -236,7 +292,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                     <By type={pr.createdByType} user={pr.createdBy} session={pr.createdBySession} />
                   </td>
                 )}
-                <td className="d-none d-md-table-cell small text-secondary" title={fmt(when.at)}>
+                <td className="pr-cell-when small text-secondary" title={fmt(when.at)}>
                   {when.label} {timeAgo(when.at)}
                   {pr.stage === 'DEPLOYED' && (pr.deployedBy || pr.deployedBySession) && (
                     <>
@@ -245,7 +301,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                     </>
                   )}
                 </td>
-                <td className="text-end text-nowrap" onClick={(e) => e.stopPropagation()}>
+                <td className="pr-cell-actions text-end text-nowrap" onClick={(e) => e.stopPropagation()}>
                   <ActionsMenu pr={pr} onOpen={() => setOpen(pr)} />
                 </td>
               </tr>
@@ -253,7 +309,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
           })}
         </tbody>
       </Table>
-      {open && <PullRequestModal projectId={open.project.id} number={open.number} onClose={() => setOpen(null)} />}
+      {open && <PullRequestModal projectId={open.project.id} number={open.number} onClose={() => setOpen(null)} onResolveConflicts={resolver} related={relatedOf(open)} />}
     </>
   );
 }

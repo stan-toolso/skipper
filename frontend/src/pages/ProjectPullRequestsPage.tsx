@@ -66,8 +66,18 @@ export default function ProjectPullRequestsPage() {
   return (
     <>
       <ProjectHeader project={project} active="pullRequests" />
-      <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
-        <ButtonGroup size="sm" className="flex-wrap">
+      <div className="pr-toolbar d-flex flex-wrap gap-2 align-items-center mb-3">
+        <Form.Select size="sm" className="pr-filter-select d-md-none" value={filter} onChange={(e) => pick(e.target.value as Filter)} aria-label="Filtrer par étape">
+          <option value="pending">À traiter{pending > 0 ? ` (${pending})` : ''}</option>
+          {STAGE_ORDER.map((s) => (
+            <option key={s} value={s}>
+              {STAGE_LABELS[s].plural}
+              {counts[s] > 0 ? ` (${counts[s]})` : ''}
+            </option>
+          ))}
+          <option value="all">Toutes{all.length > 0 ? ` (${all.length})` : ''}</option>
+        </Form.Select>
+        <ButtonGroup size="sm" className="flex-wrap d-none d-md-flex">
           <Button variant={filter === 'pending' ? 'secondary' : 'outline-secondary'} onClick={() => pick('pending')} title="À fusionner, brouillons et à déployer">
             À traiter {pending > 0 && <Badge bg="light" text="dark" className="ms-1">{pending}</Badge>}
           </Button>
@@ -80,10 +90,10 @@ export default function ProjectPullRequestsPage() {
             Toutes
           </Button>
         </ButtonGroup>
-        <Form.Control size="sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrer (titre, numéro, branche, tâche, note)" style={{ width: 260 }} />
-        <div className="ms-auto d-flex gap-2">
-          <Button size="sm" variant="outline-secondary" disabled={syncing || !project.gitUrl} title="Relire l'état des pull requests sur GitHub" onClick={() => void sync({ variables: { projectId: id } }).catch(() => undefined)}>
-            <i className={`bi bi-arrow-clockwise me-1${syncing ? ' spin' : ''}`} /> Rafraîchir
+        <Form.Control size="sm" className="pr-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrer (titre, numéro, branche, tâche, note)" />
+        <div className="pr-toolbar-actions ms-auto d-flex gap-2">
+          <Button size="sm" variant="outline-secondary" disabled={syncing || !project.gitUrl} title="Relire l'état des pull requests sur GitHub" aria-label="Rafraîchir" onClick={() => void sync({ variables: { projectId: id } }).catch(() => undefined)}>
+            <i className={`bi bi-arrow-clockwise${syncing ? ' spin' : ''}`} /> <span className="d-none d-md-inline">Rafraîchir</span>
           </Button>
           {canWrite && (
             <Button size="sm" onClick={() => setRegistering(true)}>
@@ -104,9 +114,9 @@ export default function ProjectPullRequestsPage() {
       )}
       {groups.map((g) => (
         <section key={g.stage} className="mb-4">
-          <h2 className="h6 d-flex align-items-center gap-2 mb-2">
+          <h2 className="h6 d-flex align-items-center flex-wrap gap-2 mb-2">
             <i className={`bi ${STAGE_LABELS[g.stage].icon}`} />
-            {STAGE_LABELS[g.stage].plural}
+            <span className="text-nowrap">{STAGE_LABELS[g.stage].plural}</span>
             <Badge bg="secondary" pill>
               {g.prs.length}
             </Badge>
