@@ -384,7 +384,7 @@ type CreatedProjectApiKey {
 "Notification affichée dans la cloche de l'interface."
 type Notification {
   id: ID!
-  "request.created, task.created, task.completed, session.completed, session.failed, context.created"
+  "request.created, task.created, task.completed, session.completed, session.failed, context.created… (familles : PushCategory.types)"
   type: String!
   title: String!
   message: String
@@ -1185,6 +1185,11 @@ type TrackedPullRequest {
   updatedAt: DateTime!
   "La PR GitHub en direct (checks, revues, fusion), null si GitHub ne répond pas."
   github: PullRequest
+  """
+  Session d'agent rattachée : la session (non archivée) la plus récente du dossier de travail de la branche de la PR,
+  sinon celle qui a ouvert la PR. C'est elle qui reçoit la demande de résolution des conflits.
+  """
+  session: Session
 }
 
 input UpdateTrackedPullRequestInput {
@@ -1849,6 +1854,18 @@ input PushSubscriptionInput {
   userAgent: String
 }
 
+"Famille de notifications qu'une personne reçoit ou non en push (et en notification du navigateur) ; la cloche affiche tout."
+type PushCategory {
+  key: String!
+  label: String!
+  description: String!
+  "Types de notification (Notification.type) de la famille."
+  types: [String!]!
+  enabled: Boolean!
+  "Réservée aux administrateurs de l'application."
+  adminsOnly: Boolean!
+}
+
 "Relance : la nouvelle session reprend le dossier et la branche de la session d'origine (archivée), ou un nouveau dossier s'il a disparu."
 input RelaunchSessionInput {
   name: String
@@ -2048,6 +2065,8 @@ type Query {
   sharedPages: [SharedPage!]!
   "Clé publique VAPID avec laquelle les navigateurs s'abonnent aux notifications push."
   pushPublicKey: String!
+  "Familles de notifications de la personne connectée, avec leur état (toutes reçues par défaut)."
+  pushPreferences: [PushCategory!]!
   "Contenu d'un dossier du workspace du projet (ou de la work session). path vide = racine."
   workspaceEntries(projectId: ID!, worksessionId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
@@ -2363,6 +2382,8 @@ type Mutation {
   deletePullRequest(id: ID!): Boolean!
   "Rafraîchit tout de suite les pull requests suivies d'un projet depuis GitHub."
   syncPullRequests(projectId: ID!): [TrackedPullRequest!]!
+  "Demande à la session rattachée à la PR (TrackedPullRequest.session) de résoudre ses conflits avec la base : l'instruction lui est envoyée (la session est relancée si elle était terminée). Renvoie la session."
+  resolvePullRequestConflicts(id: ID!): Session!
 
   "Ouvre un shell dans une work session du projet, avec l'historique des commandes de l'utilisateur sur le projet."
   createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!
@@ -2412,6 +2433,8 @@ type Mutation {
   unsubscribePush(endpoint: String!): Boolean!
   "Envoie une notification de test aux appareils de l'utilisateur ; renvoie leur nombre."
   sendTestPush: Int!
+  "Active ou coupe une famille de notifications push pour la personne connectée ; renvoie toutes ses familles."
+  setPushPreference(category: String!, enabled: Boolean!): [PushCategory!]!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!

@@ -62,7 +62,7 @@ Trois notions :
   est réglée (répondue, annulée avec la session, expirée au redémarrage) : la cloche ne réclame que ce
   qui attend encore. Réservées aux administrateurs de l'application : les limites d'utilisation de
   l'abonnement Claude (fenêtre à 75 % puis 90 %, tours refusés). Notifications natives du navigateur
-  activables en option.
+  activables en option, avec le choix des familles reçues (voir « Notifications » plus bas).
 - **Coffre** : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS, sites web, secrets et comptes Google que les
   agents utilisent sans jamais voir les identifiants : le serveur agit pour eux (outils MCP, saisie dans le
   navigateur headless). Un élément appartient à une personne (coffre personnel, partageable et ouvrable à
@@ -93,7 +93,7 @@ Paramètres (menu en bas de la sidebar), **propres à chaque personne** : **Clau
 connecté depuis la page ou clé API du coffre, modèles, budgets et consommation), **OpenCode** (modèle
 par défaut, clés des fournisseurs, liste des modèles), **GitHub** (comptes connectés par code ou par
 jeton du coffre, dépôts), **Serveur** (administrateurs : santé, sessions simultanées, maintenance,
-limites de l'abonnement) et **Apparence**. Les sessions, actions git et pull requests d'une personne
+limites de l'abonnement), **Notifications** (familles reçues en push) et **Apparence**. Les sessions, actions git et pull requests d'une personne
 utilisent ses propres comptes.
 
 ```bash
@@ -665,6 +665,18 @@ conversation), tâches, pages et éléments du coffre ; **raccourcis** listés p
 modifiable) et **Git** (état, branche comparée à sa base avec diff par fichier, commits, PR).
 Les listes ne se rafraîchissent plus quand l'onglet du navigateur est caché (`usePollingQuery`).
 
+Fluidité (30/10/2026) : le fil d'une session (`lib/sessionEvents.ts`) ne change d'état qu'à l'arrivée d'un
+événement ou d'un brouillon différent, et garde son curseur quand l'onglet du workbench est caché (pas de
+rechargement de l'historique au retour) ; le transcript mémoïse ses nœuds (`useMemo`) et `Markdown` est
+mémoïsé : pendant qu'un agent écrit, seul le bloc « en direct » est re-rendu. Les pages lourdes ou rares
+(éditeurs CodeMirror, terminal xterm, workflows, réglages, coffre…) sont chargées à la demande (`lazy` dans
+`App.tsx`) : le bundle principal passe de 2,4 Mo à 1,1 Mo. Côté backend, les résolveurs de champ appelés une
+fois par objet (propriétaire, work session, projet, tâche, demandes en attente) passent par des chargeurs
+groupés par requête (`graphql/loaders.ts`, `loadersOf(ctx)`) : la sidebar coûte quelques requêtes SQL par
+relevé au lieu de plusieurs centaines ; une opération GraphQL de plus de 500 ms est journalisée en `warn`
+(`operationTimingPlugin`, toutes en `debug`). nginx compresse bundles et réponses GraphQL et sert en HTTP/2
+(voir DEPLOY.md).
+
 **Tableau de bord** (page d'accueil, `frontend/src/pages/DashboardPage.tsx`) : ce qui attend
 l'utilisateur sur l'ensemble de ses projets. Quatre tuiles (demandes en attente, agents au travail
 et en attente d'instructions, tâches ouvertes avec les retards, consommation du mois avec le
@@ -1008,8 +1020,8 @@ La taille du contexte (`Session.contextTokens`) est relevée par le provider Cla
 (tokens d'entrée, cache compris, du dernier appel au modèle) et sur les frontières de compaction
 (`compact_boundary`, `post_tokens`). Elle est **visible sans ouvrir les réglages** : jauge dans l'en-tête de la
 page de session (`Session.context` : tokens, part de la fenêtre du modèle, coût approximatif de la relecture du
-contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans la sidebar et les
-onglets au-delà du seuil de signalement. Ce seuil est **propre à chaque personne** (Paramètres › Claude ›
+contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans les onglets au-delà
+du seuil de signalement (la sidebar n'en affiche pas, pour rester lisible). Ce seuil est **propre à chaque personne** (Paramètres › Claude ›
 « Signaler le contexte d'une session à partir de », en milliers de tokens, `ClaudeSettings.contextWarnTokens`) :
 150 000 tokens par défaut (`CONTEXT_WARN_TOKENS`), vide pour ne jamais être signalé. Au-delà de ce seuil, un bandeau dans l'onglet
 « Session » du panneau de droite (dans la page elle-même pour un chat, qui n'a pas de panneau) propose
@@ -1071,6 +1083,17 @@ clés VAPID générées au premier démarrage dans `app_settings`), le service w
 `vite-plugin-pwa` en mode `injectManifest`) affiche la notification système même application fermée,
 met à jour le badge de l'icône et ouvre la page concernée au clic. « Tester » envoie une notification
 à tous ses appareils ; des conseils par système sont affichés quand elles sont bloquées.
+
+**Ce que chacun reçoit** se règle dans Paramètres › Notifications (lien « Choisir ce que vous recevez »
+dans la cloche) : les notifications sont regroupées en familles (`backend/src/notifications/preferences.ts`,
+`PUSH_CATEGORIES` : demandes d'un agent, sessions terminées ou en erreur, sessions lancées par un agent,
+tâches, pull requests, planifications, workflows, contexte, pages partagées, ressources des projets et,
+pour les administrateurs, alertes du serveur et de l'abonnement), chacune activable ou non. Le choix suit
+la personne sur tous ses appareils (`user_settings`, clé `notifications.push`, qui ne garde que les
+familles coupées : une famille ajoutée plus tard est reçue par défaut). Il filtre l'envoi push
+(`pushService.deliver`) et les notifications du navigateur affichées par la cloche quand la fenêtre n'a
+pas le focus ; la cloche elle-même affiche tout. Un type de notification absent des familles est toujours
+envoyé. API : `pushPreferences`, `setPushPreference(category, enabled)`.
 
 ## Apparence
 

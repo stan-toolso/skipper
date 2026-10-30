@@ -16,7 +16,7 @@ import { displayComboText } from '../lib/shortcuts';
 import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
-import { ContextDot, SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
+import { SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
 import { attachedElsewhere, mineFirst, openItemsOf, participates, sessionGroups, subagentsSummary, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
@@ -249,7 +249,6 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
             <i className="bi bi-layers" /> {elsewhere}
           </span>
         )}
-        {s.context.overThreshold && <ContextDot context={s.context} />}
         {s.owner && !mine && (
           <span className="wb-owner" title={`Session de ${s.owner.name}`}>
             {initialsOf(s.owner.name)}
@@ -400,7 +399,6 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
           <span className="wb-ws-name">{ws.name}</span>
           {ws.primary && ws.projectName && <span className="wb-tag" title="Sessions et terminaux d'avant les work sessions, dans le checkout principal">principal</span>}
           {!ws.exists && <span className="wb-tag missing">absent</span>}
-          {session?.context.overThreshold && <ContextDot context={session.context} />}
           {session?.owner && !mine && (
             <span className="wb-owner" title={`Session de ${session.owner.name}`}>
               {initialsOf(session.owner.name)}
@@ -555,7 +553,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const { openSearch } = useSearchPalette();
   const { openHelp } = useShortcutsHelp();
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
-  const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
+  const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 5000, fetchPolicy: 'cache-and-network' });
   const chats = data?.chats ?? [];
   const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });

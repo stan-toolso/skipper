@@ -49,7 +49,7 @@
 .wb-menu-icons .wb-menu-item:hover { background: var(--cc-bg-hover); }
 .wb-menu-icons .wb-badge { position: absolute; top: 0; right: 0; margin: 0; font-size: 9.5px; line-height: 14px; padding: 0 4px; }
 /* La phrase d'état se tronque avant le nom : une ligne indentée (session lancée par un agent) garde un nom lisible. */
-.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-row.active .wb-state, .wb-row:hover .wb-state { color: var(--cc-dim); }
 
 .wb-section-title {
@@ -571,6 +571,9 @@
 .wb-ws-link { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; color: var(--cc-fg); text-decoration: none; }
 .wb-ws-link:hover { color: var(--cc-accent); }
 .wb-ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* La tête d'une carte tient sur une ligne : la phrase d'état ne passe jamais à la ligne, se montre entière quand elle
+   est courte (« travaille ») et se tronque au-delà de 40 % de la largeur ; le nom se tronque sur le reste. */
+.wb-ws-link .wb-state { flex: 0 0 auto; max-width: 40%; }
 .wb-ws-state { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; background: var(--cc-dimmer); }
 .wb-ws-state.busy { background: var(--cc-accent); box-shadow: 0 0 0 2px rgba(var(--cc-accent-rgb), 0.25); }
 .wb-ws-state.pending { background: var(--cc-yellow); }
@@ -723,9 +726,30 @@
 .pr-stage-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
 .pr-table .pr-row { cursor: pointer; }
 .pr-table td { vertical-align: middle; }
-.pr-cell-title { max-width: 420px; }
+/* Le titre garde une largeur lisible : à l'étroit, le tableau défile plutôt que de casser le titre mot par mot. */
+.pr-cell-title { max-width: 420px; min-width: 220px; }
 .pr-cell-title .small { max-width: 100%; }
+.pr-cell-when { min-width: 120px; }
+.pr-toolbar .pr-search { width: 260px; }
 .tracked-pr-item { background: var(--cc-bg-elevated); }
+/* Liens vers les tâches et sessions reliées (fenêtre de détail d'une PR) : un titre long se tronque. */
+.pr-related .btn { max-width: 100%; }
+@media (max-width: 767.98px) {
+  /* Barre d'outils de la page des PR : sélecteur d'étape et boutons sur la première ligne, recherche pleine largeur dessous. */
+  .pr-toolbar .pr-filter-select { flex: 1 1 auto; width: auto; min-width: 0; }
+  .pr-toolbar .pr-toolbar-actions { margin-left: 0 !important; }
+  .pr-toolbar .pr-search { flex: 1 1 100%; width: auto; order: 3; }
+  /* Tableau des PR : une carte par ligne. Titre (et note, tâche) pleine largeur, puis étape, date et menu sur une ligne. */
+  .pr-table thead { display: none; }
+  .pr-table tr.pr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 8px; border-bottom: 1px solid var(--cc-border); }
+  .pr-table tr.pr-row:last-child { border-bottom: 0; }
+  .pr-table td { display: block; border: 0; padding: 0; max-width: none !important; box-shadow: none; }
+  .pr-table td.pr-cell-title { flex: 1 1 100%; min-width: 0; }
+  .pr-table td.pr-cell-stage { flex: 0 0 auto; }
+  .pr-table td.pr-cell-stage .small { display: inline; margin-left: 6px; }
+  .pr-table td.pr-cell-when { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .pr-table td.pr-cell-actions { flex: 0 0 auto; margin-left: auto; }
+}
 
 /* ---- Tâches : badges, panneau latéral, commentaires, tableau de bord ------------------------- */
 .task-status { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; white-space: nowrap; }

@@ -83,6 +83,32 @@ export function reportAppErrors(result: ExecutionResult, operation: string, user
   }
 }
 
+/** Au-delà de cette durée, une opération est signalée en `warn` ; en dessous, elle n'apparaît qu'en `debug`. */
+export const SLOW_OPERATION_MS = 500;
+
+/**
+ * Plugin yoga : durée de chaque opération (requête ou mutation ; les subscriptions, flux ouverts, sont ignorées).
+ * Une opération lente tient sur une ligne `warn` avec son nom et l'utilisateur, pour repérer ce qui ralentit
+ * l'interface (sidebar, fil d'une session…) sans outillage externe ; toutes sont en `debug` (LOG_LEVEL=debug).
+ */
+export function operationTimingPlugin(slowMs = SLOW_OPERATION_MS, now: () => number = () => performance.now()): Plugin {
+  return {
+    onExecute({ args }) {
+      const started = now();
+      const operation = operationNameOf(args.document, args.operationName);
+      const user = (args.contextValue as Partial<AuthContext>).user?.email ?? null;
+      return {
+        onExecuteDone({ result }) {
+          if (isAsyncIterable(result)) return;
+          const ms = Math.round(now() - started);
+          if (ms >= slowMs) log.warn(`${operation} · ${user ?? 'anonyme'} : ${ms} ms`);
+          else log.debug(`${operation} : ${ms} ms`);
+        },
+      };
+    },
+  };
+}
+
 /** Plugin yoga : après chaque exécution, journalise les erreurs métier avec l'opération et l'utilisateur. */
 export function appErrorLogPlugin(): Plugin {
   return {
