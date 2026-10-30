@@ -148,7 +148,8 @@ systemctl enable --now fail2ban && systemctl restart fail2ban
 
 if [ "$SKIP_CERTBOT" = 0 ]; then
   step "Certificat TLS Let's Encrypt pour $DOMAIN"
-  if certbot --nginx -n --agree-tos --redirect ${CERTBOT_EMAIL:+-m "$CERTBOT_EMAIL"} ${CERTBOT_EMAIL:---register-unsafely-without-email} -d "$DOMAIN"; then
+  if [ -n "$CERTBOT_EMAIL" ]; then CERTBOT_ARGS=(-m "$CERTBOT_EMAIL"); else CERTBOT_ARGS=(--register-unsafely-without-email); fi
+  if certbot --nginx -n --agree-tos --redirect "${CERTBOT_ARGS[@]}" -d "$DOMAIN"; then
     systemctl reload nginx
   else
     echo "certbot a échoué (le DNS de $DOMAIN pointe-t-il déjà ici ?) : relancer plus tard « certbot --nginx -d $DOMAIN »" >&2
