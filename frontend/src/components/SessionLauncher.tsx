@@ -268,7 +268,7 @@ function LaunchModal({ initial, onClose }: LaunchModalProps) {
                       </Form.Group>
                       <Form.Group className="mb-2">
                         <Form.Label className="mb-1">À partir de</Form.Label>
-                        <Form.Control size="sm" value={baseRef} onChange={(e) => setBaseRef(e.target.value)} placeholder={`HEAD du dossier principal${mainBranch ? ` (${mainBranch})` : ''} par défaut`} />
+                        <Form.Control size="sm" value={baseRef} onChange={(e) => setBaseRef(e.target.value)} placeholder={`${mainBranch ? `origin/${mainBranch}` : 'Branche principale sur origin'} par défaut`} />
                         <Form.Text>Ignoré si la branche existe déjà, localement ou sur origin.</Form.Text>
                       </Form.Group>
                     </div>

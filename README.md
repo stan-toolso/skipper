@@ -416,8 +416,11 @@ conteneur de l'agent.
 - **Work session** (`worksessions`) : `projectId`, `name` (dossier), `branch` (le nom du dossier pour un
   projet sans dépôt), `label` (libellé libre, sinon la branche), `taskId` (tâche à laquelle elle est
   consacrée), `archivedAt`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>` ; pour un projet git, créé
-  par `git worktree add` depuis le checkout principal : branche locale ou distante existante extraite,
-  sinon nouvelle branche depuis `baseRef` (défaut : HEAD) ; pour un projet sans dépôt, un dossier vide. La
+  par `git worktree add` depuis le checkout principal, après un `fetch` : branche locale ou distante
+  existante extraite, sinon nouvelle branche depuis `baseRef` (défaut : la branche principale **sur origin**,
+  `origin/<branche du projet>`, pas le HEAD du checkout principal qui n'avance qu'aux fusions faites depuis
+  Skipper ; le checkout principal est au passage avancé sur origin si c'est une avance rapide) ; pour un
+  projet sans dépôt, un dossier vide. La
   suppression retire le dossier et conserve la branche sauf demande contraire. Sessions et terminaux portent
   un `worksessionId`, obligatoire à la création, qui fixe leur dossier de travail ; une work session
   n'héberge qu'une session active (voir « Work session » plus haut).
