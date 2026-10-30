@@ -114,6 +114,8 @@ export interface Project {
   id: string;
   name: string;
   slug: string;
+  /** Espace personnel : projet qui n'appartient qu'à la personne connectée (jamais partagé). */
+  isPersonal: boolean;
   description: string | null;
   systemPrompt: string;
   taskInstructions: string;
@@ -138,6 +140,8 @@ export interface Project {
 export interface Session {
   id: string;
   name: string;
+  /** Session d'agent ordinaire, ou chat (conversation légère de l'espace personnel, sans work session). */
+  kind: 'SESSION' | 'CHAT';
   provider: string;
   status: SessionStatus;
   activity: SessionActivity | null;
@@ -418,6 +422,7 @@ export const PROJECT_FIELDS = gql`
     id
     name
     slug
+    isPersonal
     description
     systemPrompt
     taskInstructions
@@ -446,6 +451,7 @@ export const PROJECT_FIELDS = gql`
       commit
     }
     myRole
+    isPersonal
     isMember
     createdAt
     updatedAt
@@ -479,6 +485,7 @@ export const PROJECT_MEMBERS = gql`
     project(id: $id) {
       id
       myRole
+      isPersonal
       members {
         role
         pending
@@ -531,6 +538,7 @@ export const SESSION_FIELDS = gql`
   fragment SessionFields on Session {
     id
     name
+    kind
     provider
     status
     activity
@@ -674,8 +682,8 @@ export const PROVIDERS = gql`
 
 export const PROJECTS = gql`
   ${PROJECT_FIELDS}
-  query Projects($all: Boolean) {
-    projects(all: $all) {
+  query Projects($all: Boolean, $includePersonal: Boolean) {
+    projects(all: $all, includePersonal: $includePersonal) {
       ...ProjectFields
     }
   }
@@ -1013,6 +1021,7 @@ export const PROJECT_CONTEXT = gql`
       name
       description
       myRole
+      isPersonal
       contextFolders {
         id
         projectId
@@ -1132,6 +1141,7 @@ export const SIDEBAR = gql`
       gitUrl
       gitBranch
       isMember
+      isPersonal
       myRole
       sessions(limit: 50) {
         ...SidebarSession
@@ -2042,6 +2052,7 @@ export const DASHBOARD = gql`
           slug
           gitUrl
           myRole
+          isPersonal
           git {
             branch
           }

@@ -1,11 +1,12 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { FormerWorksession, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { FormerWorksession, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionKind, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
   project_id: string;
   worksession_id: string | null;
+  kind: SessionKind;
   parent_session_id: string | null;
   owner_id: string | null;
   workflow_run_id: string | null;
@@ -47,6 +48,7 @@ function toSession(row: SessionRow): Session {
     id: row.id,
     projectId: row.project_id,
     worksessionId: row.worksession_id,
+    kind: row.kind ?? 'session',
     parentSessionId: row.parent_session_id,
     ownerId: row.owner_id ?? null,
     workflowRunId: row.workflow_run_id ?? null,
@@ -131,10 +133,10 @@ const patchColumns: Record<keyof SessionPatch, string> = {
 export const sessionRepository = {
   async create(input: CreateSessionInput): Promise<Session> {
     const { rows } = await pool.query<SessionRow>(
-      `INSERT INTO sessions (project_id, worksession_id, parent_session_id, owner_id, name, provider, prompt, config, workflow_run_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO sessions (project_id, worksession_id, parent_session_id, owner_id, name, provider, prompt, config, workflow_run_id, kind)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [input.projectId, input.worksessionId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.workflowRunId ?? null],
+      [input.projectId, input.worksessionId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.workflowRunId ?? null, input.kind ?? 'session'],
     );
     return toSession(rows[0]);
   },
@@ -178,6 +180,13 @@ export const sessionRepository = {
     if (filter.ids) {
       params.push(filter.ids);
       where.push(`id = ANY($${params.length}::uuid[])`);
+    }
+    // Les chats (sessions légères d'un espace personnel) ne figurent pas dans les listes de sessions, sauf demande ;
+    // une liste par identifiants (sessions d'une tâche) ou par session parente prend tout.
+    const kind = filter.kind ?? (filter.ids || filter.parentSessionId ? 'all' : 'session');
+    if (kind !== 'all') {
+      params.push(kind);
+      where.push(`kind = $${params.length}`);
     }
     const archived = filter.archived ?? 'exclude';
     if (archived === 'exclude') where.push('archived_at IS NULL');

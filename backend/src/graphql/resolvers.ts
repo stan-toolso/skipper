@@ -25,6 +25,8 @@ import { runner, type RunnerConfig } from '../runners/index.js';
 import { containerMonitor } from '../runners/monitor.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
+import { isPersonalProject } from '../projects/types.js';
+import { personalService } from '../personal/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
 import { workspaceExists, workspaceGitInfo, workspacePath } from '../projects/workspace.js';
 import { notificationService } from '../notifications/service.js';
@@ -469,6 +471,7 @@ export const resolvers = {
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     isMember: async (project: Project, _: unknown, ctx: Ctx) => (await memberRoleFor(ctx, project.id)) !== null,
+    isPersonal: (project: Project) => isPersonalProject(project),
     terminals: (project: Project, _: unknown, ctx: Ctx) => terminalService.listByProject(project.id, requireUser(ctx).id),
     worksessions: (project: Project) => worksessionService.listByProject(project.id),
     archivedWorksessions: (project: Project) => worksessionService.listByProject(project.id, { archived: 'only' }),
@@ -492,6 +495,7 @@ export const resolvers = {
   },
 
   Session: {
+    kind: (session: Session) => session.kind.toUpperCase(),
     project: (session: Session) => projectService.get(session.projectId),
     worksession: (session: Session) => (session.worksessionId ? worksessionService.get(session.worksessionId).catch(() => null) : null),
     owner: (session: Session) => userOrNull(session.ownerId),
@@ -582,10 +586,12 @@ export const resolvers = {
     },
     sidebarProjects: async (_: unknown, args: { open?: OpenItems | null }, ctx: Ctx) => {
       const user = requireUser(ctx);
-      const mine = await projectService.listForUser(user.id);
+      // L'espace personnel figure dans la sidebar (en tête, voir le front), pas dans la liste des projets.
+      const mine = await projectService.listForUser(user.id, { includePersonal: true });
       if (!user.isSuperAdmin || !args.open) return mine;
       const extra = (await userService.projectIdsHolding(args.open)).filter((id) => !mine.some((p) => p.id === id));
-      const others = (await Promise.all(extra.map((id) => projectService.get(id).catch(() => null)))).filter((p): p is Project => Boolean(p));
+      // L'espace personnel d'une autre personne n'est jamais ouvert à un super administrateur.
+      const others = (await Promise.all(extra.map((id) => projectService.get(id).catch(() => null)))).filter((p): p is Project => Boolean(p) && !isPersonalProject(p!));
       return [...mine, ...others].sort((a, b) => a.name.localeCompare(b.name));
     },
     search: async (_: unknown, args: { query: string; kinds?: SearchKind[] | null; limit?: number | null }, ctx: Ctx) => {
@@ -687,11 +693,12 @@ export const resolvers = {
     },
     claudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => loginService.get(args.id, requireUser(ctx).id),
     providers: (_: unknown, __: unknown, ctx: Ctx) => listProviders(requireUser(ctx).id),
-    sessions: async (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; ownerId?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
+    sessions: async (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; ownerId?: string | null; kind?: 'SESSION' | 'CHAT' | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return sessionService.list({
         projectId: args.projectId ?? undefined,
         projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
+        kind: args.kind === 'CHAT' ? 'chat' : 'session',
         status: fromGqlStatus(args.status),
         provider: args.provider ?? undefined,
         ownerId: args.ownerId ?? undefined,
@@ -704,6 +711,8 @@ export const resolvers = {
       if (session) await requireProject(ctx, session.projectId);
       return session;
     },
+    personalSpace: (_: unknown, __: unknown, ctx: Ctx) => personalService.ensure(requireUser(ctx)),
+    chats: (_: unknown, args: { limit?: number | null }, ctx: Ctx) => personalService.listChats(requireUser(ctx), args.limit ?? undefined),
     sessionChanges: async (_: unknown, args: { sessionId: string }, ctx: Ctx) => {
       await guardSession(ctx, args.sessionId, 'viewer');
       return sessionChangesService.list(await loadSession(args.sessionId));
@@ -716,9 +725,9 @@ export const resolvers = {
       requireUser(ctx);
       return scheduleService.preview(args.cron, args.timezone, args.count ?? 5);
     },
-    projects: (_: unknown, args: { all?: boolean | null }, ctx: Ctx) => {
+    projects: (_: unknown, args: { all?: boolean | null; includePersonal?: boolean | null }, ctx: Ctx) => {
       const user = requireUser(ctx);
-      return args.all && user.isSuperAdmin ? projectService.list() : projectService.listForUser(user.id);
+      return args.all && user.isSuperAdmin ? projectService.list() : projectService.listForUser(user.id, { includePersonal: args.includePersonal ?? false });
     },
     project: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id);
@@ -973,10 +982,12 @@ export const resolvers = {
     inviteProjectMember: async (_: unknown, args: { projectId: string; email: string; role?: GqlRole | null }, ctx: Ctx) => {
       const user = requireUser(ctx);
       await requireProject(ctx, args.projectId, 'admin');
+      await personalService.assertNotPersonal(args.projectId, 'Inviter quelqu\'un');
       return userService.invite(args.projectId, args.email, fromGqlRole(args.role), user);
     },
     updateProjectMemberRole: async (_: unknown, args: { projectId: string; userId: string; role: GqlRole }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');
+      await personalService.assertNotPersonal(args.projectId, 'Changer un rôle');
       return userService.setRole(args.projectId, args.userId, fromGqlRole(args.role));
     },
     addProjectPermissionRule: async (_: unknown, args: { projectId: string; toolName: string; ruleContent?: string | null }, ctx: Ctx) => {
@@ -997,6 +1008,7 @@ export const resolvers = {
     },
     removeProjectMember: async (_: unknown, args: { projectId: string; userId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');
+      await personalService.assertNotPersonal(args.projectId, 'Retirer un membre');
       return userService.remove(args.projectId, args.userId);
     },
 
@@ -1049,6 +1061,7 @@ export const resolvers = {
     },
     deleteProject: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
+      await personalService.assertNotPersonal(args.id, 'Supprimer');
       return deleteProjectCascade(args.id);
     },
     createSession: async (
@@ -1059,6 +1072,8 @@ export const resolvers = {
       await requireProject(ctx, input.projectId, 'member');
       return sessionService.create({ ...input, ownerId: requireUser(ctx).id, autoStart: input.autoStart ?? true });
     },
+    createChat: (_: unknown, args: { text: string; attachments?: AttachmentInput[] | null; config?: Record<string, unknown> | null }, ctx: Ctx) =>
+      personalService.createChat(requireUser(ctx), args.text, args.attachments, args.config),
     startSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       return sessionService.start(args.id);

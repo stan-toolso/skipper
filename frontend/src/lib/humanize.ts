@@ -59,13 +59,19 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
     case 'Skill':
       return { label: `Utilisation du savoir-faire ${str(input, 'skill') ?? ''}`, action: `utiliser le savoir-faire ${str(input, 'skill') ?? ''}` };
     default: {
+      // Depuis un espace personnel, les outils visent un projet de la personne (paramètre project).
+      const inProject = str(input, 'project') ? ` dans le projet ${str(input, 'project')}` : '';
+      if (name.startsWith('mcp__projects__')) {
+        const op = name.slice('mcp__projects__'.length);
+        return op === 'get' ? { label: `Consultation du projet ${str(input, 'project') ?? ''}`, action: `consulter le projet ${str(input, 'project') ?? ''}` } : { label: 'Consultation de la liste des projets', action: 'consulter la liste de vos projets' };
+      }
       if (name.startsWith('mcp__tasks__')) {
         const op = name.slice('mcp__tasks__'.length);
         const title = str(input, 'title');
         const verbs: Record<string, [string, string]> = {
-          list: ['Consultation des tâches du projet', 'consulter les tâches'],
+          list: [`Consultation des tâches${inProject || ' du projet'}`, `consulter les tâches${inProject}`],
           get: ["Consultation d'une tâche", 'consulter une tâche'],
-          create: [`Création de la tâche « ${title ?? ''} »`, `créer la tâche « ${title ?? ''} »`],
+          create: [`Création de la tâche « ${title ?? ''} »${inProject}`, `créer la tâche « ${title ?? ''} »${inProject}`],
           update: [`Mise à jour d'une tâche${str(input, 'status') ? ` (${str(input, 'status')})` : ''}`, 'mettre à jour une tâche'],
           claim: ["Prise en charge d'une tâche", 'prendre une tâche en charge'],
         };
@@ -91,9 +97,9 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
       if (name.startsWith('mcp__sessions__')) {
         const op = name.slice('mcp__sessions__'.length);
         const short = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
-        const target = str(input, 'new_branch') ? ` dans une nouvelle work session (${str(input, 'new_branch')})` : str(input, 'worksession') ? ` dans la work session ${str(input, 'worksession')}` : '';
+        const target = `${str(input, 'new_branch') ? ` dans une nouvelle work session (${str(input, 'new_branch')})` : str(input, 'worksession') ? ` dans la work session ${str(input, 'worksession')}` : ''}${inProject}`;
         const verbs: Record<string, [string, string | undefined, string]> = {
-          list: ['Consultation des sessions du projet', undefined, 'consulter les sessions du projet'],
+          list: [`Consultation des sessions${inProject || ' du projet'}`, undefined, `consulter les sessions${inProject || ' du projet'}`],
           get: ["Consultation d'une session", undefined, 'consulter une session'],
           create: [`Lancement d'une session d'agent${target}`, short(str(input, 'prompt') ?? ''), `lancer une autre session d'agent${target}`],
           wait: ["Attente de la réponse d'une session", undefined, "attendre la réponse d'une session"],
@@ -107,9 +113,9 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
         const op = name.slice('mcp__worksessions__'.length);
         const branch = str(input, 'branch') ?? str(input, 'name') ?? '';
         const verbs: Record<string, [string, string]> = {
-          list: ['Consultation des work sessions du projet', 'consulter les work sessions'],
-          create: [`Création de la work session ${branch}`, `créer la work session ${branch}`],
-          delete: [`Suppression de la work session ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer la work session ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
+          list: [`Consultation des work sessions${inProject || ' du projet'}`, `consulter les work sessions${inProject}`],
+          create: [`Création de la work session ${branch}${inProject}`, `créer la work session ${branch}${inProject}`],
+          delete: [`Suppression de la work session ${branch}${input.delete_branch ? ' et de sa branche' : ''}${inProject}`, `supprimer la work session ${branch}${input.delete_branch ? ' et sa branche' : ''}${inProject}`],
         };
         const [label, action] = verbs[op] ?? [`Work sessions : ${op}`, `utiliser les work sessions (${op})`];
         return { label, action };

@@ -116,7 +116,8 @@ interface LaunchModalProps {
 function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
   const navigate = useNavigate();
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const { data: projectsData, loading: projectsLoading } = useQuery<{ projects: Project[] }>(PROJECTS);
+  // L'espace personnel est proposé avec les projets : on y lance aussi des sessions.
+  const { data: projectsData, loading: projectsLoading } = useQuery<{ projects: Project[] }>(PROJECTS, { variables: { includePersonal: true } });
   const providers = providersData?.providers ?? [];
   const projects = projectsData?.projects ?? [];
 
@@ -252,7 +253,7 @@ function LaunchModal({ mode, initial, onClose }: LaunchModalProps) {
                     <Form.Select size="sm" className="w-auto flex-grow-1" value={projectId} onChange={(e) => setProjectId(e.target.value)} aria-label="Projet" disabled={Boolean(initial.worksessionId)}>
                       {projects.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name}
+                          {p.isPersonal ? 'Mon espace personnel' : p.name}
                         </option>
                       ))}
                     </Form.Select>

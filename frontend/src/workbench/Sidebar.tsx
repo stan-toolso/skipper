@@ -49,6 +49,7 @@ const MAIN_MENU: { to: string; label: string; icon: string; title?: string }[] =
   { to: '/', label: 'Tableau de bord', icon: 'bi-speedometer2' },
   { to: '/projects', label: 'Projets', icon: 'bi-folder2' },
   { to: '/sessions', label: 'Sessions', icon: 'bi-chat-dots' },
+  { to: '/chats', label: 'Chats', icon: 'bi-chat-left-text', title: 'Chats : conversations légères de votre espace personnel, avec accès à tous vos projets' },
   { to: '/tasks', label: 'Tâches', icon: 'bi-check2-square' },
   { to: '/shared', label: 'Pages', icon: 'bi-file-earmark-richtext', title: 'Pages partagées' },
   { to: '/vault', label: 'Coffre', icon: 'bi-shield-lock' },
@@ -540,18 +541,20 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
             <Spinner animation="border" size="sm" className="me-2" /> chargement des projets…
           </div>
         )}
-        {(data?.projects ?? []).map((p) => {
+        {[...(data?.projects ?? [])]
+          .sort((a, b) => Number(b.isPersonal) - Number(a.isPersonal))
+          .map((p) => {
           const open = expanded[p.id] ?? projectDefaultOpen(p);
           const list = workspaces.ofProject(p.id);
           const collapsedPending = !open ? p.sessions.filter((s) => participates(s, userId)).reduce((n, s) => n + s.pendingRequestCount, 0) : 0;
           return (
-            <div key={p.id} className="wb-project">
+            <div key={p.id} className={`wb-project${p.isPersonal ? ' wb-personal' : ''}`}>
               <div className={`wb-row wb-project-row${p.id === activeProjectId ? ' active' : ''}`}>
                 <button type="button" className="wb-chevron" onClick={() => toggle(p.id, projectDefaultOpen(p))} title={open ? 'Replier' : 'Déplier'}>
                   <i className={`bi bi-chevron-${open ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
                 </button>
-                <Link to={`/projects/${p.id}`} className="wb-row-label" title="Ouvrir le projet">
-                  <i className="bi bi-folder2 wb-icon" /> {p.name}
+                <Link to={`/projects/${p.id}`} className="wb-row-label" title={p.isPersonal ? 'Mon espace personnel : mes sessions, chats et tâches, avec accès à tous mes projets' : 'Ouvrir le projet'}>
+                  <i className={`bi ${p.isPersonal ? 'bi-person-circle' : 'bi-folder2'} wb-icon`} /> {p.isPersonal ? 'Mon espace' : p.name}
                 </Link>
                 {!p.isMember && <i className="bi bi-shield-lock wb-icon" title="Vous n'êtes pas membre de ce projet : il apparaît parce qu'un de vos onglets y est ouvert (super administrateur)" />}
                 {collapsedPending > 0 && <span className="wb-badge">{collapsedPending}</span>}

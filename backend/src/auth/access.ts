@@ -38,10 +38,15 @@ export async function memberRoleFor(ctx: AuthContext, projectId: string): Promis
   return ctx.roles.get(projectId) ?? null;
 }
 
-/** Rôle effectif : l'appartenance, sinon administrateur pour un super administrateur (null : aucun accès). */
+/**
+ * Rôle effectif : l'appartenance, sinon administrateur pour un super administrateur (null : aucun accès).
+ * L'espace personnel d'une personne n'est jamais ouvert à quelqu'un d'autre, super administrateur compris.
+ */
 export async function roleFor(ctx: AuthContext, projectId: string): Promise<ProjectRole | null> {
   const user = requireUser(ctx);
-  return (await memberRoleFor(ctx, projectId)) ?? (user.isSuperAdmin ? 'admin' : null);
+  const member = await memberRoleFor(ctx, projectId);
+  if (member) return member;
+  return user.isSuperAdmin && !(await userService.isPersonalProject(projectId)) ? 'admin' : null;
 }
 
 /** Lève une erreur si l'utilisateur n'a pas au moins le rôle demandé sur le projet. */

@@ -1,6 +1,39 @@
 import { gql } from '@apollo/client';
 import { SESSION_FIELDS } from './operations';
 
+/** Espace personnel de la personne connectée (créé à la première demande). */
+export const PERSONAL_SPACE = gql`
+  query PersonalSpace {
+    personalSpace {
+      id
+      name
+      slug
+      isPersonal
+      myRole
+    }
+  }
+`;
+
+/** Chats de la personne connectée, les plus récents d'abord. */
+export const CHATS = gql`
+  ${SESSION_FIELDS}
+  query Chats($limit: Int) {
+    chats(limit: $limit) {
+      ...SessionFields
+    }
+  }
+`;
+
+/** Ouvre un chat avec un premier message (config : permissionMode, model). */
+export const CREATE_CHAT = gql`
+  ${SESSION_FIELDS}
+  mutation CreateChat($text: String!, $attachments: [AttachmentInput!], $config: JSON) {
+    createChat(text: $text, attachments: $attachments, config: $config) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const ARCHIVE_SESSION = gql`
   mutation ArchiveSession($id: ID!) {
     archiveSession(id: $id) {
@@ -44,6 +77,7 @@ export const HISTORY_PROJECT = gql`
       name
       description
       myRole
+      isPersonal
       gitUrl
       worksessions {
         id

@@ -39,7 +39,10 @@ function validateRunnerConfig(runnerConfig: Record<string, unknown> | null | und
 
 export const projectService = {
   list: () => projectRepository.list(),
-  listForUser: (userId: string) => projectRepository.listForUser(userId),
+  listForUser: (userId: string, opts?: { includePersonal?: boolean }) => projectRepository.listForUser(userId, opts),
+  /** Espace personnel de la personne, s'il a déjà été créé (voir personalService.ensure). */
+  findPersonal: (userId: string) => projectRepository.findPersonal(userId),
+  personalOwnerOf: (projectId: string) => projectRepository.personalOwnerOf(projectId),
 
   async get(id: string): Promise<Project> {
     const project = await projectRepository.findById(id);
