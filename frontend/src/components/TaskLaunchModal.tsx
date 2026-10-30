@@ -9,6 +9,7 @@ import { buildConfig, FieldGroup, lastPermissionMode, rememberPermissionMode } f
 
 export interface LaunchTarget {
   id: string;
+  myRole?: 'ADMIN' | 'MEMBER' | 'VIEWER';
   gitUrl: string | null;
   defaultPermissionMode: string;
   approvalConnections?: string[];

@@ -74,6 +74,10 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
           create: [`Création de la tâche « ${title ?? ''} »${inProject}`, `créer la tâche « ${title ?? ''} »${inProject}`],
           update: [`Mise à jour d'une tâche${str(input, 'status') ? ` (${str(input, 'status')})` : ''}`, 'mettre à jour une tâche'],
           claim: ["Prise en charge d'une tâche", 'prendre une tâche en charge'],
+          pr_list: ['Consultation des pull requests suivies', 'consulter les pull requests suivies'],
+          pr_open: [`Ouverture de la pull request « ${title ?? ''} » sur GitHub (branche poussée avec votre compte)`, `ouvrir la pull request « ${title ?? ''} » sur GitHub`],
+          pr_register: ["Suivi d'une pull request existante", 'suivre une pull request existante'],
+          pr_update: [`Mise à jour d'une pull request suivie${str(input, 'status') ? ` (${str(input, 'status')})` : input.deployed === true ? ' (déployée)' : ''}`, 'mettre à jour une pull request suivie'],
         };
         const [label, action] = verbs[op] ?? [`Tâches : ${op}`, `utiliser les tâches (${op})`];
         return { label, action };

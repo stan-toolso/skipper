@@ -1,0 +1,170 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Project } from '../projects/types.js';
+import type { TrackedPullRequest } from '../pullRequests/types.js';
+
+// Le CLI Claude liste les outils d'un serveur in-process au démarrage : un schéma zod refusé par le convertisseur
+// du SDK ferait disparaître tout le serveur `tasks` pour l'agent. Services voisins simulés : on exerce la
+// déclaration des outils et les outils de suivi des pull requests (pr_list, pr_register, pr_update, pr_open).
+const m = vi.hoisted(() => ({
+  tasks: {} as Record<string, unknown>,
+  prs: {} as Record<string, unknown>,
+  session: { id: 's1', worksessionId: 'w1' as string | null, ownerId: 'u1' },
+  calls: [] as Array<[string, unknown[]]>,
+}));
+vi.mock('./service.js', () => ({ taskService: m.tasks, describeComment: () => [], formatPerson: () => '', statusTagText: () => '' }));
+vi.mock('./attachments.js', () => ({ describeAttachments: () => [], imageBlocks: async () => [] }));
+vi.mock('../pullRequests/service.js', () => ({ trackedPullRequestService: m.prs }));
+vi.mock('../sessions/service.js', () => ({ sessionService: { get: async () => m.session } }));
+vi.mock('../personal/scope.js', () => ({
+  inScope: async (_p: Project, _s: unknown, projectId: string) => projectId === 'p',
+  targetProject: async (p: Project) => p,
+  withProjectParam: (shape: Record<string, unknown>) => shape,
+}));
+
+const { createTasksMcpServer, TASKS_FREE_TOOLS } = await import('./mcp.js');
+
+const project = { id: 'p', name: 'Projet', gitUrl: 'https://github.com/acme/app.git' } as Project;
+const pr = (over: Partial<TrackedPullRequest> = {}): TrackedPullRequest => ({
+  id: 'pr1',
+  projectId: 'p',
+  taskId: 't1',
+  number: 42,
+  url: 'https://github.com/acme/app/pull/42',
+  title: 'Ma PR',
+  headBranch: 'task/x',
+  baseBranch: 'main',
+  status: 'open',
+  isDraft: false,
+  checksState: 'SUCCESS',
+  reviewDecision: null,
+  mergeable: 'MERGEABLE',
+  syncedAt: null,
+  mergeSha: null,
+  deployedAt: null,
+  deployedByType: null,
+  deployedByUserId: null,
+  deployedBySessionId: null,
+  deployNote: '',
+  note: '',
+  createdByType: 'agent',
+  createdByUserId: null,
+  createdBySessionId: 's1',
+  openedAt: new Date(),
+  mergedAt: null,
+  closedAt: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...over,
+});
+
+async function connect() {
+  const server = createTasksMcpServer(project, 's1', 'Session');
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.instance.connect(serverTransport);
+  const client = new Client({ name: 'test', version: '1.0.0' });
+  await client.connect(clientTransport);
+  return client;
+}
+const textOf = (r: unknown) => ((r as { content: Array<{ type: string; text?: string }> }).content.find((c) => c.type === 'text')?.text ?? '');
+const record = (name: string) => (...args: unknown[]) => void m.calls.push([name, args]);
+
+beforeEach(() => {
+  m.calls = [];
+  m.session = { id: 's1', worksessionId: 'w1', ownerId: 'u1' };
+  Object.assign(m.tasks, {
+    get: async (id: string) => {
+      if (id !== 't1') throw new Error('Tâche introuvable');
+      return { id, projectId: 'p', title: 'Tâche', description: '', status: 'in_progress', priority: 'medium', tags: [], customFields: [], branch: 'task/x', commentCount: 0 };
+    },
+    comments: async () => [],
+    attachments: async () => [],
+  });
+  Object.assign(m.prs, {
+    forTask: async () => [pr()],
+    list: async (f: unknown) => {
+      record('list')(f);
+      return [pr(), pr({ id: 'pr2', number: 43, status: 'merged', mergedAt: new Date(), taskId: null })];
+    },
+    register: async (...args: unknown[]) => {
+      record('register')(...args);
+      return pr({ note: 'déclarée' });
+    },
+    resolve: async (_p: string, ref: string) => {
+      if (ref !== 'pr1' && ref !== '#42') throw new Error('Pull request suivie introuvable dans ce projet');
+      return pr();
+    },
+    update: async (...args: unknown[]) => {
+      record('update')(...args);
+      return pr({ status: 'merged', deployedAt: new Date(), deployNote: 'prod' });
+    },
+    open: async (...args: unknown[]) => {
+      record('open')(...args);
+      return pr({ number: 44, title: 'Ouverte' });
+    },
+  });
+});
+
+describe('serveur MCP tasks', () => {
+  it('déclare tous ses outils (schémas acceptés par le SDK), dont ceux des pull requests', async () => {
+    const client = await connect();
+    const names = (await client.listTools()).tools.map((t) => t.name).sort();
+    expect(names).toEqual(['claim', 'comment', 'create', 'get', 'list', 'pr_list', 'pr_open', 'pr_register', 'pr_update', 'update']);
+    // Tout outil libre existe ; pr_open (pousse et ouvre sur GitHub) n'est pas libre.
+    for (const free of TASKS_FREE_TOOLS) expect(names).toContain(free.replace('mcp__tasks__', ''));
+    expect(TASKS_FREE_TOOLS).not.toContain('mcp__tasks__pr_open');
+  });
+
+  it('get montre les pull requests suivies de la tâche', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'get', arguments: { id: 't1' } }));
+    expect(text).toContain('Pull requests suivies');
+    expect(text).toContain('PR #42 « Ma PR » · à fusionner (checks réussis)');
+    expect(text).toContain('Branche : task/x');
+  });
+
+  it('pr_list filtre par tâche et par étape', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'pr_list', arguments: { task_id: 't1', stage: ['to_merge', 'to_deploy'] } }));
+    expect(text).toContain('PR #42');
+    expect(text).toContain('PR #43');
+    expect(m.calls[0]).toEqual(['list', [{ projectId: 'p', taskId: 't1', stage: ['to_merge', 'to_deploy'], limit: 200 }]]);
+    const res = await client.callTool({ name: 'pr_list', arguments: { task_id: 'autre' } });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toContain('Tâche introuvable');
+  });
+
+  it('pr_register déclare une PR avec le compte de la personne qui pilote la session', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'pr_register', arguments: { task_id: 't1', url: 'https://github.com/acme/app/pull/42', note: 'déclarée' } }));
+    expect(text).toContain('Pull request suivie');
+    expect(text).toContain('note : déclarée');
+    const [name, args] = m.calls[0];
+    expect(name).toBe('register');
+    expect(args[0]).toBe('p');
+    expect(args[1]).toEqual({ url: 'https://github.com/acme/app/pull/42', number: undefined });
+    expect(args[2]).toMatchObject({ taskId: 't1', note: 'déclarée', userId: 'u1' });
+    expect(args[3]).toEqual({ type: 'agent', sessionId: 's1' });
+  });
+
+  it('pr_update accepte le numéro GitHub et transmet le déploiement', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'pr_update', arguments: { id: '#42', deployed: true, deploy_note: 'prod' } }));
+    expect(text).toContain('déployée');
+    expect(m.calls[0]).toEqual(['update', ['pr1', { status: undefined, note: undefined, deployed: true, deployNote: 'prod', taskId: undefined }, { type: 'agent', sessionId: 's1' }]]);
+    const res = await client.callTool({ name: 'pr_update', arguments: { id: '#7', status: 'closed' } });
+    expect(res.isError).toBe(true);
+  });
+
+  it('pr_open ouvre la PR depuis la work session de la session, et refuse depuis le dossier principal', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'pr_open', arguments: { task_id: 't1', title: 'Ouverte', body: 'Détail', draft: false } }));
+    expect(text).toContain('PR #44 « Ouverte »');
+    expect(m.calls[0]).toEqual(['open', [{ projectId: 'p', worksessionId: 'w1' }, 'u1', { title: 'Ouverte', body: 'Détail', base: undefined, draft: false }, { taskId: 't1', note: undefined }, { type: 'agent', sessionId: 's1' }]]);
+    m.session.worksessionId = null;
+    const res = await client.callTool({ name: 'pr_open', arguments: { task_id: 't1', title: 'x' } });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toContain('dossier principal');
+  });
+});
