@@ -561,6 +561,13 @@
 .wb-project { margin-bottom: 2px; }
 /* L'espace personnel, en tête de l'explorateur, séparé des projets. */
 .wb-project.wb-personal { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--cc-border); }
+/* Bloc « Chats » de l'espace personnel : en-tête cliquable (liste des chats) puis les derniers chats. */
+.wb-chats { margin: 2px 0 4px; }
+.wb-chats-head { color: var(--cc-fg); font-weight: 500; }
+.wb-chats-head .wb-icon { color: var(--cc-accent); }
+.wb-chats-head .wb-chats-new { margin-left: auto; visibility: hidden; }
+.wb-chats-head:hover .wb-chats-new, .wb-chats-head.active .wb-chats-new { visibility: visible; }
+.wb-chats-rows .wb-row-label { font-weight: 400; }
 .wb-ws { margin: 2px 8px 4px 10px; border: 1px solid transparent; border-radius: 6px; }
 .wb-ws.active { border-color: var(--cc-border); background: var(--cc-bg-elevated); }
 .wb-ws-head { display: flex; align-items: center; gap: 4px; padding: 3px 6px 3px 8px; }
