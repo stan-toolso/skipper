@@ -292,14 +292,52 @@ function toPullRequest(projectId: string, p: GqlPullRequest): PullRequest {
 
 // Cache court : le panneau git interroge régulièrement, et chaque carte de tâche cherche sa PR.
 const CACHE_TTL_MS = 20_000;
-const cache = new Map<string, { at: number; value: Promise<unknown> }>();
-function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+// Au-delà du cache court, l'affichage (sidebar, cartes de tâches) se contente de la dernière liste connue
+// pendant qu'elle se rafraîchit en arrière-plan : la liste des 100 PR coûte 2 à 3 s à GitHub, et la sidebar
+// l'interroge toutes les 60 s, donc toujours à froid avec le seul cache court.
+export const STALE_TTL_MS = 10 * 60_000;
+interface CacheEntry {
+  at: number;
+  value: Promise<unknown>;
+  settled: boolean;
+  refreshing?: boolean;
+}
+const cache = new Map<string, CacheEntry>();
+function cached<T>(key: string, load: () => Promise<T>, opts: { stale?: boolean } = {}): Promise<T> {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value as Promise<T>;
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < CACHE_TTL_MS) return hit.value as Promise<T>;
+  if (hit && opts.stale && hit.settled && age < STALE_TTL_MS) {
+    if (!hit.refreshing) {
+      hit.refreshing = true;
+      load().then(
+        (v) => {
+          // Pas d'écrasement si l'entrée a été invalidée ou remplacée entre-temps.
+          if (cache.get(key) === hit) cache.set(key, { at: Date.now(), value: Promise.resolve(v), settled: true });
+        },
+        () => {
+          hit.refreshing = false;
+        },
+      );
+    }
+    return hit.value as Promise<T>;
+  }
   const value = load();
-  cache.set(key, { at: Date.now(), value });
-  value.catch(() => cache.delete(key));
+  const entry: CacheEntry = { at: Date.now(), value, settled: false };
+  cache.set(key, entry);
+  value.then(
+    () => {
+      entry.settled = true;
+    },
+    () => {
+      if (cache.get(key) === entry) cache.delete(key);
+    },
+  );
   return value;
+}
+/** Pour les tests : vide le cache GitHub. */
+export function clearPullRequestCache(): void {
+  cache.clear();
 }
 function invalidate(repo: GithubRepoRef): void {
   const prefix = `${repo.owner}/${repo.name}|`.toLowerCase();
@@ -340,7 +378,8 @@ export const pullRequestService = {
 
   /** PR du dépôt du projet, les plus récemment mises à jour d'abord. */
   /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt. */
-  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50): Promise<PullRequest[]> {
+  /** `stale` : accepte la dernière liste connue (jusqu'à STALE_TTL_MS) pendant son rafraîchissement, pour l'affichage. */
+  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50, opts: { stale?: boolean } = {}): Promise<PullRequest[]> {
     const project = await projectService.get(projectId);
     // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
     if (!project.gitUrl) return [];
@@ -359,7 +398,7 @@ export const pullRequestService = {
         { owner: repo.owner, name: repo.name, states, first },
       );
       return data.repository.pullRequests.nodes;
-    });
+    }, opts);
     return nodes.map((p) => toPullRequest(projectId, p));
   },
 
@@ -377,11 +416,12 @@ export const pullRequestService = {
 
   /**
    * PR la plus récente d'une branche (ouverte de préférence), parmi les 100 dernières du dépôt.
-   * Null si le projet n'est pas sur GitHub ou si GitHub ne répond pas : sert à l'affichage des tâches.
+   * Null si le projet n'est pas sur GitHub ou si GitHub ne répond pas : sert à l'affichage des tâches et de la sidebar,
+   * qui se contente d'une liste un peu ancienne (rafraîchie en arrière-plan) plutôt que d'attendre GitHub à chaque relevé.
    */
   async forBranch(projectId: string, userId: string | null | undefined, branch: string): Promise<PullRequest | null> {
     try {
-      const all = (await this.list(projectId, userId, 'ALL', 100)).filter((p) => p.headRefName === branch && !p.isCrossRepository);
+      const all = (await this.list(projectId, userId, 'ALL', 100, { stale: true })).filter((p) => p.headRefName === branch && !p.isCrossRepository);
       return all.find((p) => p.state === 'OPEN') ?? all[0] ?? null;
     } catch {
       return null;

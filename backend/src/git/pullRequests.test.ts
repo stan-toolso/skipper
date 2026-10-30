@@ -28,7 +28,7 @@ vi.mock('../tasks/repository.js', () => ({ taskRepository: { list: async () => m
 vi.mock('../tasks/service.js', () => ({ taskService: { update: m.updateTask } }));
 vi.stubGlobal('fetch', m.fetch);
 
-const { buildDraftText, parseGithubRepo, pullRequestService } = await import('./pullRequests.js');
+const { buildDraftText, clearPullRequestCache, parseGithubRepo, pullRequestService, STALE_TTL_MS } = await import('./pullRequests.js');
 
 const gqlPr = (state = 'OPEN') => ({
   number: 7,
@@ -97,6 +97,51 @@ describe('pullRequestService.list', () => {
   it("refuse un dépôt qui n'est pas sur GitHub", async () => {
     m.gitUrl = 'https://gitlab.com/acme/app.git';
     await expect(pullRequestService.list('p1', 'u1')).rejects.toThrow(/pas hébergé sur GitHub/);
+  });
+});
+
+describe('pullRequestService.forBranch', () => {
+  const listed = (state: string) => json({ data: { repository: { pullRequests: { nodes: [gqlPr(state)] } } } });
+  beforeEach(() => {
+    clearPullRequestCache();
+    m.fetch.mockReset();
+    vi.useFakeTimers({ toFake: ['Date'] });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("sert la dernière liste connue sans attendre GitHub, puis la rafraîchit en arrière-plan", async () => {
+    m.fetch.mockResolvedValueOnce(listed('OPEN'));
+    expect((await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache'))?.state).toBe('OPEN');
+    expect(m.fetch).toHaveBeenCalledTimes(1);
+
+    // Cache court encore valide : aucun appel.
+    vi.advanceTimersByTime(10_000);
+    await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache');
+    expect(m.fetch).toHaveBeenCalledTimes(1);
+
+    // Cache court expiré : réponse immédiate avec l'ancienne liste, un seul rafraîchissement lancé.
+    vi.advanceTimersByTime(60_000);
+    let release!: (r: Response) => void;
+    m.fetch.mockImplementationOnce(() => new Promise<Response>((r) => (release = r)));
+    expect((await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache'))?.state).toBe('OPEN');
+    expect((await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache'))?.state).toBe('OPEN');
+    expect(m.fetch).toHaveBeenCalledTimes(2);
+    release(listed('MERGED'));
+    await vi.waitFor(async () => expect((await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache'))?.state).toBe('MERGED'));
+    expect(m.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("attend GitHub quand la liste connue est trop ancienne, et list() sans stale reste fraîche", async () => {
+    m.fetch.mockResolvedValueOnce(listed('OPEN'));
+    await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache');
+    vi.advanceTimersByTime(30_000);
+    m.fetch.mockResolvedValueOnce(listed('MERGED'));
+    expect((await pullRequestService.list('p1', 'u1', 'ALL', 100))[0].state).toBe('MERGED');
+
+    vi.advanceTimersByTime(STALE_TTL_MS + 1);
+    m.fetch.mockResolvedValueOnce(listed('CLOSED'));
+    expect((await pullRequestService.forBranch('p1', 'u1', 'task/ma-tache'))?.state).toBe('CLOSED');
+    expect(m.fetch).toHaveBeenCalledTimes(3);
   });
 });
 
