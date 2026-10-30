@@ -12,6 +12,7 @@ import { useTabTitle } from '../workbench/TabsContext';
 import ProjectHeader from '../components/ProjectHeader';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { PullRequestChip } from '../components/PullRequests';
+import { TrackedPullRequestChip } from '../components/TrackedPullRequests';
 import TaskActions from '../components/TaskActions';
 import TaskDashboard from '../components/TaskDashboard';
 import TaskGrid from '../components/TaskGrid';
@@ -80,7 +81,7 @@ function TaskCard({ task, showProject, onEdit, target, onTag }: { task: Task; sh
               {task.worksession?.branch ?? task.branch}
             </span>
           )}
-          {task.pullRequest && <PullRequestChip projectId={task.project.id} pr={task.pullRequest} />}
+          {task.pullRequests?.length ? task.pullRequests.slice(0, 2).map((pr) => <TrackedPullRequestChip key={pr.id} projectId={task.project.id} pr={pr} />) : task.pullRequest && <PullRequestChip projectId={task.project.id} pr={task.pullRequest} />}
           <PersonChip person={task.assignee} />
           {task.commentCount > 0 && (
             <Link to={`/tasks/${task.id}`} className="text-reset" title="Commentaires">

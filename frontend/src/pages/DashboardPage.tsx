@@ -12,6 +12,8 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
 import ChatComposer from '../components/ChatComposer';
+import { PullRequestStageBadge, TrackedPullRequestIndicators } from '../components/TrackedPullRequests';
+import type { TrackedPullRequest } from '../graphql/pullRequests';
 import './dashboard.css';
 
 /**
@@ -134,6 +136,20 @@ export default function DashboardPage() {
             <ul className="dash-list">
               {d.attentionTasks.map((t) => <TaskRow key={t.id} task={t} />)}
               {d.attentionTasks.length === 0 && <li className="empty">Aucune tâche urgente, haute ou en retard.</li>}
+            </ul>
+          </section>
+
+          <section className="dash-section">
+            <h2 className="dash-section-title">
+              <span>
+                Pull requests à traiter
+                {counts.openPullRequests > 0 && <Badge bg="success" className="ms-2 fw-normal" title="À fusionner">{counts.openPullRequests} à fusionner</Badge>}
+                {counts.toDeployPullRequests > 0 && <Badge bg="warning" text="dark" className="ms-2 fw-normal" title="Fusionnées, pas encore déployées">{counts.toDeployPullRequests} à déployer</Badge>}
+              </span>
+            </h2>
+            <ul className="dash-list">
+              {d.pullRequests.map((pr) => <PullRequestRow key={pr.id} pr={pr} />)}
+              {d.pullRequests.length === 0 && <li className="empty">Aucune pull request à fusionner ni à déployer.</li>}
             </ul>
           </section>
         </Col>
@@ -431,6 +447,31 @@ function TaskRow({ task }: { task: Task }) {
       <div className="side">
         <Badge bg={prio.bg} text={prio.bg === 'warning' ? 'dark' : undefined}>{prio.label}</Badge>
         {task.dueDate && <div className={overdue ? 'text-danger' : undefined}>{overdue ? 'en retard · ' : 'pour le '}{new Date(`${task.dueDate}T00:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</div>}
+      </div>
+    </li>
+  );
+}
+
+/** Une pull request suivie qui attend une action : fusion ou mise en production. */
+function PullRequestRow({ pr }: { pr: TrackedPullRequest }) {
+  const toDeploy = pr.stage === 'TO_DEPLOY';
+  return (
+    <li>
+      <i className={`bi ${toDeploy ? 'bi-box-arrow-up warn' : 'bi-git'} icon`} />
+      <div className="main">
+        <a href={pr.url} target="_blank" rel="noreferrer" className="title" title="Ouvrir sur GitHub">
+          <span className="text-secondary">#{pr.number}</span> {pr.title}
+        </a>
+        <div className="meta">
+          <Link to={`/projects/${pr.project.id}/pull-requests`}>{pr.project.name}</Link>
+          {pr.task && <> · <Link to={`/tasks/${pr.task.id}`}>{pr.task.title}</Link></>}
+          {pr.createdBySession && <> · <Link to={`/sessions/${pr.createdBySession.id}`}>{pr.createdBySession.name}</Link></>}
+          {pr.note && <> · {pr.note}</>}
+        </div>
+      </div>
+      <div className="side d-flex align-items-center gap-1">
+        <TrackedPullRequestIndicators pr={pr} />
+        <PullRequestStageBadge stage={pr.stage} />
       </div>
     </li>
   );

@@ -19,6 +19,8 @@ import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
+import { trackedPullRequestService } from '../pullRequests/service.js';
+import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { gitService } from '../git/service.js';
 import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
 import { runner, type RunnerConfig } from '../runners/index.js';
@@ -265,6 +267,7 @@ export const resolvers = {
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
     comments: (t: Task) => taskService.comments(t.id),
     pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
+    pullRequests: (t: Task) => trackedPullRequestService.forTask(t.id),
     worksession: async (t: Task) => (await worksessionRepository.findByTask(t.id))[0] ?? null,
     attachments: (t: Task) => (t.attachmentCount ? taskService.attachments(t.id, null) : []),
   },
@@ -288,6 +291,19 @@ export const resolvers = {
   PullRequest: {
     worksession: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worksessionService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
     tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
+  },
+
+  TrackedPullRequest: {
+    project: (pr: TrackedPullRequest) => projectService.get(pr.projectId),
+    task: (pr: TrackedPullRequest) => (pr.taskId ? taskService.get(pr.taskId).catch(() => null) : null),
+    status: (pr: TrackedPullRequest) => pr.status.toUpperCase(),
+    stage: (pr: TrackedPullRequest) => stageOf(pr).toUpperCase(),
+    deployedBy: (pr: TrackedPullRequest) => userOrNull(pr.deployedByUserId),
+    deployedBySession: (pr: TrackedPullRequest) => (pr.deployedBySessionId ? sessionService.get(pr.deployedBySessionId) : null),
+    createdBy: (pr: TrackedPullRequest) => userOrNull(pr.createdByUserId),
+    createdBySession: (pr: TrackedPullRequest) => (pr.createdBySessionId ? sessionService.get(pr.createdBySessionId) : null),
+    // En direct depuis GitHub (cache de 20 s côté service) : null si le projet n'y est pas ou si GitHub ne répond pas.
+    github: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => pullRequestService.get(pr.projectId, ctx.user?.id, pr.number).catch(() => null),
   },
 
   VaultItem: {
@@ -569,6 +585,27 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       return pullRequestService.draft(args, requireUser(ctx).id);
     },
+    pullRequests: async (_: unknown, args: { projectId?: string | null; taskId?: string | null; status?: string[] | null; stage?: string[] | null; limit?: number | null }, ctx: Ctx) => {
+      if (args.projectId) {
+        await requireProject(ctx, args.projectId);
+        // La liste d'un projet rafraîchit ses PR depuis GitHub au passage (au plus toutes les 30 s).
+        await trackedPullRequestService.sync(args.projectId, requireUser(ctx).id);
+      }
+      if (args.taskId) await guardTask(ctx, args.taskId, 'viewer');
+      return trackedPullRequestService.list({
+        projectId: args.projectId ?? undefined,
+        projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
+        taskId: args.taskId ?? undefined,
+        status: args.status?.map((s) => s.toLowerCase() as TrackedPullRequestStatus),
+        stage: args.stage?.map((s) => s.toLowerCase() as PullRequestStage),
+        limit: args.limit ?? undefined,
+      });
+    },
+    pullRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const pr = await trackedPullRequestService.get(args.id);
+      await requireProject(ctx, pr.projectId);
+      return pr;
+    },
     workspaceEntries: async (_: unknown, args: WorkspaceRef & { path?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return fileService.list(args, args.path ?? '');
@@ -836,11 +873,38 @@ export const resolvers = {
     },
     createPullRequest: async (_: unknown, args: WorkspaceRef & { title: string; body?: string | null; base?: string | null; draft?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.create(args, requireUser(ctx).id, args);
+      const user = requireUser(ctx);
+      const pr = await pullRequestService.create(args, user.id, args);
+      // La PR ouverte depuis l'interface est suivie (reliée à la tâche de sa branche).
+      await trackedPullRequestService.recordGithub(args.projectId, pr, { type: 'human', userId: user.id }).catch((err) => console.error('[pull-requests] suivi de la PR créée', err));
+      return pr;
     },
     mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.merge(args.projectId, requireUser(ctx).id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true });
+      const user = requireUser(ctx);
+      const result = await pullRequestService.merge(args.projectId, user.id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true });
+      await trackedPullRequestService.markMerged(args.projectId, result.pullRequest, result.sha, { type: 'human', userId: user.id }).catch((err) => console.error('[pull-requests] suivi de la PR fusionnée', err));
+      return result;
+    },
+    registerPullRequest: async (_: unknown, args: { projectId: string; url?: string | null; number?: number | null; taskId?: string | null; note?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      const user = requireUser(ctx);
+      return trackedPullRequestService.register(args.projectId, { url: args.url, number: args.number }, { taskId: args.taskId, note: args.note, userId: user.id }, { type: 'human', userId: user.id });
+    },
+    updatePullRequest: async (_: unknown, args: { id: string; input: { status?: string | null; note?: string | null; taskId?: string | null; deployed?: boolean | null; deployNote?: string | null } }, ctx: Ctx) => {
+      const pr = await trackedPullRequestService.get(args.id);
+      await requireProject(ctx, pr.projectId, 'member');
+      const user = requireUser(ctx);
+      return trackedPullRequestService.update(args.id, { ...args.input, status: args.input.status ? (args.input.status.toLowerCase() as TrackedPullRequestStatus) : undefined }, { type: 'human', userId: user.id });
+    },
+    deletePullRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const pr = await trackedPullRequestService.get(args.id);
+      await requireProject(ctx, pr.projectId, 'member');
+      return trackedPullRequestService.delete(args.id);
+    },
+    syncPullRequests: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return trackedPullRequestService.sync(args.projectId, requireUser(ctx).id, { force: true });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');

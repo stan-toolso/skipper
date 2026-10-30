@@ -1,4 +1,5 @@
 import { gql } from '@apollo/client';
+import { TASK_PULL_REQUEST_FIELDS, TRACKED_PULL_REQUEST_FIELDS, type TrackedPullRequest, type TrackedPullRequestSummary } from './pullRequests';
 import type { AttachmentRef } from '../lib/attachments';
 import type { ClaudeRateLimits } from './settings';
 
@@ -314,6 +315,8 @@ export interface Task {
   createdBySession: { id: string; name: string } | null;
   /** Présent seulement dans la query TASKS. */
   pullRequest?: PullRequestSummary | null;
+  /** Pull requests suivies de la tâche (objets Skipper) ; présentes dans TASKS et TASK_PAGE. */
+  pullRequests?: TrackedPullRequestSummary[];
 }
 
 export interface AppNotification {
@@ -1360,6 +1363,7 @@ export const TASK_FIELDS = gql`
 
 export const TASKS = gql`
   ${TASK_FIELDS}
+  ${TASK_PULL_REQUEST_FIELDS}
   query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean, $limit: Int) {
     tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine, limit: $limit) {
       ...TaskFields
@@ -1374,6 +1378,9 @@ export const TASKS = gql`
         checksState
         headRefName
         baseRefName
+      }
+      pullRequests {
+        ...TaskPullRequestFields
       }
     }
   }
@@ -1426,6 +1433,7 @@ export const TASK_LAUNCH_TARGETS = gql`
   query TaskLaunchTargets {
     projects {
       id
+      myRole
       gitUrl
       defaultPermissionMode
       approvalConnections
@@ -1864,6 +1872,8 @@ export interface DashboardCounts {
   overdueTasks: number;
   doneTasks7d: number;
   unreadNotifications: number;
+  openPullRequests: number;
+  toDeployPullRequests: number;
 }
 
 export interface DashboardUsage {
@@ -1900,12 +1910,14 @@ export interface Dashboard {
   runningSessions: Session[];
   recentSessions: Session[];
   attentionTasks: Task[];
+  pullRequests: TrackedPullRequest[];
 }
 
 export const DASHBOARD = gql`
   ${SESSION_FIELDS}
   ${REQUEST_FIELDS}
   ${TASK_FIELDS}
+  ${TRACKED_PULL_REQUEST_FIELDS}
   query Dashboard {
     dashboard {
       generatedAt
@@ -1920,6 +1932,8 @@ export const DASHBOARD = gql`
         overdueTasks
         doneTasks7d
         unreadNotifications
+        openPullRequests
+        toDeployPullRequests
       }
       usage {
         monthStart
@@ -1989,6 +2003,9 @@ export const DASHBOARD = gql`
       }
       attentionTasks {
         ...TaskFields
+      }
+      pullRequests {
+        ...TrackedPullRequestFields
       }
     }
   }

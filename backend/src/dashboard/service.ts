@@ -2,6 +2,8 @@ import { pool } from '../db/pool.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
 import type { Project } from '../projects/types.js';
+import { trackedPullRequestService } from '../pullRequests/service.js';
+import type { TrackedPullRequest } from '../pullRequests/types.js';
 import { requestService } from '../requests/service.js';
 import type { HumanRequest } from '../requests/types.js';
 import { sessionService } from '../sessions/service.js';
@@ -32,6 +34,10 @@ export interface DashboardCounts {
   /** Tâches terminées au cours des 7 derniers jours. */
   doneTasks7d: number;
   unreadNotifications: number;
+  /** Pull requests suivies ouvertes (à fusionner, brouillons compris). */
+  openPullRequests: number;
+  /** Pull requests suivies fusionnées, pas encore déployées. */
+  toDeployPullRequests: number;
 }
 
 export interface DashboardUsageDay {
@@ -75,6 +81,8 @@ export interface Dashboard {
   runningSessions: Session[];
   recentSessions: Session[];
   attentionTasks: Task[];
+  /** Pull requests suivies qui attendent une action : à fusionner puis à déployer. */
+  pullRequests: TrackedPullRequest[];
 }
 
 const DAYS_OF_HISTORY = 30;
@@ -133,7 +141,7 @@ async function projectStats(projectIds: string[], monthStart: Date): Promise<Map
   return new Map(rows.map((r) => [r.project_id, r]));
 }
 
-async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks'>> {
+async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests' | 'toDeployPullRequests'>> {
   if (!projectIds.length) return { failedSessions24h: 0, endedSessions24h: 0, doneTasks7d: 0 };
   const { rows } = await pool.query<{ failed: string; ended: string; done: string }>(
     `SELECT
@@ -226,7 +234,7 @@ async function recentSessions(projectIds: string[]): Promise<Session[]> {
 export const dashboardService = {
   async build(userId: string, projectIds: string[], now = new Date(), isAdmin = false): Promise<Dashboard> {
     const monthStart = currentMonthStart(now);
-    const [projects, stats, extra, usageData, pending, running, recent, tasks, unread] = await Promise.all([
+    const [projects, stats, extra, usageData, pending, running, recent, tasks, unread, pullRequests, prCounts] = await Promise.all([
       // L'espace personnel compte comme un projet du tableau de bord (ses sessions et tâches sont celles de la personne).
       projectService.listForUser(userId, { includePersonal: true }),
       projectStats(projectIds, monthStart),
@@ -237,6 +245,8 @@ export const dashboardService = {
       recentSessions(projectIds),
       attentionTasks(projectIds),
       notificationService.countUnread({ projectIds, admin: isAdmin }),
+      projectIds.length ? trackedPullRequestService.list({ projectIds, stage: ['to_merge', 'draft', 'to_deploy'], limit: 20 }) : Promise.resolve([]),
+      trackedPullRequestService.countPending(projectIds),
     ]);
 
     const perProject: DashboardProject[] = projects.map((project) => {
@@ -265,6 +275,8 @@ export const dashboardService = {
         inProgressTasks: sum('inProgressTasks'),
         overdueTasks: sum('overdueTasks'),
         unreadNotifications: unread,
+        openPullRequests: prCounts.open,
+        toDeployPullRequests: prCounts.toDeploy,
         ...extra,
       },
       usage: usageData,
@@ -280,6 +292,7 @@ export const dashboardService = {
       runningSessions: running,
       recentSessions: recent,
       attentionTasks: tasks,
+      pullRequests,
     };
   },
 };

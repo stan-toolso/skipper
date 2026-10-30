@@ -29,6 +29,7 @@ import WorkflowsPage from './pages/WorkflowsPage';
 import WorkflowPage from './pages/WorkflowPage';
 import WorkflowRunPage from './pages/WorkflowRunPage';
 import ChatsPage from './pages/ChatsPage';
+import ProjectPullRequestsPage from './pages/ProjectPullRequestsPage';
 import PersonalSpaceRedirect from './pages/PersonalSpaceRedirect';
 
 /** Routes des pages ; `location` est celle de l'onglet rendu (figée pour un onglet caché). */
@@ -42,6 +43,7 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/projects/:id/edit" element={<ProjectFormPage />} />
       <Route path="/projects/:id/context" element={<ContextPage />} />
       <Route path="/projects/:id/tasks" element={<TasksPage />} />
+      <Route path="/projects/:id/pull-requests" element={<ProjectPullRequestsPage />} />
       <Route path="/projects/:id/vault" element={<ProjectVaultPage />} />
       <Route path="/projects/:id/history" element={<SessionHistoryPage />} />
       <Route path="/projects/:id/connections" element={<RedirectToVault />} />
