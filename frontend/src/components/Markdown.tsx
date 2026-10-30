@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -6,8 +7,9 @@ import remarkGfm from 'remark-gfm';
  * GFM (tableaux, listes de tâches, barré), liens ouverts dans un nouvel onglet, pas de HTML brut.
  * Le style est défini par `.cc-md` dans terminal.css : compact, dans la teinte du transcript. `base` remplace cette
  * classe de base par une autre feuille de style (ex. `ctx-md`, typographie de document des instructions du contexte).
+ * Mémoïsé : l'analyse Markdown coûte cher et le texte d'un message ne change jamais une fois journalisé.
  */
-export default function Markdown({ text, className, base = 'cc-md' }: { text: string; className?: string; base?: string }) {
+function Markdown({ text, className, base = 'cc-md' }: { text: string; className?: string; base?: string }) {
   return (
     <div className={`${base}${className ? ` ${className}` : ''}`}>
       <ReactMarkdown
@@ -21,3 +23,5 @@ export default function Markdown({ text, className, base = 'cc-md' }: { text: st
     </div>
   );
 }
+
+export default memo(Markdown);

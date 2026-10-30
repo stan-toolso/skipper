@@ -219,3 +219,39 @@ export const DELETE_SHARED_PAGE = gql`
     deleteSharedPage(id: $id)
   }
 `;
+
+/** Famille de notifications qu'une personne reçoit ou non en push (et en notification du navigateur). */
+export interface PushCategory {
+  key: string;
+  label: string;
+  description: string;
+  types: string[];
+  enabled: boolean;
+  adminsOnly: boolean;
+}
+
+export const PUSH_PREFERENCES = gql`
+  query PushPreferences {
+    pushPreferences {
+      key
+      label
+      description
+      types
+      enabled
+      adminsOnly
+    }
+  }
+`;
+
+export const SET_PUSH_PREFERENCE = gql`
+  mutation SetPushPreference($category: String!, $enabled: Boolean!) {
+    setPushPreference(category: $category, enabled: $enabled) {
+      key
+      label
+      description
+      types
+      enabled
+      adminsOnly
+    }
+  }
+`;

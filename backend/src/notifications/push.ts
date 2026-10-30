@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { AppError } from '../errors.js';
 import { decryptSecret, encryptSecret } from '../settings/crypto.js';
 import { settingsRepository } from '../settings/repository.js';
+import { pushPreferencesService, wantsPush } from './preferences.js';
 import { pushRepository } from './pushRepository.js';
 import { notificationRepository } from './repository.js';
 import type { Notification } from './types.js';
@@ -95,10 +96,16 @@ export const pushService = {
 
   unsubscribe: (userId: string, endpoint: string) => pushRepository.delete(userId, endpoint),
 
-  /** Envoie la notification aux appareils des personnes qui la verraient dans leur cloche. Ne lève jamais. */
+  /**
+   * Envoie la notification aux appareils des personnes qui la verraient dans leur cloche et qui n'ont pas
+   * coupé cette famille de notifications (preferences.ts). Ne lève jamais.
+   */
   async deliver(n: Notification): Promise<void> {
     try {
-      const recipients = await pushRepository.recipients({ userId: n.userId, adminsOnly: n.adminsOnly, projectId: n.projectId });
+      const subscribed = await pushRepository.recipients({ userId: n.userId, adminsOnly: n.adminsOnly, projectId: n.projectId });
+      if (!subscribed.length) return;
+      const muted = await pushPreferencesService.mutedOf([...new Set(subscribed.map((s) => s.userId))]);
+      const recipients = subscribed.filter((s) => wantsPush(n.type, muted.get(s.userId) ?? []));
       if (!recipients.length) return;
       const unreadByUser = new Map<string, Promise<number>>();
       const unreadOf = (userId: string, admin: boolean) => {

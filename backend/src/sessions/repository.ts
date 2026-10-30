@@ -146,6 +146,13 @@ export const sessionRepository = {
     return rows[0] ? toSession(rows[0]) : null;
   },
 
+  /** Sessions de ces identifiants (chargement groupé par requête GraphQL), sans ordre garanti. */
+  async findByIds(ids: string[]): Promise<Session[]> {
+    if (!ids.length) return [];
+    const { rows } = await pool.query<SessionRow>('SELECT * FROM sessions WHERE id = ANY($1::uuid[])', [ids]);
+    return rows.map(toSession);
+  },
+
   async list(filter: SessionFilter = {}): Promise<Session[]> {
     const where: string[] = [];
     const params: unknown[] = [];

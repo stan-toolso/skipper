@@ -78,6 +78,16 @@ export const requestRepository = {
     return Number(rows[0].n);
   },
 
+  /** Demandes en attente par session (chargement groupé par requête GraphQL) ; une session sans demande est absente. */
+  async countPendingBySessions(sessionIds: string[]): Promise<Map<string, number>> {
+    if (!sessionIds.length) return new Map();
+    const { rows } = await pool.query<{ session_id: string; n: string }>(
+      `SELECT session_id, count(*)::text AS n FROM requests WHERE session_id = ANY($1::uuid[]) AND status = 'pending' GROUP BY session_id`,
+      [sessionIds],
+    );
+    return new Map(rows.map((r) => [r.session_id, Number(r.n)]));
+  },
+
   /** Passe une demande en attente à `status` ; renvoie null si elle n'était plus en attente. */
   async settle(id: string, status: Exclude<RequestStatus, 'pending'>, response: Record<string, unknown> | null, answeredBy: string | null = null): Promise<HumanRequest | null> {
     const { rows } = await pool.query<RequestRow>(

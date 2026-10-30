@@ -160,6 +160,33 @@ export const taskRepository = {
     return rows[0] ? toTask(rows[0]) : null;
   },
 
+  /** Tâches de ces identifiants (chargement groupé par requête GraphQL), sans ordre garanti. */
+  async findByIds(ids: string[]): Promise<Task[]> {
+    if (!ids.length) return [];
+    const { rows } = await pool.query<Row>(`${SELECT} WHERE t.id = ANY($1::uuid[])`, [ids]);
+    return rows.map(toTask);
+  },
+
+  /**
+   * Tâche de chaque branche demandée (clé : projet et branche, voir `branchKey` dans graphql/loaders.ts), avec la
+   * règle de `taskService.forBranch` : la première non annulée dans l'ordre habituel, sinon la première.
+   */
+  async findForBranches(keys: { projectId: string; branch: string }[]): Promise<Map<string, Task>> {
+    const found = new Map<string, Task>();
+    if (!keys.length) return found;
+    const { rows } = await pool.query<Row>(`${SELECT} WHERE t.project_id = ANY($1::uuid[]) AND t.branch = ANY($2::text[]) ${ORDER}`, [
+      [...new Set(keys.map((k) => k.projectId))],
+      [...new Set(keys.map((k) => k.branch))],
+    ]);
+    for (const task of rows.map(toTask)) {
+      if (!task.branch) continue;
+      const key = `${task.projectId}\u0000${task.branch}`;
+      const current = found.get(key);
+      if (!current || (current.status === 'cancelled' && task.status !== 'cancelled')) found.set(key, task);
+    }
+    return found;
+  },
+
   async list(filter: TaskFilter = {}): Promise<Task[]> {
     const where: string[] = [];
     const params: unknown[] = [];

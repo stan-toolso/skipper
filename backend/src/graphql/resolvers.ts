@@ -2,9 +2,11 @@ import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { accessibleProjectIds, canAccessProject, filterAsync, memberRoleFor, requireAdmin, requireProject, requireSuperAdmin, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { liveBrowserService } from '../browser/live.js';
 import { liveDraftService } from '../sessions/live.js';
+import { createLoaders, type Loaders } from './loaders.js';
 import { apiKeyService } from '../apiKeys/service.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { accountOf, googleAccountService } from '../google/service.js';
+import { pushPreferencesService } from '../notifications/preferences.js';
 import { pushService, type PushSubscriptionInput } from '../notifications/push.js';
 import { searchService, type SearchKind } from '../search/service.js';
 import { sharedPageService } from '../sharedPages/service.js';
@@ -173,7 +175,26 @@ const actorOf = (user: User) => ({ type: 'human' as const, userId: user.id, name
 const fromGqlPermission = (p: string): VaultPermission => p.toLowerCase() as VaultPermission;
 const fromGqlScope = (sc: string): VaultLinkScope => sc.toLowerCase() as VaultLinkScope;
 const vaultActor = (ctx: Ctx) => ({ userId: requireUser(ctx).id });
-const userOrNull = (id: string | null | undefined) => (id ? userService.get(id).catch(() => null) : null);
+/**
+ * Chargeurs groupés de la requête en cours (voir loaders.ts) : les résolveurs de champ appelés une fois par objet
+ * (propriétaire, work session, projet, tâche, demandes en attente) sont servis en une requête SQL par lot.
+ */
+const loadersByCtx = new WeakMap<Ctx, Loaders>();
+const loadersOf = (ctx: Ctx): Loaders => {
+  let loaders = loadersByCtx.get(ctx);
+  if (!loaders) {
+    loaders = createLoaders();
+    loadersByCtx.set(ctx, loaders);
+  }
+  return loaders;
+};
+const userOrNull = async (ctx: Ctx, id: string | null | undefined) => (id ? ((await loadersOf(ctx).user(id)) ?? null) : null);
+const projectOf = async (ctx: Ctx, id: string): Promise<Project> => {
+  const project = await loadersOf(ctx).project(id);
+  if (!project) throw new NotFoundError('Projet introuvable');
+  return project;
+};
+const worksessionOrNull = async (ctx: Ctx, id: string | null | undefined) => (id ? ((await loadersOf(ctx).worksession(id)) ?? null) : null);
 /** Projet renvoyé seulement si l'utilisateur y a accès (sinon null, le nom restant disponible à part). */
 const projectIfAccessible = async (ctx: Ctx, id: string | null | undefined) => (id && (await roleFor(ctx, id)) ? projectService.get(id).catch(() => null) : null);
 const fromGqlRequestStatus = (s?: GqlRequestStatus | null): RequestStatus | undefined =>
@@ -252,7 +273,7 @@ export const resolvers = {
   Notification: {
     project: (n: Notification) => (n.projectId ? projectService.get(n.projectId).catch(() => null) : null),
     session: (n: Notification) => (n.sessionId ? sessionService.get(n.sessionId) : null),
-    user: (n: Notification) => userOrNull(n.userId),
+    user: (n: Notification, _: unknown, ctx: Ctx) => userOrNull(ctx, n.userId),
   },
 
   Task: {
@@ -275,7 +296,7 @@ export const resolvers = {
 
   TaskComment: {
     attachments: (c: TaskComment) => taskService.attachments(c.taskId, c.id),
-    author: (c: TaskComment) => userOrNull(c.authorUserId),
+    author: (c: TaskComment, _: unknown, ctx: Ctx) => userOrNull(ctx, c.authorUserId),
     authorSession: (c: TaskComment) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
     editable: (c: TaskComment, _: unknown, ctx: Ctx) => c.authorType === 'human' && c.authorUserId === ctx.user?.id,
     deletable: async (c: TaskComment, _: unknown, ctx: Ctx) => {
@@ -286,7 +307,7 @@ export const resolvers = {
   },
 
   ProjectApiKey: {
-    createdBy: (k: ProjectApiKey) => userOrNull(k.createdById),
+    createdBy: (k: ProjectApiKey, _: unknown, ctx: Ctx) => userOrNull(ctx, k.createdById),
   },
 
   PullRequest: {
@@ -299,9 +320,9 @@ export const resolvers = {
     task: (pr: TrackedPullRequest) => (pr.taskId ? taskService.get(pr.taskId).catch(() => null) : null),
     status: (pr: TrackedPullRequest) => pr.status.toUpperCase(),
     stage: (pr: TrackedPullRequest) => stageOf(pr).toUpperCase(),
-    deployedBy: (pr: TrackedPullRequest) => userOrNull(pr.deployedByUserId),
+    deployedBy: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, pr.deployedByUserId),
     deployedBySession: (pr: TrackedPullRequest) => (pr.deployedBySessionId ? sessionService.get(pr.deployedBySessionId) : null),
-    createdBy: (pr: TrackedPullRequest) => userOrNull(pr.createdByUserId),
+    createdBy: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, pr.createdByUserId),
     createdBySession: (pr: TrackedPullRequest) => (pr.createdBySessionId ? sessionService.get(pr.createdBySessionId) : null),
     // En direct depuis GitHub (cache de 20 s côté service) : null si le projet n'y est pas ou si GitHub ne répond pas.
     github: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => pullRequestService.get(pr.projectId, ctx.user?.id, pr.number).catch(() => null),
@@ -310,7 +331,7 @@ export const resolvers = {
 
   VaultItem: {
     kind: (i: VaultItem) => i.kind,
-    ownerUser: (i: VaultItem) => userOrNull(i.ownerUserId),
+    ownerUser: (i: VaultItem, _: unknown, ctx: Ctx) => userOrNull(ctx, i.ownerUserId),
     ownerProject: (i: VaultItem, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, i.ownerProjectId),
     ownerProjectName: async (i: VaultItem) => (i.ownerProjectId ? (await projectService.get(i.ownerProjectId).catch(() => null))?.name ?? null : null),
     myPermission: async (i: VaultItemWithPermission, _: unknown, ctx: Ctx) => ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i)) ?? 'use') as string).toUpperCase(),
@@ -358,25 +379,25 @@ export const resolvers = {
       return links.filter((l) => (l.scope === 'personal' ? l.userId === user.id : mine.includes(l.projectId)));
     },
     audit: async (i: VaultItemWithPermission, args: { limit?: number | null; before?: string | null }, ctx: Ctx) => ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i))) === 'manage' ? vaultService.auditLog(i.id, args.limit ?? 50, args.before) : []),
-    createdBy: (i: VaultItem) => userOrNull(i.createdById),
+    createdBy: (i: VaultItem, _: unknown, ctx: Ctx) => userOrNull(ctx, i.createdById),
   },
 
   VaultShare: {
     user: (sh: VaultShare) => userService.get(sh.userId),
     permission: (sh: VaultShare) => sh.permission.toUpperCase(),
-    grantedBy: (sh: VaultShare) => userOrNull(sh.grantedById),
+    grantedBy: (sh: VaultShare, _: unknown, ctx: Ctx) => userOrNull(ctx, sh.grantedById),
   },
 
   VaultLink: {
     project: (l: VaultLink, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, l.projectId),
     projectName: async (l: VaultLink) => (await projectService.get(l.projectId).catch(() => null))?.name ?? 'projet supprimé',
     scope: (l: VaultLink) => l.scope.toUpperCase(),
-    user: (l: VaultLink) => userOrNull(l.userId),
-    linkedBy: (l: VaultLink) => userOrNull(l.linkedById),
+    user: (l: VaultLink, _: unknown, ctx: Ctx) => userOrNull(ctx, l.userId),
+    linkedBy: (l: VaultLink, _: unknown, ctx: Ctx) => userOrNull(ctx, l.linkedById),
   },
 
   VaultAuditEvent: {
-    actor: (e: VaultAuditEvent) => userOrNull(e.actorUserId),
+    actor: (e: VaultAuditEvent, _: unknown, ctx: Ctx) => userOrNull(ctx, e.actorUserId),
     project: (e: VaultAuditEvent, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, e.projectId),
     projectName: async (e: VaultAuditEvent) => (e.projectId ? (await projectService.get(e.projectId).catch(() => null))?.name ?? null : null),
   },
@@ -394,10 +415,10 @@ export const resolvers = {
     project: (w: Workflow) => projectService.get(w.projectId),
     issues: (w: Workflow) => workflowService.issues(w.definition),
     variables: (w: Workflow, args: { triggerKey?: string | null }) => workflowVariables(w.definition, args.triggerKey),
-    eventOwner: (w: Workflow) => userOrNull(w.eventOwnerId),
+    eventOwner: (w: Workflow, _: unknown, ctx: Ctx) => userOrNull(ctx, w.eventOwnerId),
     runs: (w: Workflow, args: { limit?: number | null }) => workflowService.listRuns({ workflowId: w.id, limit: args.limit ?? 20 }),
     lastRun: (w: Workflow) => workflowService.lastRun(w.id),
-    createdBy: (w: Workflow) => userOrNull(w.createdById),
+    createdBy: (w: Workflow, _: unknown, ctx: Ctx) => userOrNull(ctx, w.createdById),
   },
 
   WorkflowRun: {
@@ -407,7 +428,7 @@ export const resolvers = {
     status: (r: WorkflowRun) => toGqlRunStatus(r.status),
     nodes: (r: WorkflowRun) => workflowService.runNodes(r.id),
     logs: (r: WorkflowRun, args: { after?: string | null; limit?: number | null }) => workflowService.runLogs(r.id, { after: args.after, limit: args.limit ?? 500 }),
-    owner: (r: WorkflowRun) => userOrNull(r.ownerId),
+    owner: (r: WorkflowRun, _: unknown, ctx: Ctx) => userOrNull(ctx, r.ownerId),
   },
 
   WorkflowRunNode: {
@@ -436,29 +457,29 @@ export const resolvers = {
   },
   SharedPageMember: {
     user: (m: SharedPageMember) => userService.get(m.userId),
-    addedBy: (m: SharedPageMember) => userOrNull(m.addedById),
+    addedBy: (m: SharedPageMember, _: unknown, ctx: Ctx) => userOrNull(ctx, m.addedById),
     addedAt: (m: SharedPageMember) => m.createdAt,
   },
   SharedPageVersion: {
-    createdBy: (v: SharedPageVersion) => userOrNull(v.createdById),
+    createdBy: (v: SharedPageVersion, _: unknown, ctx: Ctx) => userOrNull(ctx, v.createdById),
   },
 
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
-    project: (t: TerminalRecord) => projectService.get(t.projectId),
-    worksession: (t: TerminalRecord) => (t.worksessionId ? worksessionService.get(t.worksessionId).catch(() => null) : null),
-    createdBy: (t: TerminalRecord) => userOrNull(t.createdById),
+    project: (t: TerminalRecord, _: unknown, ctx: Ctx) => projectOf(ctx, t.projectId),
+    worksession: (t: TerminalRecord, _: unknown, ctx: Ctx) => worksessionOrNull(ctx, t.worksessionId),
+    createdBy: (t: TerminalRecord, _: unknown, ctx: Ctx) => userOrNull(ctx, t.createdById),
   },
 
   Worksession: {
-    project: (w: Worksession) => projectService.get(w.projectId),
+    project: (w: Worksession, _: unknown, ctx: Ctx) => projectOf(ctx, w.projectId),
     label: (w: Worksession) => worksessionLabel(w),
     customLabel: (w: Worksession) => w.label,
-    path: async (w: Worksession) => worksessionPath(await projectService.get(w.projectId), w),
-    exists: async (w: Worksession) => worksessionService.exists(await projectService.get(w.projectId), w),
-    git: async (w: Worksession) => worksessionService.gitInfo(await projectService.get(w.projectId), w),
-    pullRequest: async (w: Worksession, _: unknown, ctx: Ctx) => ((await projectService.get(w.projectId)).gitUrl ? pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null) : null),
-    task: async (w: Worksession) => (w.taskId ? await taskService.get(w.taskId).catch(() => null) : null) ?? taskService.forBranch(w.projectId, w.branch),
+    path: async (w: Worksession, _: unknown, ctx: Ctx) => worksessionPath(await projectOf(ctx, w.projectId), w),
+    exists: async (w: Worksession, _: unknown, ctx: Ctx) => worksessionService.exists(await projectOf(ctx, w.projectId), w),
+    git: async (w: Worksession, _: unknown, ctx: Ctx) => worksessionService.gitInfo(await projectOf(ctx, w.projectId), w),
+    pullRequest: async (w: Worksession, _: unknown, ctx: Ctx) => ((await projectOf(ctx, w.projectId)).gitUrl ? pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null) : null),
+    task: async (w: Worksession, _: unknown, ctx: Ctx) => (w.taskId ? await loadersOf(ctx).task(w.taskId) : null) ?? (await loadersOf(ctx).taskForBranch({ projectId: w.projectId, branch: w.branch })) ?? null,
     sessions: (w: Worksession) => sessionService.list({ projectId: w.projectId, worksessionId: w.id, limit: 200 }),
     terminals: async (w: Worksession, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worksessionId === w.id),
   },
@@ -511,23 +532,23 @@ export const resolvers = {
   Request: {
     status: (request: HumanRequest) => request.status.toUpperCase(),
     session: (request: HumanRequest) => sessionService.get(request.sessionId),
-    answeredBy: (request: HumanRequest) => userOrNull(request.answeredById),
+    answeredBy: (request: HumanRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, request.answeredById),
   },
 
   Session: {
     kind: (session: Session) => session.kind.toUpperCase(),
-    project: (session: Session) => projectService.get(session.projectId),
-    worksession: (session: Session) => (session.worksessionId ? worksessionService.get(session.worksessionId).catch(() => null) : null),
-    owner: (session: Session) => userOrNull(session.ownerId),
+    project: (session: Session, _: unknown, ctx: Ctx) => projectOf(ctx, session.projectId),
+    worksession: (session: Session, _: unknown, ctx: Ctx) => worksessionOrNull(ctx, session.worksessionId),
+    owner: (session: Session, _: unknown, ctx: Ctx) => userOrNull(ctx, session.ownerId),
     task: (session: Session) => taskService.forSession(session.id),
-    parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
+    parentSession: async (session: Session, _: unknown, ctx: Ctx) => (session.parentSessionId ? ((await loadersOf(ctx).session(session.parentSessionId)) ?? null) : null),
     childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, archived: 'all', limit: 50 }),
     workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
     requests: (session: Session, args: { status?: GqlRequestStatus | null }) =>
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
-    pendingRequestCount: (session: Session) => requestService.countPending(session.id),
+    pendingRequestCount: async (session: Session, _: unknown, ctx: Ctx) => (await loadersOf(ctx).pendingRequestCount(session.id)) ?? 0,
     browserActive: (session: Session) => liveBrowserService.isActive(session.id),
     liveDraft: (session: Session) => liveDraftService.get(session.id),
     queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
@@ -683,6 +704,10 @@ export const resolvers = {
     pushPublicKey: (_: unknown, __: unknown, ctx: Ctx) => {
       requireUser(ctx);
       return pushService.publicKey();
+    },
+    pushPreferences: (_: unknown, __: unknown, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      return pushPreferencesService.list(user.id, user.isAdmin);
     },
     settings: (_: unknown, __: unknown, ctx: Ctx) => appSettings(ctx),
     vaultAwsAccounts: (_: unknown, args: { id: string }, ctx: Ctx) => awsService.accounts(vaultActor(ctx), args.id),
@@ -1346,6 +1371,10 @@ export const resolvers = {
     },
     unsubscribePush: (_: unknown, args: { endpoint: string }, ctx: Ctx) => pushService.unsubscribe(requireUser(ctx).id, args.endpoint),
     sendTestPush: (_: unknown, __: unknown, ctx: Ctx) => pushService.test(requireUser(ctx).id),
+    setPushPreference: (_: unknown, args: { category: string; enabled: boolean }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      return pushPreferencesService.set(user.id, user.isAdmin, args.category, args.enabled);
+    },
     closeTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTerminal(ctx, args.id, 'member');
       return terminalService.close(args.id);

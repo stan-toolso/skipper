@@ -555,7 +555,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const { openSearch } = useSearchPalette();
   const { openHelp } = useShortcutsHelp();
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
-  const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
+  const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 5000, fetchPolicy: 'cache-and-network' });
   const chats = data?.chats ?? [];
   const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });

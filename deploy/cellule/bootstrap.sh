@@ -150,7 +150,9 @@ if [ "$SKIP_CERTBOT" = 0 ]; then
   step "Certificat TLS Let's Encrypt pour $DOMAIN"
   if [ -n "$CERTBOT_EMAIL" ]; then CERTBOT_ARGS=(-m "$CERTBOT_EMAIL"); else CERTBOT_ARGS=(--register-unsafely-without-email); fi
   if certbot --nginx -n --agree-tos --redirect "${CERTBOT_ARGS[@]}" -d "$DOMAIN"; then
-    systemctl reload nginx
+    # HTTP/2 sur les écoutes TLS posées par certbot (une connexion multiplexée pour les relevés GraphQL et les bundles).
+    sed -i -E '/http2/! s/^(\s*listen\s+(\[::\]:)?443\s+ssl)\b/\1 http2/' /etc/nginx/sites-available/skipper
+    nginx -t && systemctl reload nginx
   else
     echo "certbot a échoué (le DNS de $DOMAIN pointe-t-il déjà ici ?) : relancer plus tard « certbot --nginx -d $DOMAIN »" >&2
   fi
