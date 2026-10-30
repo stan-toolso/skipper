@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { SessionEvent, SessionLiveDraft } from '../graphql/operations';
 import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
+import type { LocalAttachment } from '../lib/pendingInstructions';
 import { clockTime, dayLabel, describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
 import Markdown from './Markdown';
 
@@ -22,6 +23,28 @@ function InstructionAttachments({ sessionId, attachments }: { sessionId: string;
             <span className="cc-chip-name">{a.name}</span>
             <span className="cc-chip-size">{formatSize(a.size)}</span>
           </a>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Fichiers d'une instruction pas encore journalisée par le serveur : aperçus depuis le navigateur. */
+function LocalAttachments({ attachments }: { attachments: LocalAttachment[] }) {
+  return (
+    <div className="cc-user-files">
+      {attachments.map((a, i) => {
+        const title = `${a.name} · ${a.mediaType} · ${formatSize(a.size)}`;
+        return a.previewUrl ? (
+          <span key={i} className="cc-user-image" title={title}>
+            <img src={a.previewUrl} alt={a.name} />
+          </span>
+        ) : (
+          <span key={i} className="cc-chip" title={title}>
+            <i className="bi bi-file-earmark" />
+            <span className="cc-chip-name">{a.name}</span>
+            <span className="cc-chip-size">{formatSize(a.size)}</span>
+          </span>
         );
       })}
     </div>
@@ -564,12 +587,15 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
     switch (e.type) {
       case 'instruction': {
         const attachments = Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [];
+        // Instruction envoyée depuis la page et pas encore journalisée : affichée aussitôt, fichiers lus en local.
+        const local = Array.isArray(p.localAttachments) ? (p.localAttachments as LocalAttachment[]) : [];
         nodes.push(
-          <div key={e.id} className="cc-user">
+          <div key={e.id} className={`cc-user${p.pending ? ' pending' : ''}`} title={p.pending ? 'Envoi en cours…' : undefined}>
             {stamp(true)}
             <span className="cc-user-text">{String(p.text ?? '')}</span>
             {p.preamble === true && <span className="cc-note"> (précédée, pour le modèle, du résumé de la conversation précédente)</span>}
             {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
+            {local.length > 0 && <LocalAttachments attachments={local} />}
           </div>,
         );
         break;

@@ -18,7 +18,8 @@ import { SessionChildren, SessionParentNote, parentStateHint, useSessionActions 
 import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript from '../components/Transcript';
 import { fileToolResultCount } from '../lib/sessionChanges';
-import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
+import { isImageType, toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
+import { confirmedPending, newPendingInstruction, withPendingInstructions, type PendingInstruction } from '../lib/pendingInstructions';
 import '../components/terminal.css';
 import '../components/chat.css';
 import {
@@ -59,7 +60,7 @@ const writeDraft = (id: string, value: string) => {
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
   const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
-  const { events, loaded: eventsLoaded, draft } = useSessionEvents(id);
+  const { events, loaded: eventsLoaded, draft, refresh: refreshEvents } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession] = useMutation(INTERRUPT_SESSION, { onError: (err) => void showError(err) });
   const { confirm, showError } = useDialogs();
@@ -77,6 +78,24 @@ export default function SessionDetailPage() {
   };
   const [encoding, setEncoding] = useState(false);
   const attachments = usePendingAttachments();
+  // Instructions envoyées depuis cette page et pas encore journalisées par le serveur : affichées dans le
+  // transcript dès l'envoi, sans attendre l'aller-retour de la mutation ni le prochain relevé des événements.
+  const [pendingInstructions, setPendingInstructions] = useState<PendingInstruction[]>([]);
+  const pendingRef = useRef(pendingInstructions);
+  pendingRef.current = pendingInstructions;
+  const shownEvents = useMemo(() => withPendingInstructions(events, pendingInstructions), [events, pendingInstructions]);
+  const dropPending = (toDrop: PendingInstruction[]) => {
+    if (!toDrop.length) return;
+    toDrop.forEach((p) => p.attachments.forEach((a) => a.previewUrl && URL.revokeObjectURL(a.previewUrl)));
+    setPendingInstructions((list) => list.filter((p) => !toDrop.includes(p)));
+  };
+  // Une fois l'événement du serveur arrivé, l'instruction en attente qui lui correspond est oubliée.
+  useEffect(() => {
+    const confirmed = confirmedPending(events, pendingInstructions);
+    if (confirmed.size) dropPending(pendingInstructions.filter((p) => confirmed.has(p.id)));
+  }, [events, pendingInstructions]);
+  // Au changement de session et à la fermeture de la page, rien ne reste des envois en attente (aperçus révoqués).
+  useEffect(() => () => dropPending(pendingRef.current), [id]);
   const [technical, setTechnical] = useState<boolean>(() => {
     try {
       return localStorage.getItem(TECH_KEY) === '1';
@@ -163,15 +182,27 @@ export default function SessionDetailPage() {
     if (!canSend) return;
     const value = text.trim();
     const items = attachments.items;
+    // Le message apparaît dans le transcript et la zone de saisie se vide avant tout échange avec le serveur.
+    const pending = newPendingInstruction(
+      value,
+      items.map((i) => ({ name: i.name, mediaType: i.mediaType, size: i.size, previewUrl: isImageType(i.mediaType) ? URL.createObjectURL(i.file) : null })),
+      events.length,
+    );
+    setPendingInstructions((list) => [...list, pending]);
+    setText('');
+    attachments.reset();
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     setEncoding(true);
     try {
       const files = items.length ? await toAttachmentInputs(items) : null;
-      setText('');
-      attachments.reset();
-      if (inputRef.current) inputRef.current.style.height = 'auto';
       await sendMessage({ variables: { id, text: value, attachments: files } });
+      // Le serveur a journalisé l'instruction : on la relève tout de suite plutôt qu'au prochain tour de sondage.
+      refreshEvents();
     } catch {
-      /* l'erreur est affichée par sendError */
+      // L'erreur est affichée par sendError ; le message revient dans la zone de saisie pour être renvoyé.
+      dropPending([pending]);
+      setText(value);
+      requestAnimationFrame(() => inputRef.current?.focus());
     } finally {
       setEncoding(false);
     }
@@ -343,7 +374,7 @@ export default function SessionDetailPage() {
           <span className="d-md-none">Détails techniques</span>
         </label>
       </div>
-      <Transcript events={events} draft={draft} loading={!eventsLoaded} technical={technical} />
+      <Transcript events={shownEvents} draft={draft} loading={!eventsLoaded} technical={technical} />
       {actions.modals}
 
       {pending.length > 0 && (
@@ -386,7 +417,6 @@ export default function SessionDetailPage() {
             rows={1}
             value={text}
             placeholder={running ? "Écrivez ce que l'agent doit faire…" : 'Écrivez une nouvelle instruction pour reprendre…'}
-            disabled={sending || encoding}
             onChange={(e) => {
               historyPos.current = null;
               setText(e.target.value);
