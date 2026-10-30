@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { containerDrift, countZombies, cpusArgs, splitInspect, type ContainerSpec } from './spec.js';
+import { containerDrift, countZombies, cpusArgs, splitInspect, updateCpusValue, type ContainerSpec } from './spec.js';
 
 const home = '/home/skipper';
 const expected: ContainerSpec = {
@@ -92,5 +92,15 @@ describe('splitInspect', () => {
   it('sépare les champs et garde les | du dernier (label JSON)', () => {
     expect(splitInspect('running|2026-10-10T15:00:03Z|<nil>|<no value>\n', 4)).toEqual(['running', '2026-10-10T15:00:03Z', null, null]);
     expect(splitInspect('running|true|{"a":"x|y"}', 3)).toEqual(['running', 'true', '{"a":"x|y"}']);
+  });
+});
+
+describe('updateCpusValue', () => {
+  it('garde le plafond demandé', () => {
+    expect(updateCpusValue('1.5', 8)).toBe('1.5');
+  });
+  it('donne tous les cœurs de l\'hôte sans plafond, jamais 0', () => {
+    expect(updateCpusValue('', 8)).toBe('8');
+    expect(updateCpusValue('', 0)).toBe('1');
   });
 });

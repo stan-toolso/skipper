@@ -105,6 +105,15 @@ export function cpusArgs(cpus: string): string[] {
 }
 
 /**
+ * Valeur de `--cpus` pour `docker update` (limites appliquées à chaud). Sans plafond demandé, on donne tous
+ * les cœurs de l'hôte : `docker update --cpus 0` est accepté mais ne retire pas un plafond existant
+ * (constaté avec Docker 29.9.2 le 30/10/2026, le conteneur restait à 1 cœur).
+ */
+export function updateCpusValue(cpus: string, hostCpus: number): string {
+  return cpus || String(Math.max(1, Math.floor(hostCpus)));
+}
+
+/**
  * Nombre de processus zombies (état `Z`, terminés mais pas récoltés) dans la sortie de
  * `docker top <conteneur> -o pid,stat` (en-tête puis une ligne par processus).
  */
