@@ -5,8 +5,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import PageLoading from '../components/PageLoading';
 import { PullRequestChip } from '../components/PullRequests';
 import StatusBadge from '../components/StatusBadge';
+import TaskAttachments from '../components/TaskAttachments';
 import TaskActions from '../components/TaskActions';
-import { formatPerson, isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge } from '../components/TaskBadges';
+import { formatPerson, isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskComments from '../components/TaskComments';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 import TaskModal from '../components/TaskModal';
@@ -29,7 +30,7 @@ interface TaskSession {
   startedAt: string | null;
   endedAt: string | null;
   owner: { id: string; name: string } | null;
-  worktree: { id: string; label: string } | null;
+  worksession: { id: string; label: string } | null;
 }
 
 type TaskWithSessions = Task & { sessions: TaskSession[] };
@@ -46,7 +47,7 @@ export default function TaskPage() {
   const task = data?.task;
   useTabTitle(task?.title ?? null);
   const current = task?.sessions.find((s) => s.id === task.session?.id);
-  useGitTarget(task && task.session?.worktree ? { projectId: task.project.id, worktreeId: task.session.worktree.id, label: task.session.worktree.label } : null);
+  useGitTarget(task && task.session?.worksession ? { projectId: task.project.id, worksessionId: task.session.worksession.id, label: task.session.worksession.label } : null);
 
   if (loading && !data) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
@@ -62,10 +63,16 @@ export default function TaskPage() {
       <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap">
         <div>
           <h1 className="h3 mb-1">
-            {task.title} <TaskStatusBadge status={task.status} /> <TaskPriorityBadge priority={task.priority} />
+            {task.title} <TaskStatusBadge status={task.status} statusTag={task.statusTag} /> <TaskPriorityBadge priority={task.priority} />
           </h1>
           <div className="small text-secondary">
             <Link to={`/projects/${task.project.id}`}>{task.project.name}</Link>
+            {task.tags.length > 0 && (
+              <>
+                {' · '}
+                <TaskTags tags={task.tags} />
+              </>
+            )}
             {' · créée le '}
             {fmt(task.createdAt)}
             {task.createdByType === 'agent' ? ' par un agent' : " depuis l'interface"}
@@ -88,6 +95,7 @@ export default function TaskPage() {
             <Card.Header>Description</Card.Header>
             <Card.Body className="small" style={{ whiteSpace: 'pre-wrap' }}>
               {task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}
+              <TaskAttachments taskId={task.id} attachments={task.attachments} />
             </Card.Body>
           </Card>
           <Card className="mt-3">
@@ -102,14 +110,14 @@ export default function TaskPage() {
               {task.sessions.length === 0 ? (
                 <div className="p-3 text-secondary fst-italic">Aucune session n'a encore travaillé sur cette tâche. « Confier à un agent » en lance une.</div>
               ) : (
-                <Table size="sm" hover className="mb-0">
+                <Table size="sm" hover responsive className="mb-0">
                   <thead>
                     <tr>
                       <th>Session</th>
                       <th>État</th>
-                      <th>Worktree</th>
-                      <th>Par</th>
-                      <th>Démarrée</th>
+                      <th className="d-none d-md-table-cell">Work session</th>
+                      <th className="d-none d-md-table-cell">Par</th>
+                      <th className="d-none d-md-table-cell">Démarrée</th>
                       <th className="text-end">Coût</th>
                     </tr>
                   </thead>
@@ -120,16 +128,16 @@ export default function TaskPage() {
                           <Link to={`/sessions/${s.id}`}>{s.name}</Link>
                           {s.id === task.session?.id && <Badge bg="primary" className="ms-2">en charge</Badge>}
                           {s.id === task.createdBySession?.id && <Badge bg="secondary" className="ms-2">l'a créée</Badge>}
-                          {s.archivedAt && <Badge bg="dark" className="ms-2">archivée</Badge>}
+                          {s.archivedAt && <Badge bg="secondary" className="ms-2">archivée</Badge>}
                           <span className="text-secondary ms-2">{s.provider}</span>
                         </td>
                         <td>
                           <StatusBadge status={s.status} />
                           {s.pendingRequestCount > 0 && <Badge bg="warning" text="dark" className="ms-1">{s.pendingRequestCount}</Badge>}
                         </td>
-                        <td>{s.worktree ? <Link to={`/worktrees/${s.worktree.id}/files`}>{s.worktree.label}</Link> : <span className="text-secondary">dossier principal</span>}</td>
-                        <td>{s.owner?.name ?? <span className="text-secondary">—</span>}</td>
-                        <td title={s.startedAt ? fmt(s.startedAt) : ''}>
+                        <td className="d-none d-md-table-cell">{s.worksession ? <Link to={`/worksessions/${s.worksession.id}/files`}>{s.worksession.label}</Link> : <span className="text-secondary">dossier principal</span>}</td>
+                        <td className="d-none d-md-table-cell">{s.owner?.name ?? <span className="text-secondary">—</span>}</td>
+                        <td className="d-none d-md-table-cell" title={s.startedAt ? fmt(s.startedAt) : ''}>
                           {s.startedAt ? timeAgo(s.startedAt) : '—'}
                           {s.endedAt && <span className="text-secondary"> · fin {timeAgo(s.endedAt)}</span>}
                         </td>
@@ -154,20 +162,21 @@ export default function TaskPage() {
               </dl>
             </Card.Body>
           </Card>
-          {(task.branch || task.pullRequest || current?.worktree) && (
+          {(task.branch || task.pullRequest || task.worksession || current?.worksession) && (
             <Card className="mt-3">
               <Card.Header>Code</Card.Header>
               <Card.Body className="small">
-                {current?.worktree ? (
-                  <div>
-                    <i className="bi bi-diagram-2 me-1" />
-                    <Link to={`/worktrees/${current.worktree.id}/files`}>{current.worktree.label}</Link>
+                {task.worksession || current?.worksession ? (
+                  <div title="Work session de la tâche : ses sessions y travaillent toutes">
+                    <i className="bi bi-layers me-1" />
+                    <Link to={`/worksessions/${(task.worksession ?? current!.worksession!).id}/files`}>{(task.worksession ?? current!.worksession!).label}</Link>
+                    {task.worksession?.archivedAt && <span className="text-secondary"> (archivée, restaurée à la prochaine session)</span>}
                   </div>
                 ) : (
                   task.branch && (
                     <div className="font-monospace">
-                      <i className="bi bi-diagram-2 me-1" />
-                      {task.branch} <span className="text-secondary">(worktree supprimé)</span>
+                      <i className="bi bi-layers me-1" />
+                      {task.branch} <span className="text-secondary">(work session supprimée)</span>
                     </div>
                   )
                 )}

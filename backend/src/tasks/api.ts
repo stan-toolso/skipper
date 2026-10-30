@@ -28,6 +28,8 @@ const createSchema = z
     priority: prioritySchema.optional(),
     dueDate: z.string().nullable().optional(),
     customFields: z.array(fieldSchema).optional(),
+    statusTag: z.string().nullable().optional(),
+    tags: z.array(z.string()).optional(),
     assignee: personSchema.optional(),
     reporter: personSchema.optional(),
   })
@@ -52,6 +54,8 @@ function publicTask(t: Task) {
     title: t.title,
     description: t.description,
     status: t.status,
+    statusTag: t.statusTag,
+    tags: t.tags,
     priority: t.priority,
     dueDate: t.dueDate,
     customFields: t.customFields,
@@ -167,5 +171,5 @@ async function listTasks(key: ProjectApiKey, params: URLSearchParams): Promise<T
   const limitRaw = params.get('limit');
   const limit = limitRaw ? Number(limitRaw) : 200;
   if (!Number.isInteger(limit) || limit < 1) throw new AppError('limit doit être un entier positif');
-  return taskService.list({ projectId: key.projectId, status, priority: (priority as Task['priority']) || undefined, assignee: params.get('assignee') || undefined, reporter: params.get('reporter') || undefined, limit: Math.min(limit, 1000) });
+  return taskService.list({ projectId: key.projectId, status, priority: (priority as Task['priority']) || undefined, assignee: params.get('assignee') || undefined, reporter: params.get('reporter') || undefined, tag: params.get('tag')?.trim() || undefined, limit: Math.min(limit, 1000) });
 }

@@ -6,7 +6,7 @@ import { AppError } from '../../errors.js';
 
 /**
  * Ponts MCP d'une session OpenCode : les serveurs MCP in-process de Skipper (contexte, tâches, coffre,
- * worktrees, sessions, pages) sont offerts au serveur OpenCode qui tourne dans le conteneur du projet.
+ * worksessions, sessions, pages) sont offerts au serveur OpenCode qui tourne dans le conteneur du projet.
  * Skipper écoute sur un port TCP du serveur ; OpenCode lance, par serveur, un relais local (`node -e`) qui
  * ouvre une connexion, s'annonce par un jeton propre à la session et le nom du serveur, puis relaie
  * son entrée/sortie standard. Chaque connexion est servie par une instance neuve du serveur MCP demandé

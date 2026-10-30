@@ -29,9 +29,9 @@ export function newNode(def: WorkflowDefinition, type: WorkflowNodeType, positio
     case 'callLlm':
       return { ...base, llm: { backend: 'litellm', keyItemId: '', model: '', temperature: null, maxTokens: null, langfuseItemId: null }, systemPrompt: '', prompt: '', outputFormat: 'text', outputSchema: '', timeoutMinutes: null };
     case 'task':
-      return { ...base, taskId: '', provider: 'claude', config: {}, prompt: '', includeTask: true, worktreeMode: 'new', worktreeId: null, wait: true, timeoutMinutes: null, sessionOwner: '' };
+      return { ...base, taskId: '', provider: 'claude', config: {}, prompt: '', includeTask: true, worksessionMode: 'new', worksessionId: null, wait: true, timeoutMinutes: null, sessionOwner: '' };
     case 'session':
-      return { ...base, sessionName: '', provider: 'claude', config: {}, prompt: '', worktreeMode: 'main', worktreeId: null, branch: '', wait: true, endAfterTurn: false, timeoutMinutes: null, sessionOwner: '' };
+      return { ...base, sessionName: '', provider: 'claude', config: {}, prompt: '', worksessionMode: 'new', worksessionId: null, branch: '', wait: true, endAfterTurn: false, timeoutMinutes: null, sessionOwner: '' };
     case 'createTask':
       return { ...base, newTask: { title: '', description: '', priority: '', status: '', dueDate: '', assignee: '', reporter: '', fields: [] } };
     case 'condition':

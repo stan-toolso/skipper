@@ -1,15 +1,16 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
-import type { Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
+import type { FormerWorksession, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionStatus } from './types.js';
 
 interface SessionRow {
   id: string;
   project_id: string;
-  worktree_id: string | null;
+  worksession_id: string | null;
   parent_session_id: string | null;
   owner_id: string | null;
   workflow_run_id: string | null;
   archived_at: Date | null;
+  former_worksession: FormerWorksession | null;
   name: string;
   provider: string;
   status: SessionStatus;
@@ -22,6 +23,7 @@ interface SessionRow {
   error: string | null;
   cleanup: SessionCleanup | null;
   context_tokens: number | null;
+  resume_digest: string | null;
   cost_usd: string | number | null;
   base_commit: string | null;
   queued_at: Date | null;
@@ -44,11 +46,12 @@ function toSession(row: SessionRow): Session {
   return {
     id: row.id,
     projectId: row.project_id,
-    worktreeId: row.worktree_id,
+    worksessionId: row.worksession_id,
     parentSessionId: row.parent_session_id,
     ownerId: row.owner_id ?? null,
     workflowRunId: row.workflow_run_id ?? null,
     archivedAt: row.archived_at ?? null,
+    formerWorksession: row.former_worksession ?? null,
     name: row.name,
     provider: row.provider,
     status: row.status,
@@ -61,6 +64,7 @@ function toSession(row: SessionRow): Session {
     error: row.error,
     cleanup: row.cleanup ?? {},
     contextTokens: row.context_tokens,
+    resumeDigest: row.resume_digest ?? null,
     costUsd: Number(row.cost_usd ?? 0),
     baseCommit: row.base_commit ?? null,
     queuedAt: row.queued_at ?? null,
@@ -89,6 +93,7 @@ export interface SessionPatch {
   ownerId?: string | null;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
+  resumeDigest?: string | null;
   baseCommit?: string | null;
   promptAttachments?: Attachment[];
   config?: Record<string, unknown>;
@@ -109,6 +114,7 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   ownerId: 'owner_id',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
+  resumeDigest: 'resume_digest',
   baseCommit: 'base_commit',
   promptAttachments: 'prompt_attachments',
   config: 'config',
@@ -125,10 +131,10 @@ const patchColumns: Record<keyof SessionPatch, string> = {
 export const sessionRepository = {
   async create(input: CreateSessionInput): Promise<Session> {
     const { rows } = await pool.query<SessionRow>(
-      `INSERT INTO sessions (project_id, worktree_id, parent_session_id, owner_id, name, provider, prompt, config, workflow_run_id)
+      `INSERT INTO sessions (project_id, worksession_id, parent_session_id, owner_id, name, provider, prompt, config, workflow_run_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [input.projectId, input.worktreeId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.workflowRunId ?? null],
+      [input.projectId, input.worksessionId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.workflowRunId ?? null],
     );
     return toSession(rows[0]);
   },
@@ -149,9 +155,9 @@ export const sessionRepository = {
       params.push(filter.projectIds);
       where.push(`project_id = ANY($${params.length}::uuid[])`);
     }
-    if (filter.worktreeId) {
-      params.push(filter.worktreeId);
-      where.push(`worktree_id = $${params.length}`);
+    if (filter.worksessionId) {
+      params.push(filter.worksessionId);
+      where.push(`worksession_id = $${params.length}`);
     }
     if (filter.parentSessionId) {
       params.push(filter.parentSessionId);
@@ -201,15 +207,27 @@ export const sessionRepository = {
     return rows.map((r) => r.owner_id);
   },
 
-  /** Archive les sessions actives d'un worktree ; renvoie leurs identifiants. */
-  async archiveByWorktree(worktreeId: string, at: Date): Promise<string[]> {
-    const { rows } = await pool.query<{ id: string }>(`UPDATE sessions SET archived_at = $2, updated_at = now() WHERE worktree_id = $1 AND archived_at IS NULL RETURNING id`, [worktreeId, at]);
+  /** Archive les sessions actives d'une work session ; renvoie leurs identifiants. */
+  /**
+   * Avant la suppression d'une work session : ses sessions sont archivées (celles qui l'étaient déjà gardent leur date),
+   * gardent le souvenir de la work session, et en sont détachées (la clé étrangère ferait de même, mais sans le souvenir).
+   */
+  async detachWorksession(worksessionId: string, at: Date, former: FormerWorksession): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(
+      `UPDATE sessions SET worksession_id = NULL, former_worksession = $3::jsonb, archived_at = COALESCE(archived_at, $2), updated_at = now() WHERE worksession_id = $1 RETURNING id`,
+      [worksessionId, at, JSON.stringify(former)],
+    );
     return rows.map((r) => r.id);
   },
 
-  /** Restaure les sessions d'un worktree archivées à partir de la date d'archivage du worktree. */
-  async unarchiveByWorktree(worktreeId: string, since: Date): Promise<number> {
-    const { rowCount } = await pool.query(`UPDATE sessions SET archived_at = NULL, updated_at = now() WHERE worktree_id = $1 AND archived_at IS NOT NULL AND archived_at >= $2`, [worktreeId, since]);
+  async archiveByWorksession(worksessionId: string, at: Date): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(`UPDATE sessions SET archived_at = $2, updated_at = now() WHERE worksession_id = $1 AND archived_at IS NULL RETURNING id`, [worksessionId, at]);
+    return rows.map((r) => r.id);
+  },
+
+  /** Restaure les sessions d'une work session archivées à partir de la date d'archivage de la work session. */
+  async unarchiveByWorksession(worksessionId: string, since: Date): Promise<number> {
+    const { rowCount } = await pool.query(`UPDATE sessions SET archived_at = NULL, updated_at = now() WHERE worksession_id = $1 AND archived_at IS NOT NULL AND archived_at >= $2`, [worksessionId, since]);
     return rowCount ?? 0;
   },
 

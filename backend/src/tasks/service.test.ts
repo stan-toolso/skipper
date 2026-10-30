@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeTaskChanges, normalizeFields, normalizePerson } from './service.js';
+import { describeTaskChanges, normalizeFields, normalizePerson, normalizeStatusTag, normalizeTags } from './service.js';
 import type { Task } from './types.js';
 
 const base: Task = {
@@ -15,6 +15,8 @@ const base: Task = {
   createdBySessionId: null,
   dueDate: null,
   customFields: [],
+  statusTag: null,
+  tags: [],
   assignee: null,
   reporter: null,
 } as unknown as Task;
@@ -72,5 +74,20 @@ describe('describeTaskChanges', () => {
     const before = { ...base, customFields: [{ key: 'Client', value: 'ACME' }, { key: 'Ref', value: '1' }] };
     const after = { ...base, customFields: [{ key: 'client', value: 'Globex' }] };
     expect(describeTaskChanges(before, after)).toEqual(['- Champ « client » : « ACME » → « Globex »', '- Champ « Ref » retiré']);
+  });
+});
+
+describe('étiquettes', () => {
+  it('nettoie les étiquettes : espaces, vides et doublons sans tenir compte de la casse', () => {
+    expect(normalizeTags(['  Front ', 'front', '', 'API  REST'])).toEqual(['Front', 'API REST']);
+    expect(normalizeTags(undefined)).toBeUndefined();
+  });
+  it("vide l'étiquette d'état blanche, refuse une étiquette trop longue", () => {
+    expect(normalizeStatusTag('  ')).toBeNull();
+    expect(normalizeStatusTag(undefined)).toBeUndefined();
+    expect(() => normalizeStatusTag('x'.repeat(41))).toThrow();
+  });
+  it("décrit les changements d'étiquettes", () => {
+    expect(describeTaskChanges(base, { ...base, statusTag: 'en revue', tags: ['front'] })).toEqual(["- Étiquette d'état : aucune → « en revue »", '- Étiquettes : aucune → front']);
   });
 });

@@ -21,8 +21,22 @@ export interface ConfigField {
 /** Nettoyage automatique de l'historique d'une session. */
 export interface SessionCleanup {
   retentionDays: number | null;
-  contextAction: 'compact' | 'reset' | null;
+  /** compact / reset : au-delà de contextMaxTokens ; fresh : conversation neuve à chaque exécution planifiée. */
+  contextAction: 'compact' | 'reset' | 'fresh' | null;
   contextMaxTokens: number | null;
+}
+
+/** Taille du contexte de l'agent rapportée au modèle (jauge de l'en-tête, pastille de la sidebar, bandeau). */
+export interface SessionContextInfo {
+  tokens: number | null;
+  /** Seuil au-delà duquel l'interface propose un nettoyage (réglages Claude de la personne connectée ; null : jamais). */
+  warnTokens: number | null;
+  overThreshold: boolean;
+  model: string | null;
+  windowTokens: number;
+  share: number | null;
+  /** Coût approximatif (dollars) de la relecture du contexte à froid au prochain tour. */
+  coldTurnUsd: number | null;
 }
 
 export interface SessionSchedule {
@@ -89,6 +103,11 @@ export interface RunnerStatus {
   cpus: string | null;
   startedAt: string | null;
   error: string | null;
+  /** Créé avec une autre configuration ou une image depuis reconstruite : à recréer. */
+  outdated: boolean;
+  outdatedReasons: string[];
+  /** Processus zombies dans le conteneur (null s'il ne tourne pas). */
+  zombies: number | null;
 }
 
 export interface Project {
@@ -97,6 +116,7 @@ export interface Project {
   slug: string;
   description: string | null;
   systemPrompt: string;
+  taskInstructions: string;
   gitUrl: string | null;
   gitBranch: string | null;
   runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean; maxSessions?: number };
@@ -131,6 +151,7 @@ export interface Session {
   cleanup: SessionCleanup;
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
+  context: SessionContextInfo;
   pendingRequestCount: number;
   /** Navigateur headless ouvert et utilisé par l'agent : vue en direct disponible. */
   browserActive: boolean;
@@ -142,19 +163,33 @@ export interface Session {
   startedAt: string | null;
   endedAt: string | null;
   project: Pick<Project, 'id' | 'name' | 'slug' | 'workspacePath' | 'approvalConnections'>;
-  worktree: Pick<Worktree, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
+  worksession: Pick<Worksession, 'id' | 'name' | 'branch' | 'label' | 'path'> | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create), null pour une session lancée par un humain. */
-  parentSession: { id: string; name: string } | null;
+  parentSession: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null } | null;
+  /** Sessions lancées par l'agent de cette session (requête Session seulement). */
+  childSessions?: ChildSession[];
   /** Exécution de workflow qui a ouvert la session ; null pour une session lancée à la main. */
   workflowRun: { id: string; workflow: { id: string; name: string } } | null;
   /** Utilisateur qui a lancé la session (null : session d'avant cette version). */
   owner: Pick<User, 'id' | 'name' | 'email' | 'avatarUrl'> | null;
   /** Archivée : consultable en lecture seule, relançable. */
   archivedAt: string | null;
+  /** Worksession supprimé dans lequel la session a travaillé (archivée avec lui) ; null sinon. */
+  formerWorksession: { name: string; branch: string; label: string } | null;
   /** Tâche dont la session est en charge. */
   task: { id: string; title: string; status: TaskStatus } | null;
   /** Planification (null si la session n'est pas planifiée). */
   schedule: SessionSchedule | null;
+}
+
+/** Session lancée par l'agent d'une autre session, telle que la page de la session parente la liste. */
+export interface ChildSession {
+  id: string;
+  name: string;
+  status: SessionStatus;
+  activity: SessionActivity | null;
+  pendingRequestCount: number;
+  archivedAt: string | null;
 }
 
 export interface ContextFolder {
@@ -215,7 +250,7 @@ export interface Terminal {
   createdAt: string;
   closedAt: string | null;
   project: { id: string; name: string; workspacePath: string };
-  worktree: { id: string; name: string; branch: string; label: string; path: string } | null;
+  worksession: { id: string; name: string; branch: string; label: string; path: string } | null;
 }
 
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
@@ -240,6 +275,7 @@ export interface TaskComment {
   body: string;
   editable: boolean;
   deletable: boolean;
+  attachments: { id: string; name: string; mediaType: string; size: number }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -249,6 +285,10 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…). */
+  statusTag: string | null;
+  /** Étiquettes libres. */
+  tags: string[];
   priority: TaskPriority;
   dueDate: string | null;
   createdByType: 'human' | 'agent';
@@ -259,9 +299,14 @@ export interface Task {
   assignee: TaskPerson | null;
   reporter: TaskPerson | null;
   commentCount: number;
+  /** Fichiers joints à la tâche elle-même. */
+  attachmentCount: number;
+  attachments: { id: string; name: string; mediaType: string; size: number }[];
   branch: string | null;
+  /** Work session consacrée à la tâche (active, sinon la dernière archivée). */
+  worksession: { id: string; label: string; archivedAt: string | null } | null;
   project: { id: string; name: string };
-  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worktree: { id: string; branch: string; label: string } | null } | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; worksession: { id: string; branch: string; label: string } | null } | null;
   createdBySession: { id: string; name: string } | null;
   /** Présent seulement dans la query TASKS. */
   pullRequest?: PullRequestSummary | null;
@@ -279,20 +324,20 @@ export interface AppNotification {
 }
 
 export interface SearchHit {
-  kind: 'PROJECT' | 'WORKTREE' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
+  kind: 'PROJECT' | 'WORKSESSION' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
   id: string;
   title: string;
   detail: string | null;
   projectId: string | null;
   projectName: string | null;
   outsideProjects: boolean;
-  worktreeBranch: string | null;
+  worksessionBranch: string | null;
   status: string | null;
   activity: string | null;
   updatedAt: string;
 }
 
-export interface Worktree {
+export interface Worksession {
   id: string;
   name: string;
   branch: string;
@@ -375,6 +420,7 @@ export const PROJECT_FIELDS = gql`
     slug
     description
     systemPrompt
+    taskInstructions
     gitUrl
     gitBranch
     runnerConfig
@@ -389,6 +435,9 @@ export const PROJECT_FIELDS = gql`
       cpus
       startedAt
       error
+      outdated
+      outdatedReasons
+      zombies
     }
     workspacePath
     workspaceExists
@@ -503,6 +552,15 @@ export const SESSION_FIELDS = gql`
       contextMaxTokens
     }
     contextTokens
+    context {
+      tokens
+      warnTokens
+      overThreshold
+      model
+      windowTokens
+      share
+      coldTurnUsd
+    }
     pendingRequestCount
     queuedAt
     queuePosition
@@ -516,7 +574,7 @@ export const SESSION_FIELDS = gql`
       slug
       workspacePath
     }
-    worktree {
+    worksession {
       id
       name
       branch
@@ -526,6 +584,8 @@ export const SESSION_FIELDS = gql`
     parentSession {
       id
       name
+      status
+      activity
     }
     workflowRun {
       id
@@ -541,6 +601,11 @@ export const SESSION_FIELDS = gql`
       avatarUrl
     }
     archivedAt
+    formerWorksession {
+      name
+      branch
+      label
+    }
     task {
       id
       title
@@ -712,6 +777,14 @@ export const SESSION = gql`
       requests(status: PENDING) {
         ...RequestFields
       }
+      childSessions {
+        id
+        name
+        status
+        activity
+        pendingRequestCount
+        archivedAt
+      }
     }
   }
 `;
@@ -728,9 +801,19 @@ export const SESSION_EVENTS = gql`
         payload
         createdAt
       }
+      liveDraft {
+        text
+        thinking
+      }
     }
   }
 `;
+
+/** Réponse en cours d'écriture par l'agent (voir useSessionEvents). */
+export interface SessionLiveDraft {
+  text: string;
+  thinking: boolean;
+}
 
 export const CREATE_SESSION = gql`
   ${SESSION_FIELDS}
@@ -855,6 +938,24 @@ export const APPLY_SESSION_CLEANUP = gql`
   }
 `;
 
+export const COMPACT_SESSION_CONTEXT = gql`
+  ${SESSION_FIELDS}
+  mutation CompactSessionContext($id: ID!) {
+    compactSessionContext(id: $id) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const RESET_SESSION_CONTEXT = gql`
+  ${SESSION_FIELDS}
+  mutation ResetSessionContext($id: ID!, $keepSummary: Boolean) {
+    resetSessionContext(id: $id, keepSummary: $keepSummary) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const SCHEDULE_NEXT_RUNS = gql`
   query ScheduleNextRuns($cron: String!, $timezone: String, $count: Int) {
     scheduleNextRuns(cron: $cron, timezone: $timezone, count: $count)
@@ -910,6 +1011,8 @@ export const PROJECT_CONTEXT = gql`
     project(id: $id) {
       id
       name
+      description
+      myRole
       contextFolders {
         id
         projectId
@@ -1019,7 +1122,7 @@ export const RESTORE_CONTEXT_INSTRUCTION_VERSION = gql`
   }
 `;
 
-/** Explorateur de la sidebar : projets, dossiers de travail (checkout principal et worktrees) et leur contenu. */
+/** Explorateur de la sidebar : projets, dossiers de travail (checkout principal et worksessions) et leur contenu. */
 export const SIDEBAR = gql`
   query Sidebar($open: OpenItemsInput) {
     projects: sidebarProjects(open: $open) {
@@ -1029,9 +1132,10 @@ export const SIDEBAR = gql`
       gitUrl
       gitBranch
       isMember
+      myRole
       sessions(limit: 50) {
         ...SidebarSession
-        worktree {
+        worksession {
           id
         }
       }
@@ -1039,11 +1143,11 @@ export const SIDEBAR = gql`
         id
         name
         status
-        worktree {
+        worksession {
           id
         }
       }
-      worktrees {
+      worksessions {
         id
         name
         branch
@@ -1054,6 +1158,7 @@ export const SIDEBAR = gql`
           id
           title
           status
+          statusTag
         }
         sessions {
           ...SidebarSession
@@ -1073,20 +1178,27 @@ export const SIDEBAR = gql`
     activity
     pendingRequestCount
     browserActive
+    context {
+      tokens
+      overThreshold
+    }
     owner {
       id
       name
       avatarUrl
     }
+    parentSession {
+      id
+    }
   }
 `;
 
-/** Pull requests des worktrees (requête lente : GitHub), interrogée moins souvent que la sidebar. */
-export const SIDEBAR_WORKTREE_PULL_REQUESTS = gql`
-  query SidebarWorktreePullRequests($open: OpenItemsInput) {
+/** Pull requests des work sessions (requête lente : GitHub), interrogée moins souvent que la sidebar. */
+export const SIDEBAR_WORKSESSION_PULL_REQUESTS = gql`
+  query SidebarWorksessionPullRequests($open: OpenItemsInput) {
     projects: sidebarProjects(open: $open) {
       id
-      worktrees {
+      worksessions {
         id
         pullRequest {
           number
@@ -1115,8 +1227,8 @@ export const SESSION_BROWSER = gql`
   }
 `;
 
-export const PROJECT_WORKTREES = gql`
-  query ProjectWorktrees($id: ID!) {
+export const PROJECT_WORKSESSIONS = gql`
+  query ProjectWorksessions($id: ID!) {
     project(id: $id) {
       id
       gitUrl
@@ -1126,7 +1238,7 @@ export const PROJECT_WORKTREES = gql`
         branch
         commit
       }
-      worktrees {
+      worksessions {
         id
         name
         branch
@@ -1145,9 +1257,9 @@ export const PROJECT_WORKTREES = gql`
   }
 `;
 
-export const CREATE_WORKTREE = gql`
-  mutation CreateWorktree($projectId: ID!, $branch: String!, $name: String, $baseRef: String, $label: String) {
-    createWorktree(projectId: $projectId, branch: $branch, name: $name, baseRef: $baseRef, label: $label) {
+export const CREATE_WORKSESSION = gql`
+  mutation CreateWorksession($projectId: ID!, $branch: String, $name: String, $baseRef: String, $label: String) {
+    createWorksession(projectId: $projectId, branch: $branch, name: $name, baseRef: $baseRef, label: $label) {
       id
       name
       branch
@@ -1156,9 +1268,9 @@ export const CREATE_WORKTREE = gql`
   }
 `;
 
-export const RENAME_WORKTREE = gql`
-  mutation RenameWorktree($id: ID!, $label: String, $name: String) {
-    renameWorktree(id: $id, label: $label, name: $name) {
+export const RENAME_WORKSESSION = gql`
+  mutation RenameWorksession($id: ID!, $label: String, $name: String) {
+    renameWorksession(id: $id, label: $label, name: $name) {
       id
       name
       branch
@@ -1168,34 +1280,34 @@ export const RENAME_WORKTREE = gql`
   }
 `;
 
-export const ARCHIVE_WORKTREE = gql`
-  mutation ArchiveWorktree($id: ID!) {
-    archiveWorktree(id: $id) {
+export const ARCHIVE_WORKSESSION = gql`
+  mutation ArchiveWorksession($id: ID!) {
+    archiveWorksession(id: $id) {
       id
       archivedAt
     }
   }
 `;
 
-export const RESTORE_WORKTREE = gql`
-  mutation RestoreWorktree($id: ID!) {
-    restoreWorktree(id: $id) {
+export const RESTORE_WORKSESSION = gql`
+  mutation RestoreWorksession($id: ID!) {
+    restoreWorksession(id: $id) {
       id
       archivedAt
     }
   }
 `;
 
-export const DELETE_WORKTREE = gql`
-  mutation DeleteWorktree($id: ID!, $deleteBranch: Boolean) {
-    deleteWorktree(id: $id, deleteBranch: $deleteBranch)
+export const DELETE_WORKSESSION = gql`
+  mutation DeleteWorksession($id: ID!, $deleteBranch: Boolean) {
+    deleteWorksession(id: $id, deleteBranch: $deleteBranch)
   }
 `;
 
-/** Ce qui reste dans un worktree (sessions, terminaux) : sert à proposer sa suppression quand on en retire le dernier élément. */
-export const WORKTREE_CONTENTS = gql`
-  query WorktreeContents($id: ID!) {
-    worktree(id: $id) {
+/** Ce qui reste dans une work session (sessions, terminaux) : sert à proposer sa suppression quand on en retire le dernier élément. */
+export const WORKSESSION_CONTENTS = gql`
+  query WorksessionContents($id: ID!) {
+    worksession(id: $id) {
       id
       branch
       label
@@ -1223,7 +1335,7 @@ export const TERMINAL = gql`
         name
         workspacePath
       }
-      worktree {
+      worksession {
         id
         name
         branch
@@ -1235,8 +1347,8 @@ export const TERMINAL = gql`
 `;
 
 export const CREATE_TERMINAL = gql`
-  mutation CreateTerminal($projectId: ID!, $name: String, $worktreeId: ID) {
-    createTerminal(projectId: $projectId, name: $name, worktreeId: $worktreeId) {
+  mutation CreateTerminal($projectId: ID!, $name: String, $worksessionId: ID!) {
+    createTerminal(projectId: $projectId, name: $name, worksessionId: $worksessionId) {
       id
       name
       status
@@ -1266,6 +1378,8 @@ export const TASK_FIELDS = gql`
     title
     description
     status
+    statusTag
+    tags
     priority
     dueDate
     createdByType
@@ -1285,7 +1399,19 @@ export const TASK_FIELDS = gql`
       email
     }
     commentCount
+    attachmentCount
+    attachments {
+      id
+      name
+      mediaType
+      size
+    }
     branch
+    worksession {
+      id
+      label
+      archivedAt
+    }
     project {
       id
       name
@@ -1295,7 +1421,7 @@ export const TASK_FIELDS = gql`
       name
       status
       activity
-      worktree {
+      worksession {
         id
         branch
         label
@@ -1310,8 +1436,8 @@ export const TASK_FIELDS = gql`
 
 export const TASKS = gql`
   ${TASK_FIELDS}
-  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $mine: Boolean) {
-    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, mine: $mine) {
+  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean, $limit: Int) {
+    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine, limit: $limit) {
       ...TaskFields
       pullRequest {
         number
@@ -1347,6 +1473,16 @@ export const UPDATE_TASK = gql`
   }
 `;
 
+/** Déplace une tâche dans un autre projet. */
+export const MOVE_TASK = gql`
+  ${TASK_FIELDS}
+  mutation MoveTask($id: ID!, $projectId: ID!) {
+    moveTask(id: $id, projectId: $projectId) {
+      ...TaskFields
+    }
+  }
+`;
+
 export const DELETE_TASK = gql`
   mutation DeleteTask($id: ID!) {
     deleteTask(id: $id)
@@ -1354,14 +1490,14 @@ export const DELETE_TASK = gql`
 `;
 
 export const START_TASK_SESSION = gql`
-  mutation StartTaskSession($id: ID!, $worktreeId: ID, $dedicatedWorktree: Boolean, $provider: String, $config: JSON, $prompt: String) {
-    startTaskSession(id: $id, worktreeId: $worktreeId, dedicatedWorktree: $dedicatedWorktree, provider: $provider, config: $config, prompt: $prompt) {
+  mutation StartTaskSession($id: ID!, $worksessionId: ID, $provider: String, $config: JSON, $prompt: String) {
+    startTaskSession(id: $id, worksessionId: $worksessionId, provider: $provider, config: $config, prompt: $prompt) {
       id
     }
   }
 `;
 
-/** Où une tâche peut être confiée : projets reliés à git et leurs worktrees existants. */
+/** Où une tâche peut être confiée : projets reliés à git et leurs work sessions existantes. */
 export const TASK_LAUNCH_TARGETS = gql`
   query TaskLaunchTargets {
     projects {
@@ -1369,7 +1505,7 @@ export const TASK_LAUNCH_TARGETS = gql`
       gitUrl
       defaultPermissionMode
       approvalConnections
-      worktrees {
+      worksessions {
         id
         branch
         label
@@ -1435,9 +1571,9 @@ export interface FileContent {
   content: string | null;
 }
 
-export const WORKTREE = gql`
-  query Worktree($id: ID!) {
-    worktree(id: $id) {
+export const WORKSESSION = gql`
+  query Worksession($id: ID!) {
+    worksession(id: $id) {
       id
       name
       branch
@@ -1477,8 +1613,8 @@ const FILE_CONTENT_FIELDS = gql`
 
 export const WORKSPACE_ENTRIES = gql`
   ${FILE_ENTRY_FIELDS}
-  query WorkspaceEntries($projectId: ID!, $worktreeId: ID, $path: String) {
-    workspaceEntries(projectId: $projectId, worktreeId: $worktreeId, path: $path) {
+  query WorkspaceEntries($projectId: ID!, $worksessionId: ID, $path: String) {
+    workspaceEntries(projectId: $projectId, worksessionId: $worksessionId, path: $path) {
       ...FileEntryFields
     }
   }
@@ -1486,8 +1622,8 @@ export const WORKSPACE_ENTRIES = gql`
 
 export const WORKSPACE_FILE = gql`
   ${FILE_CONTENT_FIELDS}
-  query WorkspaceFile($projectId: ID!, $worktreeId: ID, $path: String!) {
-    workspaceFile(projectId: $projectId, worktreeId: $worktreeId, path: $path) {
+  query WorkspaceFile($projectId: ID!, $worksessionId: ID, $path: String!) {
+    workspaceFile(projectId: $projectId, worksessionId: $worksessionId, path: $path) {
       ...FileContentFields
     }
   }
@@ -1495,8 +1631,8 @@ export const WORKSPACE_FILE = gql`
 
 export const WRITE_WORKSPACE_FILE = gql`
   ${FILE_CONTENT_FIELDS}
-  mutation WriteWorkspaceFile($projectId: ID!, $worktreeId: ID, $path: String!, $content: String!, $expectedModifiedAt: DateTime) {
-    writeWorkspaceFile(projectId: $projectId, worktreeId: $worktreeId, path: $path, content: $content, expectedModifiedAt: $expectedModifiedAt) {
+  mutation WriteWorkspaceFile($projectId: ID!, $worksessionId: ID, $path: String!, $content: String!, $expectedModifiedAt: DateTime) {
+    writeWorkspaceFile(projectId: $projectId, worksessionId: $worksessionId, path: $path, content: $content, expectedModifiedAt: $expectedModifiedAt) {
       ...FileContentFields
     }
   }
@@ -1504,8 +1640,8 @@ export const WRITE_WORKSPACE_FILE = gql`
 
 export const CREATE_WORKSPACE_ENTRY = gql`
   ${FILE_ENTRY_FIELDS}
-  mutation CreateWorkspaceEntry($projectId: ID!, $worktreeId: ID, $path: String!, $kind: FileEntryKind!) {
-    createWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path, kind: $kind) {
+  mutation CreateWorkspaceEntry($projectId: ID!, $worksessionId: ID, $path: String!, $kind: FileEntryKind!) {
+    createWorkspaceEntry(projectId: $projectId, worksessionId: $worksessionId, path: $path, kind: $kind) {
       ...FileEntryFields
     }
   }
@@ -1513,16 +1649,16 @@ export const CREATE_WORKSPACE_ENTRY = gql`
 
 export const RENAME_WORKSPACE_ENTRY = gql`
   ${FILE_ENTRY_FIELDS}
-  mutation RenameWorkspaceEntry($projectId: ID!, $worktreeId: ID, $path: String!, $newPath: String!) {
-    renameWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path, newPath: $newPath) {
+  mutation RenameWorkspaceEntry($projectId: ID!, $worksessionId: ID, $path: String!, $newPath: String!) {
+    renameWorkspaceEntry(projectId: $projectId, worksessionId: $worksessionId, path: $path, newPath: $newPath) {
       ...FileEntryFields
     }
   }
 `;
 
 export const DELETE_WORKSPACE_ENTRY = gql`
-  mutation DeleteWorkspaceEntry($projectId: ID!, $worktreeId: ID, $path: String!) {
-    deleteWorkspaceEntry(projectId: $projectId, worktreeId: $worktreeId, path: $path)
+  mutation DeleteWorkspaceEntry($projectId: ID!, $worksessionId: ID, $path: String!) {
+    deleteWorkspaceEntry(projectId: $projectId, worksessionId: $worksessionId, path: $path)
   }
 `;
 
@@ -1555,16 +1691,16 @@ export const GIT_STATUS_FIELDS = gql`
 
 export const GIT_STATUS = gql`
   ${GIT_STATUS_FIELDS}
-  query GitStatus($projectId: ID!, $worktreeId: ID) {
-    gitStatus(projectId: $projectId, worktreeId: $worktreeId) {
+  query GitStatus($projectId: ID!, $worksessionId: ID) {
+    gitStatus(projectId: $projectId, worksessionId: $worksessionId) {
       ...GitStatusFields
     }
   }
 `;
 
 export const GIT_DIFF = gql`
-  query GitDiff($projectId: ID!, $worktreeId: ID, $path: String!, $staged: Boolean) {
-    gitDiff(projectId: $projectId, worktreeId: $worktreeId, path: $path, staged: $staged) {
+  query GitDiff($projectId: ID!, $worksessionId: ID, $path: String!, $staged: Boolean) {
+    gitDiff(projectId: $projectId, worksessionId: $worksessionId, path: $path, staged: $staged) {
       path
       staged
       text
@@ -1575,8 +1711,8 @@ export const GIT_DIFF = gql`
 `;
 
 export const GIT_COMMIT_DIFF = gql`
-  query GitCommitDiff($projectId: ID!, $worktreeId: ID, $hash: String!) {
-    gitCommitDiff(projectId: $projectId, worktreeId: $worktreeId, hash: $hash) {
+  query GitCommitDiff($projectId: ID!, $worksessionId: ID, $hash: String!) {
+    gitCommitDiff(projectId: $projectId, worksessionId: $worksessionId, hash: $hash) {
       path
       staged
       text
@@ -1587,8 +1723,8 @@ export const GIT_COMMIT_DIFF = gql`
 `;
 
 export const GIT_BRANCHES = gql`
-  query GitBranches($projectId: ID!, $worktreeId: ID) {
-    gitBranches(projectId: $projectId, worktreeId: $worktreeId) {
+  query GitBranches($projectId: ID!, $worksessionId: ID) {
+    gitBranches(projectId: $projectId, worksessionId: $worksessionId) {
       name
       current
       remote
@@ -1605,8 +1741,8 @@ export const GIT_BRANCHES = gql`
 `;
 
 export const GIT_LOG = gql`
-  query GitLog($projectId: ID!, $worktreeId: ID, $limit: Int) {
-    gitLog(projectId: $projectId, worktreeId: $worktreeId, limit: $limit) {
+  query GitLog($projectId: ID!, $worksessionId: ID, $limit: Int) {
+    gitLog(projectId: $projectId, worksessionId: $worksessionId, limit: $limit) {
       hash
       shortHash
       subject
@@ -1618,20 +1754,20 @@ export const GIT_LOG = gql`
 
 const gitMutation = (name: string, args: string, call: string) => gql`
   ${GIT_STATUS_FIELDS}
-  mutation ${name}($projectId: ID!, $worktreeId: ID${args}) {
+  mutation ${name}($projectId: ID!, $worksessionId: ID${args}) {
     ${call} {
       ...GitStatusFields
     }
   }
 `;
-export const GIT_STAGE = gitMutation('GitStage', ', $paths: [String!]!', 'gitStage(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
-export const GIT_UNSTAGE = gitMutation('GitUnstage', ', $paths: [String!]!', 'gitUnstage(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
-export const GIT_DISCARD = gitMutation('GitDiscard', ', $paths: [String!]!', 'gitDiscard(projectId: $projectId, worktreeId: $worktreeId, paths: $paths)');
-export const GIT_COMMIT = gitMutation('GitCommit', ', $message: String!, $stageAll: Boolean', 'gitCommit(projectId: $projectId, worktreeId: $worktreeId, message: $message, stageAll: $stageAll)');
-export const GIT_FETCH = gitMutation('GitFetch', '', 'gitFetch(projectId: $projectId, worktreeId: $worktreeId)');
-export const GIT_PULL = gitMutation('GitPull', '', 'gitPull(projectId: $projectId, worktreeId: $worktreeId)');
-export const GIT_PUSH = gitMutation('GitPush', '', 'gitPush(projectId: $projectId, worktreeId: $worktreeId)');
-export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $create: Boolean', 'gitCheckout(projectId: $projectId, worktreeId: $worktreeId, branch: $branch, create: $create)');
+export const GIT_STAGE = gitMutation('GitStage', ', $paths: [String!]!', 'gitStage(projectId: $projectId, worksessionId: $worksessionId, paths: $paths)');
+export const GIT_UNSTAGE = gitMutation('GitUnstage', ', $paths: [String!]!', 'gitUnstage(projectId: $projectId, worksessionId: $worksessionId, paths: $paths)');
+export const GIT_DISCARD = gitMutation('GitDiscard', ', $paths: [String!]!', 'gitDiscard(projectId: $projectId, worksessionId: $worksessionId, paths: $paths)');
+export const GIT_COMMIT = gitMutation('GitCommit', ', $message: String!, $stageAll: Boolean', 'gitCommit(projectId: $projectId, worksessionId: $worksessionId, message: $message, stageAll: $stageAll)');
+export const GIT_FETCH = gitMutation('GitFetch', '', 'gitFetch(projectId: $projectId, worksessionId: $worksessionId)');
+export const GIT_PULL = gitMutation('GitPull', '', 'gitPull(projectId: $projectId, worksessionId: $worksessionId)');
+export const GIT_PUSH = gitMutation('GitPush', '', 'gitPush(projectId: $projectId, worksessionId: $worksessionId)');
+export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $create: Boolean', 'gitCheckout(projectId: $projectId, worksessionId: $worksessionId, branch: $branch, create: $create)');
 
 // ---- Pull requests GitHub -----------------------------------------------------------------------
 
@@ -1667,7 +1803,7 @@ export interface PullRequest extends PullRequestSummary {
   createdAt: string;
   updatedAt: string;
   mergedAt: string | null;
-  worktree: { id: string; name: string; sessions: { id: string; name: string; status: SessionStatus }[] } | null;
+  worksession: { id: string; name: string; sessions: { id: string; name: string; status: SessionStatus }[] } | null;
   tasks: { id: string; title: string; status: TaskStatus }[];
 }
 
@@ -1714,7 +1850,7 @@ export const PULL_REQUEST_FIELDS = gql`
     createdAt
     updatedAt
     mergedAt
-    worktree {
+    worksession {
       id
       name
       sessions {
@@ -1751,8 +1887,8 @@ export const GITHUB_PULL_REQUEST = gql`
 
 export const GITHUB_PULL_REQUEST_DRAFT = gql`
   ${PULL_REQUEST_FIELDS}
-  query GithubPullRequestDraft($projectId: ID!, $worktreeId: ID) {
-    githubPullRequestDraft(projectId: $projectId, worktreeId: $worktreeId) {
+  query GithubPullRequestDraft($projectId: ID!, $worksessionId: ID) {
+    githubPullRequestDraft(projectId: $projectId, worksessionId: $worksessionId) {
       branch
       base
       title
@@ -1771,8 +1907,8 @@ export const GITHUB_PULL_REQUEST_DRAFT = gql`
 
 export const CREATE_PULL_REQUEST = gql`
   ${PULL_REQUEST_FIELDS}
-  mutation CreatePullRequest($projectId: ID!, $worktreeId: ID, $title: String!, $body: String, $base: String, $draft: Boolean) {
-    createPullRequest(projectId: $projectId, worktreeId: $worktreeId, title: $title, body: $body, base: $base, draft: $draft) {
+  mutation CreatePullRequest($projectId: ID!, $worksessionId: ID, $title: String!, $body: String, $base: String, $draft: Boolean) {
+    createPullRequest(projectId: $projectId, worksessionId: $worksessionId, title: $title, body: $body, base: $base, draft: $draft) {
       ...PullRequestFields
     }
   }
@@ -1783,7 +1919,7 @@ export const MERGE_PULL_REQUEST = gql`
   mutation MergePullRequest($projectId: ID!, $number: Int!, $method: PullRequestMergeMethod, $cleanup: MergePullRequestCleanup) {
     mergePullRequest(projectId: $projectId, number: $number, method: $method, cleanup: $cleanup) {
       sha
-      deletedWorktreeIds
+      deletedWorksessionIds
       completedTaskIds
       warnings
       pullRequest {
@@ -2072,5 +2208,66 @@ export const TERMINAL_NAME = gql`
 export const PROJECT_NAME = gql`
   fragment CachedProjectName on Project {
     name
+  }
+`;
+
+export interface ContainerProcess {
+  pid: number;
+  rssMb: number;
+  elapsedSeconds: number;
+  sessionId: string | null;
+  session: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null; updatedAt: string } | null;
+  childrenRssMb: number;
+  cwd: string | null;
+}
+
+export interface ContainerStats {
+  sampledAt: string;
+  memoryUsedMb: number;
+  memoryLimitMb: number | null;
+  memoryPercent: number | null;
+  swapUsedMb: number | null;
+  cpuPercent: number | null;
+  cpuLimit: number | null;
+  hostCpus: number;
+  cpuPressurePercent: number | null;
+  oomKills: number;
+  memoryHighSince: string | null;
+  claudeProcesses: ContainerProcess[];
+}
+
+export const PROJECT_CONTAINER_STATS = gql`
+  query ProjectContainerStats($id: ID!) {
+    project(id: $id) {
+      id
+      containerStats {
+        sampledAt
+        memoryUsedMb
+        memoryLimitMb
+        memoryPercent
+        swapUsedMb
+        cpuPercent
+        cpuLimit
+        hostCpus
+        cpuPressurePercent
+        oomKills
+        memoryHighSince
+        claudeProcesses {
+          pid
+          rssMb
+          elapsedSeconds
+          sessionId
+          childrenRssMb
+          cwd
+          session {
+            id
+            name
+            status
+            activity
+            updatedAt
+          }
+        }
+      }
+    }
   }
 `;

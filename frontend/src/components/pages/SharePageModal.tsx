@@ -57,7 +57,7 @@ export default function SharePageModal({ page, onClose }: { page: SharedPage; on
           </Button>
         </Form>
         <div className="small text-secondary mb-1">Personnes ayant accès</div>
-        <Table size="sm" className="small mb-3">
+        <Table size="sm" className="small mb-3 table-stack">
           <tbody>
             <tr>
               <td>

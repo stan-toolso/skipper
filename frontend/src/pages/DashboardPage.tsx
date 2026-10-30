@@ -1,4 +1,5 @@
-import { useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
+import { useElementWidth } from '../lib/useElementWidth';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Row, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
@@ -19,7 +20,7 @@ import './dashboard.css';
 export default function DashboardPage() {
   const { openNewSession } = useSessionLauncher();
   useTabTitle('Tableau de bord');
-  const { data, loading, error, refetch } = useQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
+  const { data, loading, error, refetch } = usePollingQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
   const d = data?.dashboard;
 
   if (!d && loading) {
@@ -272,8 +273,8 @@ function DailyChart({ days }: { days: { day: string; usd: number }[] }) {
         const y = height - padBottom - h;
         return (
           <g key={d.day}>
-            <rect x={x} y={y} width={barW} height={h} rx={Math.min(4, barW / 2)} className={d === today ? 'today' : undefined} />
-            <rect x={i * slot} y={0} width={slot} height={height} fill="transparent">
+            <rect x={x} y={y} width={barW} height={h} rx={Math.min(4, barW / 2)} className={d === today ? 'bar today' : 'bar'} />
+            <rect x={i * slot} y={0} width={slot} height={height} className="hit">
               <title>{`${label(d.day)} : ${formatCost(d.usd)}`}</title>
             </rect>
             {d === peak && d.usd > 0 && (
@@ -290,22 +291,6 @@ function DailyChart({ days }: { days: { day: string; usd: number }[] }) {
       )}
     </div>
   );
-}
-
-/** Largeur courante d'un élément, suivie par ResizeObserver (le graphique se redessine avec la fenêtre). */
-function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const update = () => setWidth(Math.floor(el.getBoundingClientRect().width));
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width];
 }
 
 function ProjectsTable({ projects }: { projects: DashboardProject[] }) {
@@ -399,7 +384,7 @@ function SessionRow({ session, hint, icon, showStatus }: { session: Session; hin
         <Link to={`/sessions/${session.id}`} className="title">{session.name}</Link>
         <div className="meta">
           {session.project.name}
-          {session.worktree && <span className="font-monospace"> · {session.worktree.branch}</span>}
+          {session.worksession && <span className="font-monospace"> · {session.worksession.branch}</span>}
           {state && !showStatus && ` · ${state}`}
         </div>
       </div>

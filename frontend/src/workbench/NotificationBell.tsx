@@ -19,6 +19,8 @@ const icons: Record<string, string> = {
   'page.shared': 'bi-file-earmark-richtext',
   'claude.rate_limit': 'bi-speedometer2',
   'server.memory_low': 'bi-memory',
+  'container.memory_high': 'bi-memory',
+  'container.cpu_saturated': 'bi-speedometer2',
   'context.created': 'bi-journal-plus',
   'schedule.run': 'bi-alarm',
   'schedule.skipped': 'bi-alarm',

@@ -1,13 +1,14 @@
 import { useMutation, useQuery } from '@apollo/client';
+import PopMenu, { type MenuItem } from '../components/PopMenu';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
-import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKTREE_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
+import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKSESSION_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
-import InstallButton from '../components/InstallButton';
+import { useInstallApp } from '../components/InstallButton';
 import { useDialogs } from '../components/Dialogs';
 import { useSearchPalette } from '../components/SearchPalette';
 import { useShortcutsHelp } from '../components/ShortcutsHelp';
@@ -15,18 +16,75 @@ import { displayComboText } from '../lib/shortcuts';
 import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
-import { initialsOf, sessionDotClass } from './WorkspaceTabs';
-import { mineFirst, openItemsOf, participates, workspaceState, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
+import { ContextDot, SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
+import { attachedElsewhere, mineFirst, openItemsOf, participates, sessionGroups, subagentsSummary, workspaceState, type SessionNode, type SidebarProject, type SidebarSession, type SidebarTerminal, type Workspace } from './workspaces';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
 const FILTER_KEY = 'skipper.workbench.sessionFilter';
 const MAX_CHIPS = 6;
+/** Décalage (px) d'une session lancée par un agent sous sa session parente. */
+const CHILD_INDENT = 14;
+
+/** Session annotée de son dossier (toutes celles d'un projet forment le « pool » où l'on cherche les sous-agents d'une parente). */
+type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsWorksessionId: string | null; /** Rangée dans le dossier principal parce que sa work session a été supprimée. */ wsDeleted: boolean };
+
+/** Note d'un dossier dont les seules sessions sont des sous-agents rangés sous leur parente, ailleurs : « 4 sous-agents de « Session » ». */
+function ElsewhereNote({ subs, poolById, row }: { subs: PoolSession[]; poolById: Map<string, PoolSession>; row?: boolean }) {
+  const parents = [...new Set(subs.map((s) => s.parentSession?.id).filter((id): id is string => Boolean(id)))];
+  return (
+    <span className={row ? 'wb-row wb-empty' : 'wb-ws-empty'} style={row ? { paddingLeft: 30 } : undefined} title="Ces sessions sont listées sous la session qui les a lancées">
+      <i className="bi bi-robot" /> {subs.length} sous-agent{subs.length > 1 ? 's' : ''} de{' '}
+      {parents.map((id, i) => (
+        <span key={id}>
+          {i > 0 && ', '}
+          <Link to={`/sessions/${id}`} className="wb-empty-link">« {poolById.get(id)?.name ?? 'session'} »</Link>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Menus principaux, affichés en une ligne d'icônes (le libellé sert d'infobulle). */
+const MAIN_MENU: { to: string; label: string; icon: string; title?: string }[] = [
+  { to: '/', label: 'Tableau de bord', icon: 'bi-speedometer2' },
+  { to: '/projects', label: 'Projets', icon: 'bi-folder2' },
+  { to: '/sessions', label: 'Sessions', icon: 'bi-chat-dots' },
+  { to: '/tasks', label: 'Tâches', icon: 'bi-check2-square' },
+  { to: '/shared', label: 'Pages', icon: 'bi-file-earmark-richtext', title: 'Pages partagées' },
+  { to: '/vault', label: 'Coffre', icon: 'bi-shield-lock' },
+  { to: '/workflows', label: 'Workflows', icon: 'bi-diagram-3', title: "Workflows : enchaînements d'appels de modèle, de sessions et de tâches" },
+  { to: '/requests', label: 'Demandes', icon: 'bi-bell' },
+];
 
 interface PullRequestRef {
   number: number;
   url: string;
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
+}
+
+/** « sous-agent de « Nom » » ou « sous-agent (lancé par un agent) » pour une session lancée par l'agent d'une autre session (sessions.create). */
+const byAgentTitle = (n: Pick<SessionNode<unknown>, 'byAgent' | 'parentName'>) => (n.byAgent ? ` · sous-agent${n.parentName ? ` de « ${n.parentName} »` : ' (lancé par un agent)'}` : '');
+
+/** Pictogramme d'un sous-agent (session lancée par un agent), devant son nom. */
+const RobotIcon = () => <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />;
+
+/**
+ * Ligne « N sous-agents » sous une session parente : repliée par défaut (un clic la déplie), dépliée d'office quand la
+ * page courante est l'un des sous-agents ou que l'un d'eux attend une réponse.
+ */
+function SubagentsRow({ children, indent, expanded, onToggle }: { children: SidebarSession[]; indent: number; expanded: boolean; onToggle: () => void }) {
+  const sum = subagentsSummary(children);
+  return (
+    <button type="button" className={`wb-row wb-session-row wb-row-btn wb-subagents${expanded ? ' open' : ''}`} style={{ paddingLeft: indent }} title={`${sum.label} lancé${children.length > 1 ? 's' : ''} par l'agent de cette session · cliquer pour ${expanded ? 'replier' : 'déplier'}`} onClick={onToggle}>
+      <span className="wb-tree">└</span>
+      <span className={`wb-dot ${sum.state === 'ask' ? 'ask' : sum.state === 'busy' ? 'busy' : sum.state === 'idle' ? 'idle' : 'done'}`} />
+      <i className="bi bi-robot wb-robot" />
+      <span className="wb-row-label">{sum.label}</span>
+      {sum.pending > 0 ? <span className="wb-badge">{sum.pending}</span> : sum.hint && <span className="wb-state">{sum.hint}</span>}
+      <i className={`bi bi-chevron-${expanded ? 'down' : 'right'} wb-subagents-chevron`} />
+    </button>
+  );
 }
 
 function statusTitle(s: SidebarSession): string {
@@ -39,61 +97,13 @@ function statusTitle(s: SidebarSession): string {
   return 'Pas encore démarrée';
 }
 
-/** Icône d'un worktree, colorée par l'état de la pull request de sa branche. */
-function worktreeIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
-  if (!ws.exists) return { cls: 'wt-missing', title: 'Worktree absent du disque' };
-  const base = `Worktree · branche ${ws.branch}`;
+/** Icône d'une work session, colorée par l'état de la pull request de sa branche. */
+function worksessionIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
+  if (!ws.exists) return { cls: 'wt-missing', title: 'Work session absente du disque' };
+  const base = `Work session · branche ${ws.branch}`;
   if (!pr) return { cls: '', title: base };
   const state = pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase();
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
-}
-
-interface MenuItem {
-  label: string;
-  icon: string;
-  to?: string;
-  onClick?: () => void;
-  danger?: boolean;
-  separatorBefore?: boolean;
-}
-
-/** Menu contextuel d'une ligne (clic sur ⋯ ou clic droit). */
-function PopMenu({ items, onClose }: { items: MenuItem[]; onClose: () => void }) {
-  useEffect(() => {
-    const close = () => onClose();
-    window.addEventListener('click', close);
-    window.addEventListener('contextmenu', close);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('contextmenu', close);
-    };
-  }, [onClose]);
-  return (
-    <div className="wb-pop" onClick={(e) => e.stopPropagation()}>
-      {items.map((it) => (
-        <div key={it.label}>
-          {it.separatorBefore && <div className="wb-pop-sep" />}
-          {it.to ? (
-            <Link to={it.to} className={`wb-pop-item${it.danger ? ' danger' : ''}`} onClick={onClose}>
-              <i className={`bi ${it.icon} wb-icon`} /> {it.label}
-            </Link>
-          ) : (
-            <button
-              type="button"
-              className={`wb-pop-item${it.danger ? ' danger' : ''}`}
-              onClick={(e) => {
-                e.preventDefault();
-                onClose();
-                it.onClick?.();
-              }}
-            >
-              <i className={`bi ${it.icon} wb-icon`} /> {it.label}
-            </button>
-          )}
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function RowWithMenu({ to, active, indent, title, items, children }: { to: string; active: boolean; indent: number; title: string; items: MenuItem[]; children: React.ReactNode }) {
@@ -130,8 +140,15 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
   );
 }
 
-function SessionRow({ s, worktreeId, indent }: { s: SidebarSession; worktreeId: string | null; indent: number }) {
+/**
+ * Ligne d'une session. Ses sous-agents (`children`, sessions lancées par son agent) sont repliés derrière une ligne
+ * « N sous-agents » ; dépliés, ils apparaissent indentés (`depth`), reliés par └ et marqués d'un robot.
+ */
+function SessionRow({ s, worksessionId, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null }: { s: SidebarSession; worksessionId: string | null; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null }) {
   const location = useLocation();
+  const [open, setOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
+  const childActive = children.some((c) => location.pathname.startsWith(`/sessions/${c.session.id}`));
+  const expanded = open ?? (childActive || children.some((c) => c.session.pendingRequestCount > 0));
   const { user } = useAuth();
   const { showError } = useDialogs();
   const { archiveSession } = useDeletions();
@@ -141,32 +158,43 @@ function SessionRow({ s, worktreeId, indent }: { s: SidebarSession; worktreeId: 
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
     ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch(showError) }] : []),
-    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name, worktreeId }) },
+    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name, worksessionId }) },
   ];
   const browserPath = `/sessions/${s.id}/browser`;
+  const left = indent + depth * CHILD_INDENT;
   return (
     <>
-      <RowWithMenu to={`/sessions/${s.id}`} active={location.pathname === `/sessions/${s.id}`} indent={indent} title={statusTitle(s)} items={items}>
+      <RowWithMenu to={`/sessions/${s.id}`} active={location.pathname === `/sessions/${s.id}`} indent={left} title={`${statusTitle(s)}${byAgentTitle({ byAgent, parentName })}${elsewhere ? ` · dans le dossier ${elsewhere}` : ''}`} items={items}>
+        {depth > 0 && <span className="wb-tree">└</span>}
         <span className={`wb-dot ${sessionDotClass(s)}`} />
+        {byAgent && depth === 0 && <RobotIcon />}
         <span className="wb-row-label">{s.name}</span>
+        {elsewhere && !s.name.toLowerCase().startsWith(elsewhere.toLowerCase()) && (
+          <span className="wb-tag" title={`Travaille dans le dossier ${elsewhere}`}>
+            <i className="bi bi-layers" /> {elsewhere}
+          </span>
+        )}
+        {s.context.overThreshold && <ContextDot context={s.context} />}
         {s.owner && !mine && (
           <span className="wb-owner" title={`Session de ${s.owner.name}`}>
             {initialsOf(s.owner.name)}
           </span>
         )}
-        {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
+        {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && depth === 0 && <span className="wb-state">{hint}</span>}
       </RowWithMenu>
       {s.browserActive && (
-        <Link to={browserPath} className={`wb-row wb-session-row wb-browser-row${location.pathname === browserPath ? ' active' : ''}`} style={{ paddingLeft: indent + 16 }} title="Voir en direct la page ouverte par l'agent">
+        <Link to={browserPath} className={`wb-row wb-session-row wb-browser-row${location.pathname === browserPath ? ' active' : ''}`} style={{ paddingLeft: left + 16 }} title="Voir en direct la page ouverte par l'agent">
           <i className="bi bi-globe2 wb-browser-icon" />
           <span className="wb-row-label">Navigateur</span>
         </Link>
       )}
+      {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
+      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worksessionId={c.session.wsWorksessionId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'worksession supprimé' : c.session.wsName) : null} />)}
     </>
   );
 }
 
-function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId: string | null; indent: number }) {
+function TerminalRow({ t, worksessionId, indent }: { t: SidebarTerminal; worksessionId: string | null; indent: number }) {
   const location = useLocation();
   const { showError } = useDialogs();
   const { deleteTerminal } = useDeletions();
@@ -174,7 +202,7 @@ function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
     ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
-    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name, worktreeId }) },
+    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name, worksessionId }) },
   ];
   return (
     <RowWithMenu to={`/terminals/${t.id}`} active={location.pathname === `/terminals/${t.id}`} indent={indent} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'} items={items}>
@@ -185,39 +213,68 @@ function TerminalRow({ t, worktreeId, indent }: { t: SidebarTerminal; worktreeId
 }
 
 /**
- * Carte d'un dossier de travail (checkout principal ou worktree) : état, nom, puces de ce qui y est ouvert,
+ * Carte d'un dossier de travail (checkout principal ou worksession) : état, nom, puces de ce qui y est ouvert,
  * et lignes détaillées quand on la déplie.
  */
-function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean }) {
+function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWorksession }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; canWorksession: boolean }) {
   const location = useLocation();
   const { user } = useAuth();
-  const { activeKey } = useTabs();
+  const { activeKey, workspaces } = useTabs();
   const [menu, setMenu] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [showOthers, setShowOthers] = useState(false);
   const userId = user?.id ?? null;
   const current = location.pathname;
   const isCurrent = (path: string) => current === path || current === `${path}/browser`;
+  // Toutes les sessions du projet, annotées de leur dossier : les sous-agents lancés dans un autre work session se rangent sous leur parente.
+  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsWorksessionId: w.worksessionId, wsDeleted: Boolean(w.primary && s.worksession) }))), [workspaces, ws.projectId]);
+  const poolById = useMemo(() => new Map(pool.map((s) => [s.id, s])), [pool]);
+  // Les sous-agents (sessions lancées par un agent) sont rangés sous leur session parente, même lancés dans un autre work session :
+  // ceux dont la parente est dans un autre dossier ne sont pas listés ici (`elsewhereSubs`, juste une note). Un sous-agent dont
+  // la parente a disparu du projet reste au premier niveau, avec son robot.
+  const { local, elsewhereSubs } = useMemo(() => {
+    const mine = pool.filter((s) => s.wsKey === ws.key);
+    const here = new Set(mine.map((s) => s.id));
+    return { local: mine.filter((s) => !attachedElsewhere(s, here, poolById)), elsewhereSubs: mine.filter((s) => attachedElsewhere(s, here, poolById)) };
+  }, [pool, poolById, ws.key]);
   const visibleSessions = useMemo(() => {
-    const all = mineFirst(ws.sessions, userId);
+    const all = mineFirst(local, userId);
     if (!filterMine || showOthers) return all;
     // La session affichée reste listée même si elle est à quelqu'un d'autre.
     return all.filter((s) => participates(s, userId) || isCurrent(`/sessions/${s.id}`));
-  }, [ws.sessions, userId, filterMine, showOthers, current]);
-  const hiddenOthers = ws.sessions.length - visibleSessions.length;
+  }, [local, userId, filterMine, showOthers, current]);
+  const groups = useMemo(() => sessionGroups(visibleSessions, pool), [visibleSessions, pool]);
+  const hiddenOthers = local.length - visibleSessions.length;
   const state = workspaceState(ws.sessions);
   const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
-  const icon = worktreeIcon(ws, pr);
+  const icon = worksessionIcon(ws, pr);
   const chips = [
-    ...visibleSessions.map((s) => ({ key: `s:${s.id}`, to: `/sessions/${s.id}`, active: isCurrent(`/sessions/${s.id}`), title: `${s.name} · ${statusTitle(s)}${s.owner ? ` · ${s.owner.name}` : ''}`, node: <span className={`wb-dot ${sessionDotClass(s)}`} />, owner: s.owner && !participates(s, userId) ? s.owner : null })),
-    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, owner: null })),
+    // Une puce par session de premier niveau, avec le compte de ses sous-agents ; un sous-agent n'a sa propre puce que s'il est la page courante ou attend une réponse.
+    ...groups.flatMap(({ root, children }) =>
+      [root, ...children.filter((c) => isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, ...n }) => ({
+        key: `s:${s.id}`,
+        to: `/sessions/${s.id}`,
+        active: isCurrent(`/sessions/${s.id}`),
+        label: s.name,
+        title: `${s.name} · ${statusTitle(s)}${byAgentTitle(n)}${s.owner ? ` · ${s.owner.name}` : ''}`,
+        node: (
+          <>
+            <span className={`wb-dot ${sessionDotClass(s)}`} />
+            {n.byAgent && <RobotIcon />}
+          </>
+        ),
+        extra: n.depth === 0 && children.length ? <SubagentsCount children={children.map((c) => c.session)} /> : null,
+        owner: s.owner && !participates(s, userId) ? s.owner : null,
+      })),
+    ),
+    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, extra: null, owner: null })),
   ];
   const activeIndex = chips.findIndex((c) => c.active);
   const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
-  // Clic sur la tête : la première session du worktree, sinon la page où l'onglet du dossier en était, sinon les fichiers.
-  const headTo = !ws.primary && visibleSessions.length ? `/sessions/${visibleSessions[0].id}` : tabUrl ?? ws.key;
-  const name = ws.task && !ws.worktree?.customLabel ? ws.task.title : ws.name;
-  const title = ws.primary ? `Dossier principal · ${ws.name}` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()} · ` : ''}${icon.title}`;
+  // Clic sur la tête : la première session de la work session, sinon la page où l'onglet du dossier en était, sinon les fichiers.
+  const headTo = !ws.primary && groups.length ? `/sessions/${groups[0].root.session.id}` : tabUrl ?? ws.key;
+  const name = ws.task && !ws.worksession?.customLabel ? ws.task.title : ws.name;
+  const title = ws.primary ? `Dossier principal · ${ws.name} · sessions d'avant les work sessions` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()}${ws.task.statusTag ? ` · ${ws.task.statusTag}` : ''} · ` : ''}${icon.title}`;
   return (
     <div className={`wb-ws${activeKey === ws.key ? ' active' : ''}`}>
       <div
@@ -231,9 +288,9 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
       >
         <Link to={headTo} className="wb-ws-link">
           <span className={`wb-ws-state ${state ?? 'none'}`} />
-          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-diagram-2'} wb-icon ${icon.cls}`} />}
+          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-layers'} wb-icon ${icon.cls}`} />}
           <span className="wb-ws-name">{name}</span>
-          {ws.primary && ws.projectName && <span className="wb-tag">principal</span>}
+          {ws.primary && ws.projectName && <span className="wb-tag" title="Sessions et terminaux d'avant les work sessions, dans le checkout principal">principal</span>}
           {!ws.exists && <span className="wb-tag missing">absent</span>}
           {pending > 0 && <span className="wb-badge">{pending}</span>}
         </Link>
@@ -241,7 +298,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
           <button
             type="button"
             className="wb-plus"
-            title="Ouvrir quelque chose ici, ou gérer le worktree"
+            title={ws.primary ? 'Ouvrir quelque chose dans le dossier principal' : 'Ouvrir quelque chose ici, ou gérer la work session'}
             onClick={(e) => {
               e.stopPropagation();
               setMenu((v) => !v);
@@ -249,18 +306,21 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
           >
             <i className="bi bi-three-dots" />
           </button>
-          {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={false} onClose={() => setMenu(false)} />}
+          {menu && <AddMenu projectId={ws.projectId} worksession={ws.worksession} canWorksession={canWorksession && ws.primary} onClose={() => setMenu(false)} />}
         </span>
       </div>
       <div className="wb-ws-items">
         {ws.task && (
           <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
             {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
+            {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
           </Link>
         )}
         {shown.map((c) => (
           <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
             {c.node}
+            <span className="wb-chip-label">{c.label}</span>
+            {c.extra}
             {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
           </Link>
         ))}
@@ -274,25 +334,26 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
             <i className="bi bi-people" /> {hiddenOthers}
           </button>
         )}
-        {chips.length === 0 && hiddenOthers === 0 && <span className="wb-ws-empty">rien d'ouvert</span>}
+        {chips.length === 0 && hiddenOthers === 0 && (elsewhereSubs.length ? <ElsewhereNote subs={elsewhereSubs} poolById={poolById} /> : <span className="wb-ws-empty">rien d'ouvert</span>)}
         <button type="button" className="wb-chevron wb-ws-chevron" title={expanded ? 'Replier' : 'Détailler'} onClick={onToggle}>
           <i className={`bi bi-chevron-${expanded ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
         </button>
       </div>
       {expanded && (
         <div className="wb-ws-rows">
-          {visibleSessions.map((s) => (
-            <SessionRow key={s.id} s={s} worktreeId={ws.worktreeId} indent={30} />
+          {groups.map(({ root, children }) => (
+            <SessionRow key={root.session.id} s={root.session} worksessionId={ws.worksessionId} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} />
           ))}
           {ws.terminals.map((t) => (
-            <TerminalRow key={t.id} t={t} worktreeId={ws.worktreeId} indent={30} />
+            <TerminalRow key={t.id} t={t} worksessionId={ws.worksessionId} indent={30} />
           ))}
           {hiddenOthers > 0 && (
             <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 30 }} onClick={() => setShowOthers(true)}>
               + {hiddenOthers} session(s) d'autres personnes
             </button>
           )}
-          {visibleSessions.length === 0 && ws.terminals.length === 0 && hiddenOthers === 0 && (
+          {elsewhereSubs.length > 0 && <ElsewhereNote subs={elsewhereSubs} poolById={poolById} row />}
+          {visibleSessions.length === 0 && ws.terminals.length === 0 && hiddenOthers === 0 && elsewhereSubs.length === 0 && (
             <div className="wb-row wb-empty" style={{ paddingLeft: 30 }}>
               rien d'ouvert dans ce dossier
             </div>
@@ -303,20 +364,42 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine }: { ws:
   );
 }
 
-/** Utilisateur connecté (avatar, nom) et déconnexion, en bas de la sidebar. */
+/**
+ * Utilisateur connecté (avatar, nom, e-mail) en bas de la sidebar : un clic ouvre le menu du compte
+ * (installer l'application, utilisateurs, paramètres, déconnexion).
+ */
 function UserBlock() {
   const { user, logout } = useAuth();
+  const { available: installable, install } = useInstallApp();
+  const [open, setOpen] = useState(false);
   if (!user) return null;
+  const items: MenuItem[] = [
+    ...(installable ? [{ label: "Installer l'application", icon: 'bi-phone', onClick: install }] : []),
+    ...(user.isAdmin ? [{ label: 'Utilisateurs', icon: 'bi-people', to: '/users' }] : []),
+    { label: 'Paramètres', icon: 'bi-gear', to: '/settings' },
+    { label: 'Se déconnecter', icon: 'bi-box-arrow-right', separatorBefore: true, onClick: () => void logout() },
+  ];
   return (
-    <div className="wb-user" title={user.email}>
-      {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initialsOf(user.name)}</span>}
-      <span className="wb-user-name">
-        {user.name}
-        <span className="wb-user-email">{user.email}</span>
-      </span>
-      <button type="button" className="wb-plus" title="Se déconnecter" onClick={() => void logout()}>
-        <i className="bi bi-box-arrow-right" />
+    <div className={`wb-user-wrap${open ? ' open' : ''}`}>
+      <button
+        type="button"
+        className="wb-user"
+        title="Menu du compte"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="wb-avatar" referrerPolicy="no-referrer" /> : <span className="wb-avatar wb-avatar-initials">{initialsOf(user.name)}</span>}
+        <span className="wb-user-name">
+          <span className="wb-user-label">{user.name}</span>
+          <span className="wb-user-email">{user.email}</span>
+        </span>
+        <i className={`bi bi-chevron-${open ? 'down' : 'up'} wb-user-chevron`} />
       </button>
+      {open && <PopMenu items={items} onClose={() => setOpen(false)} up />}
     </div>
   );
 }
@@ -338,10 +421,10 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const { openHelp } = useShortcutsHelp();
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
   const { data } = usePollingQuery<{ projects: SidebarProject[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
-  const { data: prData } = usePollingQuery<{ projects: { id: string; worktrees: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKTREE_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKSESSION_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
-  const prByWorktree = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worktrees.map((w) => [w.id, w.pullRequest] as const))), [prData]);
+  const prByWorksession = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worksessions.map((w) => [w.id, w.pullRequest] as const))), [prData]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
   const [filter, setFilter] = useState<'mine' | 'all'>(() => {
     try {
@@ -423,36 +506,17 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
         <kbd>{displayComboText('mod+k')}</kbd>
       </button>
 
-      <nav className="wb-menu">
-        <NavLink to="/" end className="wb-menu-item" title="Tableau de bord">
-          <i className="bi bi-speedometer2 wb-icon" /> <span>Tableau de bord</span>
-        </NavLink>
-        <NavLink to="/projects" end className="wb-menu-item" title="Projets">
-          <i className="bi bi-folder2 wb-icon" /> <span>Projets</span>
-        </NavLink>
-        <NavLink to="/sessions" end className="wb-menu-item" title="Sessions">
-          <i className="bi bi-chat-dots wb-icon" /> <span>Sessions</span>
-        </NavLink>
-        <NavLink to="/tasks" end className="wb-menu-item" title="Tâches">
-          <i className="bi bi-check2-square wb-icon" /> <span>Tâches</span>
-        </NavLink>
-        <NavLink to="/shared" end className="wb-menu-item" title="Pages partagées">
-          <i className="bi bi-file-earmark-richtext wb-icon" /> <span>Pages</span>
-        </NavLink>
-        <NavLink to="/vault" end className="wb-menu-item" title="Coffre">
-          <i className="bi bi-shield-lock wb-icon" /> <span>Coffre</span>
-        </NavLink>
-        <NavLink to="/workflows" end className="wb-menu-item" title="Workflows : enchaînements d'appels de modèle, de sessions et de tâches">
-          <i className="bi bi-diagram-3 wb-icon" /> <span>Workflows</span>
-        </NavLink>
-        <NavLink to="/requests" className="wb-menu-item" title="Demandes">
-          <i className="bi bi-bell wb-icon" /> <span>Demandes</span>
-          {pending > 0 && (
-            <span className="wb-badge" title="Un agent attend votre réponse">
-              {pending}
-            </span>
-          )}
-        </NavLink>
+      <nav className="wb-menu wb-menu-icons" aria-label="Navigation principale">
+        {MAIN_MENU.map((m) => (
+          <NavLink key={m.to} to={m.to} end={m.to !== '/requests'} className="wb-menu-item" title={m.title ?? m.label} aria-label={m.label}>
+            <i className={`bi ${m.icon} wb-icon`} />
+            {m.to === '/requests' && pending > 0 && (
+              <span className="wb-badge" title="Un agent attend votre réponse">
+                {pending}
+              </span>
+            )}
+          </NavLink>
+        ))}
       </nav>
 
       <div className="wb-section-title">
@@ -465,6 +529,9 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
         >
           <i className={`bi ${filter === 'mine' ? 'bi-person' : 'bi-people'}`} /> {filter === 'mine' ? 'Les miennes' : 'Tout le monde'}
         </button>
+        <Link to="/projects/new" className="wb-section-action" title="Nouveau projet">
+          <i className="bi bi-plus-lg" />
+        </Link>
       </div>
 
       <div className="wb-explorer" ref={explorerRef}>
@@ -492,7 +559,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   <button
                     type="button"
                     className="wb-plus"
-                    title="Nouvelle session, terminal ou worktree"
+                    title="Actions du projet : nouvelle work session, agent, workflow ; pages ; modification, suppression"
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuFor(menuFor === p.id ? null : p.id);
@@ -500,19 +567,28 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   >
                     <i className="bi bi-three-dots" />
                   </button>
-                  {menuFor === p.id && <AddMenu projectId={p.id} canWorktree={Boolean(p.gitUrl)} onClose={() => setMenuFor(null)} />}
+                  {menuFor === p.id && (
+                    <AddMenu
+                      projectId={p.id}
+                      project={{ id: p.id, name: p.name, canManage: p.myRole === 'ADMIN', paths: [...p.sessions.map((s) => `/sessions/${s.id}`), ...p.terminals.map((t) => `/terminals/${t.id}`), ...p.worksessions.map((w) => `/worksessions/${w.id}`)] }}
+                      canWorksession
+                      onClose={() => setMenuFor(null)}
+                    />
+                  )}
                 </span>
               </div>
               {open &&
-                list.map((ws) => (
+                // Le dossier principal n'accueille plus rien : sa carte ne reste que pour les sessions et terminaux d'avant les work sessions.
+                list.filter((ws) => !ws.primary || ws.sessions.length > 0 || ws.terminals.length > 0).map((ws) => (
                   <WorkspaceCard
                     key={ws.key}
                     ws={ws}
-                    pr={ws.worktreeId ? prByWorktree.get(ws.worktreeId) : null}
+                    pr={ws.worksessionId ? prByWorksession.get(ws.worksessionId) : null}
                     expanded={expanded[ws.key] ?? false}
                     onToggle={() => toggle(ws.key, false)}
                     tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
                     filterMine={filter === 'mine'}
+                    canWorksession
                   />
                 ))}
             </div>
@@ -524,18 +600,9 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
           </div>
         )}
       </div>
-      <nav className="wb-menu wb-menu-bottom">
-        <InstallButton />
-        {user?.isAdmin && (
-          <NavLink to="/users" className="wb-menu-item" title="Utilisateurs">
-            <i className="bi bi-people wb-icon" /> <span>Utilisateurs</span>
-          </NavLink>
-        )}
-        <NavLink to="/settings" className="wb-menu-item" title="Paramètres">
-          <i className="bi bi-gear wb-icon" /> <span>Paramètres</span>
-        </NavLink>
+      <div className="wb-menu wb-menu-bottom">
         <UserBlock />
-      </nav>
+      </div>
     </aside>
   );
 }

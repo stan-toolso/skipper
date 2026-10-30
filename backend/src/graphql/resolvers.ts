@@ -1,6 +1,7 @@
 import { DateTimeResolver, JSONResolver } from 'graphql-scalars';
 import { accessibleProjectIds, canAccessProject, filterAsync, memberRoleFor, requireAdmin, requireProject, requireSuperAdmin, requireUser, roleFor, type AuthContext } from '../auth/access.js';
 import { liveBrowserService } from '../browser/live.js';
+import { liveDraftService } from '../sessions/live.js';
 import { apiKeyService } from '../apiKeys/service.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { accountOf, googleAccountService } from '../google/service.js';
@@ -11,15 +12,17 @@ import type { SharedPage, SharedPageMember, SharedPageVersion } from '../sharedP
 import { readRawFile } from '../files/service.js';
 import { fingerprint } from '../vault/ssh.js';
 import { isOauthToken, vaultService, type VaultItemWithPermission } from '../vault/service.js';
-import type { ApiSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
+import { awsService } from '../vault/awsService.js';
+import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
 import { variableName } from '../vault/website.js';
 import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
-import { archiveWorktreeCascade, deleteProjectCascade, deleteWorktreeCascade, restoreWorktreeCascade } from '../projects/cleanup.js';
-import { runner } from '../runners/index.js';
+import { archiveWorksessionCascade, deleteProjectCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
+import { runner, type RunnerConfig } from '../runners/index.js';
+import { containerMonitor } from '../runners/monitor.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import type { CreateProjectInput, Project, UpdateProjectInput } from '../projects/types.js';
@@ -50,10 +53,12 @@ import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
 import { scheduleService } from '../schedules/service.js';
 import { cleanupService } from '../sessions/cleanup.js';
+import { CONTEXT_WARN_TOKENS, contextEstimate, contextModel } from '../sessions/context.js';
 import type { SessionCleanup } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
-import { worktreePath, worktreeService } from '../worktrees/service.js';
-import { worktreeLabel, type Worktree } from '../worktrees/types.js';
+import { worksessionPath, worksessionService } from '../worksessions/service.js';
+import { worksessionRepository } from '../worksessions/repository.js';
+import { worksessionLabel, type Worksession } from '../worksessions/types.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
 import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskStatus, ProjectApiKey } from '../tasks/types.js';
@@ -83,10 +88,35 @@ const loadSession = async (id: string) => {
   return session;
 };
 const guardSession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfSession(id), min);
+
+/** Parent des champs de `SessionContext` : la session, et le modèle résolu paresseusement (une requête au plus). */
+interface ContextParent {
+  session: Session;
+  model?: Promise<string | null>;
+}
+const modelOfContext = (p: ContextParent) => (p.model ??= contextModel(p.session).catch(() => null));
+/**
+ * Seuil de signalement du contexte de la personne connectée (réglages Claude), lu une fois par requête quel que soit
+ * le nombre de sessions listées ; seuil par défaut sans personne connectée ou si la lecture échoue.
+ */
+const warnTokensByCtx = new WeakMap<Ctx, Promise<number | null>>();
+const warnTokensOf = (ctx: Ctx): Promise<number | null> => {
+  let pending = warnTokensByCtx.get(ctx);
+  if (!pending) {
+    pending = ctx.user
+      ? claudeSettings
+          .forUser(ctx.user.id)
+          .then((s) => s.settings.contextWarnTokens)
+          .catch(() => CONTEXT_WARN_TOKENS)
+      : Promise.resolve(CONTEXT_WARN_TOKENS);
+    warnTokensByCtx.set(ctx, pending);
+  }
+  return pending;
+};
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
-const guardWorktree = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worktreeService.get(id)).projectId, min);
+const guardWorksession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worksessionService.get(id)).projectId, min);
 const guardComment = async (ctx: Ctx, id: string) => {
   const comment = await taskService.getComment(id);
   const task = await taskService.get(comment.taskId);
@@ -111,8 +141,12 @@ interface GqlTaskInput {
   sessionId?: string | null;
   dueDate?: string | null;
   customFields?: TaskField[] | null;
+  statusTag?: string | null;
+  tags?: string[] | null;
   assignee?: TaskPersonInput | null;
   reporter?: TaskPersonInput | null;
+  attachments?: AttachmentInput[] | null;
+  removeAttachmentIds?: string[] | null;
 }
 const toTaskInput = (i: GqlTaskInput) => ({
   title: i.title ?? undefined,
@@ -122,8 +156,12 @@ const toTaskInput = (i: GqlTaskInput) => ({
   sessionId: i.sessionId,
   dueDate: i.dueDate,
   customFields: i.customFields ?? undefined,
+  statusTag: i.statusTag,
+  tags: i.tags ?? undefined,
   assignee: i.assignee,
   reporter: i.reporter,
+  attachments: i.attachments ?? null,
+  removeAttachmentIds: i.removeAttachmentIds ?? null,
 });
 const actorOf = (user: User) => ({ type: 'human' as const, userId: user.id, name: user.name || user.email });
 const fromGqlPermission = (p: string): VaultPermission => p.toLowerCase() as VaultPermission;
@@ -224,9 +262,12 @@ export const resolvers = {
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
     comments: (t: Task) => taskService.comments(t.id),
     pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
+    worksession: async (t: Task) => (await worksessionRepository.findByTask(t.id))[0] ?? null,
+    attachments: (t: Task) => (t.attachmentCount ? taskService.attachments(t.id, null) : []),
   },
 
   TaskComment: {
+    attachments: (c: TaskComment) => taskService.attachments(c.taskId, c.id),
     author: (c: TaskComment) => userOrNull(c.authorUserId),
     authorSession: (c: TaskComment) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
     editable: (c: TaskComment, _: unknown, ctx: Ctx) => c.authorType === 'human' && c.authorUserId === ctx.user?.id,
@@ -242,7 +283,7 @@ export const resolvers = {
   },
 
   PullRequest: {
-    worktree: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worktreeService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
+    worksession: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worksessionService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
     tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
   },
 
@@ -273,6 +314,11 @@ export const resolvers = {
     },
     authScheme: (i: VaultItem) => (i.kind === 'api' ? (i.settings as ApiSettings).authScheme : null),
     authName: (i: VaultItem) => (i.kind === 'api' ? (i.settings as ApiSettings).authName : null),
+    aws: (i: VaultItem) => {
+      if (i.kind !== 'aws') return null;
+      const s = i.settings as AwsSettings;
+      return { ...s, connected: awsService.connected(i) };
+    },
     google: (i: VaultItem) => {
       if (i.kind !== 'google') return null;
       const a = accountOf(i);
@@ -378,21 +424,21 @@ export const resolvers = {
   Terminal: {
     status: (t: TerminalRecord) => t.status.toUpperCase(),
     project: (t: TerminalRecord) => projectService.get(t.projectId),
-    worktree: (t: TerminalRecord) => (t.worktreeId ? worktreeService.get(t.worktreeId).catch(() => null) : null),
+    worksession: (t: TerminalRecord) => (t.worksessionId ? worksessionService.get(t.worksessionId).catch(() => null) : null),
     createdBy: (t: TerminalRecord) => userOrNull(t.createdById),
   },
 
-  Worktree: {
-    project: (w: Worktree) => projectService.get(w.projectId),
-    label: (w: Worktree) => worktreeLabel(w),
-    customLabel: (w: Worktree) => w.label,
-    path: async (w: Worktree) => worktreePath(await projectService.get(w.projectId), w),
-    exists: async (w: Worktree) => worktreeService.exists(await projectService.get(w.projectId), w),
-    git: async (w: Worktree) => worktreeService.gitInfo(await projectService.get(w.projectId), w),
-    pullRequest: (w: Worktree, _: unknown, ctx: Ctx) => pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null),
-    task: (w: Worktree) => taskService.forBranch(w.projectId, w.branch),
-    sessions: (w: Worktree) => sessionService.list({ projectId: w.projectId, worktreeId: w.id, limit: 200 }),
-    terminals: async (w: Worktree, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worktreeId === w.id),
+  Worksession: {
+    project: (w: Worksession) => projectService.get(w.projectId),
+    label: (w: Worksession) => worksessionLabel(w),
+    customLabel: (w: Worksession) => w.label,
+    path: async (w: Worksession) => worksessionPath(await projectService.get(w.projectId), w),
+    exists: async (w: Worksession) => worksessionService.exists(await projectService.get(w.projectId), w),
+    git: async (w: Worksession) => worksessionService.gitInfo(await projectService.get(w.projectId), w),
+    pullRequest: async (w: Worksession, _: unknown, ctx: Ctx) => ((await projectService.get(w.projectId)).gitUrl ? pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null) : null),
+    task: async (w: Worksession) => (w.taskId ? await taskService.get(w.taskId).catch(() => null) : null) ?? taskService.forBranch(w.projectId, w.branch),
+    sessions: (w: Worksession) => sessionService.list({ projectId: w.projectId, worksessionId: w.id, limit: 200 }),
+    terminals: async (w: Worksession, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worksessionId === w.id),
   },
 
   PermissionRule: {
@@ -404,12 +450,28 @@ export const resolvers = {
     workspacePath: (project: Project) => workspacePath(project),
     permissionRules: (project: Project) => permissionRuleService.list(project.id),
     runnerStatus: (project: Project) => runner.status(project),
+    containerStats: async (project: Project) => {
+      const stats = await runner.stats(project);
+      if (!stats) return null;
+      return {
+        ...stats,
+        memoryHighSince: containerMonitor.memoryHighSince(project.id),
+        claudeProcesses: stats.claudeProcesses.map((p) => ({
+          ...p,
+          // Une session d'un autre projet ne peut pas tourner dans ce conteneur ; on vérifie quand même.
+          session: async () => {
+            const session = p.sessionId ? await sessionRepository.findById(p.sessionId) : null;
+            return session?.projectId === project.id ? session : null;
+          },
+        })),
+      };
+    },
     members: (project: Project) => userService.members(project.id),
     myRole: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) ?? 'viewer').toUpperCase(),
     isMember: async (project: Project, _: unknown, ctx: Ctx) => (await memberRoleFor(ctx, project.id)) !== null,
     terminals: (project: Project, _: unknown, ctx: Ctx) => terminalService.listByProject(project.id, requireUser(ctx).id),
-    worktrees: (project: Project) => worktreeService.listByProject(project.id),
-    archivedWorktrees: (project: Project) => worktreeService.listByProject(project.id, { archived: 'only' }),
+    worksessions: (project: Project) => worksessionService.listByProject(project.id),
+    archivedWorksessions: (project: Project) => worksessionService.listByProject(project.id, { archived: 'only' }),
     vaultItems: (project: Project, _: unknown, ctx: Ctx) => vaultService.projectRows(project.id, requireUser(ctx).id),
     apiKeys: async (project: Project, _: unknown, ctx: Ctx) => ((await roleFor(ctx, project.id)) === 'admin' ? apiKeyService.list(project.id) : []),
     approvalConnections: async (project: Project, _: unknown, ctx: Ctx) => vaultService.approvalNames(await vaultService.agentItems(project.id, ctx.user?.id ?? null)),
@@ -431,11 +493,11 @@ export const resolvers = {
 
   Session: {
     project: (session: Session) => projectService.get(session.projectId),
-    worktree: (session: Session) => (session.worktreeId ? worktreeService.get(session.worktreeId).catch(() => null) : null),
+    worksession: (session: Session) => (session.worksessionId ? worksessionService.get(session.worksessionId).catch(() => null) : null),
     owner: (session: Session) => userOrNull(session.ownerId),
     task: (session: Session) => taskService.forSession(session.id),
     parentSession: (session: Session) => (session.parentSessionId ? sessionService.get(session.parentSessionId) : null),
-    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, limit: 50 }),
+    childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, archived: 'all', limit: 50 }),
     workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
     status: (session: Session) => toGqlStatus(session.status),
     activity: (session: Session) => (session.activity ? session.activity.toUpperCase() : null),
@@ -443,15 +505,29 @@ export const resolvers = {
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: (session: Session) => requestService.countPending(session.id),
     browserActive: (session: Session) => liveBrowserService.isActive(session.id),
+    liveDraft: (session: Session) => liveDraftService.get(session.id),
     queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
     schedule: (session: Session) => scheduleService.get(session.id),
+    context: (session: Session): ContextParent => ({ session }),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
   },
 
   SessionChanges: {
     mode: (c: SessionChanges) => c.mode.toUpperCase(),
+  },
+
+  // Les champs qui ne dépendent pas du modèle sont gratuits (sidebar) ; le modèle n'est cherché (relevé de
+  // consommation) que si un champ qui en dépend est demandé, une seule fois par session.
+  SessionContext: {
+    tokens: (p: ContextParent) => p.session.contextTokens,
+    warnTokens: (_: ContextParent, __: unknown, ctx: Ctx) => warnTokensOf(ctx),
+    overThreshold: async (p: ContextParent, _: unknown, ctx: Ctx) => contextEstimate(p.session.contextTokens, null, await warnTokensOf(ctx)).overThreshold,
+    model: (p: ContextParent) => modelOfContext(p),
+    windowTokens: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).windowTokens,
+    share: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).share,
+    coldTurnUsd: async (p: ContextParent) => contextEstimate(p.session.contextTokens, await modelOfContext(p)).coldTurnUsd,
   },
 
   Query: {
@@ -524,9 +600,9 @@ export const resolvers = {
       const users = (await Promise.all(ids.map((id) => userService.get(id).catch(() => null)))).filter((u): u is User => Boolean(u));
       return users.sort((a, b) => a.name.localeCompare(b.name));
     },
-    archivedSessions: async (_: unknown, args: { projectId: string; worktreeId?: string | null; search?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
+    archivedSessions: async (_: unknown, args: { projectId: string; worksessionId?: string | null; search?: string | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
-      return sessionService.list({ projectId: args.projectId, worktreeId: args.worktreeId ?? undefined, search: args.search ?? undefined, archived: 'only', limit: args.limit ?? 50, offset: args.offset ?? 0 });
+      return sessionService.list({ projectId: args.projectId, worksessionId: args.worksessionId ?? undefined, search: args.search ?? undefined, archived: 'only', limit: args.limit ?? 50, offset: args.offset ?? 0 });
     },
     gitBranchChanges: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
@@ -551,6 +627,10 @@ export const resolvers = {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return taskService.people(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
     },
+    taskTags: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) await requireProject(ctx, args.projectId);
+      return taskService.tags(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
+    },
     sharedPage: (_: unknown, args: { id: string }, ctx: Ctx) => sharedPageService.getFor(requireUser(ctx).id, args.id).catch(() => null),
     sharedPages: (_: unknown, __: unknown, ctx: Ctx) => sharedPageService.listFor(requireUser(ctx).id),
     pushPublicKey: (_: unknown, __: unknown, ctx: Ctx) => {
@@ -558,6 +638,7 @@ export const resolvers = {
       return pushService.publicKey();
     },
     settings: (_: unknown, __: unknown, ctx: Ctx) => appSettings(ctx),
+    vaultAwsAccounts: (_: unknown, args: { id: string }, ctx: Ctx) => awsService.accounts(vaultActor(ctx), args.id),
     vaultTokenServices: (_: unknown, __: unknown, ctx: Ctx) => {
       requireUser(ctx);
       return TOKEN_SERVICE_IDS.map((id) => ({ id, label: TOKEN_SERVICES[id].label, prefix: TOKEN_SERVICES[id].prefix, opencode: Boolean((TOKEN_SERVICES[id] as { opencode?: boolean }).opencode) }));
@@ -661,15 +742,15 @@ export const resolvers = {
       await guardTerminal(ctx, args.id, 'viewer');
       return terminalService.get(args.id);
     },
-    worktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'viewer');
-      return worktreeService.get(args.id);
+    worksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'viewer');
+      return worksessionService.get(args.id);
     },
     notifications: async (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }, ctx: Ctx) =>
       notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
     unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
     dashboard: async (_: unknown, __: unknown, ctx: Ctx) => dashboardService.build(requireUser(ctx).id, await accessibleProjectIds(ctx), new Date(), requireUser(ctx).isAdmin),
-    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; mine?: boolean | null; limit?: number | null }, ctx: Ctx) => {
+    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; tag?: string | null; mine?: boolean | null; limit?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return taskService.list({
         projectId: args.projectId ?? undefined,
@@ -678,6 +759,7 @@ export const resolvers = {
         priority: fromGqlTaskPriority(args.priority),
         assignee: args.assignee ?? undefined,
         reporter: args.reporter ?? undefined,
+        tag: args.tag?.trim() || undefined,
         assigneeEmail: args.mine ? requireUser(ctx).email : undefined,
         limit: args.limit ?? undefined,
       });
@@ -747,7 +829,7 @@ export const resolvers = {
     },
     mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return pullRequestService.merge(args.projectId, requireUser(ctx).id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorktree: true, completeTasks: true });
+      return pullRequestService.merge(args.projectId, requireUser(ctx).id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
@@ -823,6 +905,11 @@ export const resolvers = {
     refreshOpencodeModels: async (_: unknown, __: unknown, ctx: Ctx) => {
       await (await opencodeSettings.forUser(requireUser(ctx).id)).listModels();
       return appSettings(ctx);
+    },
+    startAwsLogin: (_: unknown, args: { id: string }, ctx: Ctx) => awsService.startLogin(vaultActor(ctx), args.id),
+    pollAwsLogin: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const r = await awsService.pollLogin(vaultActor(ctx), args.id);
+      return { ...r, status: r.status.toUpperCase(), item: r.item ? { ...r.item, permission: 'manage' } : null };
     },
     startGithubDeviceLogin: (_: unknown, __: unknown, ctx: Ctx) => githubDeviceService.start(requireUser(ctx).id),
     pollGithubDeviceLogin: (_: unknown, args: { id: string }, ctx: Ctx) => githubDeviceService.poll(requireUser(ctx).id, args.id),
@@ -921,9 +1008,21 @@ export const resolvers = {
     },
     updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {
       await requireProject(ctx, id, 'admin');
+      const before = await projectService.get(id);
       const project = await projectService.update(id, input);
       // Limite du projet changée : des places se libèrent peut-être pour la file d'attente.
       void sessionService.drainQueue();
+      // Limites mémoire / CPU modifiées : appliquées à chaud au conteneur existant, sans couper les sessions.
+      if (input.runnerConfig !== undefined) {
+        const limits = (p: Project) => `${(p.runnerConfig as RunnerConfig)?.memory ?? ''}|${(p.runnerConfig as RunnerConfig)?.cpus ?? ''}`;
+        if (limits(before) !== limits(project)) {
+          try {
+            await runner.applyLimits(project);
+          } catch (err) {
+            throw new AppError(`Limites enregistrées mais pas appliquées au conteneur en marche (${(err as Error).message}) : « Recréer » le conteneur pour les appliquer.`);
+          }
+        }
+      }
       return project;
     },
     prepareProjectWorkspace: async (_: unknown, args: { id: string }, ctx: Ctx) => {
@@ -1028,6 +1127,14 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return cleanupService.applyNow(args.id);
     },
+    compactSessionContext: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.compactNow(args.id);
+    },
+    resetSessionContext: async (_: unknown, args: { id: string; keepSummary?: boolean | null }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return cleanupService.resetNow(args.id, args.keepSummary ?? true);
+    },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
       await guardRequest(ctx, args.id, 'member');
       return requestService.answer(args.id, args.response ?? {}, requireUser(ctx).id);
@@ -1053,25 +1160,30 @@ export const resolvers = {
       await guardTask(ctx, id, 'member');
       return taskService.update(id, toTaskInput(input), actorOf(requireUser(ctx)));
     },
+    moveTask: async (_: unknown, args: { id: string; projectId: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.id, 'member');
+      await requireProject(ctx, args.projectId, 'member');
+      return taskService.move(args.id, args.projectId);
+    },
     deleteTask: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
       return taskService.delete(args.id);
     },
-    addTaskComment: async (_: unknown, args: { taskId: string; body: string }, ctx: Ctx) => {
+    addTaskComment: async (_: unknown, args: { taskId: string; body: string; attachments?: AttachmentInput[] | null }, ctx: Ctx) => {
       await guardTask(ctx, args.taskId, 'member');
-      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)));
+      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)), args.attachments ?? null);
     },
-    updateTaskComment: async (_: unknown, args: { id: string; body: string }, ctx: Ctx) => {
+    updateTaskComment: async (_: unknown, args: { id: string; body: string; attachments?: AttachmentInput[] | null; removeAttachmentIds?: string[] | null }, ctx: Ctx) => {
       const { comment } = await guardComment(ctx, args.id);
       if (comment.authorUserId !== requireUser(ctx).id) throw new AppError('Seul l\'auteur modifie son commentaire', 'FORBIDDEN');
-      return taskService.updateComment(args.id, args.body);
+      return taskService.updateComment(args.id, args.body, { attachments: args.attachments, removeAttachmentIds: args.removeAttachmentIds });
     },
     deleteTaskComment: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       const { comment, role } = await guardComment(ctx, args.id);
       if (comment.authorUserId !== requireUser(ctx).id && role !== 'admin') throw new AppError("Seuls l'auteur et les administrateurs du projet suppriment un commentaire", 'FORBIDDEN');
       return taskService.deleteComment(args.id);
     },
-    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worktreeId?: string | null; dedicatedWorktree?: boolean | null; prompt?: string | null }, ctx: Ctx) => {
+    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worksessionId?: string | null; prompt?: string | null }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
       return startTaskSession(args.id, { ...args, ownerId: requireUser(ctx).id });
     },
@@ -1083,29 +1195,29 @@ export const resolvers = {
       await requireProject(ctx, (await apiKeyService.get(args.id)).projectId, 'admin');
       return apiKeyService.delete(args.id);
     },
-    createTerminal: async (_: unknown, args: { projectId: string; name?: string | null; worktreeId?: string | null }, ctx: Ctx) => {
+    createTerminal: async (_: unknown, args: { projectId: string; name?: string | null; worksessionId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return terminalService.create(args.projectId, args.name, args.worktreeId, requireUser(ctx).id);
+      return terminalService.create(args.projectId, args.name, args.worksessionId, requireUser(ctx).id);
     },
-    createWorktree: async (_: unknown, args: { projectId: string; branch: string; name?: string | null; baseRef?: string | null; label?: string | null }, ctx: Ctx) => {
+    createWorksession: async (_: unknown, args: { projectId: string; branch?: string | null; name?: string | null; baseRef?: string | null; label?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
-      return worktreeService.create(args.projectId, args, requireUser(ctx).id);
+      return worksessionService.create(args.projectId, args, requireUser(ctx).id);
     },
-    renameWorktree: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return worktreeService.rename(args.id, args);
+    renameWorksession: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return worksessionService.rename(args.id, args);
     },
-    archiveWorktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return archiveWorktreeCascade(args.id);
+    archiveWorksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return archiveWorksessionCascade(args.id);
     },
-    restoreWorktree: async (_: unknown, args: { id: string }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return restoreWorktreeCascade(args.id);
+    restoreWorksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return restoreWorksessionCascade(args.id);
     },
-    deleteWorktree: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
-      await guardWorktree(ctx, args.id, 'member');
-      return deleteWorktreeCascade(args.id, args.deleteBranch ?? false);
+    deleteWorksession: async (_: unknown, args: { id: string; deleteBranch?: boolean | null; deleteSessions?: boolean | null }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.id, 'member');
+      return deleteWorksessionCascade(args.id, args.deleteBranch ?? false, { deleteSessions: args.deleteSessions ?? false });
     },
     // Coffre : les droits sont vérifiés par le service (use / read / manage) ; un projet propriétaire exige un administrateur.
     createVaultItem: async (_: unknown, args: { projectId?: string | null; input: VaultItemInput }, ctx: Ctx) => {
@@ -1118,6 +1230,7 @@ export const resolvers = {
       const { item, result } = await vaultService.test(vaultActor(ctx), args.id);
       return { item, ...result };
     },
+    duplicateVaultItem: (_: unknown, args: { id: string; name?: string | null }, ctx: Ctx) => vaultService.duplicate(vaultActor(ctx), args.id, args.name),
     regenerateVaultKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.regenerateKey(vaultActor(ctx), args.id),
     forgetVaultHostKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.forgetHostKey(vaultActor(ctx), args.id),
     revealVaultSecret: async (_: unknown, args: { id: string; field: string }, ctx: Ctx) => ({ field: args.field, value: await vaultService.reveal(vaultActor(ctx), args.id, args.field) }),

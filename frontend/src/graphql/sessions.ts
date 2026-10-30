@@ -30,8 +30,8 @@ export const RELAUNCH_SESSION = gql`
 
 export const ARCHIVED_SESSIONS = gql`
   ${SESSION_FIELDS}
-  query ArchivedSessions($projectId: ID!, $worktreeId: ID, $search: String, $limit: Int, $offset: Int) {
-    archivedSessions(projectId: $projectId, worktreeId: $worktreeId, search: $search, limit: $limit, offset: $offset) {
+  query ArchivedSessions($projectId: ID!, $worksessionId: ID, $search: String, $limit: Int, $offset: Int) {
+    archivedSessions(projectId: $projectId, worksessionId: $worksessionId, search: $search, limit: $limit, offset: $offset) {
       ...SessionFields
     }
   }
@@ -42,13 +42,15 @@ export const HISTORY_PROJECT = gql`
     project(id: $id) {
       id
       name
+      description
+      myRole
       gitUrl
-      worktrees {
+      worksessions {
         id
         branch
         label
       }
-      archivedWorktrees {
+      archivedWorksessions {
         id
         name
         branch
@@ -73,8 +75,8 @@ export const SESSION_OWNERS = gql`
 `;
 
 export const GIT_BRANCH_CHANGES = gql`
-  query GitBranchChanges($projectId: ID!, $worktreeId: ID) {
-    gitBranchChanges(projectId: $projectId, worktreeId: $worktreeId) {
+  query GitBranchChanges($projectId: ID!, $worksessionId: ID) {
+    gitBranchChanges(projectId: $projectId, worksessionId: $worksessionId) {
       branch
       baseBranch
       mergeBase
@@ -92,8 +94,8 @@ export const GIT_BRANCH_CHANGES = gql`
 `;
 
 export const GIT_BRANCH_FILE_DIFF = gql`
-  query GitBranchFileDiff($projectId: ID!, $worktreeId: ID, $path: String!, $origPath: String) {
-    gitBranchFileDiff(projectId: $projectId, worktreeId: $worktreeId, path: $path, origPath: $origPath) {
+  query GitBranchFileDiff($projectId: ID!, $worksessionId: ID, $path: String!, $origPath: String) {
+    gitBranchFileDiff(projectId: $projectId, worksessionId: $worksessionId, path: $path, origPath: $origPath) {
       path
       staged
       text

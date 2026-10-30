@@ -1,4 +1,5 @@
 import { useApolloClient, useMutation, useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate } from 'react-router-dom';
@@ -117,7 +118,7 @@ const writeList = (key: string, list: string[]) => {
 };
 
 /**
- * Dossier de travail d'un projet ou d'un worktree : arborescence à gauche, fichiers ouverts (onglets internes) à
+ * Dossier de travail d'un projet ou d'une work session : arborescence à gauche, fichiers ouverts (onglets internes) à
  * droite. Le fichier actif est dans l'URL (/…/files/chemin), les onglets ouverts sont mémorisés par dossier.
  */
 export default function FilesPage() {
@@ -125,9 +126,9 @@ export default function FilesPage() {
   const navigate = useNavigate();
   const client = useApolloClient();
   const visible = usePageVisible();
-  useGitTarget(info ? { projectId: info.projectId, worktreeId: info.worktreeId, label: info.label } : null);
+  useGitTarget(info ? { projectId: info.projectId, worksessionId: info.worksessionId, label: info.label } : null);
   useTabTitle(info ? `Fichiers · ${info.label}` : null);
-  const wsKey = info ? (info.worktreeId ?? info.projectId) : null;
+  const wsKey = info ? (info.worksessionId ?? info.projectId) : null;
   const expandedKey = wsKey ? `skipper.files.expanded.${wsKey}` : null;
   const openKey = wsKey ? `skipper.files.open.${wsKey}` : null;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -175,7 +176,7 @@ export default function FilesPage() {
     [expandedKey],
   );
 
-  const wsRef = useMemo<WorkspaceRef | null>(() => (info ? { projectId: info.projectId, worktreeId: info.worktreeId } : null), [info?.projectId, info?.worktreeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wsRef = useMemo<WorkspaceRef | null>(() => (info ? { projectId: info.projectId, worksessionId: info.worksessionId } : null), [info?.projectId, info?.worksessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   const openFile = useCallback(
     (p: string) => {
       if (wsRef) navigate(filesUrl(wsRef, p));
@@ -200,7 +201,7 @@ export default function FilesPage() {
     void client.refetchQueries({ include: ['WorkspaceEntries'] });
     setRefreshKey((k) => k + 1);
   }, [client]);
-  const gitQ = useQuery<{ gitStatus: GitStatus | null }>(GIT_STATUS, { variables: wsRef ?? { projectId: '', worktreeId: null }, skip: !wsRef || !visible, pollInterval: 60_000, fetchPolicy: 'network-only' });
+  const gitQ = usePollingQuery<{ gitStatus: GitStatus | null }>(GIT_STATUS, { variables: wsRef ?? { projectId: '', worksessionId: null }, skip: !wsRef || !visible, pollInterval: 60_000, fetchPolicy: 'network-only' });
   const signature = useMemo(() => {
     const s = gitQ.data?.gitStatus;
     if (!s) return '';
@@ -226,7 +227,7 @@ export default function FilesPage() {
 
   if (loading && !info) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
-  if (!info || !wsRef) return <Alert variant="warning">Projet ou worktree introuvable.</Alert>;
+  if (!info || !wsRef) return <Alert variant="warning">Projet ou work session introuvable.</Alert>;
 
   const actions: TreeActions = {
     createEntry: async (dir, kind) => {

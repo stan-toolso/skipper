@@ -4,7 +4,7 @@ import { createAuthContext, requireProject } from '../auth/access.js';
 import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
-import { worktreeService } from '../worktrees/service.js';
+import { worksessionService } from '../worksessions/service.js';
 import { readRawFile } from './service.js';
 
 /** Types servis d'après l'extension ; tout le reste est un flux binaire. */
@@ -41,7 +41,7 @@ const TYPES: Record<string, string> = {
 };
 
 /**
- * GET /api/files/view/<projectId>/<worktreeId|->/<chemin…>[?download=1] : fichier brut d'un workspace, pour
+ * GET /api/files/view/<projectId>/<worksessionId|->/<chemin…>[?download=1] : fichier brut d'un workspace, pour
  * l'aperçu HTML (dans un bac à sable : CSP `sandbox` sans `allow-same-origin`, la page ne peut ni lire le
  * stockage de l'application ni appeler son API avec le cookie) et le téléchargement. Les liens relatifs d'une
  * page (css, js, images) se résolvent dans le même dossier. Renvoie false hors route.
@@ -57,11 +57,11 @@ export async function handleFileViewRoute(req: IncomingMessage, res: ServerRespo
   const text = (status: number, message: string) => res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }).end(message);
   const user = await authSession.resolve(readCookie(req.headers.cookie, SESSION_COOKIE));
   if (!user) return text(401, 'Connectez-vous à Skipper pour ouvrir ce fichier.'), true;
-  const [, projectId, worktreeRaw, rawPath] = match;
-  const worktreeId = worktreeRaw === '-' ? null : worktreeRaw;
+  const [, projectId, worksessionRaw, rawPath] = match;
+  const worksessionId = worksessionRaw === '-' ? null : worksessionRaw;
   try {
     await requireProject(createAuthContext(user), projectId, 'viewer');
-    if (worktreeId && (await worktreeService.get(worktreeId)).projectId !== projectId) throw new AppError('Fichier introuvable', 'NOT_FOUND');
+    if (worksessionId && (await worksessionService.get(worksessionId)).projectId !== projectId) throw new AppError('Fichier introuvable', 'NOT_FOUND');
     let rel: string;
     try {
       rel = rawPath.split('/').map(decodeURIComponent).join('/');
@@ -69,7 +69,7 @@ export async function handleFileViewRoute(req: IncomingMessage, res: ServerRespo
       throw new AppError('Chemin invalide');
     }
     if (!rel || rel.endsWith('/')) rel = `${rel}index.html`;
-    const file = await readRawFile({ projectId, worktreeId }, rel);
+    const file = await readRawFile({ projectId, worksessionId }, rel);
     const type = TYPES[path.extname(file.name).toLowerCase()] ?? 'application/octet-stream';
     res.writeHead(200, {
       'Content-Type': type,

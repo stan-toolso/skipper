@@ -89,6 +89,8 @@ type Project {
   description: String
   "Ajouté au prompt système des agents qui le supportent."
   systemPrompt: String!
+  "Consignes ajoutées à l'instruction de toute session qui réalise une tâche du projet, après le texte de la tâche (vide : aucune)."
+  taskInstructions: String!
   gitUrl: String
   gitBranch: String
   "Réglages du conteneur Docker du projet : { image, memory, cpus, browser }."
@@ -100,6 +102,8 @@ type Project {
   "Faux quand l'utilisateur atteint le projet en tant que super administrateur sans en être membre."
   isMember: Boolean!
   runnerStatus: RunnerStatus!
+  "Mémoire, CPU et processus Claude du conteneur (mesurés à la demande) ; null s'il n'est pas en marche."
+  containerStats: ContainerStats
   "Chemin absolu du workspace sur le serveur."
   workspacePath: String!
   workspaceExists: Boolean!
@@ -115,10 +119,10 @@ type Project {
   "Terminaux de l'utilisateur connecté dans ce projet."
   terminals: [Terminal!]!
   tasks(status: [TaskStatus!]): [Task!]!
-  "Worktrees actifs."
-  worktrees: [Worktree!]!
-  "Worktrees archivés, les plus récemment archivés d'abord."
-  archivedWorktrees: [Worktree!]!
+  "Work sessions actives."
+  worksessions: [Worksession!]!
+  "Work sessions archivées, les plus récemment archivées d'abord."
+  archivedWorksessions: [Worksession!]!
   "Éléments du coffre à disposition des agents de ce projet (pour les sessions de l'utilisateur connecté)."
   vaultItems: [ProjectVaultItem!]!
   "Clés d'API du projet (administrateurs)."
@@ -241,6 +245,15 @@ input TaskPersonInput {
   email: String
 }
 
+"Fichier joint à une tâche ou à l'un de ses commentaires ; téléchargeable à GET /api/task-attachments/<tâche>/<id> (cookie de session)."
+type TaskAttachment {
+  id: ID!
+  name: String!
+  mediaType: String!
+  size: Int!
+  createdAt: DateTime!
+}
+
 "Commentaire d'une tâche, par une personne ou un agent (Markdown)."
 type TaskComment {
   id: ID!
@@ -255,6 +268,8 @@ type TaskComment {
   editable: Boolean!
   "Supprimable : ses propres commentaires, ou administrateur du projet."
   deletable: Boolean!
+  "Fichiers joints au commentaire, les plus anciens d'abord."
+  attachments: [TaskAttachment!]!
   createdAt: DateTime!
   updatedAt: DateTime!
 }
@@ -266,6 +281,10 @@ type Task {
   title: String!
   description: String!
   status: TaskStatus!
+  "Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté ; posé par les personnes ou par la session en charge (outil MCP `tasks.update`)."
+  statusTag: String
+  "Étiquettes libres de la tâche, dans l'ordre d'affichage."
+  tags: [String!]!
   priority: TaskPriority!
   "Session d'agent qui s'en occupe actuellement, le cas échéant."
   session: Session
@@ -280,10 +299,16 @@ type Task {
   assignee: TaskPerson
   reporter: TaskPerson
   commentCount: Int!
+  "Nombre de fichiers joints à la tâche elle-même (ceux de ses commentaires ne comptent pas)."
+  attachmentCount: Int!
+  "Fichiers joints à la tâche elle-même (pas à ses commentaires), les plus anciens d'abord."
+  attachments: [TaskAttachment!]!
   "Commentaires, du plus ancien au plus récent."
   comments: [TaskComment!]!
-  "Branche git de la tâche (worktree dédié task/<slug>), conservée après suppression du worktree."
+  "Branche git de la tâche (work session dédiée task/<slug>), conservée après suppression de la work session."
   branch: String
+  "Work session consacrée à la tâche (active de préférence, sinon la dernière archivée) : ses sessions y travaillent toutes."
+  worksession: Worksession
   "Pull request GitHub de la branche de la tâche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
   pullRequest: PullRequest
   createdAt: DateTime!
@@ -299,8 +324,12 @@ input CreateTaskInput {
   status: TaskStatus
   dueDate: String
   customFields: [TaskFieldInput!]
+  statusTag: String
+  tags: [String!]
   assignee: TaskPersonInput
   reporter: TaskPersonInput
+  "Fichiers joints à la tâche (10 au plus, 10 Mo chacun, 12 Mo au total)."
+  attachments: [AttachmentInput!]
 }
 
 input UpdateTaskInput {
@@ -314,9 +343,17 @@ input UpdateTaskInput {
   dueDate: String
   "Remplace la liste complète."
   customFields: [TaskFieldInput!]
+  "Absente : inchangée ; null ou vide : retirée."
+  statusTag: String
+  "Remplace la liste complète des étiquettes."
+  tags: [String!]
   "Absent : inchangé ; null : retiré."
   assignee: TaskPersonInput
   reporter: TaskPersonInput
+  "Fichiers ajoutés aux pièces jointes de la tâche (celles déjà là restent ; 10 au plus en tout)."
+  attachments: [AttachmentInput!]
+  "Pièces jointes de la tâche (pas de ses commentaires) à retirer."
+  removeAttachmentIds: [ID!]
 }
 
 "Clé d'API d'un projet (API REST des tâches) ; le secret n'est montré qu'à la création."
@@ -363,7 +400,7 @@ enum TerminalStatus {
 type Terminal {
   id: ID!
   project: Project!
-  worktree: Worktree
+  worksession: Worksession
   "Qui a ouvert le terminal : seule cette personne le voit et s'y attache."
   createdBy: User
   name: String!
@@ -373,8 +410,8 @@ type Terminal {
   closedAt: DateTime
 }
 
-"Worktree git d'un projet : une branche extraite dans son propre dossier, à côté du checkout principal."
-type Worktree {
+"Work session d'un projet : l'unité de travail où tournent sessions et terminaux. Un dossier à elle, à côté du checkout principal : un git worktree sur sa propre branche pour un projet git, un simple dossier sinon."
+type Worksession {
   id: ID!
   project: Project!
   "Nom du dossier."
@@ -390,7 +427,7 @@ type Worktree {
   archivedAt: DateTime
   "Pull request de la branche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
   pullRequest: PullRequest
-  "Tâche traitée sur la branche du worktree."
+  "Tâche à laquelle la work session est consacrée (sinon : tâche traitée sur sa branche)."
   task: Task
   createdAt: DateTime!
   "Sessions actives."
@@ -409,6 +446,8 @@ enum VaultItemKind {
   google
   api
   secret
+  "Compte AWS : connexion par code à IAM Identity Center ou clés d'accès ; les agents exécutent le CLI aws par l'outil aws_run, sans jamais voir les identifiants."
+  aws
   "Jeton applicatif : identifiant que Skipper utilise pour la personne (Claude, fournisseur OpenCode, GitHub), référencé par ses réglages ; jamais offert aux agents."
   token
   "Proxy LiteLLM : adresse et clé d'API, identifiants des appels de modèle de Skipper (agents automatisés) ; jamais offert aux agents des sessions."
@@ -485,6 +524,56 @@ type VaultField {
   variable: String!
 }
 
+"Compte AWS : mode d'authentification et identité ; les clés et jetons ne sont jamais renvoyés."
+type VaultAwsInfo {
+  "sso : IAM Identity Center (connexion par code, jetons renouvelés par Skipper) ; keys : clés d'accès."
+  auth: String!
+  "Région par défaut des commandes."
+  region: String!
+  "sso : adresse du portail d'accès et région d'IAM Identity Center."
+  startUrl: String
+  ssoRegion: String
+  "sso : compte et rôle (jeu d'autorisations) choisis après la connexion."
+  accountId: String
+  accountName: String
+  roleName: String
+  "keys : identifiant de la clé d'accès ; rôle endossé avec ces clés, le cas échéant."
+  accessKeyId: String
+  roleArn: String
+  "sso : la connexion est en cours de validité (jeton de renouvellement ou jeton d'accès valable)."
+  connected: Boolean!
+  "sso : expiration du jeton d'accès courant."
+  tokenExpiresAt: DateTime
+  "Identité (ARN) constatée au dernier test réussi."
+  identity: String
+}
+
+"Connexion AWS par code en cours : ouvrir verificationUriComplete (ou saisir userCode sur verificationUri), autoriser, puis interroger pollAwsLogin."
+type AwsLogin {
+  id: ID!
+  userCode: String!
+  verificationUri: String!
+  verificationUriComplete: String!
+  expiresAt: DateTime!
+  "Secondes à attendre entre deux interrogations."
+  interval: Int!
+}
+
+"Résultat d'une interrogation : PENDING (attendre `interval` secondes), CONNECTED (jetons enregistrés, `item` à jour), EXPIRED ou DENIED."
+type AwsLoginPoll {
+  status: String!
+  interval: Int!
+  item: VaultItem
+}
+
+"Compte AWS accessible avec la connexion Identity Center, et les rôles de la personne sur ce compte."
+type VaultAwsAccount {
+  accountId: String!
+  accountName: String!
+  email: String
+  roles: [String!]!
+}
+
 type VaultGoogleAccount {
   email: String!
   name: String
@@ -557,6 +646,7 @@ type VaultItem {
   token: VaultTokenInfo
   "website, secret : champs ; vide pour les autres types."
   fields: [VaultField!]!
+  "postgres : base rattachée ; null = le serveur entier (les agents nomment la base à chaque appel)."
   database: String
   ssl: Boolean
   "postgres : certificat de l'autorité du serveur (PEM), pour une vérification sans contrôle du nom d'hôte."
@@ -567,11 +657,12 @@ type VaultItem {
   "api : nom de l'en-tête ou du paramètre qui porte le jeton."
   authName: String
   google: VaultGoogleAccount
-  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement."
+  aws: VaultAwsInfo
+  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement ; aws : opérations de consultation seulement."
   readOnly: Boolean!
   "Chaque usage par un agent est soumis à l'approbation d'un humain, même en mode « tout autoriser »."
   requireApproval: Boolean!
-  "ssh : préfixes de commandes autorisés (vide = tout ; non vide : ni enchaînement ni transfert de fichiers)."
+  "ssh, aws : préfixes de commandes autorisés (vide = tout ; ssh : ni enchaînement ni transfert de fichiers avec une liste)."
   commandAllowlist: [String!]!
   "ssh : clé publique à ajouter dans authorized_keys du serveur."
   publicKey: String
@@ -624,6 +715,7 @@ input VaultItemInput {
   host: String
   port: Int
   username: String
+  "postgres : base rattachée ; chaîne vide ou null = le serveur entier."
   database: String
   ssl: Boolean
   "postgres : certificat PEM de l'autorité ; chaîne vide pour le retirer."
@@ -651,6 +743,29 @@ input VaultItemInput {
   service: String
   "langfuse : clé publique (pk-lf-...) ; la clé secrète (sk-lf-...) passe par `password`."
   publicKey: String
+  "aws : mode, région, portail Identity Center, compte et rôle, clés d'accès."
+  aws: VaultAwsInput
+}
+
+"Compte AWS (les champs absents sont inchangés ; le mode est fixé à la création)."
+input VaultAwsInput {
+  "sso (IAM Identity Center, connexion par code) ou keys (clés d'accès)."
+  auth: String
+  "Région par défaut des commandes (ex. eu-west-3)."
+  region: String
+  "sso : adresse du portail d'accès (https://xxx.awsapps.com/start) et région d'Identity Center."
+  startUrl: String
+  ssoRegion: String
+  "sso : compte (12 chiffres) et rôle, choisis après la connexion (vaultAwsAccounts) ; chaîne vide pour retirer les deux."
+  accountId: String
+  "sso : libellé du compte (affichage)."
+  accountName: String
+  roleName: String
+  "keys : identifiant de la clé d'accès et clé secrète (absente = inchangée)."
+  accessKeyId: String
+  secretAccessKey: String
+  "keys : ARN d'un rôle à endosser avec ces clés ; chaîne vide pour retirer."
+  roleArn: String
 }
 
 type VaultTest {
@@ -668,7 +783,7 @@ type VaultSecretValue {
 
 # ---- Explorateur de fichiers ---------------------------------------------------------------------
 
-"Entrée d'un dossier du workspace (checkout principal ou worktree)."
+"Entrée d'un dossier du workspace (checkout principal ou work session)."
 type FileEntry {
   name: String!
   "Chemin relatif à la racine du workspace, séparateur /."
@@ -702,7 +817,7 @@ type GitCommit {
   date: DateTime!
 }
 
-"Fichier modifié dans un workspace ou un worktree (statuts git : M, A, D, R, ?, U...)."
+"Fichier modifié dans un workspace ou une work session (statuts git : M, A, D, R, ?, U...)."
 type GitFileChange {
   path: String!
   origPath: String
@@ -795,9 +910,52 @@ type RunnerStatus {
   containerName: String
   image: String
   memory: String
+  "Plafond CPU (--cpus) ; null : aucun, les cœurs du serveur sont partagés équitablement."
   cpus: String
   startedAt: DateTime
   error: String
+  "Le conteneur existe mais a été créé avec une autre configuration ou une image depuis reconstruite : à recréer (fait automatiquement dès que rien ne tourne dans le projet)."
+  outdated: Boolean!
+  "Raisons lisibles de `outdated` : « option --init ajoutée », « image reconstruite le … », « montage ~/.claude ajouté »…"
+  outdatedReasons: [String!]!
+  "Processus zombies (terminés mais non récoltés) dans le conteneur ; null s'il ne tourne pas."
+  zombies: Int
+}
+
+"Mesure du conteneur d'un projet (cgroup v2, lu dans le conteneur)."
+type ContainerStats {
+  sampledAt: DateTime!
+  memoryUsedMb: Int!
+  "Limite mémoire du conteneur ; null si illimitée."
+  memoryLimitMb: Int
+  memoryPercent: Float
+  swapUsedMb: Int
+  "Utilisation CPU en pourcentage d'un cœur (200 = deux cœurs pleins)."
+  cpuPercent: Float
+  "Limite CPU en nombre de cœurs ; null si illimitée."
+  cpuLimit: Float
+  "Cœurs du serveur : plafond effectif quand cpuLimit est null."
+  hostCpus: Int!
+  "Pression CPU (PSI, moyenne sur 60 s) : part du temps où au moins un processus du conteneur attendait le processeur. null si le noyau ne la fournit pas."
+  cpuPressurePercent: Float
+  "Processus tués par le noyau faute de mémoire depuis la création du conteneur."
+  oomKills: Int!
+  "Depuis quand la mémoire dépasse 90 % de la limite (null : sous le seuil)."
+  memoryHighSince: DateTime
+  claudeProcesses: [ContainerProcess!]!
+}
+
+"Processus du CLI Claude Code dans le conteneur d'un projet."
+type ContainerProcess {
+  pid: Int!
+  rssMb: Int!
+  elapsedSeconds: Int!
+  "Session Skipper du processus ; null pour un CLI lancé à la main (terminal) ou une session supprimée."
+  session: Session
+  sessionId: ID
+  "Mémoire des autres processus de la session (commandes lancées par l'agent)."
+  childrenRssMb: Int!
+  cwd: String
 }
 
 type WorkspaceGit {
@@ -872,8 +1030,8 @@ type PullRequest {
   updatedAt: DateTime!
   mergedAt: DateTime
   closedAt: DateTime
-  "Worktree du projet sur la branche de la PR, s'il existe."
-  worktree: Worktree
+  "Work session du projet sur la branche de la PR, s'il en existe une."
+  worksession: Worksession
   "Tâches du projet traitées sur la branche de la PR."
   tasks: [Task!]!
 }
@@ -903,7 +1061,7 @@ type MergePullRequestResult {
   pullRequest: PullRequest!
   "Commit de fusion."
   sha: String
-  deletedWorktreeIds: [ID!]!
+  deletedWorksessionIds: [ID!]!
   completedTaskIds: [ID!]!
   "Étapes de nettoyage non réalisées, avec leur raison."
   warnings: [String!]!
@@ -912,23 +1070,32 @@ type MergePullRequestResult {
 input MergePullRequestCleanup {
   "Supprime la branche sur GitHub."
   deleteRemoteBranch: Boolean = true
-  "Supprime le(s) worktree(s) de la branche et la branche locale."
-  deleteWorktree: Boolean = true
-  "Arrête les sessions encore ouvertes dans ces worktrees (sinon ils sont conservés). Leur historique est gardé."
+  "Supprime le(s) worksession(s) de la branche et la branche locale."
+  deleteWorksession: Boolean = true
+  "Arrête les sessions encore ouvertes dans ces work sessions (sinon elles sont conservées). Leur historique est gardé."
   stopSessions: Boolean = false
   "Passe à « terminée » les tâches ouvertes traitées sur cette branche."
   completeTasks: Boolean = true
 }
 
+"Souvenir d'une work session supprimée, gardé par les sessions archivées avec elle."
+type FormerWorksession {
+  name: String!
+  branch: String!
+  label: String!
+}
+
 type Session {
   id: ID!
   project: Project!
-  "Worktree dans lequel la session s'exécute (null : checkout principal)."
-  worktree: Worktree
+  "Work session où la session s'exécute (null : session d'avant les work sessions, dans le checkout principal, ou work session supprimée)."
+  worksession: Worksession
   "Utilisateur qui a lancé la session ; null : session d'avant cette version ou ouverte à tous les membres."
   owner: User
   "Archivée : cachée des listes actives, consultable et relançable depuis l'historique du projet."
   archivedAt: DateTime
+  "Work session supprimée où la session a travaillé (elle a été archivée avec elle) ; null sinon."
+  formerWorksession: FormerWorksession
   "Tâche dont la session est en charge."
   task: Task
   "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
@@ -962,6 +1129,8 @@ type Session {
   pendingRequestCount: Int!
   "Le navigateur headless de la session est ouvert et l'agent s'en est servi : vue en direct sur le WebSocket /browsers/<id>."
   browserActive: Boolean!
+  "Réponse en cours d'écriture par l'agent (texte reçu en streaming, pas encore journalisé) ; null quand il n'écrit pas."
+  liveDraft: SessionLiveDraft
   "Mise en file d'attente (statut QUEUED)."
   queuedAt: DateTime
   "Rang dans la file d'attente (1 : la prochaine à démarrer), null hors de la file."
@@ -1000,6 +1169,13 @@ type Attachment {
   name: String!
   mediaType: String!
   size: Int!
+}
+
+"Brouillon en direct : ce que l'agent écrit en ce moment, avant le message complet dans les événements."
+type SessionLiveDraft {
+  text: String!
+  "L'agent est dans un bloc de réflexion."
+  thinking: Boolean!
 }
 
 type SessionEvent {
@@ -1071,6 +1247,8 @@ type ClaudeSettings {
   "Budget par défaut d'une session (USD)."
   sessionBudgetUsd: Float
   defaultMaxTurns: Int
+  "Seuil (tokens) au-delà duquel ses pages signalent le contexte d'une session : jauge en couleur, pastille, bandeau « Compacter / Repartir d'une conversation neuve ». null : ne jamais signaler. Défaut : 150 000."
+  contextWarnTokens: Int
 }
 
 type UsageByModel {
@@ -1372,6 +1550,8 @@ type ContainerHealth {
   memoryUsage: String
   memoryPercent: Float
   cpuPercent: Float
+  "Pression CPU du conteneur (PSI, 60 s) : part du temps où un processus attendait le processeur."
+  cpuPressurePercent: Float
 }
 
 type DockerHealth {
@@ -1432,12 +1612,14 @@ input ClaudeSettingsInput {
   monthlyBudgetUsd: Float
   sessionBudgetUsd: Float
   defaultMaxTurns: Int
+  "Seuil de signalement du contexte (tokens) ; null explicite : ne jamais signaler."
+  contextWarnTokens: Int
 }
 
 "Éléments ouverts dans les onglets du workbench, par type (identifiants non UUID ignorés)."
 input OpenItemsInput {
   projectIds: [ID!]
-  worktreeIds: [ID!]
+  worksessionIds: [ID!]
   sessionIds: [ID!]
   terminalIds: [ID!]
   taskIds: [ID!]
@@ -1445,7 +1627,7 @@ input OpenItemsInput {
 
 enum SearchKind {
   PROJECT
-  WORKTREE
+  WORKSESSION
   SESSION
   TERMINAL
   TASK
@@ -1461,7 +1643,7 @@ type SearchHit {
   projectName: String
   "Projet dont l'utilisateur n'est pas membre (super administrateur)."
   outsideProjects: Boolean!
-  worktreeBranch: String
+  worksessionBranch: String
   status: String
   activity: String
   updatedAt: DateTime!
@@ -1533,8 +1715,8 @@ input PushSubscriptionInput {
 }
 
 input RelaunchSessionInput {
-  worktreeId: ID
-  newWorktree: NewWorktreeInput
+  worksessionId: ID
+  newWorksession: NewWorksessionInput
   name: String
   instruction: String
 }
@@ -1708,10 +1890,10 @@ type Query {
   "Propriétaires des sessions actives des projets de l'utilisateur (ou d'un projet)."
   sessionOwners(projectId: ID): [User!]!
   "Sessions archivées d'un projet, les plus récemment archivées d'abord ; search cherche dans le nom, la consigne et la conversation."
-  archivedSessions(projectId: ID!, worktreeId: ID, search: String, limit: Int, offset: Int): [Session!]!
-  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base."
-  gitBranchChanges(projectId: ID!, worktreeId: ID): GitBranchChanges!
-  gitBranchFileDiff(projectId: ID!, worktreeId: ID, path: String!, origPath: String): GitDiff!
+  archivedSessions(projectId: ID!, worksessionId: ID, search: String, limit: Int, offset: Int): [Session!]!
+  "Fichiers modifiés sur la branche d'un workspace depuis sa branche de base ; null : aucune branche de base à comparer (dépôt sans remote ni main/master)."
+  gitBranchChanges(projectId: ID!, worksessionId: ID): GitBranchChanges
+  gitBranchFileDiff(projectId: ID!, worksessionId: ID, path: String!, origPath: String): GitDiff!
   "Éléments du coffre visibles par l'utilisateur connecté (siens, partagés, de ses projets, reliés à ses projets)."
   vaultItems(kind: VaultItemKind): [VaultItem!]!
   vaultItem(id: ID!): VaultItem
@@ -1719,19 +1901,23 @@ type Query {
   vaultShareCandidates: [User!]!
   "La connexion d'un compte Google est configurée sur le serveur."
   vaultGoogleAvailable: Boolean!
+  "aws (sso) : comptes et rôles accessibles avec la connexion en cours (permission MANAGE)."
+  vaultAwsAccounts(id: ID!): [VaultAwsAccount!]!
   "Instruction qu'un agent recevrait pour la tâche (pré-remplit le formulaire « Confier à un agent »)."
   taskPrompt(id: ID!): String!
   "Personnes déjà désignées sur les tâches (suggestions)."
   taskPeople(projectId: ID): [TaskPerson!]!
+  "Étiquettes distinctes des tâches (d'un projet, ou de tous les projets accessibles), les plus utilisées d'abord : suggestions des formulaires et filtres."
+  taskTags(projectId: ID): [String!]!
   sharedPage(id: ID!): SharedPage
   "Pages dont l'utilisateur est propriétaire ou membre."
   sharedPages: [SharedPage!]!
   "Clé publique VAPID avec laquelle les navigateurs s'abonnent aux notifications push."
   pushPublicKey: String!
-  "Contenu d'un dossier du workspace du projet (ou du worktree). path vide = racine."
-  workspaceEntries(projectId: ID!, worktreeId: ID, path: String = ""): [FileEntry!]!
+  "Contenu d'un dossier du workspace du projet (ou de la work session). path vide = racine."
+  workspaceEntries(projectId: ID!, worksessionId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
-  workspaceFile(projectId: ID!, worktreeId: ID, path: String!): FileContent!
+  workspaceFile(projectId: ID!, worksessionId: ID, path: String!): FileContent!
   "Paramètres de la personne connectée (et du serveur pour les administrateurs)."
   settings: AppSettings!
   "Santé du serveur (administrateurs de l'application)."
@@ -1766,24 +1952,24 @@ type Query {
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
   request(id: ID!): Request
   terminal(id: ID!): Terminal
-  worktree(id: ID!): Worktree
-  "Suivi git d'un workspace (checkout principal) ou d'un worktree."
-  gitStatus(projectId: ID!, worktreeId: ID): GitStatus!
-  gitDiff(projectId: ID!, worktreeId: ID, path: String!, staged: Boolean = false): GitDiff!
-  gitCommitDiff(projectId: ID!, worktreeId: ID, hash: String!): GitDiff!
-  gitBranches(projectId: ID!, worktreeId: ID): [GitBranch!]!
-  gitLog(projectId: ID!, worktreeId: ID, limit: Int): [GitCommit!]!
+  worksession(id: ID!): Worksession
+  "Suivi git d'un workspace (checkout principal) ou d'une work session."
+  gitStatus(projectId: ID!, worksessionId: ID): GitStatus!
+  gitDiff(projectId: ID!, worksessionId: ID, path: String!, staged: Boolean = false): GitDiff!
+  gitCommitDiff(projectId: ID!, worksessionId: ID, hash: String!): GitDiff!
+  gitBranches(projectId: ID!, worksessionId: ID): [GitBranch!]!
+  gitLog(projectId: ID!, worksessionId: ID, limit: Int): [GitCommit!]!
   "Pull requests GitHub du dépôt du projet, les plus récemment mises à jour d'abord."
   githubPullRequests(projectId: ID!, state: PullRequestFilter = OPEN, limit: Int): [PullRequest!]!
   githubPullRequest(projectId: ID!, number: Int!): PullRequest!
   "Titre, description et base proposés pour une pull request de la branche courante du workspace."
-  githubPullRequestDraft(projectId: ID!, worktreeId: ID): PullRequestDraft!
+  githubPullRequestDraft(projectId: ID!, worksessionId: ID): PullRequestDraft!
   notifications(unreadOnly: Boolean = false, limit: Int): [Notification!]!
   unreadNotificationCount: Int!
   "Tableau de bord de l'utilisateur connecté."
   dashboard: Dashboard!
-  "Tâches, tous projets confondus (par défaut : ouvertes). assignee / reporter : texte cherché dans le nom ou l'e-mail ; mine : tâches dont le responsable a mon e-mail."
-  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, mine: Boolean, limit: Int): [Task!]!
+  "Tâches, tous projets confondus (par défaut : ouvertes). assignee / reporter : texte cherché dans le nom ou l'e-mail ; mine : tâches dont le responsable a mon e-mail ; tag : tâches portant cette étiquette (sans tenir compte de la casse)."
+  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, tag: String, mine: Boolean, limit: Int): [Task!]!
   task(id: ID!): Task
   contextInstruction(id: ID!): ContextInstruction
   searchContext(projectId: ID!, query: String!): [ContextInstruction!]!
@@ -1817,6 +2003,7 @@ input CreateProjectInput {
   gitBranch: String
   runnerConfig: JSON
   defaultPermissionMode: String
+  taskInstructions: String
 }
 
 input UpdateProjectInput {
@@ -1827,14 +2014,17 @@ input UpdateProjectInput {
   gitBranch: String
   runnerConfig: JSON
   defaultPermissionMode: String
+  taskInstructions: String
 }
 
-"Worktree à créer en même temps que la session, qui s'y exécutera."
-input NewWorktreeInput {
-  "Branche extraite si elle existe (localement ou sur origin), sinon créée depuis baseRef."
-  branch: String!
-  "Nom du dossier (défaut : dérivé de la branche)."
+"Work session à créer en même temps que la session, qui s'y exécutera. Sans nom, branche ni libellé : nommée d'après la consigne."
+input NewWorksessionInput {
+  "Branche (projet git) extraite si elle existe (localement ou sur origin), sinon créée depuis baseRef ; défaut : le nom du dossier."
+  branch: String
+  "Nom du dossier (défaut : dérivé de la branche, sinon du libellé)."
   name: String
+  "Libellé : ce dont parle la work session."
+  label: String
   baseRef: String
 }
 
@@ -1847,9 +2037,10 @@ input AttachmentInput {
 
 input CreateSessionInput {
   projectId: ID!
-  worktreeId: ID
-  "Crée d'abord ce worktree et y lance la session (exclusif avec worktreeId)."
-  newWorktree: NewWorktreeInput
+  "Work session où la session s'exécute (obligatoire, sauf newWorksession)."
+  worksessionId: ID
+  "Crée d'abord cette work session et y lance la session (exclusif avec worksessionId)."
+  newWorksession: NewWorksessionInput
   name: String!
   provider: String!
   "Première instruction. Facultative : sans consigne ni fichier joint, la session est créée sans démarrer et attend sa première instruction."
@@ -1863,11 +2054,11 @@ input CreateSessionInput {
 
 type Mutation {
   "Écrit un fichier. Avec expectedModifiedAt, refuse (FILE_CONFLICT) si le fichier a changé depuis."
-  writeWorkspaceFile(projectId: ID!, worktreeId: ID, path: String!, content: String!, expectedModifiedAt: DateTime): FileContent!
-  createWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, kind: FileEntryKind!): FileEntry!
-  renameWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!, newPath: String!): FileEntry!
+  writeWorkspaceFile(projectId: ID!, worksessionId: ID, path: String!, content: String!, expectedModifiedAt: DateTime): FileContent!
+  createWorkspaceEntry(projectId: ID!, worksessionId: ID, path: String!, kind: FileEntryKind!): FileEntry!
+  renameWorkspaceEntry(projectId: ID!, worksessionId: ID, path: String!, newPath: String!): FileEntry!
   "Supprime un fichier ou un dossier (récursivement)."
-  deleteWorkspaceEntry(projectId: ID!, worktreeId: ID, path: String!): Boolean!
+  deleteWorkspaceEntry(projectId: ID!, worksessionId: ID, path: String!): Boolean!
 
   "Active ou lève le mode maintenance (refuse les nouvelles sessions avant un redémarrage)."
   setMaintenanceMode(enabled: Boolean!, message: String): AppSettings!
@@ -1900,6 +2091,10 @@ type Mutation {
   pollGithubDeviceLogin(id: ID!): GithubDevicePoll!
   "GitHub : connecte un compte avec un jeton personnel du coffre (vérifié auprès de GitHub)."
   connectGithubFromVault(itemId: ID!): GithubAccount!
+  "Coffre, compte AWS (sso) : démarre la connexion par code à IAM Identity Center (permission MANAGE)."
+  startAwsLogin(id: ID!): AwsLogin!
+  "Coffre, compte AWS (sso) : une interrogation de la connexion par code ; les jetons sont enregistrés quand l'autorisation est donnée."
+  pollAwsLogin(id: ID!): AwsLoginPoll!
   setDefaultGithubAccount(accountId: ID!): AppSettings!
   "GitHub : oublie un compte (tous sans accountId)."
   disconnectGithub(accountId: ID): AppSettings!
@@ -1943,7 +2138,7 @@ type Mutation {
   stopProjectRunner(id: ID!): Project!
   "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
   resetProjectRunner(id: ID!): Project!
-  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, worktrees, conteneur, dossier de travail. Irréversible."
+  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, work sessions, conteneur, dossier de travail. Irréversible."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
   startSession(id: ID!): Session!
@@ -1980,48 +2175,51 @@ type Mutation {
   createTask(input: CreateTaskInput!): Task!
   updateTask(id: ID!, input: UpdateTaskInput!): Task!
   deleteTask(id: ID!): Boolean!
-  addTaskComment(taskId: ID!, body: String!): TaskComment!
+  "Déplace une tâche dans un autre projet (membre des deux) : sa session et sa branche en sont détachées, ses commentaires et son historique la suivent."
+  moveTask(id: ID!, projectId: ID!): Task!
+  "Ajoute un commentaire, avec des fichiers le cas échéant (le texte peut alors être vide)."
+  addTaskComment(taskId: ID!, body: String!, attachments: [AttachmentInput!]): TaskComment!
   "Ses propres commentaires seulement."
-  updateTaskComment(id: ID!, body: String!): TaskComment!
+  updateTaskComment(id: ID!, body: String!, attachments: [AttachmentInput!], removeAttachmentIds: [ID!]): TaskComment!
   "Ses propres commentaires, ou administrateur du projet."
   deleteTaskComment(id: ID!): Boolean!
-  "Confie la tâche à un agent. Sans worktreeId, un worktree dédié (task/<slug>) est créé si le projet est relié à git, sauf dedicatedWorktree: false (dossier principal). prompt : consigne relue (sinon le texte de la tâche)."
-  startTaskSession(id: ID!, provider: String, config: JSON, worktreeId: ID, dedicatedWorktree: Boolean = true, prompt: String): Session!
+  "Confie la tâche à un agent, dans la work session de la tâche (créée à sa première session, task/<slug> pour un projet git ; réutilisée ensuite), sauf worksessionId. prompt : consigne relue (sinon le texte de la tâche)."
+  startTaskSession(id: ID!, provider: String, config: JSON, worksessionId: ID, prompt: String): Session!
   "Crée une clé d'API du projet (administrateurs) ; le secret n'est montré qu'une fois."
   createProjectApiKey(projectId: ID!, name: String!): CreatedProjectApiKey!
   deleteProjectApiKey(id: ID!): Boolean!
 
   "git add (paths vide = tout)."
-  gitStage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitStage(projectId: ID!, worksessionId: ID, paths: [String!]!): GitStatus!
   "git reset (paths vide = tout)."
-  gitUnstage(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitUnstage(projectId: ID!, worksessionId: ID, paths: [String!]!): GitStatus!
   "Abandonne les modifications non indexées ; supprime un fichier non suivi."
-  gitDiscard(projectId: ID!, worktreeId: ID, paths: [String!]!): GitStatus!
+  gitDiscard(projectId: ID!, worksessionId: ID, paths: [String!]!): GitStatus!
   "Remet un fichier dans son état du démarrage de la session (index et arbre de travail, commits inchangés)."
   discardSessionFile(sessionId: ID!, path: String!, origPath: String): SessionChanges!
-  gitCommit(projectId: ID!, worktreeId: ID, message: String!, stageAll: Boolean = false): GitStatus!
-  gitFetch(projectId: ID!, worktreeId: ID): GitStatus!
-  gitPull(projectId: ID!, worktreeId: ID): GitStatus!
-  gitPush(projectId: ID!, worktreeId: ID): GitStatus!
+  gitCommit(projectId: ID!, worksessionId: ID, message: String!, stageAll: Boolean = false): GitStatus!
+  gitFetch(projectId: ID!, worksessionId: ID): GitStatus!
+  gitPull(projectId: ID!, worksessionId: ID): GitStatus!
+  gitPush(projectId: ID!, worksessionId: ID): GitStatus!
   "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
-  gitCheckout(projectId: ID!, worktreeId: ID, branch: String!, create: Boolean = false): GitStatus!
+  gitCheckout(projectId: ID!, worksessionId: ID, branch: String!, create: Boolean = false): GitStatus!
   "Pousse la branche courante du workspace puis ouvre une pull request GitHub (base par défaut : branche du projet, sinon celle du dépôt)."
-  createPullRequest(projectId: ID!, worktreeId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
-  "Fusionne une pull request puis nettoie (branche distante, worktree, branche locale, tâches) et met à jour le dossier principal."
+  createPullRequest(projectId: ID!, worksessionId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
+  "Fusionne une pull request puis nettoie (branche distante, work session, branche locale, tâches) et met à jour le dossier principal."
   mergePullRequest(projectId: ID!, number: Int!, method: PullRequestMergeMethod = MERGE, cleanup: MergePullRequestCleanup): MergePullRequestResult!
 
-  "Ouvre un shell dans le workspace du projet (ou dans un worktree), avec l'historique des commandes de l'utilisateur sur le projet."
-  createTerminal(projectId: ID!, name: String, worktreeId: ID): Terminal!
-  "Crée un worktree git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal)."
-  createWorktree(projectId: ID!, branch: String!, name: String, baseRef: String, label: String): Worktree!
+  "Ouvre un shell dans une work session du projet, avec l'historique des commandes de l'utilisateur sur le projet."
+  createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!
+  "Crée une work session. Projet git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal). Il faut un nom, une branche ou un libellé."
+  createWorksession(projectId: ID!, branch: String, name: String, baseRef: String, label: String): Worksession!
   "Renomme le libellé (null ou vide : la branche) et/ou le dossier (git worktree move, seulement si rien n'y tourne)."
-  renameWorktree(id: ID!, label: String, name: String): Worktree!
-  "Archive le worktree avec ses sessions (arrêtées si elles tournent) ; dossier et branche conservés ; restaurable depuis l'historique du projet."
-  archiveWorktree(id: ID!): Worktree!
-  "Restaure un worktree archivé et les sessions archivées avec lui."
-  restoreWorktree(id: ID!): Worktree!
-  "Supprime le worktree et tout ce qui y est rattaché (sessions actives arrêtées, terminaux fermés, dossier) ; la branche est conservée sauf deleteBranch."
-  deleteWorktree(id: ID!, deleteBranch: Boolean = false): Boolean!
+  renameWorksession(id: ID!, label: String, name: String): Worksession!
+  "Archive la work session avec ses sessions (arrêtées si elles tournent) ; dossier et branche conservés ; restaurable depuis l'historique du projet."
+  archiveWorksession(id: ID!): Worksession!
+  "Restaure une work session archivée et les sessions archivées avec elle."
+  restoreWorksession(id: ID!): Worksession!
+  "Supprime la work session (dossier, terminaux fermés) ; ses sessions sont arrêtées si elles tournent puis archivées avec son souvenir, sauf deleteSessions (suppression définitive, historique compris). La branche est conservée sauf deleteBranch."
+  deleteWorksession(id: ID!, deleteBranch: Boolean = false, deleteSessions: Boolean = false): Boolean!
   "Crée un élément dans le coffre du projet (administrateurs) ou, sans projectId, dans le coffre personnel."
   createVaultItem(projectId: ID, input: VaultItemInput!): VaultItem!
   "Met à jour un élément (permission MANAGE ; les champs absents sont inchangés)."
@@ -2030,6 +2228,8 @@ type Mutation {
   deleteVaultItem(id: ID!): Boolean!
   "Vérifie l'élément depuis le serveur (MANAGE) ; mémorise la clé d'hôte SSH à la première réussite."
   testVaultItem(id: ID!): VaultTest!
+  "Duplique l'élément dans le même coffre, secrets compris, sous un nouveau nom (défaut : <nom>-copie) ; MANAGE. Partages, liens et journal ne sont pas copiés ; ni compte Google ni jeton obtenu par connexion."
+  duplicateVaultItem(id: ID!, name: String): VaultItem!
   "ssh : nouvelle paire de clés (l'ancienne clé publique est à retirer du serveur)."
   regenerateVaultKey(id: ID!): VaultItem!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
@@ -2045,7 +2245,7 @@ type Mutation {
   "Copie l'élément (secrets compris) dans le coffre d'un projet (MANAGE + administrateur du projet) ; l'original est intact."
   copyVaultItem(id: ID!, projectId: ID!, name: String): VaultItem!
   "Publie un fichier HTML d'un workspace comme page partagée (membres), nouvelle page ou nouvelle version (pageId)."
-  publishSharedPage(projectId: ID!, worktreeId: ID, path: String!, title: String!, pageId: ID): SharedPage!
+  publishSharedPage(projectId: ID!, worksessionId: ID, path: String!, title: String!, pageId: ID): SharedPage!
   updateSharedPage(id: ID!, input: SharedPageInput!): SharedPage!
   addSharedPageMember(id: ID!, email: String!): SharedPage!
   "Le propriétaire retire qui il veut ; une personne ajoutée peut se retirer elle-même."
@@ -2113,6 +2313,8 @@ input SessionScheduleInput {
   enabled: Boolean
   "Défaut : true."
   endAfterRun: Boolean
+  "Réglage de nettoyage de la session, enregistré en même temps que la planification (absent : inchangé). Proposé par défaut : « fresh »."
+  cleanup: SessionCleanupInput
 }
 
 extend type Session {
@@ -2139,9 +2341,30 @@ extend type Mutation {
 type SessionCleanup {
   "Les événements du transcript plus vieux que N jours sont supprimés (null : jamais)."
   retentionDays: Int
-  "Quand le contexte de l'agent dépasse contextMaxTokens : « compact » (compacter la conversation) ou « reset » (repartir d'une conversation neuve). Null : rien."
+  "Conversation de l'agent avant une exécution planifiée : « compact » (compacter) ou « reset » (repartir d'une conversation neuve) quand le contexte dépasse contextMaxTokens ; « fresh » : conversation neuve à chaque exécution. Null : rien."
   contextAction: String
   contextMaxTokens: Int
+}
+
+"Taille du contexte de l'agent et ce qu'elle implique (jauge de l'en-tête, pastille de la sidebar, bandeau de nettoyage)."
+type SessionContext {
+  "Tokens du contexte au dernier tour (null : inconnu)."
+  tokens: Int
+  "Seuil au-delà duquel l'interface propose de compacter ou de repartir d'une conversation neuve : celui des réglages Claude de la personne connectée (null : elle a désactivé le signalement). Aucune action automatique."
+  warnTokens: Int
+  overThreshold: Boolean!
+  "Modèle retenu pour l'estimation : dernier modèle facturé, sinon celui de la configuration."
+  model: String
+  "Fenêtre de contexte du modèle (tokens)."
+  windowTokens: Int!
+  "Part de la fenêtre occupée (0 à 1), null si la taille est inconnue."
+  share: Float
+  "Coût approximatif de la relecture du contexte à froid (cache expiré) au prochain tour, en dollars."
+  coldTurnUsd: Float
+}
+
+extend type Session {
+  context: SessionContext!
 }
 
 input SessionCleanupInput {
@@ -2167,4 +2390,8 @@ extend type Mutation {
   updateSession(id: ID!, input: UpdateSessionInput!): Session!
   "Applique tout de suite le nettoyage configuré : purge du transcript, puis compaction ou remise à zéro de la conversation si elle dépasse le seuil."
   applySessionCleanup(id: ID!): Session!
+  "Compacte tout de suite la conversation de l'agent (/compact), quel que soit le réglage de nettoyage. Erreur si l'agent travaille."
+  compactSessionContext(id: ID!): Session!
+  "Repart tout de suite d'une conversation neuve (la session en attente est d'abord terminée) ; avec `keepSummary`, les derniers échanges accompagnent la prochaine instruction. Le transcript affiché est conservé."
+  resetSessionContext(id: ID!, keepSummary: Boolean = true): Session!
 }

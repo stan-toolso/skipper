@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SessionEvent } from '../graphql/operations';
+import { Link } from 'react-router-dom';
+import type { SessionEvent, SessionLiveDraft } from '../graphql/operations';
 import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
 import { clockTime, dayLabel, describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
 import Markdown from './Markdown';
@@ -121,14 +122,37 @@ function toolHeader(name: string, input: Input, rel: (path: string) => string): 
   }
 }
 
-/** Texte tronqué à `limit` lignes, suivi de « … +N lignes » tant qu'il n'est pas déplié. */
-function Output({ text, limit, expanded }: { text: string; limit: number; expanded: boolean }) {
+/** Outils du serveur MCP `sessions` (list, get, create, wait, send, end) : leurs arguments et résultats citent des sessions par identifiant. */
+const SESSIONS_TOOL = /^mcp__sessions__/;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** Texte dont chaque identifiant de session (UUID) devient un lien vers la page de cette session. */
+export function linkSessionIds(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(UUID)) {
+    const start = m.index ?? 0;
+    if (start > last) parts.push(text.slice(last, start));
+    parts.push(
+      <Link key={`${start}`} to={`/sessions/${m[0].toLowerCase()}`} className="cc-session-link" title="Ouvrir cette session" onClick={(e) => e.stopPropagation()}>
+        {m[0]}
+      </Link>,
+    );
+    last = start + m[0].length;
+  }
+  if (!parts.length) return text;
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** Texte tronqué à `limit` lignes, suivi de « … +N lignes » tant qu'il n'est pas déplié. `links` : identifiants de session cliquables. */
+function Output({ text, limit, expanded, links = false }: { text: string; limit: number; expanded: boolean; links?: boolean }) {
   const lines = text.replace(/\n+$/, '').split('\n');
   const shown = expanded ? lines : lines.slice(0, limit);
   const hidden = lines.length - shown.length;
   return (
     <>
-      {shown.join('\n')}
+      {links ? linkSessionIds(shown.join('\n')) : shown.join('\n')}
       {hidden > 0 && <span className="cc-more">{`\n… +${plural(hidden, 'ligne', 'lignes')} (cliquer pour déplier)`}</span>}
     </>
   );
@@ -217,9 +241,19 @@ function toolBody({ name, input, result, subCalls, expanded, rel }: { name: stri
     return null;
   }
   const { data } = result;
+  const exit = nonZeroExit(name, result);
+  if (exit) {
+    return (
+      <>
+        <span className="cc-exit">{`Code de sortie ${exit.code}`}</span>
+        {'\n'}
+        <Output text={exit.output} limit={OUTPUT_LINES} expanded={expanded} />
+      </>
+    );
+  }
   if (result.isError) {
     const text = result.text.replace(/<\/?tool_use_error>/g, '').trim();
-    return <Output text={text || 'Erreur'} limit={OUTPUT_LINES} expanded={expanded} />;
+    return <Output text={text || 'Erreur'} limit={OUTPUT_LINES} expanded={expanded} links={SESSIONS_TOOL.test(name)} />;
   }
   const hunks = Array.isArray(data.structuredPatch) ? (data.structuredPatch as Hunk[]) : [];
   switch (name) {
@@ -293,8 +327,29 @@ function toolBody({ name, input, result, subCalls, expanded, rel }: { name: stri
       break;
     }
   }
-  return result.text.trim() ? <Output text={result.text} limit={OUTPUT_LINES} expanded={expanded} /> : <>(aucune sortie)</>;
+  // Outils `sessions` : l'id renvoyé par create (et repris par wait, send, end) ouvre la session lancée.
+  return result.text.trim() ? <Output text={result.text} limit={OUTPUT_LINES} expanded={expanded} links={SESSIONS_TOOL.test(name)} /> : <>(aucune sortie)</>;
 }
+
+/**
+ * Commande shell qui a tourné et s'est terminée avec un code non nul (« Exit code 2 » suivi de sa sortie) :
+ * ce n'est pas un échec de l'outil, la sortie est souvent exactement ce que l'agent cherchait (un `ls` qui
+ * sonde un dossier, un `grep` sans résultat, la dernière de plusieurs commandes). Elle est présentée comme
+ * un avertissement — le code ressort, la sortie garde sa couleur — plutôt qu'en bloc rouge. Un échec sans
+ * sortie, ou toute autre erreur d'outil, reste une erreur.
+ */
+export function nonZeroExit(name: string, result: { text: string; isError: boolean } | undefined): { code: number; output: string } | null {
+  if (!result?.isError || (name !== 'Bash' && name !== 'BashOutput')) return null;
+  const match = /^\s*Exit code (\d+)\s*\n([\s\S]*)$/.exec(result.text);
+  if (!match) return null;
+  const output = match[2].replace(/<\/?tool_use_error>/g, '').trim();
+  return output ? { code: Number(match[1]), output } : null;
+}
+
+type Severity = 'pending' | 'ok' | 'warn' | 'error';
+
+/** Issue d'un appel d'outil : une commande sortie en code non nul est un avertissement, pas un échec (voir nonZeroExit). */
+const toolSeverity = (name: string, result?: ToolResult): Severity => (!result ? 'pending' : nonZeroExit(name, result) ? 'warn' : result.isError ? 'error' : 'ok');
 
 function ToolCall({ name, input, result, subCalls, rel }: { name: string; input: Input; result?: ToolResult; subCalls: number; rel: (path: string) => string }) {
   const [expanded, setExpanded] = useState(false);
@@ -308,17 +363,18 @@ function ToolCall({ name, input, result, subCalls, rel }: { name: string; input:
     if (!window.getSelection()?.toString()) setExpanded((v) => !v);
   };
   const body = toolBody({ name, input, result, subCalls, expanded, rel });
+  const severity = toolSeverity(name, result);
   return (
     <div className="cc-tool">
       <div className={`cc-call${long ? ' foldable' : ''}`} onClick={long ? toggle : undefined}>
-        <span className={`cc-dot ${!result ? 'pending' : result.isError ? 'error' : 'ok'}`}>⏺</span>
+        <span className={`cc-dot ${severity}`}>⏺</span>
         <span>
           <span className="cc-name">{header.name}</span>
-          {args && <span className="cc-args">({args})</span>}
+          {args && <span className="cc-args">({SESSIONS_TOOL.test(name) ? linkSessionIds(args) : args})</span>}
         </span>
       </div>
       {body && (
-        <div className={`cc-result${result?.isError ? ' error' : ''}`} onClick={toggle} title={expanded ? 'Replier' : 'Déplier'}>
+        <div className={`cc-result${severity === 'error' ? ' error' : ''}`} onClick={toggle} title={expanded ? 'Replier' : 'Déplier'}>
           <span className="cc-elbow">⎿</span>
           <div className="cc-result-body">{body}</div>
         </div>
@@ -339,6 +395,63 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
+/** Un élément du travail de l'agent dans un tour : un message, un appel d'outil ou une réflexion. */
+interface WorkItem {
+  key: string;
+  node: React.ReactNode;
+  /** Gardé en vue hors du groupe replié : le dernier message d'une suite, les questions de l'agent. */
+  pinned: boolean;
+  /** Appels d'outils : nom affiché et issue. */
+  tool?: { name: string; args: string; severity: Severity };
+  text?: boolean;
+}
+
+/**
+ * Étapes de l'agent repliées en une ligne (sans le détail technique) : `⏺ 12 étapes · Read ×4 · Bash ×5`,
+ * dépliée au clic. `live` : le tour continue, son dernier appel d'outil reste nommé (avec `…` tant qu'il
+ * tourne) — la ligne change sur place plutôt que de clignoter entre deux appels.
+ */
+function WorkGroup({ items, live }: { items: WorkItem[]; live: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const tools = items.filter((i) => i.tool).map((i) => i.tool!);
+  const messages = items.filter((i) => i.text).length;
+  const thoughts = items.filter((i) => !i.tool && !i.text).length;
+  // Dans l'ordre de première utilisation : les noms gardent leur place pendant que les compteurs montent.
+  const counts = new Map<string, number>();
+  tools.forEach((t) => counts.set(t.name, (counts.get(t.name) ?? 0) + 1));
+  const names = [...counts.entries()];
+  const errors = tools.filter((t) => t.severity === 'error').length;
+  const latest = live ? tools[tools.length - 1] : undefined;
+  const parts = [
+    tools.length ? plural(tools.length, 'étape', 'étapes') : '',
+    messages ? plural(messages, 'message', 'messages') : '',
+    ...names.slice(0, 4).map(([name, n]) => (n > 1 ? `${name} ×${n}` : name)),
+    names.length > 4 ? '…' : '',
+  ].filter(Boolean);
+  if (!parts.length && thoughts) parts.push('Réflexion');
+  const severity = live ? 'pending' : errors ? 'warn' : 'ok';
+  return (
+    <div className="cc-tool cc-group">
+      <div className="cc-call foldable" onClick={() => setExpanded((v) => !v)} title={expanded ? 'Replier les étapes' : 'Voir les étapes'}>
+        <span className={`cc-dot ${severity}`}>⏺</span>
+        <span className="cc-group-summary">
+          <span className="cc-group-caret">{expanded ? '▾' : '▸'}</span> {parts.join(' · ')}
+          {errors > 0 && <span className="cc-yellow">{` · ${plural(errors, 'erreur', 'erreurs')}`}</span>}
+          {latest && (
+            <span className="cc-group-running">
+              {' · '}
+              {latest.name}
+              {latest.args ? `(${latest.args.split('\n')[0].slice(0, 80)})` : ''}
+              {latest.severity === 'pending' ? '…' : ''}
+            </span>
+          )}
+        </span>
+      </div>
+      {expanded && <div className="cc-group-body">{items.map((i) => i.node)}</div>}
+    </div>
+  );
+}
+
 function describeResult(p: Record<string, unknown>, technical: boolean): string {
   const parts: string[] = [];
   if (typeof p.duration_ms === 'number') parts.push(formatDuration(p.duration_ms));
@@ -354,9 +467,11 @@ const STICK_MARGIN = 80;
  * Transcript d'une session, calqué sur l'affichage de Claude Code : instructions préfixées par >, réponses ⏺,
  * appels d'outils `⏺ Outil(arguments)` suivis de leur résultat `⎿` (résumé, diff ou début de sortie). Les
  * demandes d'autorisation n'y laissent pas de trace : un refus apparaît comme l'erreur de l'outil.
- * `technical` ajoute les lignes de service (démarrage, autorisations, audit des connexions, erreurs brutes).
+ * `technical` ajoute les lignes de service (démarrage, autorisations, audit des connexions, erreurs brutes) et
+ * montre chaque étape ; sinon les étapes d'un tour sont repliées en une ligne (`WorkGroup`).
+ * `draft` : réponse en cours d'écriture (streaming), affichée en bas avec un curseur jusqu'au message complet.
  */
-export default function Transcript({ events, autoScroll = true, technical = false, loading = false }: { events: SessionEvent[]; autoScroll?: boolean; technical?: boolean; loading?: boolean }) {
+export default function Transcript({ events, draft = null, autoScroll = true, technical = false, loading = false }: { events: SessionEvent[]; draft?: SessionLiveDraft | null; autoScroll?: boolean; technical?: boolean; loading?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -388,9 +503,43 @@ export default function Transcript({ events, autoScroll = true, technical = fals
   useEffect(() => {
     const el = containerRef.current;
     if (autoScroll && el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [events.length, autoScroll]);
+  }, [events.length, draft?.text.length, draft?.thinking, autoScroll]);
 
   const nodes: React.ReactNode[] = [];
+  // Sans le détail technique, le travail de l'agent entre deux événements affichés (un tour, le plus souvent)
+  // est replié : son dernier message et ses questions restent en vue, les étapes entre deux sont rassemblées
+  // en une ligne chacune (`WorkGroup`), dépliée au clic.
+  let work: WorkItem[] = [];
+  const flushWork = (live: boolean): React.ReactNode[] => {
+    const items = work;
+    work = [];
+    let lastText = -1;
+    items.forEach((item, i) => {
+      if (item.text) lastText = i;
+    });
+    const out: React.ReactNode[] = [];
+    let run: WorkItem[] = [];
+    const closeRun = (end: boolean) => {
+      if (!run.length) return;
+      const tail = live && end;
+      // Un groupe est identifié par sa première étape qui n'est pas un message : quand un nouveau message arrive,
+      // le précédent rejoint le groupe, qui reste le même élément (replié ou non) au lieu d'être remplacé.
+      const key = `work-${(run.find((i) => !i.text) ?? run[0]).key}`;
+      // Rien à replier dans un message seul — sauf en fin de tour en cours, où l'étape suivante le replierait
+      // un instant plus tard.
+      if (!tail && run.every((i) => i.text || !i.tool) && run.filter((i) => i.text).length <= 1) out.push(...run.map((i) => i.node));
+      else out.push(<WorkGroup key={key} items={run} live={tail} />);
+      run = [];
+    };
+    items.forEach((item, i) => {
+      if (item.pinned || i === lastText) {
+        closeRun(false);
+        out.push(item.node);
+      } else run.push(item);
+    });
+    closeRun(true);
+    return out;
+  };
   // Repères de temps, discrets : un séparateur à chaque changement de jour, l'heure sur les instructions,
   // les fins de tour et les changements d'état, et sur les réponses quand la minute a changé.
   let lastDay = '';
@@ -419,6 +568,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
           <div key={e.id} className="cc-user">
             {stamp(true)}
             <span className="cc-user-text">{String(p.text ?? '')}</span>
+            {p.preamble === true && <span className="cc-note"> (précédée, pour le modèle, du résumé de la conversation précédente)</span>}
             {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
           </div>,
         );
@@ -428,19 +578,28 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         const content = ((p.message as { content?: ContentBlock[] } | undefined)?.content ?? []) as ContentBlock[];
         content.forEach((block, i) => {
           const key = `${e.id}-${i}`;
+          let item: WorkItem | null = null;
           if (block.type === 'text' && block.text?.trim()) {
-            nodes.push(
+            const node = (
               <div key={key} className="cc-assistant">
                 <span className="cc-dot">⏺</span>
                 <Markdown className="cc-body" text={block.text} />
                 {stamp()}
-              </div>,
+              </div>
             );
+            item = { key, node, pinned: false, text: true };
           } else if (block.type === 'tool_use') {
-            nodes.push(<ToolCall key={key} name={block.name ?? 'outil'} input={block.input ?? {}} result={block.id ? results.get(block.id) : undefined} subCalls={block.id ? subCalls.get(block.id) ?? 0 : 0} rel={rel} />);
+            const name = block.name ?? 'outil';
+            const input = block.input ?? {};
+            const result = block.id ? results.get(block.id) : undefined;
+            const node = <ToolCall key={key} name={name} input={input} result={result} subCalls={block.id ? (subCalls.get(block.id) ?? 0) : 0} rel={rel} />;
+            item = { key, node, pinned: name === 'AskUserQuestion', tool: { ...toolHeader(name, input, rel), severity: toolSeverity(name, result) } };
           } else if (block.type === 'thinking' && block.thinking?.trim()) {
-            nodes.push(<Thinking key={key} text={block.thinking} />);
+            item = { key, node: <Thinking key={key} text={block.thinking} />, pinned: false };
           }
+          if (!item) return;
+          if (technical) nodes.push(item.node);
+          else work.push(item);
         });
         break;
       }
@@ -458,16 +617,23 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         }
         break;
       }
-      case 'claude.result':
+      case 'claude.result': {
+        // Tour interrompu par l'humain (bouton « Interrompre », Échap) : depuis le CLI 2.1.300, le résultat est marqué
+        // en erreur avec un diagnostic interne (`[ede_diagnostic] …`). Ce n'est pas une panne : l'agent attend la suite.
+        const interrupted = p.terminal_reason === 'aborted_streaming' || p.terminal_reason === 'aborted_tools';
+        const failed = Boolean(p.is_error) && !interrupted;
         nodes.push(
-          <div key={e.id} className={`cc-note${p.is_error ? ' error' : ''}`}>
+          <div key={e.id} className={`cc-note${failed ? ' error' : ''}`}>
             {stamp(true)}
-            {p.is_error
-              ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
-              : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
+            {interrupted
+              ? `⏹ Interrompu${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`
+              : failed
+                ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
+                : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
           </div>,
         );
         break;
+      }
       case 'cleanup': {
         const action = String(p.action ?? '');
         const k = (v: unknown) => (typeof v === 'number' ? `${Math.round(v / 1000)} k tokens` : '?');
@@ -479,7 +645,7 @@ export default function Transcript({ events, autoScroll = true, technical = fals
               : action === 'compacted'
                 ? `Conversation compactée : ${k(p.before)} → ${k(p.after)}`
                 : action === 'reset'
-                  ? `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)}) : la conversation repart de zéro au prochain lancement`
+                  ? `${p.reason === 'fresh' ? 'Exécution planifiée' : p.manual ? 'À la demande' : `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)})`} : la conversation repart de zéro${p.manual ? '' : ' au prochain lancement'}${p.summary ? ', avec un résumé des derniers échanges' : ''}${p.reason === 'fresh' && typeof p.before === 'number' ? ` (${k(p.before)} oubliés)` : ''}`
                   : action === 'skipped'
                     ? `Nettoyage de la conversation reporté : ${String(p.reason ?? '')}`
                     : action === 'failed'
@@ -651,6 +817,8 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         // Événements techniques (rate limit, progression, consommation...) : non affichés.
         break;
     }
+    // Le travail de l'agent accumulé jusque-là précède le premier événement affiché après lui.
+    if (nodes.length > before && work.length) nodes.splice(before, 0, ...flushWork(false));
     // Séparateur de jour, seulement devant un événement qui s'affiche.
     if (nodes.length > before && day !== lastDay) {
       lastDay = day;
@@ -662,6 +830,22 @@ export default function Transcript({ events, autoScroll = true, technical = fals
         </div>,
       );
     }
+  }
+  nodes.push(...flushWork(true));
+  // Ce que l'agent écrit en ce moment : le texte grandit à chaque relevé, puis le message journalisé le remplace.
+  if (draft?.text.trim()) {
+    nodes.push(
+      <div key="live" className="cc-assistant cc-live">
+        <span className="cc-dot">⏺</span>
+        <Markdown className="cc-body" text={draft.text} />
+      </div>,
+    );
+  } else if (draft?.thinking) {
+    nodes.push(
+      <div key="live" className="cc-thinking cc-live">
+        <div>∴ Réflexion…</div>
+      </div>,
+    );
   }
 
   return (

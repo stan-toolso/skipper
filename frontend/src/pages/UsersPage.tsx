@@ -60,13 +60,13 @@ export default function UsersPage() {
         </Button>
         {inviteError && <span className="text-danger small">{inviteError.message}</span>}
       </Form>
-      <Table size="sm" hover>
+      <Table size="sm" hover responsive>
         <thead>
           <tr>
             <th>Utilisateur</th>
             <th>Rôle</th>
-            <th>Invité</th>
-            <th>Dernière connexion</th>
+            <th className="d-none d-md-table-cell">Invité</th>
+            <th className="d-none d-md-table-cell">Dernière connexion</th>
             <th />
           </tr>
         </thead>
@@ -95,8 +95,8 @@ export default function UsersPage() {
                     </option>
                   </Form.Select>
                 </td>
-                <td title={new Date(u.createdAt).toLocaleString()}>{timeAgo(u.createdAt)}</td>
-                <td>{u.lastLoginAt ? timeAgo(u.lastLoginAt) : <Badge bg="secondary">en attente</Badge>}</td>
+                <td className="d-none d-md-table-cell" title={new Date(u.createdAt).toLocaleString()}>{timeAgo(u.createdAt)}</td>
+                <td className="d-none d-md-table-cell">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : <Badge bg="secondary">en attente</Badge>}</td>
                 <td className="text-end">
                   <Button
                     size="sm"

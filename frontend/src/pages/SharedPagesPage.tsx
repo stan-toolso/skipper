@@ -44,14 +44,14 @@ export default function SharedPagesPage() {
         </ButtonGroup>
       </div>
       <p className="text-secondary small">Un agent publie une page quand vous le lui demandez (« publie ce rapport comme page ») ; vous pouvez aussi publier un fichier HTML depuis l'explorateur de fichiers. Une page est privée jusqu'à ce que son propriétaire la partage.</p>
-      <Table size="sm" hover>
+      <Table size="sm" hover responsive>
         <thead>
           <tr>
             <th>Titre</th>
-            <th>Propriétaire</th>
+            <th className="d-none d-md-table-cell">Propriétaire</th>
             <th>Accès</th>
-            <th>Version</th>
-            <th>Mise à jour</th>
+            <th className="d-none d-md-table-cell">Version</th>
+            <th className="d-none d-md-table-cell">Mise à jour</th>
           </tr>
         </thead>
         <tbody>
@@ -70,13 +70,13 @@ export default function SharedPagesPage() {
                   <Link to={`/shared/${p.id}`}>{p.title}</Link>
                   {p.description && <div className="small text-secondary text-truncate">{p.description}</div>}
                 </td>
-                <td>{p.owner.id === user?.id ? 'Vous' : p.owner.name}</td>
+                <td className="d-none d-md-table-cell">{p.owner.id === user?.id ? 'Vous' : p.owner.name}</td>
                 <td className="small">
                   <i className={`bi ${access.icon} me-1 text-secondary`} />
                   {access.text}
                 </td>
-                <td>v{p.version}</td>
-                <td title={new Date(p.updatedAt).toLocaleString()}>{timeAgo(p.updatedAt)}</td>
+                <td className="d-none d-md-table-cell">v{p.version}</td>
+                <td className="d-none d-md-table-cell" title={new Date(p.updatedAt).toLocaleString()}>{timeAgo(p.updatedAt)}</td>
               </tr>
             );
           })}

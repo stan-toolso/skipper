@@ -3,6 +3,7 @@ import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
 import { pubSub } from '../pubsub.js';
 import { cleanupService } from '../sessions/cleanup.js';
+import { resultError } from '../sessions/providers/claudeResult.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { scheduledRuns } from '../sessions/scheduledRuns.js';
 import { serverSettings } from '../settings/server.js';
@@ -53,7 +54,7 @@ async function summarizeRun(sessionId: string, afterEventId: string): Promise<{ 
     if (e.type === 'usage' && typeof e.payload.deltaUsd === 'number') cost += e.payload.deltaUsd;
     if (e.type === 'claude.result') {
       if (typeof e.payload.duration_ms === 'number') durationMs = (durationMs ?? 0) + e.payload.duration_ms;
-      if (e.payload.is_error) error = Array.isArray(e.payload.errors) && e.payload.errors.length ? e.payload.errors.join(' ; ') : String(e.payload.subtype ?? 'erreur');
+      error = resultError(e.payload) ?? error;
     }
     if (e.type === 'status' && e.payload.status === 'failed' && typeof e.payload.error === 'string') error = e.payload.error;
   }
@@ -91,6 +92,8 @@ export const scheduleService = {
       throw err;
     }
     const enabled = input.enabled ?? true;
+    // Le nettoyage de la conversation accompagne la planification : sans lui, le contexte grossit à chaque exécution.
+    if (input.cleanup) await cleanupService.set(sessionId, input.cleanup);
     const schedule = await scheduleRepository.upsert(sessionId, {
       cron: spec.source,
       timezone,

@@ -12,7 +12,9 @@ export interface ToolDescription {
 const str = (input: Record<string, unknown>, key: string): string | undefined => (typeof input[key] === 'string' ? (input[key] as string) : undefined);
 const baseName = (p?: string) => (p ? p.split('/').filter(Boolean).pop() ?? p : '');
 
-export function describeTool(name: string, input: Record<string, unknown> = {}): ToolDescription {
+export function describeTool(rawName: string, input: Record<string, unknown> = {}): ToolDescription {
+  // Transcripts d'avant le renommage : l'outil s'appelait `worktrees`.
+  const name = rawName.replace(/^mcp__worktrees__/, 'mcp__worksessions__');
   switch (name) {
     case 'Bash': {
       const cmd = str(input, 'command') ?? '';
@@ -89,7 +91,7 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
       if (name.startsWith('mcp__sessions__')) {
         const op = name.slice('mcp__sessions__'.length);
         const short = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
-        const target = str(input, 'new_branch') ? ` dans un nouveau worktree (${str(input, 'new_branch')})` : str(input, 'worktree') ? ` dans le worktree ${str(input, 'worktree')}` : '';
+        const target = str(input, 'new_branch') ? ` dans une nouvelle work session (${str(input, 'new_branch')})` : str(input, 'worksession') ? ` dans la work session ${str(input, 'worksession')}` : '';
         const verbs: Record<string, [string, string | undefined, string]> = {
           list: ['Consultation des sessions du projet', undefined, 'consulter les sessions du projet'],
           get: ["Consultation d'une session", undefined, 'consulter une session'],
@@ -101,20 +103,21 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
         const [label, detail, action] = verbs[op] ?? [`Sessions : ${op}`, undefined, `utiliser les sessions (${op})`];
         return { label, detail, action };
       }
-      if (name.startsWith('mcp__worktrees__')) {
-        const op = name.slice('mcp__worktrees__'.length);
+      if (name.startsWith('mcp__worksessions__')) {
+        const op = name.slice('mcp__worksessions__'.length);
         const branch = str(input, 'branch') ?? str(input, 'name') ?? '';
         const verbs: Record<string, [string, string]> = {
-          list: ['Consultation des worktrees du projet', 'consulter les worktrees'],
-          create: [`Création du worktree ${branch}`, `créer le worktree ${branch}`],
-          delete: [`Suppression du worktree ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer le worktree ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
+          list: ['Consultation des work sessions du projet', 'consulter les work sessions'],
+          create: [`Création de la work session ${branch}`, `créer la work session ${branch}`],
+          delete: [`Suppression de la work session ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer la work session ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
         };
-        const [label, action] = verbs[op] ?? [`Worktrees : ${op}`, `utiliser les worktrees (${op})`];
+        const [label, action] = verbs[op] ?? [`Work sessions : ${op}`, `utiliser les work sessions (${op})`];
         return { label, action };
       }
-      if (name.startsWith('mcp__connections__')) {
-        const op = name.slice('mcp__connections__'.length);
-        const conn = str(input, 'connection') ?? '';
+      if (name.startsWith('mcp__connections__') || name.startsWith('mcp__vault__')) {
+        const op = name.replace(/^mcp__(connections|vault)__/, '');
+        const conn = str(input, 'connection') ?? str(input, 'item') ?? '';
+        const db = str(input, 'database') ? ` (base ${str(input, 'database')})` : '';
         const cmd = str(input, 'command') ?? '';
         const sql = str(input, 'sql') ?? '';
         const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
@@ -123,10 +126,13 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
           ssh_run: [`Commande sur ${conn} (SSH)`, cmd, `exécuter sur ${conn} : ${short(cmd)}`],
           ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
-          sql_query: [`Requête SQL sur ${conn}`, sql, `exécuter sur ${conn} : ${short(sql)}`],
-          sql_schema: [`Schéma de ${conn}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}`],
+          sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],
+          sql_schema: [`Schéma de ${conn}${db}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}${db}`],
+          aws_run: [`Commande AWS sur ${conn}`, cmd ? `aws ${cmd}` : undefined, `exécuter sur ${conn} : aws ${short(cmd)}`],
+          http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${short(str(input, 'path') ?? '')}`],
+          browser_fill: [`Saisie du champ « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`, str(input, 'page'), `saisir « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`],
         };
-        const [label, detail, action] = verbs[op] ?? [`Connexions : ${op}`, undefined, `utiliser une connexion (${op})`];
+        const [label, detail, action] = verbs[op] ?? [`Coffre : ${op}`, undefined, `utiliser le coffre (${op})`];
         return { label, detail, action };
       }
       const json = JSON.stringify(input);
@@ -136,6 +142,20 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
 }
 
 /** Titre lisible d'une demande : pour une autorisation, l'action demandée ("Autorisation de lire le fichier x"). */
+/**
+ * Message d'une demande d'autorisation, sans ce que le détail de l'outil montre déjà : les outils du coffre passent la
+ * commande (ou `[base] requête`) en message, parfois suivie d'une remarque (élément personnel). On ne garde que le reste.
+ */
+export function requestNote(message: string | null | undefined, ...shown: (string | undefined)[]): string | undefined {
+  let rest = message ?? '';
+  for (const s of shown) {
+    const t = s?.trim();
+    if (t && rest.includes(t)) rest = rest.replace(t, '');
+  }
+  rest = rest.replace(/^\s*\[[^\]\n]*\]\s*$/m, '').trim();
+  return rest || undefined;
+}
+
 export function requestTitle(r: { type: string; title: string; payload: Record<string, unknown> }): string {
   const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
   if (r.type === 'permission' && p.toolName) return `Autorisation de ${describeTool(p.toolName, p.input ?? {}).action}`;
@@ -176,6 +196,15 @@ export const permissionModeLabels: Record<string, string> = {
   bypassPermissions: 'Tout est autorisé',
 };
 
+/** Libellés courts des modes d'autorisation, pour la rangée d'outils de la zone de saisie (le libellé complet reste en infobulle). */
+export const permissionModeShortLabels: Record<string, string> = {
+  default: 'Demander avant d\'agir',
+  acceptEdits: 'Modifier les fichiers',
+  plan: 'Plan seulement',
+  dontAsk: 'Ne jamais demander',
+  bypassPermissions: 'Tout autoriser',
+};
+
 /** Avertissement pour le mode « tout autoriser » : les appels aux connexions soumises à approbation passent sans demande. */
 export function bypassConnectionsWarning(connections: string[]): string | null {
   if (!connections.length) return null;
@@ -193,6 +222,12 @@ export function formatDuration(ms: number): string {
 
 export function formatCost(usd: number): string {
   return `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
+}
+
+/** Nombre de tokens en milliers (« 208 k »), ou en millions au-delà (« 1,2 M »). */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace('.', ',')} M`;
+  return `${Math.round(n / 1000)} k`;
 }
 
 export const sessionStatusLabels: Record<string, string> = {

@@ -41,7 +41,15 @@
 .wb-menu-item.active { color: var(--cc-fg); background: var(--cc-bg-hover); box-shadow: inset 2px 0 0 var(--cc-accent); }
 .wb-icon { width: 1.3em; text-align: center; color: var(--cc-dim); }
 .wb-menu-item.active .wb-icon { color: var(--cc-accent); }
-.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; }
+/* Menus principaux : une seule ligne d'icônes, le libellé en infobulle ; la page courante est soulignée. */
+.wb-menu-icons { display: flex; align-items: stretch; padding: 4px 8px; }
+.wb-menu-icons .wb-menu-item { position: relative; flex: 1 1 0; justify-content: center; padding: 6px 0; border-radius: 4px; font-size: 15px; }
+.wb-menu-icons .wb-menu-item .wb-icon { width: auto; }
+.wb-menu-icons .wb-menu-item.active { background: none; box-shadow: inset 0 -2px 0 var(--cc-accent); border-radius: 0; }
+.wb-menu-icons .wb-menu-item:hover { background: var(--cc-bg-hover); }
+.wb-menu-icons .wb-badge { position: absolute; top: 0; right: 0; margin: 0; font-size: 9.5px; line-height: 14px; padding: 0 4px; }
+/* La phrase d'état se tronque avant le nom : une ligne indentée (session lancée par un agent) garde un nom lisible. */
+.wb-state { margin-left: auto; font-size: 11px; color: var(--cc-dimmer); font-style: italic; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-row.active .wb-state, .wb-row:hover .wb-state { color: var(--cc-dim); }
 
 .wb-section-title {
@@ -69,22 +77,22 @@
 }
 .wb-row:hover { background: var(--cc-bg-hover); color: var(--cc-fg); }
 .wb-row.active { background: var(--cc-bg-hover); color: var(--cc-fg); box-shadow: inset 2px 0 0 var(--cc-accent); }
-.wb-row-label { flex: 1; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
+.wb-row-label { flex: 1; min-width: 40%; overflow: hidden; text-overflow: ellipsis; color: inherit; text-decoration: none; }
 .wb-project-row { color: var(--cc-fg); }
 .wb-session-row { padding-left: 30px; }
-.wb-worktree-row { padding-left: 22px; color: var(--cc-dim); }
-.wb-worktree-row .wb-row-label { color: var(--cc-fg); }
-.wb-worktree-row:hover .wb-row-actions, .wb-worktree-row .wb-row-actions.open { visibility: visible; }
+.wb-worksession-row { padding-left: 22px; color: var(--cc-dim); }
+.wb-worksession-row .wb-row-label { color: var(--cc-fg); }
+.wb-worksession-row:hover .wb-row-actions, .wb-worksession-row .wb-row-actions.open { visibility: visible; }
 .wb-empty { padding-left: 30px; font-style: italic; color: var(--cc-dimmer); }
 .wb-chevron { background: none; border: 0; color: var(--cc-dim); padding: 0; width: 14px; font: inherit; cursor: pointer; }
 .wb-row-actions { visibility: hidden; display: flex; gap: 6px; }
 .wb-row-actions a { color: var(--cc-dim); text-decoration: none; }
 .wb-row-actions a:hover { color: var(--cc-accent); }
-.wb-project-row:hover .wb-row-actions, .wb-session-row:hover .wb-row-actions, .wb-row-actions.open { visibility: visible; }
+.wb-project-row:hover .wb-row-actions, .wb-session-row:hover .wb-row-actions, .wb-ws-head:hover .wb-row-actions, .wb-row-actions.open { visibility: visible; }
 .wb-session-row .wb-row-actions { margin-left: 4px; }
 .wb-pop-sep { border-top: 1px solid var(--cc-border); margin: 4px 0; }
 .wb-pop-item.danger { color: var(--cc-red); }
-.wb-pop-item.danger:hover { color: #ff6b63; }
+.wb-pop-item.danger:hover { color: var(--cc-red-hover); }
 .wb-row-actions { position: relative; }
 .wb-plus { background: none; border: 0; color: var(--cc-dim); font: inherit; font-size: 15px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 3px; }
 .wb-plus:hover { color: var(--cc-fg); background: var(--cc-border); }
@@ -94,12 +102,13 @@
   top: 100%;
   z-index: 20;
   min-width: 190px;
-  background: #1c1c1c;
+  background: var(--cc-bg-popover);
   border: 1px solid var(--cc-border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px var(--cc-shadow);
   padding: 4px 0;
 }
+.wb-pop.up { top: auto; bottom: calc(100% + 2px); left: 8px; right: 8px; }
 .wb-pop-item {
   display: flex;
   align-items: center;
@@ -116,14 +125,33 @@
 }
 .wb-pop-item:hover { background: var(--cc-bg-hover); color: var(--cc-accent); }
 .wb-term-icon { color: var(--cc-dimmer); font-size: 11px; width: 14px; }
+/* Sous-agents (sessions lancées par l'agent d'une autre session, sessions.create) : robot devant le nom, connecteur └,
+   ligne « N sous-agents » repliable sous la parente, compteur sur la puce ou l'onglet de la parente. */
+.wb-robot { color: var(--cc-dimmer); font-size: 11px; flex: 0 0 auto; }
+.wb-row.active .wb-robot, .wb-row:hover .wb-robot, .wb-chip.active .wb-robot, .wb-ws-tab.active .wb-robot { color: var(--cc-dim); }
+.wb-tree { color: var(--cc-dimmer); font-size: 11px; line-height: 1; flex: 0 0 auto; margin-right: -2px; }
+.wb-subagents { color: var(--cc-dimmer); font-size: 12px; }
+.wb-subagents .wb-row-label { flex: 0 0 auto; }
+.wb-subagents .wb-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-subagents:hover, .wb-subagents.open { color: var(--cc-dim); }
+.wb-subagents-chevron { font-size: 9px; margin-left: auto; }
+.wb-chip-sub { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; padding: 0 5px; border-radius: 8px; font-size: 10px; line-height: 15px; background: var(--cc-border); color: var(--cc-dim); }
+.wb-chip-sub .bi { font-size: 10px; }
+.wb-chip-sub.busy { color: var(--cc-accent); }
+.wb-chip-sub.ask { color: var(--cc-yellow); }
+.wb-chip-sub.idle { color: var(--cc-green); }
+/* Sous-agent lancé dans un autre dossier : étiquette du dossier, qui se tronque pour laisser le nom lisible. */
+.wb-session-row .wb-tag { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-session-row .wb-tag .bi { font-size: 9px; }
 .wb-term-icon.live { color: var(--cc-green); }
 .wb-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--cc-dimmer); }
 .wb-dot.busy { background: var(--cc-accent); animation: wb-pulse 1.2s ease-in-out infinite; }
 .wb-dot.idle { background: var(--cc-green); }
-.wb-dot.done { background: #3d5a3d; }
+.wb-dot.done { background: var(--cc-dot-done); }
 .wb-dot.failed { background: var(--cc-red); }
-.wb-dot.stopped { background: #7a6a2a; }
+.wb-dot.stopped { background: var(--cc-dot-stopped); }
 @keyframes wb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.wb-ctx { color: var(--cc-yellow); font-size: 11px; flex: 0 0 auto; }
 .wb-badge {
   background: var(--cc-yellow);
   color: var(--cc-bg);
@@ -221,7 +249,7 @@
 .browser-state.error .browser-state-dot { background: var(--cc-red, var(--cc-red)); }
 .browser-urlbar {
   display: flex; align-items: center; gap: 8px; margin: 8px 14px 0; padding: 4px 10px;
-  border: 1px solid var(--cc-border); border-radius: 6px; background: #1c1c1c;
+  border: 1px solid var(--cc-border); border-radius: 6px; background: var(--cc-bg-elevated);
   font-family: var(--bs-font-monospace); font-size: 12px; color: var(--cc-dim);
 }
 .browser-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-fg); user-select: all; }
@@ -232,7 +260,7 @@
 .browser-empty { color: var(--cc-dim); font-size: 13px; text-align: center; max-width: 420px; }
 .browser-overlay {
   position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); max-width: calc(100% - 40px);
-  padding: 6px 12px; border-radius: 6px; background: rgba(20, 20, 20, 0.9); color: var(--cc-fg); font-size: 12px;
+  padding: 6px 12px; border-radius: 6px; background: var(--cc-overlay); color: var(--cc-fg); font-size: 12px;
 }
 .wb-browser-row .wb-row-label { color: var(--cc-dim); }
 .wb-browser-icon { color: var(--cc-green); font-size: 11px; width: 14px; }
@@ -243,7 +271,7 @@
 /* Menu contextuel d'un onglet */
 .wb-ctx-menu {
   position: fixed; z-index: 40; min-width: 200px; padding: 4px 0;
-  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 6px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  background: var(--cc-bg-popover); border: 1px solid var(--cc-border); border-radius: 6px; box-shadow: 0 12px 32px var(--cc-shadow);
   font-family: var(--bs-font-sans-serif); font-size: 13px;
 }
 .wb-ctx-menu button {
@@ -260,7 +288,7 @@
 .wb-tabs-count { margin-left: 4px; font-size: 11px; color: var(--cc-dimmer); }
 .wb-tabs-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 320px; max-height: 70vh; display: flex; flex-direction: column;
-  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  background: var(--cc-bg-popover); border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px var(--cc-shadow);
   font-family: var(--bs-font-sans-serif); font-size: 13px;
 }
 .wb-tabs-menu-list { overflow-y: auto; padding: 4px 0; }
@@ -290,7 +318,7 @@
 @keyframes wb-ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(18deg); } 40% { transform: rotate(-14deg); } 60% { transform: rotate(8deg); } 80% { transform: rotate(-4deg); } }
 .wb-notif-panel {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 380px; max-height: 70vh; display: flex; flex-direction: column;
-  background: #1c1c1c; border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.55);
+  background: var(--cc-bg-popover); border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: 0 12px 32px var(--cc-shadow);
   font-family: var(--bs-font-sans-serif); font-size: 13px;
 }
 .wb-notif-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--cc-border); font-weight: 600; }
@@ -312,18 +340,18 @@
 .wb-notif-foot button { background: none; border: 1px solid var(--cc-border); border-radius: 4px; color: var(--cc-dim); font: inherit; font-size: 12px; padding: 2px 8px; cursor: pointer; }
 .wb-notif-foot button:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
 
-/* Menu du bas de la sidebar (Paramètres). */
-.wb-menu.wb-menu-bottom { border-bottom: 0; border-top: 1px solid var(--cc-border); }
-
-/* Utilisateur connecté, en bas de la sidebar. */
-.wb-user { display: flex; align-items: center; gap: 8px; padding: 6px 14px; color: var(--cc-dim); }
-.wb-user:hover { color: var(--cc-fg); }
+/* Bas de la sidebar : le bloc utilisateur, dont le clic ouvre le menu du compte. */
+.wb-menu.wb-menu-bottom { border-bottom: 0; border-top: 1px solid var(--cc-border); padding: 4px 0; }
+.wb-user-wrap { position: relative; }
+.wb-user { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 14px; color: var(--cc-dim); background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.wb-user:hover, .wb-user-wrap.open .wb-user { color: var(--cc-fg); background: var(--cc-bg-hover); }
 .wb-avatar { width: 24px; height: 24px; border-radius: 50%; flex: 0 0 24px; object-fit: cover; }
 .wb-avatar-initials { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; background: var(--cc-accent); color: #fff; }
-.wb-user-name { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wb-user-email { font-size: 10.5px; color: var(--cc-dimmer); overflow: hidden; text-overflow: ellipsis; }
-.wb-user .wb-plus { opacity: 0.7; }
-.wb-user:hover .wb-plus { opacity: 1; }
+.wb-user-name { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
+.wb-user-label, .wb-user-email { overflow: hidden; text-overflow: ellipsis; }
+.wb-user-email { font-size: 10.5px; color: var(--cc-dimmer); }
+.wb-user-chevron { font-size: 10px; color: var(--cc-dimmer); }
+.wb-user:hover .wb-user-chevron, .wb-user-wrap.open .wb-user-chevron { color: var(--cc-dim); }
 
 /* Explorateur de fichiers */
 .fx-page { display: flex; flex-direction: column; height: 100%; }
@@ -344,7 +372,7 @@
 .fx-chevron { width: 12px; font-size: 10px; color: var(--cc-dim); flex: 0 0 12px; }
 .fx-icon { color: var(--cc-dim); width: 1.2em; text-align: center; }
 .fx-dir .fx-icon { color: var(--cc-yellow); }
-.fx-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.fx-name { flex: 1; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
 .fx-size { color: var(--cc-dimmer); font-size: 11px; }
 .fx-actions { display: none; gap: 2px; margin-left: 8px; }
 .fx-row:hover .fx-actions { display: inline-flex; }
@@ -420,8 +448,8 @@
 /* Diff unifié */
 .diff-view { margin: 0; padding: 8px 0; font-size: 12px; line-height: 1.45; background: var(--cc-bg); color: var(--cc-fg); white-space: pre; overflow-x: auto; }
 .diff-line { padding: 0 12px; }
-.diff-add { background: rgba(92, 184, 92, 0.15); color: #9be09b; }
-.diff-del { background: rgba(229, 83, 75, 0.15); color: #f29a95; }
+.diff-add { background: rgba(92, 184, 92, 0.15); color: var(--cc-diff-add-fg); }
+.diff-del { background: rgba(229, 83, 75, 0.15); color: var(--cc-diff-del-fg); }
 .diff-hunk { color: var(--cc-blue); background: rgba(111, 168, 220, 0.08); margin-top: 6px; }
 .diff-file { color: var(--cc-dim); font-weight: 600; }
 .diff-meta { color: var(--cc-dimmer); }
@@ -439,6 +467,7 @@
 @media (hover: none) {
   .wb-menu-item { padding: 9px 14px; }
   .wb-row { padding-top: 7px; padding-bottom: 7px; }
+  .wb-row-actions { visibility: visible; }
   .wb-tab-close { color: var(--cc-dim); }
   .fx-row { padding-top: 7px; padding-bottom: 7px; }
   .fx-actions { display: inline-flex; }
@@ -469,8 +498,22 @@
   .fx-header { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
   .fx-header-actions .btn { flex: 1; }
   .fe-header { flex-wrap: wrap; padding: 6px 10px; }
-  .fe-meta { margin-left: auto; }
+  /* Barre d'actions de l'éditeur sur sa propre ligne, boutons qui passent à la ligne au lieu d'être coupés à droite. */
+  .fe-meta { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: 0; }
   .fe-meta .fx-muted { display: none; }
+  .fx-header-actions .btn { white-space: nowrap; }
+  /* Tableaux « contenu + actions » (worksessions, membres, règles, comptes…) : chaque ligne devient un bloc et les
+     actions passent sous le contenu plutôt que d'être repoussées hors de l'écran. */
+  .table-stack thead { display: none; }
+  .table-stack tr { display: block; padding: 6px 0; border-bottom: 1px solid var(--cc-border); }
+  .table-stack tr:last-child { border-bottom: 0; }
+  .table-stack td { display: block; width: auto !important; max-width: none !important; border: 0; padding: 2px 0; }
+  .table-stack td:empty { display: none; }
+  .table-stack td.text-end { text-align: left !important; }
+  .table-stack td.text-nowrap { white-space: normal !important; }
+  .table-stack td .btn { margin-bottom: 4px; }
+  /* Sélecteurs et champs à largeur fixe : jamais plus larges que l'écran. */
+  .wb-content .form-select, .wb-content .form-control { max-width: 100%; }
 }
 @media (max-width: 767.98px) {
   /* En-têtes de page (titre à gauche, actions à droite) : passent à la ligne au lieu de déborder. */
@@ -491,8 +534,6 @@
 /* Zones sûres iOS en plein écran (encoche, barre d'accueil). */
 .wb { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; background: var(--cc-sidebar-bg); }
 .wb-sidebar { padding-top: env(safe-area-inset-top); }
-.wb-install { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
-.wb-install-hint { padding: 4px 14px 8px 36px; font-size: 12px; color: var(--cc-dimmer); }
 
 /* =============================================================================================
    Navigation par dossier de travail (sidebar), sous-barre d'onglets, palette, bandeaux
@@ -512,7 +553,7 @@
 .wb-filter { background: none; border: 0; font: inherit; font-size: 11px; text-transform: none; letter-spacing: 0; cursor: pointer; }
 .wb-filter.active { color: var(--cc-accent); }
 
-/* ---- Dossiers de travail (projet principal, worktrees) --------------------------------------- */
+/* ---- Dossiers de travail (projet principal, worksessions) --------------------------------------- */
 .wb-project { margin-bottom: 2px; }
 .wb-ws { margin: 2px 8px 4px 10px; border: 1px solid transparent; border-radius: 6px; }
 .wb-ws.active { border-color: var(--cc-border); background: var(--cc-bg-elevated); }
@@ -530,6 +571,8 @@
 .wb-tag.missing { color: var(--cc-yellow); border-color: var(--cc-yellow); }
 .wb-ws-items { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 6px 6px 21px; }
 .wb-ws-empty { font-size: 11px; color: var(--cc-dimmer); font-style: italic; }
+.wb-empty-link { color: var(--cc-dim); text-decoration: none; }
+.wb-empty-link:hover { color: var(--cc-fg); text-decoration: underline; }
 .wb-ws-chevron { margin-left: auto; }
 .wb-ws-rows { padding-bottom: 4px; }
 .wb-row-btn { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
@@ -541,7 +584,7 @@
 .wb-chip:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
 .wb-chip.active { color: var(--cc-fg); border-color: var(--cc-accent); box-shadow: inset 0 0 0 1px var(--cc-accent); }
 .wb-chip .wb-dot { flex: 0 0 auto; }
-.wb-chip > span:not(.wb-dot):not(.wb-owner):not(.wb-badge) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-chip-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-chip-more { background: none; font: inherit; font-size: 11px; }
 .wb-owner {
   display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; flex: 0 0 16px;
@@ -614,6 +657,12 @@
 .git-collapsed-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 8px; height: 100%; }
 .git-collapsed-rail .bi { font-size: 14px; }
 .git-collapsed-rail .git-count { margin: 0; }
+/* Mobile : pas de bande repliée à droite du contenu ; un bouton de la barre du haut ouvre le panneau. */
+.wb-git-btn { display: none; }
+@media (max-width: 767.98px) {
+  .git-collapsed-rail { display: none; }
+  .wb-git-btn { display: inline-flex; }
+}
 
 /* ---- Tâches : badges, panneau latéral, commentaires, tableau de bord ------------------------- */
 .task-status { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; white-space: nowrap; }
@@ -622,6 +671,15 @@
 .task-status-blocked { color: var(--cc-red); border-color: var(--cc-red); }
 .task-status-done { color: var(--cc-green); border-color: var(--cc-green); }
 .task-status-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
+.task-status { max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.task-status-tag { font-weight: 500; margin-left: 0.45em; padding-left: 0.45em; border-left: 1px solid currentColor; opacity: 0.85; }
+.task-tags { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; vertical-align: middle; }
+.task-tag {
+  display: inline-block; padding: 0.05em 0.5em; border-radius: 4px; font-size: 11px; line-height: 1.4; white-space: nowrap; font-family: inherit;
+  color: var(--cc-fg); background: color-mix(in srgb, var(--cc-accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--cc-accent) 22%, transparent);
+}
+button.task-tag { cursor: pointer; }
+button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, transparent); }
 .task-priority { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; }
 .task-priority-low { color: var(--cc-dimmer); }
 .task-priority-medium { color: var(--cc-dim); }
@@ -647,7 +705,7 @@
 .task-comment:hover .task-comment-actions { display: inline-flex; }
 .task-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* ---- Worktrees : état de la PR, dossier absent ----------------------------------------------- */
+/* ---- Worksessions : état de la PR, dossier absent ----------------------------------------------- */
 .wt-pr-open { color: var(--cc-green); }
 .wt-pr-draft { color: var(--cc-dim); }
 .wt-pr-merged { color: var(--cc-purple); }
@@ -678,15 +736,27 @@
 .preview-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
 @media (max-width: 767.98px) {
   .fx-tree-toggle { display: inline-block; }
+  /* Sans fichier ouvert, l'arborescence prend toute la largeur (le panneau « Choisissez un fichier » est masqué) ;
+     sinon on voit soit le fichier, soit l'arborescence (bouton ≡ de l'en-tête). */
+  .fx-page:not(.has-file) .fx-main { display: none; }
   .fx-page.has-file:not(.show-tree) .fx-split .fx-tree { display: none; }
   .fx-page.has-file.show-tree .fx-main { display: none; }
   .fx-split .fx-tree { flex: 1; width: auto; border-right: 0; }
+  .fx-actions { margin-left: 4px; }
+  .fx-actions button { padding: 0 5px; }
 }
 
 /* ---- Coffre ----------------------------------------------------------------------------------- */
 .vault-row { cursor: pointer; }
 .vault-row.open td { border-bottom-color: transparent; }
-.vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); }
+/* Une ligne par élément : rien ne passe à la ligne, nom + description et cible sont tronqués (texte complet au survol). */
+.vault-row td { white-space: nowrap; }
+.vault-cell-name { display: flex; align-items: center; gap: 6px; max-width: 360px; }
+/* Le nom se tronque lui aussi (sinon un nom long déborde sur les colonnes suivantes, surtout sur mobile). */
+.vault-cell-name > strong { min-width: 40%; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.vault-cell-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vault-cell-target { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); white-space: normal; }
 .vault-item-details { padding: 6px 4px 10px; }
 .vault-details { line-height: 1.6; }
 .vault-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
@@ -705,13 +775,82 @@
 .vault-field-actions button:disabled { opacity: 0.3; cursor: default; }
 @media (max-width: 767.98px) {
   .vault-field-row { grid-template-columns: 1fr 1fr; }
-  .vault-table .small.font-monospace { max-width: 160px; }
+  .vault-cell-name { max-width: 200px; }
+  .vault-cell-name > strong { min-width: 0; }
+  .vault-cell-desc { display: none; } /* la fiche dépliée la montre en entier */
+  .vault-cell-target { max-width: 160px; }
+  /* Liste des tâches : le nom du projet ne s'éclate pas mot par mot sur une colonne étroite. */
+  .task-cell-project { max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 
-/* ---- Petits écrans en hauteur : menu de la sidebar en grille d'icônes ------------------------ */
-@media (max-height: 640px) and (min-width: 768px) {
-  .wb-menu { display: grid; grid-template-columns: repeat(4, 1fr); padding: 4px 8px; }
-  .wb-menu-item { flex-direction: column; gap: 2px; padding: 4px 2px; font-size: 10px; }
-  .wb-menu-item .wb-icon { width: auto; font-size: 15px; }
-  .wb-menu-item .wb-state { display: none; }
+/* ---- Mobile : en-tête de la sidebar plus compact, icônes du menu plus grandes ------------------ */
+@media (max-width: 767.98px) {
+  .wb-brand { padding: 8px 12px; }
+  .wb-search-btn { margin: 6px 10px 2px; padding: 4px 10px; }
+  .wb-search-btn kbd { display: none; }
+  .wb-menu-icons .wb-menu-item { padding: 8px 0; font-size: 17px; }
+}
+
+/* ---- En-tête des pages d'un projet : barre d'onglets (aperçu, tâches, contexte, coffre…) ------- */
+.project-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.project-tabs::-webkit-scrollbar { display: none; }
+.project-tabs .nav-link { white-space: nowrap; color: var(--cc-dim); padding: 0.45rem 0.7rem; font-size: 0.9rem; }
+.project-tabs .nav-link:hover { color: var(--cc-fg); }
+.project-tabs .nav-link.active { color: var(--cc-fg); font-weight: 500; }
+@media (max-width: 767.98px) {
+  .project-tabs { margin-left: -12px; margin-right: -12px; padding: 0 12px; }
+  .project-tabs .nav-link { padding: 6px 10px; }
+}
+
+/* ---- Vue liste des tâches (components/TaskGrid.tsx) : une tâche par ligne, colonnes réglables ----------------- */
+.task-grid-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.task-grid { overflow: auto; max-height: calc(100vh - 230px); border: 1px solid var(--cc-border); border-radius: 6px; }
+.task-grid-table { table-layout: fixed; width: 100%; margin-bottom: 0; }
+.task-grid-table th, .task-grid-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.task-grid-table thead th { position: sticky; top: 0; z-index: 2; background: var(--cc-bg-elevated); }
+.task-grid-table thead tr.task-grid-filters th { top: 31px; padding: 3px 4px 6px; border-bottom: 1px solid var(--cc-border); }
+/* overflow visible : la poignée de redimensionnement chevauche le filet entre deux colonnes (le libellé, lui, se tronque dans .task-grid-sort). */
+.task-grid-th { position: relative; padding: 0; user-select: none; overflow: visible; }
+.task-grid-th.task-grid-dragging { opacity: 0.45; }
+.task-grid-th.task-grid-drop::before { content: ""; position: absolute; left: -1px; top: 4px; bottom: 4px; width: 2px; background: var(--cc-accent); z-index: 3; }
+.task-grid-sort, .task-grid-th > .task-grid-label {
+  display: flex; align-items: center; gap: 3px; width: 100%; padding: 6px 10px 6px 8px; min-height: 31px;
+  background: none; border: 0; color: var(--cc-dim); font: inherit; font-weight: 500; text-align: left; cursor: pointer; overflow: hidden;
+}
+.task-grid-th > .task-grid-label { cursor: default; }
+.task-grid-th.text-end .task-grid-sort { justify-content: flex-end; }
+.task-grid-sort:hover { color: var(--cc-fg); }
+.task-grid-sort .task-grid-label { overflow: hidden; text-overflow: ellipsis; }
+.task-grid-caret { font-size: 9px; opacity: 0; transition: opacity .15s; flex: none; }
+.task-grid-sort:hover .task-grid-caret { opacity: 0.5; }
+.task-grid-caret.on { opacity: 1; color: var(--cc-accent); }
+/* Poignée entièrement dans sa cellule : chaque th figé a son propre contexte d'empilement, le suivant couvrirait ce qui dépasse. */
+.task-grid-resizer { position: absolute; top: 0; bottom: 0; right: 0; width: 9px; cursor: col-resize; touch-action: none; z-index: 3; }
+.task-grid-resizer::after { content: ""; position: absolute; top: 6px; bottom: 6px; right: 0; width: 1px; background: var(--cc-border); transition: background .15s, width .15s; }
+.task-grid-resizer:hover::after, .task-grid-resizer.dragging::after { background: var(--cc-accent); width: 2px; }
+.task-grid-filter.form-control, .task-grid-filter.form-select { font-size: 12px; padding: 2px 6px; height: 26px; min-height: 0; }
+.task-grid-filter.form-select { padding-right: 24px; background-position: right 4px center; }
+.task-grid-filter.on { border-color: var(--cc-accent); }
+.task-grid-filter::placeholder { color: var(--cc-dimmer); }
+.task-grid-cell { height: 40px; padding: 0 8px; }
+.task-grid-cell .task-tags { flex-wrap: nowrap; max-width: 100%; overflow: hidden; }
+.task-grid-cell .task-status { max-width: 100%; }
+.task-grid-cell > a { display: inline; }
+.task-grid-actions { overflow: visible; }
+.task-actions-compact { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Première colonne figée au défilement horizontal (titre, d'ordinaire). */
+.task-grid-table th:first-child, .task-grid-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--cc-bg); }
+.task-grid-table thead th:first-child { z-index: 4; background: var(--cc-bg-elevated); }
+.task-grid-table tbody tr:hover td:first-child { background: var(--cc-bg-hover); }
+.task-grid-chooser { right: 0; top: calc(100% + 4px); min-width: 230px; padding: 6px 0; }
+.task-grid-chooser-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 12px 6px; font-weight: 600; border-bottom: 1px solid var(--cc-border); margin-bottom: 4px; }
+.task-grid-chooser-row { display: flex; align-items: center; gap: 2px; padding: 2px 12px; }
+.task-grid-chooser-row:hover { background: var(--cc-bg-hover); }
+.task-grid-chooser-row .form-check { min-width: 0; }
+.task-grid-chooser-row .form-check-label { white-space: nowrap; }
+.task-grid-chooser-foot { padding: 6px 12px 2px; color: var(--cc-dimmer); font-size: 11px; border-top: 1px solid var(--cc-border); margin-top: 4px; }
+@media (max-width: 767.98px) {
+  .task-grid { max-height: none; }
+  /* La première colonne (figée) laisse de la place aux suivantes : 180 px au plus, quelle que soit la largeur réglée. */
+  .task-grid-table col:first-child { width: 180px !important; }
 }

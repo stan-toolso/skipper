@@ -1,19 +1,22 @@
 import { useQuery } from '@apollo/client';
 import PageLoading from '../components/PageLoading';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { PROJECT, PROJECTS, TASKS, TASK_LAUNCH_TARGETS, type Project, type Task, type TaskPerson, type TaskPriority, type TaskStatus } from '../graphql/operations';
-import { TASK_PEOPLE } from '../graphql/tasks';
+import { TASK_PEOPLE, TASK_TAGS } from '../graphql/tasks';
 import { taskPriorityLabels } from '../lib/humanize';
-import { timeAgo } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskActions from '../components/TaskActions';
-import { formatPerson, isOverdue, PersonChip, TaskPriorityBadge, TaskStatusBadge } from '../components/TaskBadges';
+import TaskDashboard from '../components/TaskDashboard';
+import TaskGrid from '../components/TaskGrid';
+import type { TaskColumnKey, TaskFilters } from '../lib/taskTable';
+import { isOverdue, PersonChip, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskModal from '../components/TaskModal';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 
@@ -24,8 +27,7 @@ const columns: { status: TaskStatus; label: string; hint: string }[] = [
 ];
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 const VIEW_KEY = 'skipper.tasks.view';
-type View = 'board' | 'table';
-type SortKey = 'title' | 'project' | 'status' | 'priority' | 'assignee' | 'reporter' | 'dueDate' | 'comments' | 'createdAt' | 'updatedAt';
+type View = 'board' | 'table' | 'dashboard';
 
 function useDebounced(value: string, ms: number): string {
   const [v, setV] = useState(value);
@@ -36,7 +38,7 @@ function useDebounced(value: string, ms: number): string {
   return v;
 }
 
-function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProject: boolean; onEdit: () => void; target?: LaunchTarget }) {
+function TaskCard({ task, showProject, onEdit, target, onTag }: { task: Task; showProject: boolean; onEdit: () => void; target?: LaunchTarget; onTag: (tag: string) => void }) {
   const overdue = isOverdue(task);
   return (
     <Card className="mb-2 task-card">
@@ -47,6 +49,12 @@ function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProje
           </Link>
           <TaskPriorityBadge priority={task.priority} />
         </div>
+        {(task.statusTag || task.tags.length > 0) && (
+          <div className="mt-1 d-flex flex-wrap gap-1 align-items-center">
+            {task.statusTag && <TaskStatusBadge status={task.status} statusTag={task.statusTag} />}
+            <TaskTags tags={task.tags} onSelect={onTag} />
+          </div>
+        )}
         {task.description && (
           <div className="small text-secondary mt-1" style={{ whiteSpace: 'pre-wrap', maxHeight: 72, overflow: 'hidden' }}>
             {task.description}
@@ -66,15 +74,15 @@ function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProje
               {task.session.status === 'RUNNING' && (task.session.activity === 'BUSY' ? ' · travaille' : ' · attend')}
             </Link>
           )}
-          {task.session?.worktree ? (
-            <Link to={`/worktrees/${task.session.worktree.id}/files`} title="Worktree dédié à cette tâche">
-              <i className="bi bi-diagram-2 me-1" />
-              {task.session.worktree.label}
+          {task.worksession && !task.worksession.archivedAt ? (
+            <Link to={`/worksessions/${task.worksession.id}/files`} title="Work session de la tâche : ses sessions y travaillent toutes">
+              <i className="bi bi-layers me-1" />
+              {task.worksession.label}
             </Link>
           ) : (
             task.branch && (
-              <span className="font-monospace" title="Branche de la tâche (worktree supprimé)">
-                <i className="bi bi-diagram-2 me-1" />
+              <span className="font-monospace" title="Branche de la tâche (work session supprimée)">
+                <i className="bi bi-layers me-1" />
                 {task.branch}
               </span>
             )
@@ -100,119 +108,10 @@ function TaskCard({ task, showProject, onEdit, target }: { task: Task; showProje
   );
 }
 
-function sortValue(t: Task, key: SortKey): string | number {
-  switch (key) {
-    case 'title':
-      return t.title.toLowerCase();
-    case 'project':
-      return t.project.name.toLowerCase();
-    case 'status':
-      return ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'].indexOf(t.status);
-    case 'priority':
-      return priorities.indexOf(t.priority);
-    case 'assignee':
-      return formatPerson(t.assignee).toLowerCase() || '￿';
-    case 'reporter':
-      return formatPerson(t.reporter).toLowerCase() || '￿';
-    case 'dueDate':
-      return t.dueDate ?? '9999';
-    case 'comments':
-      return -t.commentCount;
-    case 'createdAt':
-      return -new Date(t.createdAt).getTime();
-    case 'updatedAt':
-      return -new Date(t.updatedAt).getTime();
-  }
-}
-
-function TaskTable({ tasks, showProject, onEdit, targets }: { tasks: Task[]; showProject: boolean; onEdit: (t: Task) => void; targets: Map<string, LaunchTarget> }) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'createdAt', dir: 'asc' });
-  const sorted = useMemo(() => {
-    const list = [...tasks];
-    list.sort((a, b) => {
-      const va = sortValue(a, sort.key);
-      const vb = sortValue(b, sort.key);
-      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-      return sort.dir === 'asc' ? cmp : -cmp;
-    });
-    return list;
-  }, [tasks, sort]);
-  const header = (key: SortKey, label: string, cls = '') => (
-    <th className={cls} role="button" aria-sort={sort.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} onClick={() => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))}>
-      {label}
-      {sort.key === key && <i className={`bi bi-caret-${sort.dir === 'asc' ? 'down' : 'up'}-fill ms-1 small`} />}
-    </th>
-  );
-  return (
-    <Table hover size="sm" className="task-table">
-      <thead>
-        <tr>
-          {header('title', 'Titre')}
-          {showProject && header('project', 'Projet')}
-          {header('status', 'Statut')}
-          {header('priority', 'Priorité')}
-          {header('assignee', 'Responsable')}
-          {header('reporter', 'Rapporteur')}
-          {header('dueDate', 'Échéance')}
-          {header('comments', 'Comm.', 'text-end')}
-          {header('createdAt', 'Créée')}
-          {header('updatedAt', 'Mise à jour')}
-          <th />
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((t) => (
-          <tr key={t.id}>
-            <td>
-              <Link to={`/tasks/${t.id}`} className="fw-semibold text-reset text-decoration-none">
-                {t.title}
-              </Link>
-              {t.session && (
-                <Link to={`/sessions/${t.session.id}`} className="ms-2 text-secondary" title={t.session.name}>
-                  <i className="bi bi-chat-dots" />
-                </Link>
-              )}
-              {t.pullRequest && (
-                <span className="ms-2">
-                  <PullRequestChip projectId={t.project.id} pr={t.pullRequest} />
-                </span>
-              )}
-            </td>
-            {showProject && (
-              <td>
-                <Link to={`/projects/${t.project.id}/tasks`}>{t.project.name}</Link>
-              </td>
-            )}
-            <td>
-              <TaskStatusBadge status={t.status} />
-            </td>
-            <td>
-              <TaskPriorityBadge priority={t.priority} />
-            </td>
-            <td title={formatPerson(t.assignee)}>{t.assignee?.name ?? t.assignee?.email ?? ''}</td>
-            <td title={formatPerson(t.reporter)}>{t.reporter?.name ?? t.reporter?.email ?? ''}</td>
-            <td className={isOverdue(t) ? 'text-danger' : ''}>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : ''}</td>
-            <td className="text-end">{t.commentCount || ''}</td>
-            <td title={new Date(t.createdAt).toLocaleString()}>{timeAgo(t.createdAt)}</td>
-            <td title={new Date(t.updatedAt).toLocaleString()}>{timeAgo(t.updatedAt)}</td>
-            <td style={{ minWidth: 260 }}>
-              <TaskActions task={t} target={targets.get(t.project.id)} onEdit={() => onEdit(t)} />
-            </td>
-          </tr>
-        ))}
-        {sorted.length === 0 && (
-          <tr>
-            <td colSpan={11} className="text-secondary fst-italic">
-              Aucune tâche ne correspond.
-            </td>
-          </tr>
-        )}
-      </tbody>
-    </Table>
-  );
-}
-
-/** Tâches : d'un projet (/projects/:id/tasks) ou de tous les projets (/tasks), en tableau ou en liste. */
+/**
+ * Tâches : d'un projet (/projects/:id/tasks) ou de tous les projets (/tasks), en liste (TaskGrid : colonnes réglables,
+ * filtres par colonne côté client) ou en kanban (filtres de la barre d'outils, côté serveur).
+ */
 export default function TasksPage() {
   const { id: routeProjectId } = useParams();
   const { user } = useAuth();
@@ -224,11 +123,16 @@ export default function TasksPage() {
   const [assignee, setAssignee] = useState('');
   const [reporter, setReporter] = useState('');
   const [mine, setMine] = useState(false);
+  const [tag, setTag] = useState('');
+  // Vue liste : filtres par colonne, appliqués côté client sur les tâches chargées (le projet, lui, filtre la requête).
+  const [filters, setFilters] = useState<TaskFilters>({});
   const [view, setView] = useState<View>(() => {
     try {
-      return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'board';
+      // Le tableau (liste) est la vue par défaut ; le kanban et le pilotage restent au choix.
+      const v = localStorage.getItem(VIEW_KEY);
+      return v === 'board' || v === 'dashboard' ? v : 'table';
     } catch {
-      return 'board';
+      return 'table';
     }
   });
   const setViewPersist = (v: View) => {
@@ -242,21 +146,29 @@ export default function TasksPage() {
   const [editing, setEditing] = useState<Task | null | 'new'>(null);
   const assigneeQ = useDebounced(assignee, 300);
   const reporterQ = useDebounced(reporter, 300);
+  const tagQ = useDebounced(tag, 300);
 
   const { data: projectData } = useQuery<{ project: Project | null }>(PROJECT, { variables: { id: routeProjectId }, skip: !routeProjectId });
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS, { variables: { all: Boolean(user?.isSuperAdmin) } });
   const { data: targetsData } = usePollingQuery<{ projects: LaunchTarget[] }>(TASK_LAUNCH_TARGETS, { pollInterval: 10_000 });
   const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId: projectId || null } });
+  const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId: projectId || null } });
   const targets = useMemo(() => new Map((targetsData?.projects ?? []).map((p) => [p.id, p])), [targetsData]);
-  const statuses: TaskStatus[] = mine ? ['TODO', 'IN_PROGRESS'] : showCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : ['TODO', 'IN_PROGRESS', 'DONE'];
+  const table = view === 'table';
+  const dashboard = view === 'dashboard';
+  const withCancelled = showCancelled || (table && filters.status === 'CANCELLED');
+  // Le pilotage a besoin de tout (terminées et annulées comprises, « mes tâches » aussi) pour mesurer débit et délais.
+  const statuses: TaskStatus[] = dashboard || withCancelled ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED'] : mine ? ['TODO', 'IN_PROGRESS'] : ['TODO', 'IN_PROGRESS', 'DONE'];
   const { data, loading, error } = usePollingQuery<{ tasks: Task[] }>(TASKS, {
-    variables: { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, mine },
+    variables: table
+      ? { projectId: projectId || null, status: statuses, priority: null, assignee: null, reporter: null, tag: null, mine, limit: null }
+      : { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine, limit: dashboard ? 1000 : null },
     pollInterval: 3000,
   });
 
   const project = projectData?.project;
   useTabTitle(routeProjectId ? (project ? `Tâches · ${project.name}` : null) : 'Tâches');
-  useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worktreeId: null, label: project.name } : null);
+  useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worksessionId: null, label: project.name } : null);
   const tasks = data?.tasks ?? [];
 
   // Lien profond ?task=<id> : ouvre la tâche en édition (en levant les filtres qui la cacheraient).
@@ -268,9 +180,11 @@ export default function TasksPage() {
       setEditing(found);
       searchParams.delete('task');
       setSearchParams(searchParams, { replace: true });
-    } else if (!showCancelled || mine || assignee || reporter || priority) {
+    } else if (!showCancelled || mine || assignee || reporter || priority || tag || Object.values(filters).some(Boolean)) {
       setShowCancelled(true);
       setMine(false);
+      setTag('');
+      setFilters({});
       setAssignee('');
       setReporter('');
       setPriority('');
@@ -285,22 +199,25 @@ export default function TasksPage() {
   }, [tasks]);
   const cols = (mine ? columns.filter((c) => c.status !== 'DONE') : columns).concat(showCancelled && !mine ? [{ status: 'CANCELLED' as TaskStatus, label: 'Annulées', hint: '' }] : []);
   const newTaskProjectId = projectId || projectsData?.projects.find((p) => p.myRole !== 'VIEWER')?.id || '';
-  const showProject = !routeProjectId && !projectId;
+  const showProject = !routeProjectId;
   const people = peopleData?.taskPeople ?? [];
+  const setFilter = (key: TaskColumnKey, value: string) => {
+    if (key === 'project') setProjectId(value);
+    else setFilters((f) => ({ ...f, [key]: value }));
+  };
+  const clearFilters = () => {
+    setFilters({});
+    if (!routeProjectId) setProjectId('');
+  };
+  const onTag = (t: string) => (table ? setFilters((f) => ({ ...f, tags: t })) : setTag(t));
 
   return (
     <>
+      {routeProjectId && project && <ProjectHeader project={project} active="tasks" />}
       <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
-        <div>
-          {routeProjectId && project && (
-            <Link to={`/projects/${project.id}`} className="small">
-              ← {project.name}
-            </Link>
-          )}
-          <h1 className="h3 mb-0">Tâches</h1>
-        </div>
-        <div className="d-flex gap-2 align-items-center flex-wrap">
-          {!routeProjectId && (
+        {!(routeProjectId && project) && <h1 className="h3 mb-0">Tâches</h1>}
+        <div className="d-flex gap-2 align-items-center flex-wrap ms-auto">
+          {!routeProjectId && !table && (
             <Form.Select size="sm" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ width: 'auto' }}>
               <option value="">Tous les projets</option>
               {(projectsData?.projects ?? []).map((p) => (
@@ -311,29 +228,42 @@ export default function TasksPage() {
               ))}
             </Form.Select>
           )}
-          <Form.Select size="sm" value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority | '')} style={{ width: 'auto' }}>
-            <option value="">Toutes priorités</option>
-            {priorities.map((p) => (
-              <option key={p} value={p}>
-                {taskPriorityLabels[p].label}
-              </option>
-            ))}
-          </Form.Select>
-          <Form.Control size="sm" placeholder="Responsable" list="task-people" value={assignee} disabled={mine} onChange={(e) => setAssignee(e.target.value)} style={{ width: 150 }} />
-          <Form.Control size="sm" placeholder="Rapporteur" list="task-people" value={reporter} onChange={(e) => setReporter(e.target.value)} style={{ width: 150 }} />
-          <datalist id="task-people">
-            {people.flatMap((p) => [p.name, p.email]).filter((v): v is string => Boolean(v)).map((v) => <option key={v} value={v} />)}
-          </datalist>
+          {!table && (
+            <>
+              <Form.Select size="sm" value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority | '')} style={{ width: 'auto' }}>
+                <option value="">Toutes priorités</option>
+                {priorities.map((p) => (
+                  <option key={p} value={p}>
+                    {taskPriorityLabels[p].label}
+                  </option>
+                ))}
+              </Form.Select>
+              <Form.Control size="sm" placeholder="Responsable" list="task-people" value={assignee} disabled={mine} onChange={(e) => setAssignee(e.target.value)} style={{ width: 150 }} />
+              <Form.Control size="sm" placeholder="Rapporteur" list="task-people" value={reporter} onChange={(e) => setReporter(e.target.value)} style={{ width: 150 }} />
+              <Form.Control size="sm" placeholder="Étiquette" list="task-tags" value={tag} onChange={(e) => setTag(e.target.value)} style={{ width: 130 }} title="Tâches portant cette étiquette" />
+              <datalist id="task-tags">
+                {(tagsData?.taskTags ?? []).map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <datalist id="task-people">
+                {people.flatMap((p) => [p.name, p.email]).filter((v): v is string => Boolean(v)).map((v) => <option key={v} value={v} />)}
+              </datalist>
+            </>
+          )}
           <Button size="sm" variant={mine ? 'primary' : 'outline-primary'} disabled={!user} title="Tâches dont je suis responsable et qui ne sont pas terminées" onClick={() => setMine((v) => !v)}>
             <i className="bi bi-person-check me-1" /> Mes tâches ouvertes
           </Button>
-          <Form.Check type="switch" id="showCancelled" label="Voir les annulées" className="small" checked={showCancelled} disabled={mine} onChange={(e) => setShowCancelled(e.target.checked)} />
+          {!dashboard && <Form.Check type="switch" id="showCancelled" label="Voir les annulées" className="small" checked={showCancelled} disabled={mine} onChange={(e) => setShowCancelled(e.target.checked)} />}
           <ButtonGroup size="sm">
-            <Button variant={view === 'board' ? 'secondary' : 'outline-secondary'} title="Tableau" onClick={() => setViewPersist('board')}>
-              <i className="bi bi-kanban" />
-            </Button>
             <Button variant={view === 'table' ? 'secondary' : 'outline-secondary'} title="Liste" onClick={() => setViewPersist('table')}>
               <i className="bi bi-list-ul" />
+            </Button>
+            <Button variant={view === 'board' ? 'secondary' : 'outline-secondary'} title="Kanban" onClick={() => setViewPersist('board')}>
+              <i className="bi bi-kanban" />
+            </Button>
+            <Button variant={dashboard ? 'secondary' : 'outline-secondary'} title="Pilotage : indicateurs, avancement, prévision" onClick={() => setViewPersist('dashboard')}>
+              <i className="bi bi-speedometer2" />
             </Button>
           </ButtonGroup>
           <Button size="sm" disabled={!newTaskProjectId} onClick={() => setEditing('new')}>
@@ -342,14 +272,28 @@ export default function TasksPage() {
         </div>
       </div>
       <p className="text-secondary small">
-        Les agents voient ces tâches, peuvent en créer, les commenter et les mettre à jour. « Confier à un agent » lance une session avec la tâche comme consigne.
+        {dashboard
+          ? 'Vue de pilotage : où en est le projet, à quel rythme il avance et quand le reste à faire devrait être terminé. Les filtres de la barre s’appliquent à tous les indicateurs.'
+          : 'Les agents voient ces tâches, peuvent en créer, les commenter et les mettre à jour. « Confier à un agent » lance une session avec la tâche comme consigne.'}
       </p>
 
       {error && <Alert variant="danger">Erreur : {error.message}</Alert>}
       {loading && !data && <PageLoading />}
 
-      {view === 'table' ? (
-        <TaskTable tasks={tasks} showProject={showProject} onEdit={setEditing} targets={targets} />
+      {dashboard && data ? (
+        <TaskDashboard tasks={tasks} showProject={showProject && !projectId} onEdit={setEditing} onTag={onTag} targets={targets} />
+      ) : table ? (
+        <TaskGrid
+          tasks={tasks}
+          showProject={showProject}
+          projects={projectsData?.projects ?? []}
+          filters={{ ...filters, project: routeProjectId ? '' : projectId }}
+          onFilterChange={setFilter}
+          onClearFilters={clearFilters}
+          onEdit={setEditing}
+          onTag={onTag}
+          targets={targets}
+        />
       ) : (
         <Row className="g-3">
           {cols.map((col) => {
@@ -364,7 +308,7 @@ export default function TasksPage() {
                 </div>
                 {col.hint && <div className="small text-secondary mb-2">{col.hint}</div>}
                 {list.map((t) => (
-                  <TaskCard key={t.id} task={t} showProject={showProject} onEdit={() => setEditing(t)} target={targets.get(t.project.id)} />
+                  <TaskCard key={t.id} task={t} showProject={showProject && !projectId} onEdit={() => setEditing(t)} target={targets.get(t.project.id)} onTag={onTag} />
                 ))}
                 {list.length === 0 && <div className="text-secondary small fst-italic">Rien ici.</div>}
               </Col>

@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@apollo/client';
+import { gql, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -32,6 +32,16 @@ import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitPanel } from './GitTargetContext';
 import TaskPanel from './TaskPanel';
 
+/** Dépôt du projet : sans `gitUrl`, pas de branche de base ni de pull requests à interroger. */
+const GIT_PANEL_PROJECT = gql`
+  query GitPanelProject($id: ID!) {
+    project(id: $id) {
+      id
+      gitUrl
+    }
+  }
+`;
+
 const statusLabels: Record<string, { label: string; cls: string }> = {
   M: { label: 'M', cls: 'git-m' },
   A: { label: 'A', cls: 'git-a' },
@@ -55,7 +65,7 @@ function timeAgo(iso: string): string {
 }
 
 /** Fenêtre de diff (fichier ou commit). */
-function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId: string; worktreeId: string | null }; onClose: () => void }) {
+function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId: string; worksessionId: string | null }; onClose: () => void }) {
   const fileQ = useQuery<{ gitDiff: GitDiff }>(GIT_DIFF, { variables: { ...vars, path: req.kind === 'file' ? req.path : '', staged: req.kind === 'file' ? req.staged : false }, skip: req.kind !== 'file', fetchPolicy: 'network-only' });
   const commitQ = useQuery<{ gitCommitDiff: GitDiff }>(GIT_COMMIT_DIFF, { variables: { ...vars, hash: req.kind === 'commit' ? req.hash : '' }, skip: req.kind !== 'commit', fetchPolicy: 'network-only' });
   const branchQ = useQuery<{ gitBranchFileDiff: GitDiff }>(GIT_BRANCH_FILE_DIFF, { variables: { ...vars, path: req.kind === 'branch' ? req.path : '', origPath: req.kind === 'branch' ? req.origPath : null }, skip: req.kind !== 'branch', fetchPolicy: 'network-only' });
@@ -144,7 +154,7 @@ function Section({ title, count, defaultOpen = true, children, action }: { title
 }
 
 /** Revue de toutes les modifications de la branche depuis sa base, fichier par fichier (comme l'onglet « Files changed » d'une PR). */
-function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChanges; vars: { projectId: string; worktreeId: string | null }; onClose: () => void }) {
+function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChanges; vars: { projectId: string; worksessionId: string | null }; onClose: () => void }) {
   return (
     <Modal show onHide={onClose} size="xl" centered scrollable>
       <Modal.Header closeButton>
@@ -162,7 +172,7 @@ function BranchReviewModal({ changes, vars, onClose }: { changes: GitBranchChang
   );
 }
 
-function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number]; vars: { projectId: string; worktreeId: string | null } }) {
+function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number]; vars: { projectId: string; worksessionId: string | null } }) {
   const q = useQuery<{ gitBranchFileDiff: GitDiff }>(GIT_BRANCH_FILE_DIFF, { variables: { ...vars, path: file.path, origPath: file.origPath }, fetchPolicy: 'network-only' });
   return (
     <div className="border-bottom">
@@ -184,10 +194,10 @@ function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number
 }
 
 /** Modifications de la branche depuis son point de divergence avec sa base (commits et travail non validé). */
-function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worktreeId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
-  const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
+function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worksessionId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
+  const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges | null }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
   const [review, setReview] = useState(false);
-  const changes = q.data?.gitBranchChanges;
+  const changes = q.data?.gitBranchChanges ?? undefined;
   return (
     <Section
       title={changes ? `Branche vs ${changes.baseBranch}` : 'Branche vs base'}
@@ -207,6 +217,7 @@ function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; work
       }
     >
       {q.error && <div className="git-empty">{q.error.message}</div>}
+      {q.data && !changes && <div className="git-empty">Aucune branche de base à comparer.</div>}
       {changes && (
         <>
           <div className="git-subhead" title={`Point de divergence : ${changes.mergeBase.slice(0, 7)}`}>
@@ -235,8 +246,8 @@ function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; work
 }
 
 /** Pull requests GitHub : celle de la branche courante (ou bouton de création), puis les autres PR ouvertes du dépôt. */
-function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: string; worktreeId: string | null; branch: string | null }) {
-  const q = useQuery<{ githubPullRequests: PullRequest[] }>(GITHUB_PULL_REQUESTS, { variables: { projectId, state: 'OPEN', limit: 50 }, pollInterval: 30000 });
+function PullRequestsSection({ projectId, worksessionId, branch }: { projectId: string; worksessionId: string | null; branch: string | null }) {
+  const q = usePollingQuery<{ githubPullRequests: PullRequest[] }>(GITHUB_PULL_REQUESTS, { variables: { projectId, state: 'OPEN', limit: 50 }, pollInterval: 30000 });
   const [creating, setCreating] = useState(false);
   const [openNumber, setOpenNumber] = useState<number | null>(null);
   const navigate = useNavigate();
@@ -287,15 +298,15 @@ function PullRequestsSection({ projectId, worktreeId, branch }: { projectId: str
           {others.map(row)}
         </>
       )}
-      {creating && <CreatePullRequestModal projectId={projectId} worktreeId={worktreeId} onClose={() => setCreating(false)} onCreated={(pr) => { setCreating(false); setOpenNumber(pr.number); }} />}
+      {creating && <CreatePullRequestModal projectId={projectId} worksessionId={worksessionId} onClose={() => setCreating(false)} onCreated={(pr) => { setCreating(false); setOpenNumber(pr.number); }} />}
       {openNumber !== null && (
         <PullRequestModal
           projectId={projectId}
           number={openNumber}
           onClose={() => setOpenNumber(null)}
           onMerged={(deleted) => {
-            // Le worktree affiché vient d'être supprimé : retour au projet.
-            if (worktreeId && deleted.includes(worktreeId) && location.pathname.startsWith('/worktrees/')) navigate(`/projects/${projectId}`);
+            // La work session affiché vient d'être supprimé : retour au projet.
+            if (worksessionId && deleted.includes(worksessionId) && location.pathname.startsWith('/worksessions/')) navigate(`/projects/${projectId}`);
           }}
         />
       )}
@@ -309,7 +320,7 @@ const panelTabChoice = new Map<string, 'task' | 'git'>();
 /** Panneau de droite : onglet « Tâche » (session en charge d'une tâche) et onglet git (modifications, commit, branche, pull requests, historique). */
 export default function GitPanel() {
   const { target, open, setOpen } = useGitPanel();
-  const vars = target ? { projectId: target.projectId, worktreeId: target.worktreeId } : null;
+  const vars = target ? { projectId: target.projectId, worksessionId: target.worksessionId } : null;
   const taskId = target?.taskId ?? null;
   const [tabState, setTabState] = useState<{ taskId: string | null; tab: 'task' | 'git' } | null>(null);
   const tab: 'task' | 'git' = taskId ? (tabState?.taskId === taskId ? tabState.tab : panelTabChoice.get(taskId) ?? 'task') : 'git';
@@ -322,6 +333,9 @@ export default function GitPanel() {
   const [newBranch, setNewBranch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const gitVisible = Boolean(vars) && open && tab === 'git';
+  const projectQ = useQuery<{ project: { id: string; gitUrl: string | null } | null }>(GIT_PANEL_PROJECT, { variables: { id: target?.projectId ?? '' }, skip: !target });
+  // Projet sans dépôt git : pas de comparaison à une base ni de pull requests (requêtes inutiles, erreurs côté serveur).
+  const hasRepo = Boolean(projectQ.data?.project?.gitUrl);
 
   const statusQ = usePollingQuery<{ gitStatus: GitStatus }>(GIT_STATUS, { variables: vars ?? undefined, skip: !gitVisible, pollInterval: 5000 });
   const branchesQ = usePollingQuery<{ gitBranches: GitBranch[] }>(GIT_BRANCHES, { variables: vars ?? undefined, skip: !gitVisible, pollInterval: 15000 });
@@ -337,7 +351,7 @@ export default function GitPanel() {
   const [pull, { loading: pulling }] = useMutation(GIT_PULL, opts);
   const [push, { loading: pushing }] = useMutation(GIT_PUSH, opts);
   const [checkout, { loading: checkingOut }] = useMutation(GIT_CHECKOUT, { ...opts, onCompleted: () => { setNewBranch(''); void refetchAll(); } });
-  useEffect(() => setActionError(null), [target?.projectId, target?.worktreeId]);
+  useEffect(() => setActionError(null), [target?.projectId, target?.worksessionId]);
 
   if (!target) return null;
   if (!open) {
@@ -364,6 +378,9 @@ export default function GitPanel() {
 
   const headTitle = target.label ?? (status ? (status.detached ? 'HEAD détaché' : status.branch ?? 'Git') : 'Git');
   return (
+    <>
+    {/* Mobile : le panneau recouvre le contenu, toucher à côté le referme (invisible sur bureau). */}
+    <div className="wb-backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
     <aside className="git-panel">
       <div className="git-head">
         {taskId ? (
@@ -495,8 +512,8 @@ export default function GitPanel() {
           </div>
         </div>
 
-        {vars && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
-        <PullRequestsSection projectId={target.projectId} worktreeId={target.worktreeId} branch={status && !status.detached ? status.branch : null} />
+        {vars && hasRepo && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
+        {hasRepo && <PullRequestsSection projectId={target.projectId} worksessionId={target.worksessionId} branch={status && !status.detached ? status.branch : null} />}
 
         <Section title="Branches" count={local.length} defaultOpen={false}>
           <Form
@@ -553,5 +570,6 @@ export default function GitPanel() {
       )}
       {diffReq && vars && <DiffModal req={diffReq} vars={vars} onClose={() => setDiffReq(null)} />}
     </aside>
+    </>
   );
 }

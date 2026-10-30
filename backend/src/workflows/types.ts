@@ -43,8 +43,8 @@ export const WORKFLOW_NODE_TYPES: WorkflowNodeType[] = ['trigger', 'callLlm', 't
 /** Types de nœuds qui peuvent échouer et ont donc une branche « en cas d'erreur ». */
 export const FALLIBLE_NODE_TYPES: WorkflowNodeType[] = ['callLlm', 'task', 'session', 'createTask'];
 
-/** Où travaille un nœud « tâche » ou « session » : un nouveau worktree, un worktree existant, ou le dossier principal. */
-export type TaskWorktreeMode = 'new' | 'existing' | 'main';
+/** Où travaille un nœud « tâche » ou « session » : une nouvelle work session (celle de la tâche pour un nœud « tâche ») ou une work session existante. */
+export type TaskWorksessionMode = 'new' | 'existing';
 
 /** Tâche créée par un nœud « créer une tâche » : des modèles rendus à l'exécution. */
 export interface NewTaskTemplate {
@@ -106,10 +106,10 @@ export interface WorkflowNode {
   config?: Record<string, unknown>;
   prompt?: string;
   includeTask?: boolean;
-  worktreeMode?: TaskWorktreeMode;
-  worktreeId?: string | null;
+  worksessionMode?: TaskWorksessionMode;
+  worksessionId?: string | null;
   wait?: boolean;
-  /** session : nom de la session, branche du nouveau worktree, fin de session après le tour. */
+  /** session : nom de la session, branche de la nouvelle work session, fin de session après le tour. */
   sessionName?: string;
   branch?: string;
   endAfterTurn?: boolean;

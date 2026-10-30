@@ -10,6 +10,10 @@ import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import { serverSettings } from '../settings/server.js';
 import { terminalService } from '../terminals/service.js';
+import { readContainerStats } from '../runners/stats.js';
+import { parseClaudeProcesses, type ClaudeProcess } from './processes.js';
+
+export { parseClaudeProcesses, type ClaudeProcess };
 
 const execFileAsync = promisify(execFile);
 const MB = 1024 * 1024;
@@ -20,13 +24,6 @@ export interface MemoryHealth {
   availableMb: number;
   swapTotalMb: number;
   swapFreeMb: number;
-}
-
-export interface ClaudeProcess {
-  pid: number;
-  rssMb: number;
-  /** Durée de vie du processus, en secondes. */
-  elapsedSeconds: number;
 }
 
 export interface ContainerHealth {
@@ -40,6 +37,8 @@ export interface ContainerHealth {
   memoryUsage: string | null;
   memoryPercent: number | null;
   cpuPercent: number | null;
+  /** Pression CPU du conteneur (PSI, 60 s) : part du temps où un processus attendait le processeur. */
+  cpuPressurePercent: number | null;
 }
 
 export interface WorkspaceUsage {
@@ -97,26 +96,6 @@ export async function readMemory(): Promise<MemoryHealth> {
   return { totalMb: Math.round(os.totalmem() / MB), availableMb: Math.round(os.freemem() / MB), swapTotalMb: 0, swapFreeMb: 0 };
 }
 
-/**
- * Processus du CLI Claude Code (ceux des conteneurs sont visibles depuis l'hôte). Les relais
- * `docker exec … claude` et le CLI de connexion du compte sont exclus : seul le processus de l'agent compte.
- */
-export function parseClaudeProcesses(psOutput: string): ClaudeProcess[] {
-  const result: ClaudeProcess[] = [];
-  for (const raw of psOutput.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(raw);
-    if (!m) continue;
-    const args = m[4];
-    const [argv0 = '', argv1 = ''] = args.split(/\s+/);
-    if (/(^|\/)(docker|sudo|bash|sh|dash)$/.test(argv0) || args.includes('/.runners/')) continue;
-    // Binaire `claude` (natif, ou script lancé par node), ou CLI JavaScript du SDK.
-    const isClaude = [argv0, argv1].some((t) => /(^|\/)claude(\.exe)?$/.test(t) || /claude-(code|agent-sdk)\/(cli\.js|bin\/claude)/.test(t));
-    if (!isClaude || /\sauth\s/.test(` ${args} `)) continue;
-    result.push({ pid: Number(m[1]), rssMb: Math.round(Number(m[2]) / 1024), elapsedSeconds: Number(m[3]) });
-  }
-  return result;
-}
-
 async function readClaudeProcesses(): Promise<ClaudeProcess[]> {
   try {
     const { stdout } = await execFileAsync('ps', ['-eo', 'pid=,rss=,etimes=,args='], { maxBuffer: 4 * MB, timeout: 5000 });
@@ -148,7 +127,7 @@ async function readDocker(projects: Map<string, { id: string; name: string }>): 
     for (const lineText of ps.split('\n').filter(Boolean)) {
       const [name, state, status] = lineText.split('\t');
       const project = projects.get(name.replace(/^skipper-/, ''));
-      containers.push({ name, projectId: project?.id ?? null, projectName: project?.name ?? null, state, status, memoryUsage: null, memoryPercent: null, cpuPercent: null });
+      containers.push({ name, projectId: project?.id ?? null, projectName: project?.name ?? null, state, status, memoryUsage: null, memoryPercent: null, cpuPercent: null, cpuPressurePercent: null });
     }
     if (containers.some((c) => c.state === 'running')) {
       const stats = await run(['stats', '--no-stream', '--format', '{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}']);
@@ -160,6 +139,14 @@ async function readDocker(projects: Map<string, { id: string; name: string }>): 
         container.memoryPercent = percent(memPerc);
         container.cpuPercent = percent(cpuPerc);
       }
+      // Pression CPU : lue dans le cgroup du conteneur (mesure partagée avec la page du projet, en cache 4 s).
+      await Promise.all(
+        containers
+          .filter((c) => c.state === 'running')
+          .map(async (c) => {
+            c.cpuPressurePercent = (await readContainerStats(c.name))?.cpuPressurePercent ?? null;
+          }),
+      );
     }
   } catch (err) {
     return { available: true, version, error: (err as Error).message.split('\n')[0], containers };

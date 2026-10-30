@@ -7,7 +7,7 @@ import { PUBLISH_SHARED_PAGE, SHARED_PAGES, type SharedPage } from '../../graphq
 
 interface Props {
   projectId: string;
-  worktreeId: string | null;
+  worksessionId: string | null;
   path: string;
   /** Contenu actuel, pour proposer le <title> comme titre. */
   html: string;
@@ -15,7 +15,7 @@ interface Props {
 }
 
 /** Publication d'un fichier HTML du dossier de travail comme page partagée (nouvelle page ou nouvelle version). */
-export default function PublishPageModal({ projectId, worktreeId, path, html, onClose }: Props) {
+export default function PublishPageModal({ projectId, worksessionId, path, html, onClose }: Props) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const fileName = path.split('/').pop() ?? path;
@@ -33,7 +33,7 @@ export default function PublishPageModal({ projectId, worktreeId, path, html, on
           e.preventDefault();
           setError(null);
           try {
-            const res = await publish({ variables: { projectId, worktreeId, path, title: title.trim(), pageId: pageId || null } });
+            const res = await publish({ variables: { projectId, worksessionId, path, title: title.trim(), pageId: pageId || null } });
             if (res.data) {
               onClose();
               navigate(`/shared/${res.data.publishSharedPage.id}`);
