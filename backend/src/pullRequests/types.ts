@@ -11,12 +11,11 @@ export const TRACKED_PR_STATUSES: TrackedPullRequestStatus[] = ['open', 'merged'
  * Étape dérivée, celle qu'affichent les listes de suivi :
  * - `draft` : ouverte en brouillon ;
  * - `to_merge` : ouverte, à relire et fusionner ;
- * - `to_deploy` : fusionnée, pas encore mise en production ;
- * - `deployed` : fusionnée et déployée ;
+ * - `merged` : fusionnée ;
  * - `cancelled` : fermée sans fusion.
  */
-export type PullRequestStage = 'draft' | 'to_merge' | 'to_deploy' | 'deployed' | 'cancelled';
-export const PR_STAGES: PullRequestStage[] = ['draft', 'to_merge', 'to_deploy', 'deployed', 'cancelled'];
+export type PullRequestStage = 'draft' | 'to_merge' | 'merged' | 'cancelled';
+export const PR_STAGES: PullRequestStage[] = ['draft', 'to_merge', 'merged', 'cancelled'];
 
 export type PullRequestCreatorType = 'human' | 'agent' | 'system';
 
@@ -39,11 +38,6 @@ export interface TrackedPullRequest {
   mergeable: string | null;
   syncedAt: Date | null;
   mergeSha: string | null;
-  deployedAt: Date | null;
-  deployedByType: 'human' | 'agent' | null;
-  deployedByUserId: string | null;
-  deployedBySessionId: string | null;
-  deployNote: string;
   note: string;
   createdByType: PullRequestCreatorType;
   createdByUserId: string | null;
@@ -95,10 +89,6 @@ export interface UpdateTrackedPullRequestInput {
   note?: string | null;
   mergedAt?: Date | null;
   closedAt?: Date | null;
-  /** Marquée déployée (true, avec `deployedBy` et `deployNote`) ou plus déployée (false). */
-  deployed?: boolean | null;
-  deployedBy?: PullRequestActor | null;
-  deployNote?: string | null;
 }
 
 export interface TrackedPullRequestFilter {
@@ -113,18 +103,17 @@ export interface TrackedPullRequestFilter {
   limit?: number;
 }
 
-/** Étape d'une PR suivie, dérivée de son statut, de son brouillon et de son déploiement. */
-export function stageOf(pr: Pick<TrackedPullRequest, 'status' | 'isDraft' | 'deployedAt'>): PullRequestStage {
+/** Étape d'une PR suivie, dérivée de son statut et de son brouillon. */
+export function stageOf(pr: Pick<TrackedPullRequest, 'status' | 'isDraft'>): PullRequestStage {
   if (pr.status === 'closed') return 'cancelled';
-  if (pr.status === 'merged') return pr.deployedAt ? 'deployed' : 'to_deploy';
+  if (pr.status === 'merged') return 'merged';
   return pr.isDraft ? 'draft' : 'to_merge';
 }
 
 export const stageLabels: Record<PullRequestStage, string> = {
   draft: 'brouillon',
   to_merge: 'à fusionner',
-  to_deploy: 'à déployer',
-  deployed: 'déployée',
+  merged: 'fusionnée',
   cancelled: 'annulée',
 };
 
@@ -150,7 +139,6 @@ export function describePullRequest(pr: TrackedPullRequest): string {
   const hints = describeSnapshot(pr);
   const parts = [`${pr.id} · PR #${pr.number} « ${pr.title} » · ${stage}${hints.length ? ` (${hints.join(', ')})` : ''}`, `${pr.headBranch}${pr.baseBranch ? ` → ${pr.baseBranch}` : ''}`];
   if (pr.taskId) parts.push(`tâche ${pr.taskId}`);
-  if (pr.deployedAt) parts.push(`déployée le ${pr.deployedAt.toISOString().slice(0, 10)}${pr.deployNote ? ` (${pr.deployNote})` : ''}`);
   if (pr.note) parts.push(`note : ${pr.note}`);
   parts.push(pr.url);
   return `- ${parts.join(' · ')}`;

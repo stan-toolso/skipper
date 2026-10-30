@@ -339,8 +339,6 @@ export const resolvers = {
     task: (pr: TrackedPullRequest) => (pr.taskId ? taskService.get(pr.taskId).catch(() => null) : null),
     status: (pr: TrackedPullRequest) => pr.status.toUpperCase(),
     stage: (pr: TrackedPullRequest) => stageOf(pr).toUpperCase(),
-    deployedBy: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, pr.deployedByUserId),
-    deployedBySession: (pr: TrackedPullRequest) => (pr.deployedBySessionId ? sessionService.get(pr.deployedBySessionId) : null),
     createdBy: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, pr.createdByUserId),
     createdBySession: (pr: TrackedPullRequest) => (pr.createdBySessionId ? sessionService.get(pr.createdBySessionId) : null),
     // En direct depuis GitHub (cache de 20 s côté service) : null si le projet n'y est pas ou si GitHub ne répond pas.
@@ -937,11 +935,10 @@ export const resolvers = {
       const user = requireUser(ctx);
       return trackedPullRequestService.register(args.projectId, { url: args.url, number: args.number }, { taskId: args.taskId, note: args.note, userId: user.id }, { type: 'human', userId: user.id });
     },
-    updatePullRequest: async (_: unknown, args: { id: string; input: { status?: string | null; note?: string | null; taskId?: string | null; deployed?: boolean | null; deployNote?: string | null } }, ctx: Ctx) => {
+    updatePullRequest: async (_: unknown, args: { id: string; input: { status?: string | null; note?: string | null; taskId?: string | null } }, ctx: Ctx) => {
       const pr = await trackedPullRequestService.get(args.id);
       await requireProject(ctx, pr.projectId, 'member');
-      const user = requireUser(ctx);
-      return trackedPullRequestService.update(args.id, { ...args.input, status: args.input.status ? (args.input.status.toLowerCase() as TrackedPullRequestStatus) : undefined }, { type: 'human', userId: user.id });
+      return trackedPullRequestService.update(args.id, { ...args.input, status: args.input.status ? (args.input.status.toLowerCase() as TrackedPullRequestStatus) : undefined });
     },
     deletePullRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       const pr = await trackedPullRequestService.get(args.id);

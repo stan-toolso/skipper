@@ -293,9 +293,10 @@ function toPullRequest(projectId: string, p: GqlPullRequest): PullRequest {
 // Cache court : le panneau git interroge régulièrement, et chaque carte de tâche cherche sa PR.
 const CACHE_TTL_MS = 20_000;
 const cache = new Map<string, { at: number; value: Promise<unknown> }>();
-function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+/** `fresh` : relit sans attendre l'expiration, et le résultat remplace l'entrée du cache. */
+function cached<T>(key: string, load: () => Promise<T>, fresh = false): Promise<T> {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value as Promise<T>;
+  if (!fresh && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value as Promise<T>;
   const value = load();
   cache.set(key, { at: Date.now(), value });
   value.catch(() => cache.delete(key));
@@ -339,8 +340,8 @@ export const pullRequestService = {
   isGithubProject: async (projectId: string) => Boolean(parseGithubRepo((await projectService.get(projectId)).gitUrl)),
 
   /** PR du dépôt du projet, les plus récemment mises à jour d'abord. */
-  /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt. */
-  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50): Promise<PullRequest[]> {
+  /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt ; `fresh` : sans le cache de 20 s. */
+  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50, opts: { fresh?: boolean } = {}): Promise<PullRequest[]> {
     const project = await projectService.get(projectId);
     // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
     if (!project.gitUrl) return [];
@@ -359,7 +360,7 @@ export const pullRequestService = {
         { owner: repo.owner, name: repo.name, states, first },
       );
       return data.repository.pullRequests.nodes;
-    });
+    }, opts.fresh);
     return nodes.map((p) => toPullRequest(projectId, p));
   },
 

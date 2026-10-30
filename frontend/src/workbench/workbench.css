@@ -721,8 +721,7 @@
 .pr-stage { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; white-space: nowrap; vertical-align: middle; }
 .pr-stage-to_merge { color: var(--cc-green); border-color: var(--cc-green); }
 .pr-stage-draft { color: var(--cc-dim); border-color: var(--cc-border); }
-.pr-stage-to_deploy { color: var(--cc-yellow); border-color: var(--cc-yellow); }
-.pr-stage-deployed { color: var(--cc-blue); border-color: var(--cc-blue); }
+.pr-stage-merged { color: var(--cc-purple); border-color: var(--cc-purple); }
 .pr-stage-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
 .pr-table .pr-row { cursor: pointer; }
 .pr-table td { vertical-align: middle; }

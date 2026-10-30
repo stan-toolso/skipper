@@ -79,7 +79,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
   return createSdkMcpServer({
     name: 'tasks',
     version: '1.0.0',
-    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Le fil d'une tâche est une conversation : comment poste un message (reply_to pour répondre dans le fil d'un message), react pose ou retire un emoji, une mention (« @Nom » ou « @e-mail » d'un membre, « @session:<id> » d'une session d'agent ; people liste qui l'on peut mentionner) prévient la personne ou transmet le message à la session, qui est alors reliée à la tâche. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : draft, to_merge, to_deploy, deployed, cancelled).`,
+    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Le fil d'une tâche est une conversation : comment poste un message (reply_to pour répondre dans le fil d'un message), react pose ou retire un emoji, une mention (« @Nom » ou « @e-mail » d'un membre, « @session:<id> » d'une session d'agent ; people liste qui l'on peut mentionner) prévient la personne ou transmet le message à la session, qui est alors reliée à la tâche. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, tâche) et pr_list (par étape : draft, to_merge, merged, cancelled).`,
     tools: [
       tool(
         'list',
@@ -216,7 +216,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       // ---- Pull requests suivies ----------------------------------------------------------------------------
       tool(
         'pr_list',
-        "Liste les pull requests suivies du projet, ou celles d'une tâche, par étape (draft, to_merge, to_deploy, deployed, cancelled ; défaut : toutes).",
+        "Liste les pull requests suivies du projet, ou celles d'une tâche, par étape (draft, to_merge, merged, cancelled ; défaut : toutes).",
         {
           task_id: z.string().optional().describe("Tâche dont on veut les PR ; absent : tout le projet"),
           stage: z.array(prStageSchema).optional().describe('Étapes gardées ; défaut : toutes'),
@@ -270,20 +270,18 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       ),
       tool(
         'pr_update',
-        "Met à jour une pull request suivie : statut (open, merged, closed = annulée), note, déploiement (deployed true quand elle est en production, avec deploy_note), tâche reliée.",
+        "Met à jour une pull request suivie : statut (open, merged, closed = annulée), note, tâche reliée. Le statut suit aussi GitHub tout seul.",
         {
           id: z.string().describe("Identifiant de la PR suivie (donné par pr_list ou get), ou son numéro GitHub (« 42 », « #42 »)"),
           status: prStatusSchema.optional(),
           note: z.string().optional().describe('Remplace la note ; chaîne vide pour la retirer'),
-          deployed: z.boolean().optional().describe('true : mise en production (PR fusionnée seulement) ; false : annule'),
-          deploy_note: z.string().optional().describe('Où et comment elle a été déployée (version, cellule, heure)'),
           task_id: z.string().optional().describe('Relie la PR à cette tâche'),
         },
-        async ({ id, status, note, deployed, deploy_note, task_id }) =>
+        async ({ id, status, note, task_id }) =>
           run(async () => {
             const current = await trackedPullRequestService.resolve(project.id, id);
             if (task_id) await own(task_id);
-            const pr = await trackedPullRequestService.update(current.id, { status: status as TrackedPullRequestStatus | undefined, note, deployed, deployNote: deploy_note, taskId: task_id }, prActor);
+            const pr = await trackedPullRequestService.update(current.id, { status: status as TrackedPullRequestStatus | undefined, note, taskId: task_id });
             return `Pull request mise à jour :\n${describePullRequest(pr)}`;
           }),
       ),

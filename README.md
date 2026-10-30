@@ -207,7 +207,7 @@ backend/
       launch.ts                # confier une tâche à un nouvel agent
       api.ts                   # API REST /api/v1/tasks (clés d'API du projet)
     pullRequests/
-      types.ts                 # pull request suivie : statut, étape dérivée (brouillon, à fusionner, à déployer, déployée, annulée), textes pour les agents
+      types.ts                 # pull request suivie : statut, étape dérivée (brouillon, à fusionner, fusionnée, annulée), textes pour les agents
       repository.ts            # table pull_requests
       service.ts               # suivi : enregistrement, ouverture sur GitHub, mise à jour, déploiement, synchronisation GitHub, notifications
     vault/
@@ -713,26 +713,26 @@ dossier principal est ensuite mis à jour (fetch, pull s'il est sur la base). AP
 `mergePullRequest`.
 
 **Pull requests suivies** (`backend/src/pullRequests/`, table `pull_requests`) : l'objet qui matérialise une PR
-dans Skipper, rattaché au projet et le plus souvent à une **tâche**, pour suivre ce qui est à fusionner, à
-déployer, déployé ou annulé sans dépendre de GitHub à chaque affichage. Il porte le numéro, l'URL, le titre,
+dans Skipper, rattaché au projet et le plus souvent à une **tâche**, pour suivre ce qui est à fusionner, fusionné ou
+annulé sans dépendre de GitHub à chaque affichage. Il porte le numéro, l'URL, le titre,
 les branches, le **statut** (ouverte, fusionnée, fermée), le brouillon, un instantané GitHub (checks, revue,
-conflits) rafraîchi à la synchronisation, une **note** libre, et le **déploiement** (`deployed_at`, par qui,
-note). L'**étape** en découle : *brouillon*, *à fusionner*, *à déployer* (fusionnée, pas encore en production),
-*déployée*, *annulée*. Il naît de trois façons : une session d'agent (outils `tasks.pr_open`, qui pousse la
+conflits) rafraîchi à la synchronisation, et une **note** libre. L'**étape** en
+découle : *brouillon*, *à fusionner*, *fusionnée*, *annulée*. Il n'y a pas d'étape « déployée » : le
+déploiement n'était qu'une déclaration à la main, rarement tenue à jour (colonnes retirées par la migration 044). Il naît de trois façons : une session d'agent (outils `tasks.pr_open`, qui pousse la
 branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session, soumis à son
 autorisation ; `tasks.pr_register`, qui déclare une PR ouverte par un autre moyen ; `tasks.pr_update` tient à jour
-statut, note et déploiement ; `tasks.pr_list` liste par étape ; `tasks.get` montre les PR d'une tâche), l'interface
+statut, note et tâche ; `tasks.pr_list` liste par étape ; `tasks.get` montre les PR d'une tâche), l'interface
 (création ou fusion depuis le panneau git, bouton « Suivre une PR » de la page des pull requests ou de la fiche
 d'une tâche), ou la **synchronisation** (`trackedPullRequestService.sync`, à l'affichage de la page d'un projet, au
-plus toutes les 30 s, forçable par « Rafraîchir ») qui recopie l'état GitHub des PR suivies, notifie une fusion ou
+plus toutes les 20 s, liste GitHub relue sans cache, forçable par « Rafraîchir ») qui recopie l'état GitHub des PR suivies, notifie une fusion ou
 une fermeture faite ailleurs (`pull_request.merged`, `pull_request.closed`) et adopte les PR ouvertes du dépôt sur la
 branche d'une tâche ou d'une work session. Un agent qui ouvre ou déclare une PR déclenche `pull_request.opened`.
 Interfaces : onglet **Pull requests** d'un projet (`/projects/:id/pull-requests`, groupes par étape, filtres « À
-traiter » / par étape / texte, menu d'actions : détail et fusion, déploiement, statut, note, détacher, ne plus
+traiter » / par étape / texte, menu d'actions : détail et fusion, statut, note, détacher, ne plus
 suivre), carte **Code** de la fiche d'une tâche, colonne PR de la grille et cartes du kanban (PR suivies d'abord, PR
-GitHub en direct sinon), section « Pull requests à traiter » du tableau de bord (à fusionner, puis à déployer).
+GitHub en direct sinon), section « Pull requests à traiter » du tableau de bord (ouvertes : à fusionner, brouillons).
 API : query `pullRequests(projectId, taskId, status, stage, limit)`, `pullRequest(id)`, `Task.pullRequests`,
-`Dashboard.pullRequests` et compteurs `openPullRequests` / `toDeployPullRequests` ; mutations
+`Dashboard.pullRequests` et compteur `openPullRequests` ; mutations
 `registerPullRequest`, `updatePullRequest`, `deletePullRequest`, `syncPullRequests`.
 
 La page de session a un onglet **Modifications** (`frontend/src/components/SessionChanges.tsx`) : les
@@ -1262,7 +1262,7 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `notifications(unreadOnly, limit)`, `unreadNotificationCount` ; `markNotificationRead(id)`, `markAllNotificationsRead` ; subscription `notificationCreated`
 - `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
 - `githubPullRequests(projectId, state, limit)`, `githubPullRequest(projectId, number)`, `githubPullRequestDraft(projectId, worksessionId)` ; `createPullRequest(projectId, worksessionId, title, body, base, draft)`, `mergePullRequest(projectId, number, method, cleanup)` ; `Task.branch`, `Task.pullRequest`
-- Pull requests suivies : `pullRequests(projectId, taskId, status, stage, limit)`, `pullRequest(id)`, `Task.pullRequests`, `Dashboard.pullRequests` ; `registerPullRequest(projectId, url, number, taskId, note)`, `updatePullRequest(id, input { status, note, taskId, deployed, deployNote })`, `deletePullRequest(id)`, `syncPullRequests(projectId)`
+- Pull requests suivies : `pullRequests(projectId, taskId, status, stage, limit)`, `pullRequest(id)`, `Task.pullRequests`, `Dashboard.pullRequests` ; `registerPullRequest(projectId, url, number, taskId, note)`, `updatePullRequest(id, input { status, note, taskId })`, `deletePullRequest(id)`, `syncPullRequests(projectId)`
 - `Project.worksessions`, `worksession(id)` avec `sessions` et `terminals` ; `createWorksession(projectId, branch?, name?, baseRef?, label?)`, `deleteWorksession(id, deleteBranch)` ; `CreateSessionInput.worksessionId`, `createTerminal(..., worksessionId)` (API technique : l'interface ne manipule que des sessions)
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`

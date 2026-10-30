@@ -42,11 +42,6 @@ const pr = (over: Partial<TrackedPullRequest> = {}): TrackedPullRequest => ({
   mergeable: 'MERGEABLE',
   syncedAt: null,
   mergeSha: null,
-  deployedAt: null,
-  deployedByType: null,
-  deployedByUserId: null,
-  deployedBySessionId: null,
-  deployNote: '',
   note: '',
   createdByType: 'agent',
   createdByUserId: null,
@@ -110,7 +105,7 @@ beforeEach(() => {
     },
     update: async (...args: unknown[]) => {
       record('update')(...args);
-      return pr({ status: 'merged', deployedAt: new Date(), deployNote: 'prod' });
+      return pr({ status: 'merged' });
     },
     open: async (...args: unknown[]) => {
       record('open')(...args);
@@ -164,10 +159,10 @@ describe('serveur MCP tasks', () => {
 
   it('pr_list filtre par tâche et par étape', async () => {
     const client = await connect();
-    const text = textOf(await client.callTool({ name: 'pr_list', arguments: { task_id: 't1', stage: ['to_merge', 'to_deploy'] } }));
+    const text = textOf(await client.callTool({ name: 'pr_list', arguments: { task_id: 't1', stage: ['to_merge', 'merged'] } }));
     expect(text).toContain('PR #42');
     expect(text).toContain('PR #43');
-    expect(m.calls[0]).toEqual(['list', [{ projectId: 'p', taskId: 't1', stage: ['to_merge', 'to_deploy'], limit: 200 }]]);
+    expect(m.calls[0]).toEqual(['list', [{ projectId: 'p', taskId: 't1', stage: ['to_merge', 'merged'], limit: 200 }]]);
     const res = await client.callTool({ name: 'pr_list', arguments: { task_id: 'autre' } });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain('Tâche introuvable');
@@ -186,11 +181,11 @@ describe('serveur MCP tasks', () => {
     expect(args[3]).toEqual({ type: 'agent', sessionId: 's1' });
   });
 
-  it('pr_update accepte le numéro GitHub et transmet le déploiement', async () => {
+  it('pr_update accepte le numéro GitHub et transmet le statut', async () => {
     const client = await connect();
-    const text = textOf(await client.callTool({ name: 'pr_update', arguments: { id: '#42', deployed: true, deploy_note: 'prod' } }));
-    expect(text).toContain('déployée');
-    expect(m.calls[0]).toEqual(['update', ['pr1', { status: undefined, note: undefined, deployed: true, deployNote: 'prod', taskId: undefined }, { type: 'agent', sessionId: 's1' }]]);
+    const text = textOf(await client.callTool({ name: 'pr_update', arguments: { id: '#42', status: 'merged' } }));
+    expect(text).toContain('fusionnée');
+    expect(m.calls[0]).toEqual(['update', ['pr1', { status: 'merged', note: undefined, taskId: undefined }]]);
     const res = await client.callTool({ name: 'pr_update', arguments: { id: '#7', status: 'closed' } });
     expect(res.isError).toBe(true);
   });
