@@ -70,6 +70,7 @@ export default function ProjectFormPage() {
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [taskInstructions, setTaskInstructions] = useState('');
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('');
   const [runnerImage, setRunnerImage] = useState('');
@@ -87,6 +88,7 @@ export default function ProjectFormPage() {
     setSlug(p.slug);
     setDescription(p.description ?? '');
     setSystemPrompt(p.systemPrompt);
+    setTaskInstructions(p.taskInstructions ?? '');
     setGitUrl(p.gitUrl ?? '');
     setGitBranch(p.gitBranch ?? '');
     setRunnerImage(p.runnerConfig?.image ?? '');
@@ -103,7 +105,7 @@ export default function ProjectFormPage() {
     if (runnerBrowser) runnerConfig.browser = true;
     const max = Math.round(Number(maxSessions));
     if (max > 0) runnerConfig.maxSessions = max;
-    const common = { name, description: description || null, systemPrompt, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runnerConfig, defaultPermissionMode: permissionMode };
+    const common = { name, description: description || null, systemPrompt, taskInstructions, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runnerConfig, defaultPermissionMode: permissionMode };
     if (isEdit) updateProject({ variables: { id, input: common } });
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
   };
@@ -142,6 +144,18 @@ export default function ProjectFormPage() {
                 placeholder="Ce que tout agent doit savoir sur ce projet : de quoi il s'agit, les conventions à respecter, ce qu'il ne faut pas faire…"
               />
               <Form.Text>Transmis à chaque session lancée dans ce projet, en plus de la tâche demandée.</Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3">
+              <Form.Label>Consignes des sessions de tâches</Form.Label>
+              <Form.Control
+                as="textarea"
+                rows={4}
+                value={taskInstructions}
+                onChange={(e) => setTaskInstructions(e.target.value)}
+                placeholder="Ex. : travaille sur une branche, ouvre une pull request à la fin, mets la tâche « en revue » et commente avec le lien de la PR."
+              />
+              <Form.Text>Ajoutées après le texte de la tâche dans l'instruction de toute session qui réalise une tâche du projet (« Confier à un agent », agents, workflows).</Form.Text>
             </Form.Group>
 
             <Form.Group className="mb-3">
@@ -201,7 +215,7 @@ export default function ProjectFormPage() {
                     </Col>
                     <Col sm={3}>
                       <Form.Label className="small mb-1">CPU</Form.Label>
-                      <Form.Control size="sm" value={runnerCpus} onChange={(e) => setRunnerCpus(e.target.value)} placeholder="1" />
+                      <Form.Control size="sm" value={runnerCpus} onChange={(e) => setRunnerCpus(e.target.value)} placeholder="sans plafond" />
                     </Col>
                     <Form.Text>Vides : valeurs par défaut du serveur. Un changement d'image ou de limites s'applique après « Recréer » sur la page du projet.</Form.Text>
                   </Row>

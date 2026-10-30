@@ -10,9 +10,14 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import { access, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { config } from '../../config.js';
+import { createProjectsMcpServer } from '../../personal/mcp.js';
+import type { Project } from '../../projects/types.js';
+import { personalService } from '../../personal/service.js';
+import { userService } from '../../users/service.js';
 import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
 import { materializeSkills } from '../../context/skills.js';
@@ -31,10 +36,9 @@ import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
 import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
-import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
+import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
-import { claudeSettings } from '../../settings/claude.js';
-import { agentService } from '../../agents/service.js';
+import { claudeSettings, cliEnv } from '../../settings/claude.js';
 import { usageService } from '../../settings/usage.js';
 import { describeRejection, rateLimitService } from '../../settings/rateLimits.js';
 import type { PermissionResponse, QuestionResponse } from '../../requests/types.js';
@@ -42,6 +46,9 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
+import { resultError } from './claudeResult.js';
+import { liveDraftService } from '../live.js';
+import { SESSION_ENV } from '../../runners/stats.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -52,6 +59,12 @@ interface ClaudeConfig {
 }
 
 const permissionModes: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'];
+
+/**
+ * Dossier de configuration Claude Code des chats d'un espace personnel, sur le serveur (les chats ne passent pas par
+ * un conteneur) : leurs conversations y sont rangées et reprises, à l'écart du compte du serveur (`~/.claude`).
+ */
+export const chatConfigDir = (project: Pick<Project, 'slug'>): string => path.join(config.workspacesRoot, '.runners', project.slug, 'chat-home');
 
 /**
  * File de messages utilisateur consommée par le SDK en mode "streaming input" :
@@ -167,14 +180,26 @@ export class ClaudeProvider implements SessionProvider {
     // Modèle courant : modifiable en cours de session (updateConfig), d'où la variable.
     let model = cfg.model ? String(cfg.model) : general.defaultModel ?? undefined;
     owner.assertModelAllowed(model);
+    // Chat : session légère d'un espace personnel, sans conteneur ni dossier de travail ; le CLI tourne sur le serveur
+    // sans outil de fichiers ni de commande, seulement les outils MCP de Skipper.
+    const chat = ctx.session.kind === 'chat';
+    // Session d'un espace personnel : portée sur tous les projets de la personne (outils sessions, tasks, worksessions, projects).
+    const scope = personalService.scopeFor(ctx.project, ownerId);
     const actor = { sessionId: ctx.session.id, projectId: ctx.project.id };
-    const env = { ...(await owner.credentialEnv(general.authMode, actor)), ...(await agentGitEnv(ownerId, ctx.project.gitUrl, actor)) };
-    // Script de relais qui exécute le CLI dans le conteneur du projet (avant le navigateur : rien à nettoyer s'il échoue).
-    const claudeExecutable = await runner.claudeExecutable(ctx.project);
+    const credentials = await owner.credentialEnv(general.authMode, actor);
+    // Un chat reçoit l'environnement du serveur sans ses secrets Anthropic (comme la vérification des identifiants), un dossier
+    // de configuration propre à l'espace (conversations reprises) et aucune variable git ; une session, ses seuls identifiants.
+    const env: Record<string, string | undefined> = chat
+      ? { ...cliEnv(credentials), CLAUDE_CONFIG_DIR: chatConfigDir(ctx.project), [SESSION_ENV]: ctx.session.id }
+      : { ...credentials, ...(await agentGitEnv(ownerId, ctx.project.gitUrl, actor)), [SESSION_ENV]: ctx.session.id };
+    if (chat) await mkdir(chatConfigDir(ctx.project), { recursive: true });
+    // Script de relais qui exécute le CLI dans le conteneur du projet (avant le navigateur : rien à nettoyer s'il échoue) ;
+    // un chat utilise le CLI du serveur (CLAUDE_BIN, sinon celui du SDK), comme la vérification des identifiants.
+    const claudeExecutable = chat ? config.claudeBin : await runner.claudeExecutable(ctx.project);
 
     const abortController = new AbortController();
     // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
-    const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
+    const browserEnabled = !chat && Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
     // Portée du coffre pour cette session : éléments du projet, reliés au projet, reliés par le propriétaire pour ses sessions.
     const vaultItems = await vaultService.agentItems(ctx.project.id, ownerId);
     const vaultTools = vaultItems.some((i) => i.kind !== 'google');
@@ -184,23 +209,24 @@ export class ClaudeProvider implements SessionProvider {
     // Prompt système : celui du projet, l'identité de la session, puis la bibliothèque de contexte, les tâches, le coffre et les comptes Google.
     const systemPrompt = [
       ctx.project.systemPrompt.trim(),
-      await agentService.systemPromptFor(ctx.session),
       sessionIdentityPrompt(ctx.session, ctx.project),
+      scope ? await personalService.promptSummary(scope, await userService.get(scope.ownerId)) : '',
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
       vaultService.promptSummary(vaultItems, ctx.project),
-      sessionsPromptSummary(ctx.project),
+      sessionsPromptSummary(ctx.project, { chat }),
       googleAccountService.promptSummary(googleAccounts),
-      sharedPagesPrompt(),
+      chat ? '' : sharedPagesPrompt(),
       browserEnabled
         ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du coffre, clique le champ du formulaire puis appelle `browser_fill` : Skipper y saisit la valeur, que tu ne vois jamais."
         : '',
     ]
       .filter(Boolean)
       .join('\n\n');
-    // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local).
-    const pluginDir = await materializeSkills(ctx.project);
+    // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local). Un chat n'a
+    // pas l'outil Skill (aucun outil intégré) : il lit le contexte par les outils MCP.
+    const pluginDir = chat ? null : await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
     const projectRules = await permissionRuleService.list(ctx.project.id);
@@ -237,17 +263,22 @@ export class ClaudeProvider implements SessionProvider {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
       mcpServers: {
         context: createContextMcpServer(ctx.project, ctx.session.id),
-        tasks: createTasksMcpServer(ctx.project, ctx.session.id, ctx.session.name),
+        tasks: createTasksMcpServer(ctx.project, ctx.session.id, ctx.session.name, scope),
         ...(vaultTools ? { vault: createVaultMcpServer(vaultContext) } : {}),
-        worktrees: createWorktreesMcpServer(ctx.project, ctx.session.id),
-        sessions: createSessionsMcpServer(ctx.project, ctx.session.id),
-        pages: createSharedPagesMcpServer({ project: ctx.project, session: ctx.session, cwd: ctx.cwd }),
+        worksessions: createWorksessionsMcpServer(ctx.project, ctx.session.id, scope),
+        sessions: createSessionsMcpServer(ctx.project, ctx.session.id, scope),
+        // Espace personnel : la liste des projets de la personne (lecture seule).
+        ...(scope ? { projects: createProjectsMcpServer(scope) } : {}),
+        // Un chat n'a pas de dossier de travail : rien à publier.
+        ...(chat ? {} : { pages: createSharedPagesMcpServer({ project: ctx.project, session: ctx.session, cwd: ctx.cwd }) }),
         ...(googleAccounts.length ? { google: createGoogleMcpServer({ project: ctx.project, accounts: googleAccounts, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
         // Le serveur hérite de l'environnement du CLI (dans le conteneur). La configuration MCP passe sur la ligne
         // de commande du CLI, visible de tout utilisateur du serveur (ps) : l'environnement du backend n'y figure jamais.
         ...(browserServer ? { playwright: { type: 'stdio' as const, command: browserServer.command, args: browserServer.args, ...(browserServer.env ? { env: browserServer.env } : {}) } } : {}),
       },
-      plugins: [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }],
+      plugins: pluginDir ? [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }] : [],
+      // Chat : aucun outil intégré (ni fichiers, ni commandes, ni web) et aucun réglage lu sur le disque du serveur.
+      ...(chat ? { tools: [], settingSources: [] } : {}),
       model,
       // Le CLI refuse un repli identique au modèle principal : le repli est alors simplement omis.
       fallbackModel: general.fallbackModel && general.fallbackModel !== model ? general.fallbackModel : undefined,
@@ -262,16 +293,19 @@ export class ClaudeProvider implements SessionProvider {
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
       // Les outils du coffre portent leur propre porte d'approbation (élément « avec approbation » : un humain
       // confirme chaque usage, quel que soit le mode d'autorisation) : le SDK ne redemande pas.
-      // Worktrees : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
+      // Worksessions : lister et créer sont libres (réversible, sans coût) ; supprimer est soumis à autorisation.
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
       // Pages partagées : lister est libre ; publier passe par l'autorisation quand la page est exposée à d'autres.
-      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Le coffre saisit des secrets dans le navigateur : les outils qui pourraient relire la valeur sont retirés à l'agent.
       ...(browserServer && vaultBrowser ? { disallowedTools: ['mcp__playwright__browser_evaluate', 'mcp__playwright__browser_run_code'] } : {}),
       // Reprise de la conversation Claude si la session a déjà tourné et que le CLI la retrouve encore.
       resume: (await this.resumableConversation(ctx)) ?? undefined,
       pathToClaudeCodeExecutable: claudeExecutable,
+      // Événements de streaming de l'API (texte au fil de l'eau) : jamais journalisés, ils alimentent le brouillon
+      // en direct de la session (liveDraftService) que l'interface affiche en attendant le message complet.
+      includePartialMessages: true,
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
@@ -280,11 +314,11 @@ export class ClaudeProvider implements SessionProvider {
 
     await ctx.emit('system', {
       message: `Lancement via Claude Agent SDK${options.resume ? ` (reprise de ${options.resume})` : ''}`,
-      options: { cwd: options.cwd, project: ctx.project.slug, systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, vaultItems: vaultItems.map((i) => i.name), googleAccounts: googleAccounts.map((a) => a.email), model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, owner: ownerId },
+      options: { cwd: options.cwd, project: ctx.project.slug, chat, personalScope: Boolean(scope), systemPromptLength: systemPrompt.length, contextPlugin: pluginDir, browser: browserEnabled, vaultItems: vaultItems.map((i) => i.name), googleAccounts: googleAccounts.map((a) => a.email), model: options.model, fallbackModel: options.fallbackModel, authMode: general.authMode, permissionMode: options.permissionMode, maxTurns: options.maxTurns, maxBudgetUsd: options.maxBudgetUsd, allowedTools: options.allowedTools, owner: ownerId },
     });
 
     const queue = new MessageQueue();
-    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments));
+    queue.push(await this.instruction(ctx, ctx.initialMessage, ctx.initialAttachments, ctx.initialPreamble));
     // Un tour est en cours entre l'envoi d'une instruction et le message `result` qui le clôt.
     let turnInProgress = true;
     await ctx.setActivity('busy');
@@ -310,6 +344,11 @@ export class ClaudeProvider implements SessionProvider {
       const run: RunState = { rateLimitStatus: null };
       try {
         for await (const message of stream) {
+          if (message.type === 'stream_event') {
+            liveDraftService.apply(ctx.session.id, message.event, message.parent_tool_use_id);
+            continue;
+          }
+          if (message.type === 'assistant' || message.type === 'result') liveDraftService.clear(ctx.session.id);
           await this.handleMessage(ctx, message, run);
           await this.trackRuleUsage(ctx, message, ruleUsage).catch((e) => console.error('[permissions] suivi des règles', e));
           if (message.type === 'assistant' && !message.parent_tool_use_id) {
@@ -335,16 +374,16 @@ export class ClaudeProvider implements SessionProvider {
         if (closedByServer() || err instanceof AbortError) return { exitCode: null, closedByServer: true };
         return { exitCode: 1, error: (err as Error).message };
       } finally {
+        liveDraftService.clear(ctx.session.id);
         await disposeAll();
       }
       if (closedByServer()) return { exitCode: null, closedByServer: true };
       // Le flux s'est terminé de lui-même au milieu d'un tour : le processus Claude Code s'est arrêté
       // (plantage, mémoire épuisée...), ce qui n'a rien à voir avec une fermeture par le serveur.
       if (!lastResult || turnInProgress) return { exitCode: 1, error: "Le processus Claude Code s'est arrêté au milieu d'un tour (flux terminé sans message de résultat)" };
-      if (lastResult.is_error) {
-        const detail = lastResult.subtype === 'success' ? lastResult.result : lastResult.errors.join('\n');
-        return { exitCode: 1, error: `${lastResult.subtype}${detail ? ` : ${detail}` : ''}` };
-      }
+      // Un dernier tour interrompu par l'humain n'est pas une erreur de la session.
+      const error = resultError(lastResult, { interruptedIsError: false });
+      if (error) return { exitCode: 1, error };
       return { exitCode: 0 };
     })();
 
@@ -515,17 +554,21 @@ export class ClaudeProvider implements SessionProvider {
   private async resumableConversation(ctx: RunContext): Promise<string | null> {
     const id = ctx.session.externalId;
     if (!id) return null;
-    const file = path.posix.join(os.homedir(), '.claude', 'projects', ctx.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
-    if (await runner.pathExists(ctx.project, file).catch(() => true)) return id;
+    const chat = ctx.session.kind === 'chat';
+    // Un chat tourne sur le serveur, avec son propre dossier de configuration ; une session, dans le conteneur du projet.
+    const file = path.posix.join(chat ? chatConfigDir(ctx.project) : path.posix.join(os.homedir(), '.claude'), 'projects', ctx.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`);
+    const exists = chat ? await access(file).then(() => true, () => false) : await runner.pathExists(ctx.project, file).catch(() => true);
+    if (exists) return id;
     await ctx.emit('system', { notice: true, message: `La conversation Claude Code précédente (${id}) est introuvable dans l'environnement du projet : la session repart d'une conversation neuve. L'agent ne se souvient pas des échanges affichés ci-dessus ; le fil reste consultable ici.` });
     return null;
   }
 
-  private async instruction(ctx: RunContext, text: string, attachments: Attachment[]): Promise<SDKUserMessage['message']['content']> {
-    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
-    if (!attachments.length) return text;
+  private async instruction(ctx: RunContext, text: string, attachments: Attachment[], preamble?: string | null): Promise<SDKUserMessage['message']['content']> {
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}), ...(preamble ? { preamble: true } : {}) });
+    const body = preamble ? `${preamble}\n\n${text}` : text;
+    if (!attachments.length) return body;
     const note = attachmentsNote(attachments);
-    return [{ type: 'text', text: `${text}\n\n${note}` }, ...(await inlineBlocks(attachments))];
+    return [{ type: 'text', text: `${body}\n\n${note}` }, ...(await inlineBlocks(attachments))];
   }
 
   /**

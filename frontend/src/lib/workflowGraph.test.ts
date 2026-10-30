@@ -5,7 +5,7 @@ import { autoLayout, availablePaths, edgeId, edgeLabel, emptyDefinition, newNode
 const def: WorkflowDefinition = {
   nodes: [
     { key: 'start', type: 'trigger', label: 'Départ', position: { x: 0, y: 0 }, event: 'task.created', variables: [{ key: 'env', label: 'Environnement', description: null, required: false, defaultValue: 'prod' }] },
-    { key: 'review', type: 'agent', label: 'Relecture', position: { x: 0, y: 0 }, agentId: 'a1' },
+    { key: 'review', type: 'callLlm', label: 'Relecture', position: { x: 0, y: 0 }, llm: { backend: 'openai', keyItemId: 'k1', model: 'gpt-5', temperature: null, maxTokens: null, langfuseItemId: null }, prompt: 'Relis', outputFormat: 'json' },
     { key: 'ok', type: 'condition', label: 'Approuvé ?', position: { x: 0, y: 0 }, expression: 'nodes.review.json.approved' },
     { key: 'done', type: 'end', label: 'Fin', position: { x: 0, y: 0 } },
   ],
@@ -18,7 +18,7 @@ const def: WorkflowDefinition = {
 
 describe('graphe de workflow', () => {
   it('génère des clés uniques et des nœuds avec leurs valeurs par défaut', () => {
-    expect(nextKey(def, 'agent')).not.toBe('review');
+    expect(nextKey(def, 'callLlm')).toBe('llm1');
     const n = newNode(def, 'condition', { x: 10, y: 20 });
     expect(n.type).toBe('condition');
     expect(n.key).not.toBe('ok');

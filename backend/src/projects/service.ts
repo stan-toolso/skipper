@@ -1,18 +1,12 @@
+import { parseDockerSize } from '../runners/stats.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectRepository } from './repository.js';
 import { projectPermissionModes, type CreateProjectInput, type Project, type UpdateProjectInput } from './types.js';
+import { slugify } from './slug.js';
 import { ensureWorkspace } from './workspace.js';
 
 /** Dérive un identifiant de dossier sûr à partir du nom du projet. */
-export function slugify(input: string): string {
-  return input
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-}
+export { slugify };
 
 function validateSlug(slug: string): void {
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
@@ -24,8 +18,20 @@ function validatePermissionMode(mode: string | null | undefined): void {
   if (mode && !(projectPermissionModes as readonly string[]).includes(mode)) throw new AppError(`Mode d'autorisation invalide : ${mode}`);
 }
 
-/** Limite de sessions simultanées du projet (runnerConfig.maxSessions) : entier positif, ou absente. */
+/**
+ * Réglages du conteneur : limite mémoire au format Docker (« 2g », « 1500m », au moins 256 Mo), CPU en
+ * nombre de cœurs, sessions simultanées du projet (runnerConfig.maxSessions) : entier positif, ou absente.
+ */
 function validateRunnerConfig(runnerConfig: Record<string, unknown> | null | undefined): void {
+  const memory = runnerConfig?.memory;
+  if (memory !== undefined && memory !== null && memory !== '') {
+    const bytes = typeof memory === 'string' ? parseDockerSize(memory) : null;
+    if (!bytes || bytes < 256 * 1024 * 1024) throw new AppError('Mémoire du conteneur : taille Docker attendue, au moins 256 Mo (ex. « 2g », « 1500m »)');
+  }
+  const cpus = runnerConfig?.cpus;
+  if (cpus !== undefined && cpus !== null && cpus !== '' && !(typeof cpus === 'string' && /^\d+(\.\d+)?$/.test(cpus) && Number(cpus) > 0)) {
+    throw new AppError('CPU du conteneur : nombre de cœurs attendu (ex. « 1 », « 1.5 »)');
+  }
   const max = runnerConfig?.maxSessions;
   if (max === undefined || max === null) return;
   if (!Number.isInteger(max) || (max as number) < 0 || (max as number) > 100) throw new AppError('Sessions simultanées du projet : entier entre 0 et 100 attendu');
@@ -33,7 +39,10 @@ function validateRunnerConfig(runnerConfig: Record<string, unknown> | null | und
 
 export const projectService = {
   list: () => projectRepository.list(),
-  listForUser: (userId: string) => projectRepository.listForUser(userId),
+  listForUser: (userId: string, opts?: { includePersonal?: boolean }) => projectRepository.listForUser(userId, opts),
+  /** Espace personnel de la personne, s'il a déjà été créé (voir personalService.ensure). */
+  findPersonal: (userId: string) => projectRepository.findPersonal(userId),
+  personalOwnerOf: (projectId: string) => projectRepository.personalOwnerOf(projectId),
 
   async get(id: string): Promise<Project> {
     const project = await projectRepository.findById(id);

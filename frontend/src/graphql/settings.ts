@@ -50,6 +50,8 @@ export interface ClaudeSettings {
   monthlyBudgetUsd: number | null;
   sessionBudgetUsd: number | null;
   defaultMaxTurns: number | null;
+  /** Seuil (tokens) de signalement du contexte d'une session ; null = jamais. */
+  contextWarnTokens: number | null;
 }
 
 export interface UsageSummary {
@@ -173,7 +175,7 @@ export interface ServerHealth {
     available: boolean;
     version: string | null;
     error: string | null;
-    containers: { name: string; project: { id: string; name: string } | null; state: string; status: string; memoryUsage: string | null; memoryPercent: number | null; cpuPercent: number | null }[];
+    containers: { name: string; project: { id: string; name: string } | null; state: string; status: string; memoryUsage: string | null; memoryPercent: number | null; cpuPercent: number | null; cpuPressurePercent: number | null }[];
   };
   disk: {
     path: string;
@@ -226,6 +228,7 @@ export const SERVER_HEALTH = gql`
           memoryUsage
           memoryPercent
           cpuPercent
+          cpuPressurePercent
         }
       }
       disk {
@@ -329,6 +332,7 @@ export const APP_SETTINGS_FIELDS = gql`
       monthlyBudgetUsd
       sessionBudgetUsd
       defaultMaxTurns
+      contextWarnTokens
     }
     claudeAuth {
       mode

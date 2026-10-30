@@ -1,10 +1,12 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useState } from 'react';
+import { Alert, Modal, Spinner } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import DiffView from './DiffView';
 import { useDialogs } from './Dialogs';
 import { filesUrl } from '../lib/files';
-import { DISCARD_SESSION_FILE, SESSION_FILE_DIFF, type GitDiff, type SessionChanges as Changes, type SessionFileChange } from '../graphql/operations';
+import { usePollingQuery } from '../lib/usePollingQuery';
+import { DISCARD_SESSION_FILE, SESSION_CHANGES, SESSION_FILE_DIFF, type GitDiff, type SessionChanges as Changes, type SessionFileChange } from '../graphql/operations';
 
 const statusLabels: Record<string, { label: string; cls: string; title: string }> = {
   M: { label: 'M', cls: 'git-m', title: 'Modifié' },
@@ -19,34 +21,58 @@ const statusLabels: Record<string, { label: string; cls: string; title: string }
 const modeLabels: Record<Changes['mode'], string> = {
   COMMIT: 'depuis le début de la session',
   HEAD: 'non validées (commit de départ inconnu : les commits faits pendant la session ne sont pas inclus)',
-  MTIME: "dossier sans git : fichiers modifiés depuis la création de la session, sans diff",
+  MTIME: 'dossier sans git : fichiers modifiés depuis la création de la session, sans diff',
 };
 
-/** Diff d'un fichier, rechargé à chaque rafraîchissement de l'onglet. */
-function FileDiff({ sessionId, file, refreshKey }: { sessionId: string; file: SessionFileChange; refreshKey: number }) {
-  const { data, loading, error, refetch } = useQuery<{ sessionFileDiff: GitDiff }>(SESSION_FILE_DIFF, {
-    variables: { sessionId, path: file.path, origPath: file.origPath },
-    fetchPolicy: 'network-only',
-    notifyOnNetworkStatusChange: false,
-  });
+/** Liste des fichiers modifiés par une session : la requête, rechargée quand `changesKey` change et par sondage tant qu'elle est visible. */
+export function useSessionChanges(sessionId: string | null, changesKey: string | undefined, visible: boolean) {
+  const q = usePollingQuery<{ sessionChanges: Changes }>(SESSION_CHANGES, { variables: { sessionId: sessionId ?? '' }, skip: !sessionId, pollInterval: visible ? 10_000 : 0, fetchPolicy: 'cache-and-network' });
+  const [refreshCount, setRefreshCount] = useState(0);
+  const refetch = q.refetch;
+  const refresh = () => {
+    void refetch().catch(() => undefined);
+    setRefreshCount((n) => n + 1);
+  };
+  // Premier rendu : la requête part d'elle-même ; ensuite chaque changement de clé recharge la liste.
+  const [seenKey, setSeenKey] = useState(changesKey);
   useEffect(() => {
-    if (refreshKey) void refetch();
-  }, [refreshKey, refetch]);
+    if (changesKey === seenKey) return;
+    setSeenKey(changesKey);
+    if (sessionId) refresh();
+  }, [changesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { changes: q.data?.sessionChanges, loading: q.loading, error: q.error, refreshKey: refreshCount, refresh };
+}
+
+/** Fenêtre de diff d'un fichier modifié par la session. */
+function SessionDiffModal({ sessionId, file, base, onClose }: { sessionId: string; file: SessionFileChange; base: string | null; onClose: () => void }) {
+  const { data, loading, error } = useQuery<{ sessionFileDiff: GitDiff }>(SESSION_FILE_DIFF, { variables: { sessionId, path: file.path, origPath: file.origPath }, fetchPolicy: 'network-only' });
   const diff = data?.sessionFileDiff;
-  if (error) return <div className="cc-red cc-changes-note">{error.message}</div>;
-  if (loading && !diff) return <div className="cc-dim cc-changes-note">Chargement du diff…</div>;
-  if (!diff) return null;
   return (
-    <>
-      <DiffView text={diff.text} binary={diff.binary} />
-      {diff.truncated && <div className="cc-dim cc-changes-note">Diff tronqué (trop volumineux).</div>}
-    </>
+    <Modal show onHide={onClose} size="xl" centered scrollable>
+      <Modal.Header closeButton>
+        <Modal.Title className="h6 font-monospace">
+          {file.origPath && <span className="text-secondary">{file.origPath} → </span>}
+          {file.path} <span className="text-secondary">· depuis le début de la session{base ? ` (${base.slice(0, 7)})` : ''}</span>
+        </Modal.Title>
+      </Modal.Header>
+      <Modal.Body className="p-0">
+        {loading && !diff && (
+          <div className="p-3">
+            <Spinner size="sm" /> Chargement…
+          </div>
+        )}
+        {error && <Alert variant="danger" className="m-3">{error.message}</Alert>}
+        {diff && <DiffView text={diff.text} binary={diff.binary} />}
+        {diff?.truncated && <div className="text-secondary small p-2">Diff tronqué (trop volumineux).</div>}
+      </Modal.Body>
+    </Modal>
   );
 }
 
 /**
- * Onglet « Modifications » de la page de session : fichiers modifiés dans le dossier de travail depuis le
- * démarrage de la session (commits de l'agent compris), avec leur diff.
+ * Onglet « Modifications » du panneau de droite : fichiers modifiés dans le dossier de travail depuis le démarrage
+ * de la session (commits de l'agent compris). Un clic ouvre le diff ; chaque fichier s'ouvre dans l'éditeur ou se
+ * remet dans son état de départ.
  */
 export default function SessionChanges({
   sessionId,
@@ -54,27 +80,19 @@ export default function SessionChanges({
   changes,
   loading,
   error,
-  refreshKey,
   onRefresh,
 }: {
   sessionId: string;
-  workspace: { projectId: string; worktreeId: string | null };
+  /** Adresse de l'explorateur : sous la session quand elle a son dossier, sous le projet sinon. */
+  workspace: { projectId: string; sessionId: string | null };
   changes: Changes | undefined;
   loading: boolean;
   error?: Error;
-  refreshKey: number;
   onRefresh: () => void;
 }) {
   const { confirm, showError } = useDialogs();
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [opened, setOpened] = useState<SessionFileChange | null>(null);
   const [discard, { loading: discarding }] = useMutation(DISCARD_SESSION_FILE);
-  const toggle = (path: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
 
   const onDiscard = async (f: SessionFileChange) => {
     const ok = await confirm({
@@ -98,81 +116,74 @@ export default function SessionChanges({
   const deletions = files.reduce((n, f) => n + (f.deletions ?? 0), 0);
 
   return (
-    <div className="cc-transcript cc-changes">
-      <div className="cc-changes-head">
-        <span className="cc-dim">
+    <div className="git-body session-changes">
+      <div className="session-changes-head">
+        <span className="session-changes-summary">
           {changes ? (
             <>
-              {files.length === 0 ? 'Aucune modification' : `${files.length} fichier${files.length > 1 ? 's' : ''} modifié${files.length > 1 ? 's' : ''}`} {modeLabels[changes.mode]}
-              {changes.baseCommit && (
-                <>
-                  {' '}
-                  · référence <code title={changes.baseCommit}>{changes.baseCommit.slice(0, 7)}</code>
-                </>
-              )}
+              <span title={modeLabels[changes.mode]}>{files.length === 0 ? 'Aucune modification' : `${files.length} fichier${files.length > 1 ? 's' : ''} modifié${files.length > 1 ? 's' : ''}`}</span>
               {withDiff && files.length > 0 && (
-                <>
-                  {' '}
-                  · <span className="cc-green">+{additions}</span> <span className="cc-red">−{deletions}</span>
-                </>
+                <span className="ms-2">
+                  <span className="git-a">+{additions}</span> <span className="git-d">−{deletions}</span>
+                </span>
               )}
-              {changes.truncated && ' · liste incomplète'}
             </>
           ) : loading ? (
             'Chargement…'
           ) : null}
         </span>
-        <span className="cc-changes-tools">
-          {withDiff && files.length > 1 && (
-            <button type="button" className="cc-btn" onClick={() => setExpanded(expanded.size ? new Set() : new Set(files.map((f) => f.path)))}>
-              {expanded.size ? 'Tout replier' : 'Tout déplier'}
-            </button>
-          )}
-          <button type="button" className="cc-btn" title="Rafraîchir la liste" onClick={onRefresh} disabled={loading}>
-            <i className="bi bi-arrow-clockwise" />
-          </button>
-        </span>
+        <button type="button" className="git-icon-btn" title="Rafraîchir la liste" onClick={onRefresh} disabled={loading}>
+          <i className={`bi bi-arrow-clockwise${loading ? ' spin' : ''}`} />
+        </button>
       </div>
-      {error && <div className="cc-red cc-changes-note">{error.message}</div>}
+      {changes && (
+        <div className="session-changes-mode">
+          {modeLabels[changes.mode]}
+          {changes.baseCommit && (
+            <>
+              {' '}
+              · référence <code title={changes.baseCommit}>{changes.baseCommit.slice(0, 7)}</code>
+            </>
+          )}
+          {changes.truncated && ' · liste incomplète'}
+        </div>
+      )}
+      {error && <Alert variant="warning" className="m-2 py-1 small">{error.message}</Alert>}
       {files.map((f) => {
         const st = statusLabels[f.status] ?? { label: f.status, cls: '', title: f.status };
-        const open = withDiff && expanded.has(f.path);
+        const name = f.path.split('/').pop() ?? f.path;
+        const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '';
         const deleted = f.status === 'D';
         return (
-          <div key={f.path} className="cc-changes-file">
-            <div className="cc-changes-row">
-              <button type="button" className="cc-changes-main" onClick={() => withDiff && toggle(f.path)} disabled={!withDiff} title={f.origPath ? `${f.origPath} → ${f.path}` : f.path}>
-                {withDiff && <i className={`bi bi-chevron-${open ? 'down' : 'right'} cc-dimmer`} />}
-                <span className={`git-status ${st.cls}`} title={st.title}>
-                  {st.label}
-                </span>
-                <span className="cc-changes-path">
-                  {f.origPath && <span className="cc-dim">{f.origPath} → </span>}
-                  {f.path}
-                </span>
-                {withDiff && (f.additions !== null || f.deletions !== null) && (
-                  <span className="cc-changes-count">
-                    <span className="cc-green">+{f.additions ?? 0}</span> <span className="cc-red">−{f.deletions ?? 0}</span>
-                  </span>
-                )}
-              </button>
-              <span className="cc-changes-actions">
-                {!deleted && (
-                  <Link to={filesUrl(workspace, f.path)} className="cc-btn" title="Ouvrir dans l'éditeur (nouvel onglet)">
-                    <i className="bi bi-pencil-square" />
-                  </Link>
-                )}
-                {withDiff && (
-                  <button type="button" className="cc-btn danger" title="Abandonner : remettre le fichier dans son état du début de la session" disabled={discarding} onClick={() => void onDiscard(f)}>
-                    <i className="bi bi-arrow-counterclockwise" />
-                  </button>
-                )}
+          <div key={f.path} className="git-row" title={f.origPath ? `${f.origPath} → ${f.path}` : f.path}>
+            <button type="button" className="git-row-main" onClick={() => withDiff && setOpened(f)} disabled={!withDiff}>
+              <span className={`git-status ${st.cls}`} title={st.title}>
+                {st.label}
               </span>
-            </div>
-            {open && <FileDiff sessionId={sessionId} file={f} refreshKey={refreshKey} />}
+              <span className="git-name">{name}</span>
+              {dir && <span className="git-dir">{dir}</span>}
+              {withDiff && (f.additions !== null || f.deletions !== null) && (
+                <span className="session-changes-count">
+                  <span className="git-a">+{f.additions ?? 0}</span> <span className="git-d">−{f.deletions ?? 0}</span>
+                </span>
+              )}
+            </button>
+            <span className="git-row-actions">
+              {!deleted && (
+                <Link to={filesUrl(workspace, f.path)} title="Ouvrir dans l'éditeur (nouvel onglet)">
+                  <i className="bi bi-pencil-square" />
+                </Link>
+              )}
+              {withDiff && (
+                <button type="button" title="Abandonner : remettre le fichier dans son état du début de la session" disabled={discarding} onClick={() => void onDiscard(f)}>
+                  <i className="bi bi-arrow-counterclockwise" />
+                </button>
+              )}
+            </span>
           </div>
         );
       })}
+      {opened && <SessionDiffModal sessionId={sessionId} file={opened} base={changes?.baseCommit ?? null} onClose={() => setOpened(null)} />}
     </div>
   );
 }

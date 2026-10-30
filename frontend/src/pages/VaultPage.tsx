@@ -68,7 +68,7 @@ export default function VaultPage() {
       if (scope === 'projects' && !(i.ownerProject || i.ownerProjectName)) return false;
       if (kind && i.kind !== kind) return false;
       if (!q) return true;
-      return [i.name, i.description, i.host, i.url, i.database, i.username, i.google?.email, i.token?.serviceLabel, i.token?.account, i.langfusePublicKey].some((v) => v?.toLowerCase().includes(q));
+      return [i.name, i.description, i.host, i.url, i.database, i.username, i.google?.email, i.token?.serviceLabel, i.token?.account, i.langfusePublicKey, i.aws?.accountId, i.aws?.accountName, i.aws?.roleName, i.aws?.accessKeyId, i.scaleway?.accessKey, i.scaleway?.identity, i.scaleway?.projectId].some((v) => v?.toLowerCase().includes(q));
     });
   }, [items, scope, kind, search, user?.id]);
 
@@ -83,7 +83,7 @@ export default function VaultPage() {
         </Button>
       </div>
       <p className="text-secondary small">
-        Serveurs SSH, bases de données, API, sites web, secrets et comptes Google utilisables par les agents. Chaque élément est chiffré avec sa propre clé ; les agents n'en voient jamais les valeurs, le serveur agit pour eux. Un élément personnel vous appartient : partagez-le avec des collègues ou ouvrez-le à des projets. Un élément de projet est géré par ses administrateurs. Les jetons applicatifs, proxys LiteLLM et projets Langfuse sont réservés à Skipper (vos réglages Claude, OpenCode et GitHub, les agents à appel direct) et ne sont jamais offerts aux agents.
+        Serveurs SSH, bases de données, API, comptes AWS, sites web, secrets et comptes Google utilisables par les agents. Chaque élément est chiffré avec sa propre clé ; les agents n'en voient jamais les valeurs, le serveur agit pour eux. Un élément personnel vous appartient : partagez-le avec des collègues ou ouvrez-le à des projets. Un élément de projet est géré par ses administrateurs. Les jetons applicatifs, proxys LiteLLM et projets Langfuse sont réservés à Skipper (vos réglages Claude, OpenCode et GitHub, les agents à appel direct) et ne sont jamais offerts aux agents.
       </p>
       {flash && (
         <Alert variant={flash.ok ? 'success' : 'danger'} dismissible onClose={() => setFlash(null)} className="py-2">

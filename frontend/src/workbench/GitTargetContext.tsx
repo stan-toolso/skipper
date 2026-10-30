@@ -1,13 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 
-/** Workspace suivi par le panneau de droite : projet (checkout principal) ou worktree, et tâche éventuelle. */
+/** Workspace suivi par le panneau de droite : projet (checkout principal) ou dossier d'une session (sa work session, identifiant technique), et tâche éventuelle. */
 export interface GitTarget {
   projectId: string;
-  worktreeId: string | null;
+  worksessionId: string | null;
   label?: string;
   /** Tâche affichée dans l'onglet « Tâche » du panneau (page d'une session en charge d'une tâche). */
   taskId?: string | null;
+  /** Session affichée dans les onglets « Session » et « Modifications » du panneau (page d'une session). */
+  sessionId?: string | null;
+  /** Change quand la liste des fichiers modifiés par la session mérite d'être rechargée (résultat d'outil, état). */
+  changesKey?: string;
 }
 
 interface State {
@@ -19,8 +23,9 @@ interface State {
 
 const Ctx = createContext<State | null>(null);
 const OPEN_KEY = 'skipper.workbench.gitPanel';
+const isMobile = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767.98px)').matches;
 
-const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worktreeId === b!.worktreeId && a!.label === b!.label && (a!.taskId ?? null) === (b!.taskId ?? null));
+const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worksessionId === b!.worksessionId && a!.label === b!.label && (a!.taskId ?? null) === (b!.taskId ?? null) && (a!.sessionId ?? null) === (b!.sessionId ?? null) && (a!.changesKey ?? '') === (b!.changesKey ?? ''));
 
 export function GitTargetProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -28,13 +33,18 @@ export function GitTargetProvider({ children }: { children: ReactNode }) {
   // la fait tomber, sans la vider par un effet (une page dont les données sont déjà en cache déclare dans le même
   // rendu que la navigation et serait écrasée).
   const [declared, setDeclared] = useState<{ path: string; target: GitTarget } | null>(null);
+  // Sur mobile le panneau recouvre le contenu : il s'ouvre à la demande et se referme à chaque navigation.
   const [open, setOpenState] = useState<boolean>(() => {
+    if (isMobile()) return false;
     try {
       return localStorage.getItem(OPEN_KEY) !== '0';
     } catch {
       return true;
     }
   });
+  useEffect(() => {
+    if (isMobile()) setOpenState(false);
+  }, [location.pathname]);
   const setTarget = useCallback(
     (t: GitTarget | null) => {
       const path = location.pathname;
@@ -44,6 +54,7 @@ export function GitTargetProvider({ children }: { children: ReactNode }) {
   );
   const setOpen = useCallback((v: boolean) => {
     setOpenState(v);
+    if (isMobile()) return;
     try {
       localStorage.setItem(OPEN_KEY, v ? '1' : '0');
     } catch {
@@ -54,7 +65,7 @@ export function GitTargetProvider({ children }: { children: ReactNode }) {
     if (declared && declared.path === location.pathname) return declared.target;
     // Sans déclaration : les pages d'un projet suivent son checkout principal.
     const m = location.pathname.match(/^\/projects\/([^/]+)(?:\/(?!new$)[^/]+)?$/);
-    if (m && m[1] !== 'new' && !location.pathname.endsWith('/edit')) return { projectId: m[1], worktreeId: null };
+    if (m && m[1] !== 'new' && !location.pathname.endsWith('/edit')) return { projectId: m[1], worksessionId: null };
     return null;
   }, [declared, location.pathname]);
   const value = useMemo(() => ({ target, setTarget, open, setOpen }), [target, setTarget, open, setOpen]);
@@ -70,7 +81,7 @@ export function useGitPanel(): State {
 /** Déclare, depuis une page, le workspace (et la tâche) que le panneau de droite doit suivre. */
 export function useGitTarget(target: GitTarget | null | undefined): void {
   const { setTarget } = useGitPanel();
-  const key = target ? `${target.projectId}|${target.worktreeId ?? ''}|${target.label ?? ''}|${target.taskId ?? ''}` : '';
+  const key = target ? `${target.projectId}|${target.worksessionId ?? ''}|${target.label ?? ''}|${target.taskId ?? ''}|${target.sessionId ?? ''}|${target.changesKey ?? ''}` : '';
   useEffect(() => {
     if (target) setTarget(target);
   }, [key, setTarget]); // eslint-disable-line react-hooks/exhaustive-deps

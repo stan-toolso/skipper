@@ -26,8 +26,8 @@ export const apolloClient = new ApolloClient({
     typePolicies: {
       Query: {
         fields: {
-          // Un worktree déjà chargé par la sidebar se lit directement dans le cache, sans aller-retour.
-          worktree: { read: (existing, { args, toReference }) => existing ?? toReference({ __typename: 'Worktree', id: args?.id }) },
+          // Un dossier de travail (work session) déjà chargé par la sidebar se lit directement dans le cache, sans aller-retour.
+          worksession: { read: (existing, { args, toReference }) => existing ?? toReference({ __typename: 'Worksession', id: args?.id }) },
         },
       },
     },
@@ -82,9 +82,9 @@ export function googleConnectUrl(projectId: string | null, gmail: string, drive:
 }
 
 /** Fichier brut d'un workspace (aperçu HTML dans un bac à sable, téléchargement). */
-export function fileViewUrl(projectId: string, worktreeId: string | null | undefined, path: string, download = false): string {
+export function fileViewUrl(projectId: string, worksessionId: string | null | undefined, path: string, download = false): string {
   const encoded = path.split('/').map(encodeURIComponent).join('/');
-  return `${apiBaseUrl}/api/files/view/${projectId}/${worktreeId ?? '-'}/${encoded}${download ? '?download=1' : ''}`;
+  return `${apiBaseUrl}/api/files/view/${projectId}/${worksessionId ?? '-'}/${encoded}${download ? '?download=1' : ''}`;
 }
 
 /** Contenu d'une page partagée (bac à sable), éventuellement une version donnée ou en téléchargement. */

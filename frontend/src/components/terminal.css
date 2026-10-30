@@ -25,7 +25,30 @@
 .cc-header .cc-title { color: var(--cc-accent); font-weight: 600; }
 .cc-header .cc-meta { color: var(--cc-dim); }
 .cc-header .cc-meta code { color: var(--cc-dim); background: none; padding: 0; font-size: inherit; }
-.cc-actions { display: flex; gap: 6px; }
+.cc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Actions empilées dans l'onglet « Session » du panneau de droite. */
+.cc-actions.stacked { padding: 4px 10px 8px; font-family: var(--bs-font-sans-serif); font-size: 12px; }
+/* Détail déplié sous l'en-tête d'une ligne : actions, note de sous-agent, sous-agents. */
+.cc-header-detail { font-family: var(--bs-font-sans-serif); padding: 8px 14px; border-bottom: 1px solid var(--cc-border); display: flex; flex-direction: column; gap: 8px; }
+.cc-header-detail .cc-subagent, .cc-header-detail .cc-children { padding: 0; border: 0; background: none; }
+/* Sous-agent : bandeau sous l'en-tête d'une session lancée par l'agent d'une autre session. */
+.cc-subagent { font-family: var(--bs-font-sans-serif); font-size: 12.5px; padding: 6px 14px; border-bottom: 1px solid var(--cc-border); background: var(--cc-bg-user); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cc-subagent-icon { color: var(--cc-accent); font-size: 15px; }
+.cc-subagent-text { flex: 1 1 240px; min-width: 0; }
+.cc-subagent-text a { color: var(--cc-fg); }
+.cc-subagent .cc-btn { text-decoration: none; font-size: 12px; white-space: nowrap; }
+/* Sous-agents de cette session : une ligne sous l'en-tête, une puce par sous-agent. */
+.cc-children { font-family: var(--bs-font-sans-serif); font-size: 12px; padding: 5px 14px; border-bottom: 1px solid var(--cc-border); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; color: var(--cc-dim); }
+.cc-children-title { color: var(--cc-dimmer); }
+.cc-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.cc-child .cc-child-name { color: var(--cc-fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.cc-child .cc-child-name:hover { color: var(--cc-accent); }
+.cc-child .cc-link { font-size: inherit; }
+/* Panneau de droite : note de sous-agent et sous-agents en colonne, sans filet ni fond. */
+.cc-subagent.compact { padding: 2px 10px 6px; border: 0; background: none; font-size: 12px; }
+.cc-children.stacked { flex-direction: column; align-items: stretch; gap: 4px; padding: 2px 10px 6px; border: 0; }
+.cc-children.stacked .cc-child { flex-wrap: wrap; }
+.cc-children.stacked .cc-child-name { max-width: none; flex: 1 1 100%; white-space: normal; }
 .cc-btn {
   font: inherit;
   color: var(--cc-fg);
@@ -87,13 +110,25 @@
 .cc-tool .cc-dot.pending { color: var(--cc-dim); }
 .cc-tool .cc-dot.ok { color: var(--cc-green); }
 .cc-tool .cc-dot.error { color: var(--cc-red); }
+.cc-tool .cc-dot.warn { color: var(--cc-yellow); }
+/* Code de sortie d'une commande qui a tourné mais s'est terminée en non nul : seule cette ligne ressort. */
+.cc-exit { color: var(--cc-yellow); }
 .cc-tool .cc-name { font-weight: 600; }
+/* Étapes de l'agent repliées en une ligne (détail technique masqué), dépliées au clic.
+   Une seule ligne, coupée par des points de suspension : la dernière étape qui change ne fait pas sauter le fil. */
+.cc-group .cc-group-summary { color: var(--cc-dim); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-group .cc-group-caret { color: var(--cc-dimmer); }
+.cc-group .cc-group-running { color: var(--cc-fg); }
+.cc-group .cc-group-body { margin: 4px 0 0 6px; padding-left: 12px; border-left: 1px solid var(--cc-dimmer); }
 .cc-result { display: flex; gap: 8px; margin-left: 18px; color: var(--cc-dim); }
 .cc-tool .cc-result { cursor: pointer; }
 .cc-result .cc-elbow { flex: 0 0 auto; color: var(--cc-dimmer); }
 .cc-result .cc-result-body { flex: 1; min-width: 0; }
 .cc-result.error { color: var(--cc-red); }
 .cc-more { color: var(--cc-dimmer); }
+/* Identifiant de session cité par un outil `sessions` : lien vers la session. */
+.cc-session-link { color: var(--cc-accent); text-decoration: none; }
+.cc-session-link:hover { text-decoration: underline; }
 .cc-todo.completed { color: var(--cc-dimmer); text-decoration: line-through; }
 .cc-todo.in_progress { color: var(--cc-fg); font-weight: 600; }
 
@@ -109,10 +144,19 @@
 .cc-diff-text { flex: 1; min-width: 0; }
 
 .cc-thinking { margin: 10px 0; color: var(--cc-dimmer); font-style: italic; cursor: pointer; }
+/* Réponse en cours d'écriture : curseur clignotant après le dernier bloc reçu. */
+.cc-live .cc-body > :last-child::after,
+.cc-thinking.cc-live > div::after { content: '▍'; margin-left: 2px; color: var(--cc-accent); animation: cc-blink 1s ease-in-out infinite; }
+.cc-thinking.cc-live { cursor: default; }
 .cc-thinking .cc-thinking-text { margin-left: 18px; }
 .cc-note { margin: 4px 0; color: var(--cc-dimmer); }
 .cc-note.error { color: var(--cc-red); }
 .cc-note.warn { color: var(--cc-yellow); }
+
+/* Demandes en attente : sous le transcript, dans leur propre zone qui défile. Sans cela, une demande haute (longue
+   commande, règle à retenir, plusieurs options) pousse ses options sous le bord du conteneur .cc (overflow: hidden) :
+   on ne peut plus répondre, surtout sur mobile. Bornée pour laisser toujours un bout de conversation visible. */
+.cc-prompts { flex: 0 1 auto; min-height: 0; max-height: 70%; overflow-y: auto; }
 
 /* Demande d'intervention (autorisation, question) : encadré orange, options numérotées */
 .cc-prompt {
@@ -154,48 +198,59 @@
 .cc-prompt .cc-rule-edit .cc-desc { color: var(--cc-dim); }
 .cc-prompt .cc-rule-edit textarea { resize: vertical; white-space: pre; }
 
-/* Barre d'état + zone de saisie */
+/* Bas de page : ligne d'état sobre (sans filet), puis la zone de saisie en boîte arrondie. */
 .cc-status {
   font-family: var(--bs-font-sans-serif);
-  padding: 4px 16px;
+  padding: 8px 16px 2px;
   color: var(--cc-dim);
-  border-top: 1px solid var(--cc-border);
   display: flex;
   justify-content: space-between;
   gap: 12px;
 }
-.cc-status .cc-spinner { color: var(--cc-accent); display: inline-block; animation: cc-blink 1s ease-in-out infinite; }
-/* Réglages modifiables en cours de session (modèle, autorisations) : listes déroulantes discrètes dans la barre d'état */
-.cc-status .cc-settings { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.cc-select {
-  font: inherit;
-  color: var(--cc-dim);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0 4px;
-  max-width: 260px;
-  cursor: pointer;
-}
-.cc-select:hover, .cc-select:focus { border-color: var(--cc-border); color: var(--cc-fg); outline: none; }
-.cc-select:disabled { opacity: 0.5; cursor: default; }
-.cc-select option { background: var(--cc-bg-elevated); color: var(--cc-fg); }
+.cc-status .cc-spinner { color: var(--cc-accent); display: inline-block; margin-right: 5px; animation: cc-blink 1s ease-in-out infinite; }
 @keyframes cc-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* Zone de saisie : le texte en haut, une rangée d'outils en bas (fichiers, modèle, autorisations, envoi). */
 .cc-input {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 0 12px 12px;
+  gap: 6px;
+  margin: 4px 12px 12px;
   border: 1px solid var(--cc-border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  background: var(--cc-bg-elevated);
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  background: var(--cc-bg-user);
+  font-family: var(--bs-font-sans-serif);
+  font-size: 14px;
+  cursor: text;
 }
 .cc-input:focus-within { border-color: var(--cc-dim); }
-.cc-input .cc-input-row { display: flex; gap: 8px; }
-/* Bouton trombone : ouvre le sélecteur de fichiers ; les fichiers peuvent aussi être collés ou déposés. */
-.cc-attach { flex: 0 0 auto; align-self: flex-end; color: var(--cc-dim); font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer; margin: 0; }
-.cc-attach:hover { color: var(--cc-fg); }
+.cc-input-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; cursor: default; }
+/* Bouton « + » : ouvre le sélecteur de fichiers ; les fichiers peuvent aussi être collés ou déposés. */
+.cc-attach {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px;
+  color: var(--cc-dim); font-size: 16px; line-height: 1; cursor: pointer; margin: 0;
+}
+.cc-attach:hover { color: var(--cc-fg); background: var(--cc-bg-hover); }
+/* Pastilles de réglage (modèle, autorisations) : libellé courant et chevron ; la liste déroulante native, invisible,
+   recouvre la pastille (clic, clavier et menu natif), ce qui évite qu'elle prenne la largeur de sa plus longue option. */
+.cc-pill {
+  position: relative; display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border-radius: 8px;
+  color: var(--cc-fg); white-space: nowrap; max-width: 100%;
+}
+.cc-pill:hover { background: var(--cc-bg-hover); }
+.cc-pill.static { color: var(--cc-dim); }
+.cc-pill.warn { color: var(--cc-yellow); }
+.cc-pill .cc-pill-label { overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.cc-pill .bi-chevron-down { font-size: 10px; color: var(--cc-dim); }
+.cc-pill.warn .bi-chevron-down { color: inherit; opacity: 0.8; }
+.cc-pill:focus-within { box-shadow: 0 0 0 1px var(--cc-border); }
+.cc-pill:has(.cc-select:disabled) { opacity: 0.5; }
+.cc-select {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0;
+  font: inherit; opacity: 0; cursor: pointer; appearance: none; -webkit-appearance: none;
+}
+.cc-select:disabled { cursor: default; }
+.cc-select option { background: var(--cc-bg-elevated); color: var(--cc-fg); }
 /* Fichiers joints en attente d'envoi (zone de saisie, modale de lancement). */
 .cc-attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-family: var(--bs-font-sans-serif); font-size: 12.5px; }
 .cc-input .cc-attachments { margin: 0; }
@@ -212,18 +267,20 @@
 /* Fichiers joints d'une instruction dans le transcript. */
 .cc-user-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .cc-user-image img { max-width: 240px; max-height: 160px; border-radius: 4px; border: 1px solid var(--cc-border); display: block; }
-.cc-input .cc-caret { color: var(--cc-dim); }
 .cc-input textarea {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: 0;
   outline: none;
   color: var(--cc-fg);
   font: inherit;
+  line-height: 1.5;
   resize: none;
   min-height: 1.5em;
   max-height: 10em;
+  padding: 0;
 }
+.cc-input textarea::placeholder { color: var(--cc-dim); }
 .cc-hint { padding: 0 16px 8px; color: var(--cc-dimmer); display: flex; justify-content: space-between; font-family: var(--bs-font-sans-serif); }
 .cc-prompt { font-family: var(--bs-font-sans-serif); font-size: 13.5px; }
 .cc-prompt .cc-prompt-body { font-family: var(--bs-font-monospace); font-size: 12.5px; }
@@ -257,26 +314,68 @@
 .cc-changes-file .diff-view { border-top: 1px solid var(--cc-border); max-height: 70vh; overflow: auto; }
 .cc-changes-note { padding: 6px 10px; font-family: var(--bs-font-sans-serif); font-size: 12px; }
 
-/* Bouton d'envoi : discret au clavier, visible sur mobile où Entrée ne suffit pas. */
+/* Bouton d'envoi : rond, à droite de la rangée d'outils ; éteint tant qu'il n'y a rien à envoyer (Entrée envoie aussi). */
 .cc-send {
-  display: none; flex: 0 0 auto; align-self: flex-end; background: none; border: 0; color: var(--cc-accent); font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; margin-left: auto;
+  width: 32px; height: 32px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  background: var(--cc-accent); color: var(--cc-accent-contrast); font-size: 18px; line-height: 1;
 }
-.cc-send:disabled { color: var(--cc-dimmer); cursor: default; }
-@media (hover: none), (max-width: 767.98px) {
-  .cc-send { display: inline-flex; }
-}
+.cc-send:hover { background: var(--cc-accent-hover); }
+.cc-send:disabled { background: var(--cc-border); color: var(--cc-dim); cursor: default; }
 @media (max-width: 767.98px) {
-  .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; }
-  .cc-header { padding: 8px 10px; gap: 6px; }
-  .cc-actions { width: 100%; flex-wrap: wrap; }
+  /* Le conteneur défile au lieu de rogner : avec un en-tête haut (sous-agents, bandeaux) et des demandes en attente,
+     la zone de saisie resterait sinon hors de l'écran. */
+  .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; overflow-y: auto; }
+  .cc-children { padding: 5px 10px; }
+  .cc-subagent { padding: 6px 10px; }
+  .cc-actions { width: 100%; }
+  .cc-context-banner { padding: 6px 10px; }
+  .cc-context-banner-actions { width: 100%; }
+  .cc-context-banner-actions .cc-btn { flex: 1 1 auto; text-align: center; }
   .cc-actions .cc-btn { flex: 1 1 auto; text-align: center; padding: 5px 8px; }
   .cc-transcript { padding: 10px 10px; }
-  .cc-toggle { padding: 4px 10px 0; }
-  .cc-status { padding: 4px 10px; flex-direction: column; gap: 2px; font-size: 12px; }
-  .cc-input { margin: 0 8px 8px; }
-  .cc-hint { display: none; }
+  .cc-toggle { padding: 3px 10px 0; }
+  /* Bas de page : état sur une ligne, saisie resserrée, pastilles bornées pour que la rangée d'outils tienne en largeur. */
+  .cc-status { padding: 6px 10px 2px; flex-direction: column; gap: 0; font-size: 12px; }
+  .cc-status > span:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+  .cc-input { margin: 2px 6px 6px; padding: 10px 10px 8px; gap: 4px; font-size: 13px; }
+  .cc-input-tools { gap: 2px; }
+  .cc-pill { padding: 0 6px; min-width: 0; }
+  .cc-pill .cc-pill-label { max-width: 150px; }
+  /* Pas de raccourcis clavier sur mobile : seul le bouton « Ignorer » reste, à droite. */
+  .cc-hint { padding: 0 8px 8px; justify-content: flex-end; }
+  .cc-hint .cc-hint-text { display: none; }
+  .cc-prompts { max-height: 75%; min-height: 160px; }
   .cc-prompt { margin: 10px 8px; padding: 8px 10px; }
   .cc-result { margin-left: 8px; }
+}
+
+/* En-tête de la page de session : une seule ligne (nom, détail tronqué, jauge de contexte, chevron). Le chevron
+   (état React `headerOpen`, classe `open`) laisse le détail s'étaler sur plusieurs lignes et affiche .cc-header-detail
+   (actions, sous-agents) ; le panneau de droite (onglet « Session ») montre la même chose en permanence. */
+.cc-header { padding: 6px 14px; gap: 4px 8px; flex-wrap: nowrap; }
+.cc-header-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0 4px; }
+.cc-header-main > .cc-title, .cc-header-main > .cc-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Le nom a la priorité (jusqu'à la moitié de la ligne) ; le détail se tronque, puis le reste (workflow, planification). */
+.cc-header-main > .cc-title { flex: 0 0 auto; max-width: 50%; }
+.cc-header-main > .cc-meta { flex: 1 1 0; }
+.cc-header-main > .cc-meta-more { flex: 0 1 auto; max-width: 35%; }
+.cc-header-main > .cc-meta:empty { display: none; }
+.cc-header-gauge { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.cc-header-toggle {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 28px;
+  background: none; border: 1px solid var(--cc-border); border-radius: 4px; color: var(--cc-dim); font-size: 13px; cursor: pointer;
+}
+.cc-header-toggle:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
+.cc-header.open { align-items: flex-start; }
+.cc-header.open .cc-header-main { display: block; }
+.cc-header.open .cc-header-main > .cc-title, .cc-header.open .cc-header-main > .cc-meta { white-space: normal; overflow: visible; max-width: none; }
+@media (max-width: 767.98px) {
+  .cc-header { padding: 6px 10px; gap: 4px 6px; }
+  .cc-header-detail { padding: 8px 10px; }
+  /* Replié : seuls le nom (tronqué) et la jauge restent, le détail n'a pas la place. */
+  .cc-header:not(.open) .cc-header-main > .cc-title { flex: 1; max-width: none; }
+  .cc-header:not(.open) .cc-header-main > .cc-meta, .cc-header:not(.open) .cc-sep, .cc-header:not(.open) .cc-gauge-cost { display: none; }
 }
 
 /* Markdown des agents (réponses, questions, motifs) : compact, dans la teinte du transcript */
@@ -320,3 +419,31 @@
 /* Lien discret dans l'en-tête (planification) */
 .cc-link { background: none; border: none; padding: 0; color: var(--cc-dim); cursor: pointer; font: inherit; }
 .cc-link:hover { color: var(--cc-fg); text-decoration: underline; }
+
+/* Jauge de contexte de l'en-tête : tokens, barre (part de la fenêtre du modèle), coût d'un tour à froid */
+.cc-gauge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.cc-gauge:hover { text-decoration: none; }
+.cc-gauge-bar { display: inline-block; width: 48px; height: 6px; border-radius: 3px; background: var(--cc-border); overflow: hidden; vertical-align: middle; }
+.cc-gauge-bar > span { display: block; height: 100%; background: var(--cc-green); }
+.cc-gauge.warn, .cc-gauge.warn:hover { color: var(--cc-yellow); }
+.cc-gauge.warn .cc-gauge-bar > span { background: var(--cc-yellow); }
+.cc-gauge.danger, .cc-gauge.danger:hover { color: var(--cc-red); }
+.cc-gauge.danger .cc-gauge-bar > span { background: var(--cc-red); }
+
+/* Bandeau au-delà du seuil : compacter, repartir d'une conversation neuve ou ignorer */
+.cc-context-banner {
+  font-family: var(--bs-font-sans-serif);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--cc-border);
+  color: var(--cc-fg);
+  border-left: 3px solid var(--cc-yellow);
+}
+.cc-context-banner.danger { border-left-color: var(--cc-red); }
+.cc-context-banner > i { color: var(--cc-yellow); }
+.cc-context-banner.danger > i { color: var(--cc-red); }
+.cc-context-banner-text { flex: 1 1 320px; font-size: 13px; }
+.cc-context-banner-actions { display: flex; gap: 6px; flex-wrap: wrap; }

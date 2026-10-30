@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { formatTokens } from '../lib/humanize';
 import AddMenu from './AddMenu';
 import { useTabs } from './TabsContext';
-import { mineFirst, type SidebarSession } from './workspaces';
+import { attachedElsewhere, filesKey, mineFirst, sessionGroups, subagentsSummary, type SidebarSession } from './workspaces';
 
 export function sessionDotClass(s: Pick<SidebarSession, 'status' | 'activity' | 'pendingRequestCount'>): string {
   if (s.pendingRequestCount > 0) return 'ask';
@@ -12,6 +13,26 @@ export function sessionDotClass(s: Pick<SidebarSession, 'status' | 'activity' | 
   if (s.status === 'FAILED') return 'failed';
   if (s.status === 'COMPLETED') return 'done';
   return 'stopped';
+}
+
+/** Pastille « contexte lourd » d'une session dont le contexte dépasse le seuil serveur : la page propose de le nettoyer. */
+export function ContextDot({ context }: { context: { tokens: number | null } }) {
+  return (
+    <span className="wb-ctx" title={`Contexte de l'agent : ${formatTokens(context.tokens ?? 0)} tokens. Ouvrez la session pour compacter ou repartir d'une conversation neuve.`}>
+      <i className="bi bi-speedometer2" />
+    </span>
+  );
+}
+
+/** Compteur de sous-agents sur la puce ou l'onglet d'une session parente. */
+export function SubagentsCount({ children }: { children: SidebarSession[] }) {
+  const sum = subagentsSummary(children);
+  return (
+    <span className={`wb-chip-sub ${sum.state ?? 'none'}`} title={`${sum.label}${sum.hint ? ` · ${sum.hint}` : ''}${sum.pending ? ` · ${sum.pending} demande(s) en attente` : ''}`}>
+      <i className="bi bi-robot" />
+      {children.length}
+    </span>
+  );
 }
 
 /** Initiales d'un nom (deux lettres). */
@@ -24,9 +45,9 @@ export const initialsOf = (name: string) =>
     .toUpperCase();
 
 /**
- * Sous-barre d'un dossier de travail : Fichiers, les sessions (les miennes d'abord), le navigateur des sessions
- * qui en ont un, les terminaux, et un « + » pour y ouvrir quelque chose. Affichée seulement quand la page
- * courante appartient à un dossier.
+ * Sous-barre d'un dossier de travail (celui d'une session, ou le checkout principal pour les sessions d'avant) :
+ * la session (et ses sous-agents), son navigateur s'il est ouvert, ses fichiers, ses terminaux, et un « + » pour
+ * y ouvrir quelque chose. Affichée seulement quand la page courante appartient à un dossier.
  */
 export default function WorkspaceTabs() {
   const location = useLocation();
@@ -42,8 +63,13 @@ export default function WorkspaceTabs() {
   }, [location.pathname, ws?.sessions.length]);
 
   if (!ws) return null;
-  const sessions = mineFirst(ws.sessions, user?.id ?? null);
-  const filesActive = location.pathname.startsWith(ws.key);
+  // Sous-agents cherchés dans tout le projet : un sous-agent (qui a son propre dossier) compte pour sa parente, et n'a pas d'onglet à part ici.
+  const pool = workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s) => ({ ...s, wsKey: w.key })));
+  const poolById = new Map(pool.map((s) => [s.id, s]));
+  const here = new Set(ws.sessions.map((s) => s.id));
+  const sessions = mineFirst(ws.sessions, user?.id ?? null).filter((s) => !attachedElsewhere(s, here, poolById));
+  const files = filesKey(ws);
+  const filesActive = location.pathname === files || location.pathname.startsWith(`${files}/`);
   const link = (to: string, active: boolean, title: string, children: React.ReactNode) => (
     <Link key={to} to={to} className={`wb-ws-tab${active ? ' active' : ''}`} title={title}>
       {children}
@@ -60,19 +86,26 @@ export default function WorkspaceTabs() {
           el.scrollLeft += e.deltaY;
         }}
       >
-        {link(ws.key, filesActive, `Fichiers · ${ws.name}`, (
-          <>
-            <i className="bi bi-folder2-open" /> Fichiers
-          </>
-        ))}
-        {sessions.map((s) => {
+        {ws.primary &&
+          link(files, filesActive, `Fichiers · ${ws.name}`, (
+            <>
+              <i className="bi bi-folder2-open" /> Fichiers
+            </>
+          ))}
+        {sessionGroups(sessions.map((s) => ({ ...s, wsKey: ws.key })), pool).flatMap(({ root, children }) =>
+          // Un onglet par session de premier niveau (avec le compte de ses sous-agents) ; un sous-agent de ce dossier n'a le sien que s'il est la page courante ou attend une réponse.
+          [root, ...children.filter((c) => location.pathname.startsWith(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, depth, byAgent, parentName }) => {
           const mine = !s.owner || s.owner.id === user?.id;
           return (
             <span key={s.id} className="wb-ws-group">
-              {link(`/sessions/${s.id}`, location.pathname === `/sessions/${s.id}`, `${s.name}${s.owner && !mine ? ` · session de ${s.owner.name}` : ''}`, (
+              {link(`/sessions/${s.id}`, location.pathname === `/sessions/${s.id}`, `${s.name}${byAgent ? ` · sous-agent${parentName ? ` de « ${parentName} »` : ''}` : ''}${s.owner && !mine ? ` · session de ${s.owner.name}` : ''}`, (
                 <>
+                  {depth > 0 && <span className="wb-tree">└</span>}
                   <span className={`wb-dot ${sessionDotClass(s)}`} />
+                  {byAgent && depth === 0 && <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />}
                   <span className="wb-ws-label">{s.name}</span>
+                  {depth === 0 && children.length > 0 && <SubagentsCount children={children.map((c) => c.session)} />}
+                  {s.context.overThreshold && <ContextDot context={s.context} />}
                   {s.owner && !mine ? <span className="wb-owner" title={`Session de ${s.owner.name}`}>{initialsOf(s.owner.name)}</span> : null}
                   {s.pendingRequestCount > 0 && <span className="wb-badge">{s.pendingRequestCount}</span>}
                 </>
@@ -85,7 +118,14 @@ export default function WorkspaceTabs() {
                 ))}
             </span>
           );
-        })}
+          }),
+        )}
+        {!ws.primary &&
+          link(files, filesActive, `Fichiers · ${ws.name}${ws.branch ? ` · branche ${ws.branch}` : ''}`, (
+            <>
+              <i className="bi bi-folder2-open" /> Fichiers
+            </>
+          ))}
         {ws.terminals.map((t) =>
           link(`/terminals/${t.id}`, location.pathname === `/terminals/${t.id}`, t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé', (
             <>
@@ -106,7 +146,7 @@ export default function WorkspaceTabs() {
         >
           <i className="bi bi-plus-lg" />
         </button>
-        {menu && <AddMenu projectId={ws.projectId} worktree={ws.worktree} canWorktree={false} onClose={() => setMenu(false)} />}
+        {menu && <AddMenu projectId={ws.projectId} session={ws.session ? { id: ws.session.id, name: ws.session.name, status: ws.session.status, worksessionId: ws.worksessionId, branch: ws.worksessionId ? ws.branch : null } : null} onClose={() => setMenu(false)} />}
       </span>
     </div>
   );

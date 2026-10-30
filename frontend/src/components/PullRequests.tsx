@@ -12,6 +12,7 @@ import {
   type PullRequestSummary,
 } from '../graphql/operations';
 import Markdown from './Markdown';
+import { usePollingQuery } from '../lib/usePollingQuery';
 
 /** Requêtes à rafraîchir après une création ou une fusion (panneau git, tâches, sidebar). */
 const PR_REFETCH = ['GithubPullRequests', 'Tasks', 'Sidebar', 'GitStatus', 'GitBranches', 'GitLog'];
@@ -99,22 +100,22 @@ function DetailsLine({ pr }: { pr: PullRequest }) {
 
 /**
  * Détail d'une PR : checks, revues, possibilité de fusion ; fusion (merge, squash, rebase) avec
- * nettoyage du worktree, des branches et des tâches liées.
+ * nettoyage du dossier de travail, des branches et des tâches liées.
  */
-export function PullRequestModal({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose: () => void; onMerged?: (deletedWorktreeIds: string[]) => void }) {
-  const q = useQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
+export function PullRequestModal({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose: () => void; onMerged?: (deletedWorksessionIds: string[]) => void }) {
+  const q = usePollingQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
   const pr = q.data?.githubPullRequest;
   const [method, setMethod] = useState<PullRequestMergeMethod>('SQUASH');
   const [deleteRemoteBranch, setDeleteRemoteBranch] = useState(true);
-  const [deleteWorktree, setDeleteWorktree] = useState(true);
+  const [deleteWorksession, setDeleteWorksession] = useState(true);
   const [stopSessions, setStopSessions] = useState(true);
   const [completeTasks, setCompleteTasks] = useState(true);
-  const [merge, { loading: merging, data: mergeData, error: mergeError }] = useMutation<{ mergePullRequest: { sha: string | null; warnings: string[]; deletedWorktreeIds: string[]; completedTaskIds: string[]; pullRequest: PullRequest } }>(MERGE_PULL_REQUEST, {
+  const [merge, { loading: merging, data: mergeData, error: mergeError }] = useMutation<{ mergePullRequest: { sha: string | null; warnings: string[]; deletedWorksessionIds: string[]; completedTaskIds: string[]; pullRequest: PullRequest } }>(MERGE_PULL_REQUEST, {
     refetchQueries: PR_REFETCH,
-    onCompleted: (res) => onMerged?.(res.mergePullRequest.deletedWorktreeIds),
+    onCompleted: (res) => onMerged?.(res.mergePullRequest.deletedWorksessionIds),
   });
   const result = mergeData?.mergePullRequest;
-  const runningSessions = pr?.worktree?.sessions.filter((s) => s.status === 'RUNNING') ?? [];
+  const runningSessions = pr?.worksession?.sessions.filter((s) => s.status === 'RUNNING') ?? [];
   const openTasks = pr?.tasks.filter((t) => t.status === 'TODO' || t.status === 'IN_PROGRESS') ?? [];
   const hint = pr ? mergeStateHints[pr.mergeStateStatus] : undefined;
 
@@ -209,16 +210,16 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                   <Form.Check id="pr-del-remote" label={`Supprimer la branche ${pr.headRefName} sur GitHub`} checked={deleteRemoteBranch} disabled={pr.isCrossRepository} onChange={(e) => setDeleteRemoteBranch(e.target.checked)} />
                   <Form.Check
                     id="pr-del-wt"
-                    label={pr.worktree ? `Supprimer le worktree ${pr.worktree.name} et la branche locale` : 'Supprimer la branche locale'}
-                    checked={deleteWorktree}
+                    label={pr.worksession ? `Supprimer la branche locale et le dossier de travail de la branche (ses sessions sont archivées)` : 'Supprimer la branche locale'}
+                    checked={deleteWorksession}
                     disabled={pr.isCrossRepository}
-                    onChange={(e) => setDeleteWorktree(e.target.checked)}
+                    onChange={(e) => setDeleteWorksession(e.target.checked)}
                   />
-                  {deleteWorktree && runningSessions.length > 0 && (
+                  {deleteWorksession && runningSessions.length > 0 && (
                     <Form.Check
                       className="ms-4"
                       id="pr-stop-sessions"
-                      label={`Arrêter ${runningSessions.length > 1 ? `les ${runningSessions.length} sessions encore ouvertes` : `la session encore ouverte (${runningSessions[0].name})`} dans ce worktree (historique conservé)`}
+                      label={`Arrêter ${runningSessions.length > 1 ? `les ${runningSessions.length} sessions encore ouvertes` : `la session encore ouverte (${runningSessions[0].name})`} sur cette branche (historique conservé)`}
                       checked={stopSessions}
                       onChange={(e) => setStopSessions(e.target.checked)}
                     />
@@ -240,7 +241,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                 <div>
                   <i className="bi bi-check2-circle me-1" />
                   Pull request fusionnée{result.sha ? ` (${result.sha.slice(0, 7)})` : ''}.
-                  {result.deletedWorktreeIds.length > 0 && ' Worktree supprimé.'}
+                  {result.deletedWorksessionIds.length > 0 && ' Dossier de travail supprimé.'}
                   {result.completedTaskIds.length > 0 && ` ${result.completedTaskIds.length > 1 ? 'Tâches terminées' : 'Tâche terminée'}.`}
                 </div>
                 {result.warnings.map((w) => (
@@ -260,7 +261,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
             variant="success"
             disabled={merging || pr.isDraft || pr.mergeable === 'CONFLICTING'}
             onClick={() =>
-              merge({ variables: { projectId, number, method, cleanup: { deleteRemoteBranch, deleteWorktree, stopSessions: deleteWorktree && stopSessions, completeTasks: completeTasks && openTasks.length > 0 } } }).catch(() => undefined)
+              merge({ variables: { projectId, number, method, cleanup: { deleteRemoteBranch, deleteWorksession, stopSessions: deleteWorksession && stopSessions, completeTasks: completeTasks && openTasks.length > 0 } } }).catch(() => undefined)
             }
           >
             {merging ? 'Fusion…' : 'Fusionner'}
@@ -272,8 +273,8 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
 }
 
 /** Création d'une PR pour la branche courante d'un workspace : titre et description pré-remplis. */
-export function CreatePullRequestModal({ projectId, worktreeId, onClose, onCreated }: { projectId: string; worktreeId: string | null; onClose: () => void; onCreated?: (pr: PullRequest) => void }) {
-  const q = useQuery<{ githubPullRequestDraft: PullRequestDraft }>(GITHUB_PULL_REQUEST_DRAFT, { variables: { projectId, worktreeId }, fetchPolicy: 'network-only' });
+export function CreatePullRequestModal({ projectId, worksessionId, onClose, onCreated }: { projectId: string; worksessionId: string | null; onClose: () => void; onCreated?: (pr: PullRequest) => void }) {
+  const q = useQuery<{ githubPullRequestDraft: PullRequestDraft }>(GITHUB_PULL_REQUEST_DRAFT, { variables: { projectId, worksessionId }, fetchPolicy: 'network-only' });
   const d = q.data?.githubPullRequestDraft;
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -295,7 +296,7 @@ export function CreatePullRequestModal({ projectId, worktreeId, onClose, onCreat
       <Form
         onSubmit={(e) => {
           e.preventDefault();
-          if (title.trim()) create({ variables: { projectId, worktreeId, title: title.trim(), body, base: base.trim() || null, draft } }).catch(() => undefined);
+          if (title.trim()) create({ variables: { projectId, worksessionId, title: title.trim(), body, base: base.trim() || null, draft } }).catch(() => undefined);
         }}
       >
         <Modal.Header closeButton>

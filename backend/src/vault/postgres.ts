@@ -11,6 +11,15 @@ import type { PostgresCredentials } from './types.js';
 
 export const SQL_MAX_ROWS = 200;
 export const SQL_TIMEOUT_MS = 30_000;
+/** Base de connexion d'un élément rattaché à un serveur entier, quand l'agent n'en nomme pas une. */
+export const MAINTENANCE_DATABASE = 'postgres';
+
+/** Nom de base PostgreSQL acceptable : lettres, chiffres, `_`, `-` et `$`, 63 octets au plus (cité en identifiant dans le SQL). */
+export function validateDatabaseName(name: string | null | undefined, label = 'Le nom de la base'): string {
+  const n = (name ?? '').trim();
+  if (!n || Buffer.byteLength(n, 'utf8') > 63 || !/^[A-Za-z0-9_][A-Za-z0-9_$-]*$/.test(n)) throw new AppError(`${label} est invalide : lettres, chiffres, _ - $, 63 caractères au plus${n ? ` (« ${n} »)` : ''}`);
+  return n;
+}
 
 export interface QueryResult {
   /** Une entrée par instruction exécutée. */
@@ -136,15 +145,26 @@ function statementOf(r: pg.QueryArrayResult, maxRows: number, command?: string):
   return { command: command ?? r.command, rowCount: truncated ? null : (fields.length ? r.rows.length : r.rowCount), fields, rows, truncated };
 }
 
-/** Vérifie la connexion et renvoie la version du serveur. */
-export async function probe(creds: PostgresCredentials): Promise<{ detail: string; sshHostKey: string | null }> {
+/** Vérifie la connexion et renvoie la version du serveur (serverWide : l'élément couvre toutes les bases, la connexion de test passe par la base de maintenance). */
+export async function probe(creds: PostgresCredentials, serverWide = false): Promise<{ detail: string; sshHostKey: string | null }> {
   const opened = await open(creds, true);
   try {
-    const { rows } = await opened.client.query<{ version: string; db: string; usr: string }>('SELECT version() AS version, current_database() AS db, current_user AS usr');
-    return { detail: `${rows[0].version.split(',')[0]} · base ${rows[0].db} · utilisateur ${rows[0].usr}`, sshHostKey: opened.sshHostKey };
+    const { rows } = await opened.client.query<{ version: string; db: string; usr: string; databases: string }>(
+      'SELECT version() AS version, current_database() AS db, current_user AS usr, (SELECT count(*) FROM pg_database WHERE datallowconn) AS databases',
+    );
+    const scope = serverWide ? `toutes les bases (${rows[0].databases}, connexion par ${rows[0].db})` : `base ${rows[0].db}`;
+    return { detail: `${rows[0].version.split(',')[0]} · ${scope} · utilisateur ${rows[0].usr}`, sshHostKey: opened.sshHostKey };
   } finally {
     await opened.close();
   }
+}
+
+/** Requête listant les bases du serveur (nom, propriétaire, taille quand le rôle peut s'y connecter). */
+export function databasesSql(): string {
+  return `SELECT d.datname AS database, pg_catalog.pg_get_userbyid(d.datdba) AS owner,
+       CASE WHEN has_database_privilege(d.datname, 'CONNECT') THEN pg_size_pretty(pg_database_size(d.datname)) END AS size,
+       d.datistemplate AS template
+       FROM pg_database d WHERE d.datallowconn ORDER BY d.datname`;
 }
 
 /** Valeur SQL présentable en texte (dates, JSON, tableaux, binaires). */

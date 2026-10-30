@@ -21,7 +21,7 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 .dash-tile-value small { font-size: 14px; font-weight: 400; color: var(--cc-dim); margin-left: 6px; }
 .dash-tile-sub { font-size: 12px; color: var(--cc-dim); margin-top: 4px; }
 .dash-tile-sub .up { color: var(--cc-red); }
-.dash-tile-sub .down { color: #57ab5a; }
+.dash-tile-sub .down { color: var(--cc-green); }
 
 .dash-section { margin-bottom: 20px; }
 .dash-section-title {
@@ -58,9 +58,10 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 .dash-meter > div.over { background: var(--cc-red); }
 
 .dash-chart { display: block; width: 100%; height: 96px; margin-top: 8px; }
-.dash-chart rect { fill: var(--cc-accent); opacity: 0.85; }
-.dash-chart rect:hover { opacity: 1; }
-.dash-chart rect.today { opacity: 1; }
+.dash-chart rect.bar { fill: var(--cc-accent); opacity: 0.85; }
+.dash-chart g:hover rect.bar { opacity: 1; }
+.dash-chart rect.bar.today { opacity: 1; }
+.dash-chart rect.hit { fill: transparent; }
 .dash-chart text { fill: var(--cc-dim); font-size: 10px; }
 .dash-chart line { stroke: var(--cc-border); stroke-width: 1; }
 
@@ -77,6 +78,7 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 /* ---- Mobile ---------------------------------------------------------------------------------- */
 @media (max-width: 767.98px) {
   .dash-tiles { gap: 8px; }
+  .dash-list .meta.wrap > * { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dash-tile { padding: 10px 12px; min-height: 0; }
   .dash-tile-value { font-size: 22px; }
   .dash-tile-sub { display: none; }
@@ -87,4 +89,81 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
   .dash-list li { padding: 8px 10px; }
   .dash-list .side { max-width: 40%; }
   .dash-section { margin-bottom: 16px; }
+}
+
+/* ---- Tableau de bord des tâches (vue « pilotage » de la page Tâches, components/TaskDashboard.tsx) ---- */
+.task-dash-filters { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; color: var(--cc-dim); }
+.task-dash-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+@media (max-width: 991px) { .task-dash-grid2 { grid-template-columns: minmax(0, 1fr); } }
+.task-dash-card { background: var(--cc-bg-elevated); border: 1px solid var(--cc-border); border-radius: 6px; padding: 12px 14px; min-width: 0; }
+.task-dash-card h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.task-dash-card .hint { font-size: 12px; color: var(--cc-dim); }
+.task-dash-good { color: var(--cc-green); }
+.task-dash-bad { color: var(--cc-red); }
+.dash-tile-value.date { font-size: 22px; }
+
+/* Graphiques SVG : marques fines, grille en hairline, texte en couleur de texte (jamais en couleur de série). */
+.task-dash-chart-wrap { position: relative; width: 100%; margin-top: 8px; }
+.task-dash-chart { display: block; width: 100%; }
+.task-dash-chart text { fill: var(--cc-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.task-dash-chart .grid { stroke: var(--cc-border); stroke-width: 1; }
+.task-dash-chart .today-line { stroke: var(--cc-dimmer); stroke-width: 1; }
+.task-dash-chart .crosshair { stroke: var(--cc-fg); stroke-width: 1; opacity: 0.5; }
+.task-dash-chart .scope { fill: none; stroke: var(--cc-dim); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.task-dash-chart .done { fill: none; stroke: var(--cc-accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.task-dash-chart .done-area { fill: var(--cc-accent); opacity: 0.12; }
+.task-dash-chart .forecast { fill: none; stroke: var(--cc-accent); stroke-width: 2; stroke-dasharray: 5 4; stroke-linecap: round; opacity: 0.8; }
+.task-dash-chart .marker { stroke: var(--cc-bg-elevated); stroke-width: 2; }
+.task-dash-chart .marker.scope { fill: var(--cc-dim); }
+.task-dash-chart .marker.done { fill: var(--cc-accent); }
+.task-dash-chart .marker.forecast { fill: var(--cc-bg-elevated); stroke: var(--cc-accent); }
+.task-dash-chart path.created { fill: var(--cc-dim); opacity: 0.85; }
+.task-dash-chart path.finished { fill: var(--cc-accent); opacity: 0.85; }
+.task-dash-chart path.current { opacity: 0.45; }
+.task-dash-chart g.slot:hover path.created, .task-dash-chart g.slot:hover path.finished { opacity: 1; }
+.task-dash-chart rect.hit { fill: transparent; }
+.task-dash-tooltip {
+  position: absolute;
+  top: 6px;
+  pointer-events: none;
+  background: var(--cc-bg-popover);
+  border: 1px solid var(--cc-border);
+  box-shadow: var(--cc-shadow);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--cc-dim);
+  white-space: nowrap;
+  z-index: 2;
+}
+.task-dash-tooltip .t { color: var(--cc-fg); font-weight: 600; margin-bottom: 2px; }
+.task-dash-tooltip .v { color: var(--cc-fg); font-weight: 600; font-variant-numeric: tabular-nums; margin-right: 4px; }
+.task-dash-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--cc-dim); margin-top: 6px; }
+.task-dash-legend span, .task-dash-tooltip div { display: flex; align-items: center; gap: 6px; }
+.task-dash-key { display: inline-block; width: 12px; height: 0; border-top: 2px solid var(--cc-dim); flex: none; }
+.task-dash-key.done { border-top-color: var(--cc-accent); }
+.task-dash-key.forecast { border-top-color: var(--cc-accent); border-top-style: dashed; }
+.task-dash-key.sw { height: 10px; width: 10px; border: 0; border-radius: 2px; background: var(--cc-dim); }
+.task-dash-key.sw.done { background: var(--cc-accent); }
+.task-dash-key.sw.current { opacity: 0.45; }
+.task-dash-data { margin-top: 4px; }
+.task-dash-data summary { font-size: 12px; color: var(--cc-dim); cursor: pointer; }
+.task-dash-data table { font-size: 12px; margin: 4px 0 0; }
+.task-dash-data td.num, .task-dash-data th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Répartitions : barres HTML empilées (en cours en accent, à faire en gris), 2 px de surface entre les segments. */
+.task-dash-bars { display: grid; grid-template-columns: minmax(70px, 150px) minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; font-size: 12px; margin-top: 8px; }
+.task-dash-bars .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-dash-bars .num { color: var(--cc-dim); font-variant-numeric: tabular-nums; text-align: right; }
+.task-dash-bar { display: flex; gap: 2px; height: 12px; }
+.task-dash-bar > span { height: 100%; border-radius: 0; }
+.task-dash-bar > span:last-child { border-radius: 0 3px 3px 0; }
+.task-dash-bar .ip { background: var(--cc-accent); }
+.task-dash-bar .td { background: var(--cc-dim); }
+
+.task-dash-lists .dash-list .side { display: flex; align-items: center; gap: 8px; }
+.task-dash-lists .dash-list .meta .task-status { font-size: 10px; }
+@media (max-width: 767.98px) {
+  .task-dash-grid2 { gap: 8px; margin-bottom: 16px; }
+  .task-dash-lists .dash-list .side .age { display: none; }
 }

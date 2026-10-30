@@ -25,11 +25,11 @@ import VaultPage from './pages/VaultPage';
 import ProjectVaultPage from './pages/ProjectVaultPage';
 import SharedPagesPage from './pages/SharedPagesPage';
 import SharedPagePage from './pages/SharedPagePage';
-import AgentsPage from './pages/AgentsPage';
-import AgentPage from './pages/AgentPage';
 import WorkflowsPage from './pages/WorkflowsPage';
 import WorkflowPage from './pages/WorkflowPage';
 import WorkflowRunPage from './pages/WorkflowRunPage';
+import ChatsPage from './pages/ChatsPage';
+import PersonalSpaceRedirect from './pages/PersonalSpaceRedirect';
 
 /** Routes des pages ; `location` est celle de l'onglet rendu (figée pour un onglet caché). */
 function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolean }) {
@@ -48,9 +48,6 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/tasks/:id" element={<TaskPage />} />
       <Route path="/vault" element={<VaultPage />} />
-      <Route path="/agents" element={<AgentsPage />} />
-      <Route path="/agents/:id" element={<AgentPage />} />
-      <Route path="/projects/:id/agents" element={<AgentsPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/workflows/:id" element={<WorkflowPage />} />
       <Route path="/workflows/:id/runs/:runId" element={<WorkflowRunPage />} />
@@ -59,6 +56,9 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/shared/:id" element={<SharedPagePage />} />
       <Route path="/sessions" element={<SessionsPage />} />
       <Route path="/sessions/:id" element={<SessionDetailPage />} />
+      <Route path="/chats" element={<ChatsPage />} />
+      <Route path="/chats/:id" element={<SessionDetailPage />} />
+      <Route path="/me" element={<PersonalSpaceRedirect />} />
       <Route path="/sessions/:id/browser" element={<BrowserPage />} />
       <Route path="/requests" element={<RequestsPage />} />
       <Route path="/terminals/:id" element={<TerminalPage />} />
@@ -66,8 +66,10 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       {isAdmin && <Route path="/users" element={<UsersPage />} />}
       <Route path="/projects/:id/files" element={<FilesPage />} />
       <Route path="/projects/:id/files/*" element={<FilesPage />} />
-      <Route path="/worktrees/:wid/files" element={<FilesPage />} />
-      <Route path="/worktrees/:wid/files/*" element={<FilesPage />} />
+      <Route path="/sessions/:id/files" element={<FilesPage />} />
+      <Route path="/sessions/:id/files/*" element={<FilesPage />} />
+      <Route path="/worktrees/*" element={<Navigate to="/" replace />} />
+      <Route path="/worksessions/*" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

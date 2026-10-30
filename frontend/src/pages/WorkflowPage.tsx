@@ -9,8 +9,8 @@ import RunWorkflowModal from '../components/automation/workflow/RunWorkflowModal
 import WorkflowCanvas, { dragNodeType } from '../components/automation/workflow/WorkflowCanvas';
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
-import { AGENTS, CLEAR_WORKFLOW_SCHEDULE, DELETE_WORKFLOW, SET_WORKFLOW_SCHEDULE, UPDATE_WORKFLOW, VALIDATE_WORKFLOW, WORKFLOW, type Agent, type InputVariable, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNodeType, type WorkflowRunSummary } from '../graphql/automation';
-import { PROJECT_WORKTREES, PROVIDERS, type Provider, type Worktree } from '../graphql/operations';
+import { CLEAR_WORKFLOW_SCHEDULE, DELETE_WORKFLOW, SET_WORKFLOW_SCHEDULE, UPDATE_WORKFLOW, VALIDATE_WORKFLOW, WORKFLOW, type InputVariable, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNodeType, type WorkflowRunSummary } from '../graphql/automation';
+import { PROVIDERS, type Provider } from '../graphql/operations';
 import { fmtDateTime, nodeTypeInfo, runDurationMs } from '../lib/automation';
 import { formatCost, formatDuration } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
@@ -94,12 +94,8 @@ export default function WorkflowPage() {
   const { data, loading, error } = usePollingQuery<{ workflow: WorkflowDetail | null }>(WORKFLOW, { variables: { id }, pollInterval: 10_000 });
   const workflow = data?.workflow;
   useTabTitle(workflow ? workflow.name : null);
-  const { data: agentsData } = useQuery<{ agents: Agent[] }>(AGENTS, { variables: { projectId: workflow?.project.id }, skip: !workflow });
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const { data: worktreesData } = useQuery<{ project: { worktrees: Worktree[] } | null }>(PROJECT_WORKTREES, { variables: { id: workflow?.project.id }, skip: !workflow });
-  const agents = agentsData?.agents ?? [];
   const providers = providersData?.providers ?? [];
-  const worktrees = (worktreesData?.project?.worktrees ?? []).filter((w) => !w.archivedAt);
 
   // Définition locale : repart de la version serveur tant qu'aucune modification n'est en attente.
   const [def, setDef] = useState<WorkflowDefinition | null>(null);
@@ -147,7 +143,6 @@ export default function WorkflowPage() {
   const [remove] = useMutation(DELETE_WORKFLOW, { refetchQueries: ['Workflows'] });
 
   const selectedNode = useMemo(() => def?.nodes.find((n) => n.key === selected) ?? null, [def, selected]);
-  const canvasAgents = useMemo(() => agents.map((a) => ({ id: a.id, name: a.name })), [agents]);
 
   const onSave = async () => {
     if (!workflow || !def) return;
@@ -244,7 +239,7 @@ export default function WorkflowPage() {
           ))}
           <div className="small text-secondary px-1 mt-2">Reliez la sortie d'un nœud à l'entrée du suivant. Suppr retire la sélection.</div>
         </div>
-        <WorkflowCanvas definition={def} selectedKey={selected} onSelect={setSelected} onChange={change} issues={issues} agents={canvasAgents} />
+        <WorkflowCanvas definition={def} selectedKey={selected} onSelect={setSelected} onChange={change} issues={issues} />
         <div className="wf-inspector">
           {selectedNode ? (
             <NodeInspector
@@ -255,9 +250,7 @@ export default function WorkflowPage() {
                 change({ ...def, nodes: def.nodes.filter((n) => n.key !== selectedNode.key), edges: def.edges.filter((e) => e.source !== selectedNode.key && e.target !== selectedNode.key) });
                 setSelected(null);
               }}
-              agents={agents}
               providers={providers}
-              worktrees={worktrees}
               issues={issues.filter((i) => i.nodeKey === selectedNode.key)}
             />
           ) : (
@@ -288,13 +281,13 @@ export default function WorkflowPage() {
           {workflow.runs.length === 0 ? (
             <div className="text-secondary small">Aucune exécution pour l'instant.</div>
           ) : (
-            <Table size="sm" hover className="mb-0">
+            <Table size="sm" hover responsive className="mb-0">
               <thead>
                 <tr>
                   <th>Statut</th>
                   <th>Lancée</th>
-                  <th>Par</th>
-                  <th>Durée</th>
+                  <th className="d-none d-md-table-cell">Par</th>
+                  <th className="d-none d-md-table-cell">Durée</th>
                   <th>Coût</th>
                   <th />
                 </tr>
@@ -308,10 +301,10 @@ export default function WorkflowPage() {
                     <td className="small">
                       <Link to={`/workflows/${workflow.id}/runs/${r.id}`}>{fmtDateTime(r.createdAt)}</Link>
                     </td>
-                    <td>
+                    <td className="d-none d-md-table-cell">
                       <RunTriggerBadge trigger={r.trigger} />
                     </td>
-                    <td className="small">{runDurationMs({ startedAt: r.createdAt, finishedAt: r.finishedAt }) !== null && r.finishedAt ? formatDuration(new Date(r.finishedAt).getTime() - new Date(r.createdAt).getTime()) : '—'}</td>
+                    <td className="small d-none d-md-table-cell">{runDurationMs({ startedAt: r.createdAt, finishedAt: r.finishedAt }) !== null && r.finishedAt ? formatDuration(new Date(r.finishedAt).getTime() - new Date(r.createdAt).getTime()) : '—'}</td>
                     <td className="small">{r.costUsd > 0 ? formatCost(r.costUsd) : '—'}</td>
                     <td className="small text-danger text-truncate" style={{ maxWidth: 360 }}>
                       {r.error}

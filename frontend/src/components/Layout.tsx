@@ -6,7 +6,7 @@ import WorkspaceTabs from '../workbench/WorkspaceTabs';
 import { TabsProvider } from '../workbench/TabsContext';
 import GitPanel from '../workbench/GitPanel';
 import { GitTargetProvider } from '../workbench/GitTargetContext';
-import { RenameWorktreeProvider } from '../workbench/RenameWorktree';
+import { RenameSessionProvider } from '../workbench/RenameSession';
 import { SessionLauncherProvider } from './SessionLauncher';
 import { SearchPaletteProvider } from './SearchPalette';
 import { ShortcutsHelpProvider } from './ShortcutsHelp';
@@ -14,12 +14,12 @@ import StatusBanners from './StatusBanners';
 import { useShortcut } from '../lib/useShortcut';
 import '../workbench/workbench.css';
 
-const SIDEBAR_WIDTH_KEY = 'skipper.workbench.sidebarWidth';
 const SIDEBAR_COLLAPSED_KEY = 'skipper.workbench.sidebarCollapsed';
-const SIDEBAR_DEFAULT = 260;
-const SIDEBAR_MIN = 180;
-const SIDEBAR_MAX = 640;
-const clampWidth = (w: number) => Math.round(Math.min(Math.max(w, SIDEBAR_MIN), Math.min(SIDEBAR_MAX, window.innerWidth - 320)));
+/** Sidebar (gauche) et panneau git / session (droite) : largeur par défaut, bornes, clé de stockage et variable CSS. */
+const SIDEBAR = { key: 'skipper.workbench.sidebarWidth', cssVar: '--wb-sidebar-w', def: 260, min: 180, max: 640, side: 'left' as const };
+const PANEL = { key: 'skipper.workbench.panelWidth', cssVar: '--wb-panel-w', def: 320, min: 240, max: 720, side: 'right' as const };
+type PanelSpec = typeof SIDEBAR | typeof PANEL;
+const clampWidth = (spec: PanelSpec, w: number) => Math.round(Math.min(Math.max(w, spec.min), Math.min(spec.max, window.innerWidth - 320)));
 
 const read = (key: string) => {
   try {
@@ -36,15 +36,20 @@ const write = (key: string, value: string) => {
   }
 };
 
-/** Largeur de la sidebar sur ordinateur, réglable à la souris ou au clavier et mémorisée dans le navigateur. */
-function useSidebarWidth(rootRef: RefObject<HTMLDivElement | null>) {
+/**
+ * Largeur d'un panneau latéral sur ordinateur (sidebar à gauche, panneau git / session à droite), réglable à la
+ * souris ou au clavier et mémorisée dans le navigateur. Pendant le glissement, seule la variable CSS bouge.
+ */
+function usePanelWidth(rootRef: RefObject<HTMLDivElement | null>, spec: PanelSpec) {
   const [width, setWidth] = useState<number>(() => {
-    const saved = Number(read(SIDEBAR_WIDTH_KEY));
-    return saved > 0 ? clampWidth(saved) : SIDEBAR_DEFAULT;
+    const saved = Number(read(spec.key));
+    return saved > 0 ? clampWidth(spec, saved) : spec.def;
   });
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{ x: number; w: number; live: number } | null>(null);
-  useEffect(() => write(SIDEBAR_WIDTH_KEY, String(width)), [width]);
+  useEffect(() => write(spec.key, String(width)), [width, spec.key]);
+  // Un panneau à droite grandit quand on tire la poignée vers la gauche.
+  const sign = spec.side === 'left' ? 1 : -1;
   const endDrag = () => {
     if (!drag.current) return;
     setWidth(drag.current.live);
@@ -61,21 +66,21 @@ function useSidebarWidth(rootRef: RefObject<HTMLDivElement | null>) {
     },
     onPointerMove: (e: PointerEvent<HTMLDivElement>) => {
       if (!drag.current) return;
-      drag.current.live = clampWidth(drag.current.w + e.clientX - drag.current.x);
-      rootRef.current?.style.setProperty('--wb-sidebar-w', `${drag.current.live}px`);
+      drag.current.live = clampWidth(spec, drag.current.w + sign * (e.clientX - drag.current.x));
+      rootRef.current?.style.setProperty(spec.cssVar, `${drag.current.live}px`);
     },
     onPointerUp: endDrag,
     onPointerCancel: endDrag,
-    onDoubleClick: () => setWidth(SIDEBAR_DEFAULT),
+    onDoubleClick: () => setWidth(spec.def),
     onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
       const step = e.shiftKey ? 40 : 10;
-      if (e.key === 'ArrowLeft') setWidth((w) => clampWidth(w - step));
-      else if (e.key === 'ArrowRight') setWidth((w) => clampWidth(w + step));
+      if (e.key === 'ArrowLeft') setWidth((w) => clampWidth(spec, w - sign * step));
+      else if (e.key === 'ArrowRight') setWidth((w) => clampWidth(spec, w + sign * step));
       else return;
       e.preventDefault();
     },
   };
-  return { width, dragging, handleProps };
+  return { width, dragging, handleProps, min: spec.min, max: spec.max };
 }
 
 /** ⌘L : copie l'URL de la page courante. */
@@ -100,19 +105,20 @@ export default function Layout({ children }: { children: ReactNode }) {
   useEffect(() => setSidebarOpen(false), [pathname]);
   useEffect(() => write(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'), [collapsed]);
   const rootRef = useRef<HTMLDivElement>(null);
-  const sidebar = useSidebarWidth(rootRef);
-  const flush = /^\/sessions\/[^/]+(?:\/browser)?$/.test(pathname) || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|worktrees)\/[^/]+\/files(?:\/|$)/.test(pathname) || /^\/shared\/[^/]+$/.test(pathname);
+  const sidebar = usePanelWidth(rootRef, SIDEBAR);
+  const panel = usePanelWidth(rootRef, PANEL);
+  const flush = /^\/sessions\/[^/]+(?:\/browser)?$/.test(pathname) || /^\/chats\/[^/]+$/.test(pathname) || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|sessions)\/[^/]+\/files(?:\/|$)/.test(pathname) || /^\/shared\/[^/]+$/.test(pathname);
   return (
     <TabsProvider>
       <GitTargetProvider>
         <SessionLauncherProvider>
-          <RenameWorktreeProvider>
+          <RenameSessionProvider>
             <SearchPaletteProvider>
               <ShortcutsHelpProvider>
                 <div
                   ref={rootRef}
-                  className={`wb${sidebarOpen ? ' sidebar-open' : ''}${collapsed ? ' sidebar-collapsed' : ''}${sidebar.dragging ? ' resizing' : ''}`}
-                  style={{ '--wb-sidebar-w': `${sidebar.width}px` } as CSSProperties}
+                  className={`wb${sidebarOpen ? ' sidebar-open' : ''}${collapsed ? ' sidebar-collapsed' : ''}${sidebar.dragging || panel.dragging ? ' resizing' : ''}`}
+                  style={{ '--wb-sidebar-w': `${sidebar.width}px`, '--wb-panel-w': `${panel.width}px` } as CSSProperties}
                 >
                   <Sidebar onCollapse={() => setCollapsed(true)} />
                   <div
@@ -121,8 +127,8 @@ export default function Layout({ children }: { children: ReactNode }) {
                     aria-orientation="vertical"
                     aria-label="Largeur de la barre latérale"
                     aria-valuenow={sidebar.width}
-                    aria-valuemin={SIDEBAR_MIN}
-                    aria-valuemax={SIDEBAR_MAX}
+                    aria-valuemin={sidebar.min}
+                    aria-valuemax={sidebar.max}
                     tabIndex={0}
                     title="Glisser pour redimensionner · double-clic pour revenir à la largeur par défaut"
                     {...sidebar.handleProps}
@@ -141,12 +147,12 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <WorkspaceTabs />
                     <div className={`wb-content${flush ? ' flush' : ''}`}>{children}</div>
                   </div>
-                  <GitPanel />
+                  <GitPanel resizer={panel} />
                   <CopyUrlToast />
                 </div>
               </ShortcutsHelpProvider>
             </SearchPaletteProvider>
-          </RenameWorktreeProvider>
+          </RenameSessionProvider>
         </SessionLauncherProvider>
       </GitTargetProvider>
     </TabsProvider>

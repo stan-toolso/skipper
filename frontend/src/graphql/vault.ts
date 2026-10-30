@@ -1,7 +1,7 @@
 import { gql } from '@apollo/client';
 import type { User } from './operations';
 
-export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'token' | 'litellm' | 'langfuse';
+export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'scaleway' | 'token' | 'litellm' | 'langfuse';
 /** Types réservés à Skipper (jetons applicatifs, LiteLLM, Langfuse) : jamais offerts aux agents, ni reliés à un projet. */
 export const SKIPPER_KINDS: VaultItemKind[] = ['token', 'litellm', 'langfuse'];
 
@@ -21,6 +21,79 @@ export interface VaultTokenInfo {
   account: string | null;
   tokenExpiresAt: string | null;
 }
+export type AwsAuth = 'sso' | 'keys';
+
+/** Compte AWS : mode et identité ; les clés et jetons ne sont jamais renvoyés. */
+export interface VaultAwsInfo {
+  auth: AwsAuth;
+  region: string;
+  startUrl: string | null;
+  ssoRegion: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  roleName: string | null;
+  accessKeyId: string | null;
+  roleArn: string | null;
+  connected: boolean;
+  tokenExpiresAt: string | null;
+  identity: string | null;
+}
+
+export interface VaultAwsInput {
+  auth?: AwsAuth | null;
+  region?: string | null;
+  startUrl?: string | null;
+  ssoRegion?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  roleName?: string | null;
+  accessKeyId?: string | null;
+  secretAccessKey?: string | null;
+  roleArn?: string | null;
+}
+
+/** Compte Scaleway : clé d'accès publique et portée par défaut ; la clé secrète n'est jamais renvoyée. */
+export interface VaultScalewayInfo {
+  accessKey: string;
+  organizationId: string | null;
+  projectId: string | null;
+  region: string;
+  zone: string;
+  identity: string | null;
+}
+
+export interface VaultScalewayInput {
+  accessKey?: string | null;
+  secretKey?: string | null;
+  organizationId?: string | null;
+  projectId?: string | null;
+  region?: string | null;
+  zone?: string | null;
+}
+
+/** Connexion AWS par code en cours (mutation startAwsLogin). */
+export interface AwsLogin {
+  id: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresAt: string;
+  interval: number;
+}
+
+export interface AwsLoginPoll {
+  status: 'PENDING' | 'CONNECTED' | 'EXPIRED' | 'DENIED';
+  interval: number;
+  item: VaultItem | null;
+}
+
+export interface VaultAwsAccount {
+  accountId: string;
+  accountName: string;
+  email: string | null;
+  roles: string[];
+}
+
 export type VaultPermission = 'USE' | 'READ' | 'MANAGE';
 export type VaultLinkScope = 'PROJECT' | 'PERSONAL';
 export type VaultApiAuth = 'bearer' | 'header' | 'basic' | 'query';
@@ -90,6 +163,8 @@ export interface VaultItem {
   /** Jeton applicatif : service et provenance. */
   token: VaultTokenInfo | null;
   google: { email: string; name: string | null; avatarUrl: string | null; gmailAccess: GoogleAccess; driveAccess: GoogleAccess; scopes: string[] } | null;
+  aws: VaultAwsInfo | null;
+  scaleway: VaultScalewayInfo | null;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string[];
@@ -149,6 +224,10 @@ export interface VaultItemInput {
   service?: string | null;
   /** langfuse : clé publique. */
   publicKey?: string | null;
+  /** aws : mode, région, portail, compte et rôle, clés. */
+  aws?: VaultAwsInput | null;
+  /** scaleway : clé d'API, organisation, projet, région et zone. */
+  scaleway?: VaultScalewayInput | null;
 }
 
 export const VAULT_ITEM_FIELDS = gql`
@@ -206,6 +285,28 @@ export const VAULT_ITEM_FIELDS = gql`
       gmailAccess
       driveAccess
       scopes
+    }
+    aws {
+      auth
+      region
+      startUrl
+      ssoRegion
+      accountId
+      accountName
+      roleName
+      accessKeyId
+      roleArn
+      connected
+      tokenExpiresAt
+      identity
+    }
+    scaleway {
+      accessKey
+      organizationId
+      projectId
+      region
+      zone
+      identity
     }
     readOnly
     requireApproval
@@ -312,7 +413,9 @@ export const VAULT_PROJECT = gql`
     project(id: $id) {
       id
       name
+      description
       myRole
+      isPersonal
       runnerConfig
       vaultItems {
         via
@@ -377,6 +480,15 @@ export const TEST_VAULT_ITEM = gql`
   }
 `;
 
+export const DUPLICATE_VAULT_ITEM = gql`
+  ${VAULT_ITEM_FIELDS}
+  mutation DuplicateVaultItem($id: ID!, $name: String) {
+    duplicateVaultItem(id: $id, name: $name) {
+      ...VaultItemFields
+    }
+  }
+`;
+
 export const REGENERATE_VAULT_KEY = gql`
   ${VAULT_ITEM_FIELDS}
   mutation RegenerateVaultKey($id: ID!) {
@@ -437,6 +549,43 @@ export const COPY_VAULT_ITEM = gql`
   mutation CopyVaultItem($id: ID!, $projectId: ID!, $name: String) {
     copyVaultItem(id: $id, projectId: $projectId, name: $name) {
       ...VaultItemFields
+    }
+  }
+`;
+
+export const START_AWS_LOGIN = gql`
+  mutation StartAwsLogin($id: ID!) {
+    startAwsLogin(id: $id) {
+      id
+      userCode
+      verificationUri
+      verificationUriComplete
+      expiresAt
+      interval
+    }
+  }
+`;
+
+export const POLL_AWS_LOGIN = gql`
+  ${VAULT_ITEM_FIELDS}
+  mutation PollAwsLogin($id: ID!) {
+    pollAwsLogin(id: $id) {
+      status
+      interval
+      item {
+        ...VaultItemFields
+      }
+    }
+  }
+`;
+
+export const VAULT_AWS_ACCOUNTS = gql`
+  query VaultAwsAccounts($id: ID!) {
+    vaultAwsAccounts(id: $id) {
+      accountId
+      accountName
+      email
+      roles
     }
   }
 `;

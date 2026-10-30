@@ -1,7 +1,8 @@
 import type { Actor } from '../context/types.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
-import { worktreeService } from '../worktrees/service.js';
+import { namesFromText } from '../worksessions/names.js';
+import { worksessionService } from '../worksessions/service.js';
 import { pubSub } from '../pubsub.js';
 import { notificationService } from '../notifications/service.js';
 import { requestService } from '../requests/service.js';
@@ -13,7 +14,10 @@ import { getProvider } from './providers/registry.js';
 import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
 import { headCommitOf } from '../git/service.js';
-import type { Project } from '../projects/types.js';
+import { containerMonitor } from '../runners/monitor.js';
+import { isPersonalProject, type Project } from '../projects/types.js';
+import { userService } from '../users/service.js';
+import { ROLE_RANK } from '../users/types.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
@@ -229,9 +233,13 @@ export const sessionService = {
   get: (id: string) => sessionRepository.findById(id),
   events: (sessionId: string, opts?: { after?: string; limit?: number }) => sessionRepository.listEvents(sessionId, opts),
   isRunning: (id: string) => running.has(id),
+  /** Sessions du projet dont le processus tourne sur ce serveur. */
+  runningCountByProject: (projectId: string) => [...running.keys()].filter((id) => slots.get(id) === projectId).length,
+  /** Places occupées dans le projet : sessions en cours ou en train de démarrer (voir `slots`). */
+  slotsOfProject,
 
   /**
-   * Crée une session, éventuellement dans un worktree créé pour l'occasion (`newWorktree`).
+   * Crée une session dans une work session existante (`worksessionId`) ou créée pour l'occasion (`newWorksession`).
    * `actor` agent : la session est rattachée à la session qui la lance (profondeur et nombre limités) et les membres sont notifiés.
    */
   async create(input: CreateSessionInput & { autoStart?: boolean }, actor: Actor = { type: 'human' }): Promise<Session> {
@@ -243,15 +251,36 @@ export const sessionService = {
       input = { ...input, config: { ...input.config, permissionMode: project.defaultPermissionMode } };
     }
     provider.validateConfig?.(input.config ?? {});
-    if (input.worktreeId && input.newWorktree) throw new AppError('Choisissez un worktree existant ou un nouveau worktree, pas les deux');
-    if (input.worktreeId) await worktreeService.assertUsable(project, input.worktreeId); // vérifie l'appartenance et l'archivage
+    if (input.worksessionId && input.newWorksession) throw new AppError('Choisissez une work session existante ou une nouvelle, pas les deux');
+    if (input.kind === 'chat') {
+      // Un chat est une session légère d'un espace personnel : pas de work session (il n'a pas de dossier de travail), provider Claude.
+      if (!isPersonalProject(project)) throw new AppError("Un chat ne s'ouvre que dans un espace personnel");
+      if (input.worksessionId || input.newWorksession) throw new AppError("Un chat n'a pas de work session");
+      if (input.provider !== 'claude') throw new AppError('Un chat est toujours une conversation Claude');
+    } else if (!input.worksessionId && !input.newWorksession) {
+      // Une session s'exécute toujours dans une work session : rien ne tourne dans le checkout principal.
+      throw new AppError('Une session travaille dans une work session : choisissez-en une ou créez-en une');
+    }
+    if (input.worksessionId) {
+      // Vérifie l'appartenance et l'archivage, puis la règle « une seule session active par work session » :
+      // le dossier (et sa branche) appartient à sa session ; une autre doit être archivée avant d'y travailler.
+      const wt = await worksessionService.assertUsable(project, input.worksessionId);
+      const [busy] = await sessionRepository.list({ worksessionId: wt.id, archived: 'exclude', limit: 1 });
+      if (busy) throw new AppError(`La session « ${busy.name} » travaille déjà sur la branche ${wt.branch} : archivez-la d'abord, ou lancez la nouvelle session sur une autre branche`);
+    }
 
     let parentSessionId: string | null = null;
     let ownerId = input.ownerId ?? null;
     if (actor.type === 'agent' && actor.sessionId) {
       const parent = await sessionRepository.findById(actor.sessionId);
       if (!parent) throw new NotFoundError('Session parente introuvable');
-      if (parent.projectId !== project.id) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
+      if (parent.projectId !== project.id) {
+        // Seule une session d'un espace personnel lance des sessions ailleurs : dans les projets de son propriétaire, avec ses droits.
+        const parentProject = await projectService.get(parent.projectId);
+        if (!isPersonalProject(parentProject) || !parent.ownerId) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
+        const role = await userService.memberRoleFor(parent.ownerId, project.id);
+        if (!role || ROLE_RANK[role] < ROLE_RANK.member) throw new AppError(`Lancer une session dans « ${project.name} » demande le rôle membre sur ce projet`);
+      }
       // La session lancée par un agent appartient à la personne qui pilote la session parente.
       ownerId = parent.ownerId;
       if ((await depthOf(parent.id)) >= MAX_AGENT_DEPTH) throw new AppError(`Imbrication maximale atteinte : une session lancée par un agent lancé par un agent ne peut pas en lancer d'autres`);
@@ -265,18 +294,21 @@ export const sessionService = {
       parentSessionId = parent.id;
     }
 
-    let worktreeId = input.worktreeId ?? null;
-    let createdWorktreeId: string | null = null;
-    if (input.newWorktree) {
-      const worktree = await worktreeService.create(project.id, input.newWorktree, ownerId);
-      worktreeId = createdWorktreeId = worktree.id;
+    let worksessionId = input.worksessionId ?? null;
+    let createdWorksessionId: string | null = null;
+    if (input.newWorksession) {
+      // Sans nom ni branche ni libellé, la work session est nommée d'après la consigne (ou le nom de la session).
+      const names = namesFromText(input.prompt?.trim() || input.name);
+      const nw = input.newWorksession;
+      const worksession = await worksessionService.create(project.id, nw.name?.trim() || nw.branch?.trim() || nw.label?.trim() ? nw : { ...nw, ...names }, ownerId);
+      worksessionId = createdWorksessionId = worksession.id;
     }
     let session: Session;
     try {
       const prompt = input.prompt?.trim() || (input.attachments?.length ? ATTACHMENTS_ONLY_TEXT : input.prompt);
-      session = await sessionRepository.create({ ...input, prompt, worktreeId, parentSessionId, ownerId });
+      session = await sessionRepository.create({ ...input, prompt, worksessionId, parentSessionId, ownerId });
     } catch (err) {
-      if (createdWorktreeId) await worktreeService.delete(createdWorktreeId, true).catch(() => undefined);
+      if (createdWorksessionId) await worksessionService.delete(createdWorksessionId, true).catch(() => undefined);
       throw err;
     }
     if (input.attachments?.length) {
@@ -288,7 +320,7 @@ export const sessionService = {
       } catch (err) {
         await removeSessionAttachments(project, session.id).catch(() => undefined);
         await sessionRepository.delete(session.id).catch(() => undefined);
-        if (createdWorktreeId) await worktreeService.delete(createdWorktreeId, true).catch(() => undefined);
+        if (createdWorksessionId) await worksessionService.delete(createdWorksessionId, true).catch(() => undefined);
         throw err;
       }
     }
@@ -374,7 +406,7 @@ export const sessionService = {
         await emit('system', { message: `Place libérée : la session démarre après ${formatWait(Date.now() - (session.queuedAt?.getTime() ?? Date.now()))} d'attente`, notice: true, reason: 'queue_start' });
       }
       started = await publishSession(
-        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null }),
+        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null, resumeDigest: null }),
       );
     } catch (err) {
       slots.delete(id);
@@ -384,8 +416,8 @@ export const sessionService = {
 
     let handle: RunningHandle;
     try {
-      // La session s'exécute dans le worktree choisi, sinon dans le checkout principal du projet.
-      const cwd = await worktreeService.resolveCwd(project, session.worktreeId);
+      // La session s'exécute dans sa work session (les sessions d'avant les work sessions : dans le checkout principal).
+      const cwd = await worksessionService.resolveCwd(project, session.worksessionId);
       // Premier démarrage : le commit courant sert de référence à l'onglet « Modifications » (commits de l'agent compris).
       if (!session.baseCommit) {
         const baseCommit = await headCommitOf(cwd);
@@ -397,6 +429,8 @@ export const sessionService = {
         cwd,
         initialMessage: initialMessage ?? session.prompt,
         initialAttachments: initialMessage === undefined ? session.promptAttachments : attachments,
+        // Conversation remise à zéro « en gardant un résumé » : le résumé accompagne la première instruction (une seule fois).
+        initialPreamble: session.externalId ? null : session.resumeDigest,
         emit,
         setExternalId: async (externalId) => {
           await publishSession(await sessionRepository.update(id, { externalId }));
@@ -459,7 +493,16 @@ export const sessionService = {
       // Si `stop()` a déjà posé le statut "stopped", on le conserve.
       const status: SessionStatus =
         current?.status === 'stopped' || result.closedByServer ? 'stopped' : result.error || result.exitCode !== 0 ? 'failed' : 'completed';
-      const error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
+      let error = status === 'failed' ? result.error ?? `Code de sortie ${result.exitCode}` : null;
+      // Processus tué faute de mémoire dans le conteneur : message explicite plutôt que « exited with code 137 ».
+      if (status === 'failed') {
+        // Borné : un Docker qui ne répond pas ne doit pas retarder la fin de la session.
+        const oom = await Promise.race([
+          containerMonitor.explainFailure(project, result).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000).unref()),
+        ]);
+        if (oom) error = `${oom} (détail : ${error})`;
+      }
       await emit('status', { status, exitCode: result.exitCode, error });
       await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
       // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.
@@ -576,16 +619,35 @@ export const sessionService = {
     return publishSession(await sessionRepository.update(id, { archivedAt: new Date() }));
   },
 
-  /** Restaure une session archivée, sauf si son worktree est lui-même archivé. */
+  /**
+   * Restaure une session archivée avec son dossier de travail (sa work session, restaurée si elle l'était). Refusé
+   * si une autre session y a été ouverte entre-temps (relance, nouvelle session de la tâche) : une work session
+   * n'héberge qu'une session active.
+   */
   async unarchive(id: string): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (!session.archivedAt) return session;
-    if (session.worktreeId) {
-      const wt = await worktreeService.get(session.worktreeId);
-      if (wt.archivedAt) throw new AppError(`Son worktree « ${wt.label ?? wt.branch} » est archivé : restaurez le worktree (avec ses sessions) depuis l'historique du projet`);
+    if (session.worksessionId) {
+      const [other] = (await sessionRepository.list({ worksessionId: session.worksessionId, archived: 'exclude', limit: 2 })).filter((s) => s.id !== id);
+      if (other) throw new AppError(`La session « ${other.name} » travaille déjà dans le dossier de cette session : archivez-la d'abord, ou relancez celle-ci`);
+      await worksessionService.restore(session.worksessionId);
     }
     return publishSession(await sessionRepository.update(id, { archivedAt: null }));
+  },
+
+  /**
+   * Libère une work session pour une nouvelle session : ses sessions actives (celle qu'on relance, la précédente
+   * session d'une tâche) sont arrêtées et archivées. Une work session n'héberge qu'une session active ; la nouvelle
+   * reprend le dossier et la branche. Renvoie les identifiants des sessions archivées.
+   */
+  async vacateWorksession(worksessionId: string): Promise<string[]> {
+    const ids: string[] = [];
+    for (const s of await sessionRepository.list({ worksessionId, archived: 'exclude', limit: 50 })) {
+      await this.archive(s.id);
+      ids.push(s.id);
+    }
+    return ids;
   },
 
   /** Nouvelle session qui reprend la conversation d'une session (archivée ou non) comme contexte. */
@@ -593,10 +655,22 @@ export const sessionService = {
     const source = await sessionRepository.findById(id);
     if (!source) throw new NotFoundError('Session introuvable');
     const prompt = await relaunchPrompt(source, input.instruction);
+    // La nouvelle session reprend le dossier et la branche de la session d'origine (sa work session, libérée de
+    // toute session active — l'origine comprise — et restaurée si elle était archivée) ; si ce dossier a été
+    // supprimé, une nouvelle work session nommée d'après la session. Un chat relancé reste un chat : sans work session.
+    const chat = source.kind === 'chat';
+    let worksessionId = chat ? null : (source.worksessionId ?? null);
+    if (worksessionId && !(await worksessionService.get(worksessionId).catch(() => null))) worksessionId = null;
+    if (worksessionId) {
+      await this.vacateWorksession(worksessionId);
+      await worksessionService.restore(worksessionId);
+    }
+    const newWorksession = chat || worksessionId ? null : { label: source.name, name: namesFromText(source.name).name };
     return this.create({
       projectId: source.projectId,
-      worktreeId: input.newWorktree ? null : input.worktreeId ?? null,
-      newWorktree: input.newWorktree ?? null,
+      kind: source.kind,
+      worksessionId,
+      newWorksession,
       ownerId: input.ownerId ?? null,
       name: input.name?.trim() || source.name,
       provider: source.provider,

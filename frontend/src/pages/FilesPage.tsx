@@ -1,4 +1,5 @@
 import { useApolloClient, useMutation, useQuery } from '@apollo/client';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useNavigate } from 'react-router-dom';
@@ -6,7 +7,7 @@ import FileEditor from '../components/FileEditor';
 import PageLoading from '../components/PageLoading';
 import { useDialogs } from '../components/Dialogs';
 import { CREATE_WORKSPACE_ENTRY, DELETE_WORKSPACE_ENTRY, GIT_STATUS, RENAME_WORKSPACE_ENTRY, WORKSPACE_ENTRIES, type FileEntry, type GitStatus } from '../graphql/operations';
-import { fileIcon, filesUrl, formatSize, useWorkspaceFromRoute, type WorkspaceRef } from '../lib/files';
+import { fileIcon, filesUrl, formatSize, useWorkspaceFromRoute, type FilesTarget, type WorkspaceRef } from '../lib/files';
 import { usePageVisible } from '../lib/usePageVisible';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -117,17 +118,17 @@ const writeList = (key: string, list: string[]) => {
 };
 
 /**
- * Dossier de travail d'un projet ou d'un worktree : arborescence à gauche, fichiers ouverts (onglets internes) à
- * droite. Le fichier actif est dans l'URL (/…/files/chemin), les onglets ouverts sont mémorisés par dossier.
+ * Dossier de travail d'un projet (checkout principal) ou d'une session : arborescence à gauche, fichiers ouverts
+ * (onglets internes) à droite. Le fichier actif est dans l'URL (/…/files/chemin), les onglets ouverts sont mémorisés par dossier.
  */
 export default function FilesPage() {
   const { info, loading, error, filePath } = useWorkspaceFromRoute();
   const navigate = useNavigate();
   const client = useApolloClient();
   const visible = usePageVisible();
-  useGitTarget(info ? { projectId: info.projectId, worktreeId: info.worktreeId, label: info.label } : null);
+  useGitTarget(info ? { projectId: info.projectId, worksessionId: info.worksessionId, label: info.label } : null);
   useTabTitle(info ? `Fichiers · ${info.label}` : null);
-  const wsKey = info ? (info.worktreeId ?? info.projectId) : null;
+  const wsKey = info ? (info.worksessionId ?? info.projectId) : null;
   const expandedKey = wsKey ? `skipper.files.expanded.${wsKey}` : null;
   const openKey = wsKey ? `skipper.files.open.${wsKey}` : null;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -175,12 +176,14 @@ export default function FilesPage() {
     [expandedKey],
   );
 
-  const wsRef = useMemo<WorkspaceRef | null>(() => (info ? { projectId: info.projectId, worktreeId: info.worktreeId } : null), [info?.projectId, info?.worktreeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wsRef = useMemo<WorkspaceRef | null>(() => (info ? { projectId: info.projectId, worksessionId: info.worksessionId } : null), [info?.projectId, info?.worksessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Adresse de l'explorateur : sous la session quand c'est son dossier, sous le projet sinon.
+  const urlRef = useMemo<FilesTarget | null>(() => (info ? { projectId: info.projectId, sessionId: info.sessionId } : null), [info?.projectId, info?.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   const openFile = useCallback(
     (p: string) => {
-      if (wsRef) navigate(filesUrl(wsRef, p));
+      if (urlRef) navigate(filesUrl(urlRef, p));
     },
-    [wsRef, navigate],
+    [urlRef, navigate],
   );
   const closeFile = (p: string) => {
     if (dirty[p] && !window.confirm(`Fermer ${p.split('/').pop()} sans enregistrer les modifications ?`)) return;
@@ -192,7 +195,7 @@ export default function FilesPage() {
       delete nd[p];
       return nd;
     });
-    if (filePath === p && wsRef) navigate(filesUrl(wsRef, next[next.length - 1] ?? ''), { replace: true });
+    if (filePath === p && urlRef) navigate(filesUrl(urlRef, next[next.length - 1] ?? ''), { replace: true });
   };
 
   // Actualisation : bouton, retour au premier plan, et toutes les 60 s quand l'état git a changé.
@@ -200,7 +203,7 @@ export default function FilesPage() {
     void client.refetchQueries({ include: ['WorkspaceEntries'] });
     setRefreshKey((k) => k + 1);
   }, [client]);
-  const gitQ = useQuery<{ gitStatus: GitStatus | null }>(GIT_STATUS, { variables: wsRef ?? { projectId: '', worktreeId: null }, skip: !wsRef || !visible, pollInterval: 60_000, fetchPolicy: 'network-only' });
+  const gitQ = usePollingQuery<{ gitStatus: GitStatus | null }>(GIT_STATUS, { variables: wsRef ?? { projectId: '', worksessionId: null }, skip: !wsRef || !visible, pollInterval: 60_000, fetchPolicy: 'network-only' });
   const signature = useMemo(() => {
     const s = gitQ.data?.gitStatus;
     if (!s) return '';
@@ -226,7 +229,7 @@ export default function FilesPage() {
 
   if (loading && !info) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
-  if (!info || !wsRef) return <Alert variant="warning">Projet ou worktree introuvable.</Alert>;
+  if (!info || !wsRef || !urlRef) return <Alert variant="warning">Projet ou session introuvable.</Alert>;
 
   const actions: TreeActions = {
     createEntry: async (dir, kind) => {
@@ -254,7 +257,7 @@ export default function FilesPage() {
         const next = open.map((p) => (p === entry.path ? newPath : p));
         setOpen(next);
         if (openKey) writeList(openKey, next);
-        if (filePath === entry.path) navigate(filesUrl(wsRef, newPath), { replace: true });
+        if (filePath === entry.path) navigate(filesUrl(urlRef, newPath), { replace: true });
       }
     },
     deleteEntry: async (entry) => {
@@ -277,7 +280,7 @@ export default function FilesPage() {
         const next = open.filter((p) => !gone.includes(p));
         setOpen(next);
         if (openKey) writeList(openKey, next);
-        if (gone.includes(filePath)) navigate(filesUrl(wsRef, next[next.length - 1] ?? ''), { replace: true });
+        if (gone.includes(filePath)) navigate(filesUrl(urlRef, next[next.length - 1] ?? ''), { replace: true });
       }
     },
   };
@@ -311,9 +314,15 @@ export default function FilesPage() {
           <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => actions.createEntry('', 'dir')}>
             <i className="bi bi-folder-plus me-1" /> Dossier
           </button>
-          <Link to={`/projects/${info.projectId}`} className="btn btn-sm btn-outline-secondary">
-            Projet
-          </Link>
+          {info.sessionId ? (
+            <Link to={`/sessions/${info.sessionId}`} className="btn btn-sm btn-outline-secondary" title={info.sessionName ?? 'Session'}>
+              Session
+            </Link>
+          ) : (
+            <Link to={`/projects/${info.projectId}`} className="btn btn-sm btn-outline-secondary">
+              Projet
+            </Link>
+          )}
         </div>
       </div>
       {actionError && (

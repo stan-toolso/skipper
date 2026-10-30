@@ -1,4 +1,5 @@
 import type { Project } from '../projects/types.js';
+import type { ContainerStats } from './stats.js';
 
 /** Un seul environnement d'exécution : le conteneur Docker du projet. Rien ne tourne sur le serveur. */
 export type RunnerKind = 'docker';
@@ -9,7 +10,7 @@ export interface RunnerConfig {
   image?: string;
   /** Limite mémoire, ex. "1g" ; défaut : SKIPPER_RUNNER_MEMORY. */
   memory?: string;
-  /** Limite CPU, ex. "1" ou "0.5". */
+  /** Plafond CPU (`--cpus`), ex. "1" ou "0.5" ; absent : celui de SKIPPER_RUNNER_CPUS, par défaut aucun. */
   cpus?: string;
   /** Navigateur headless (serveur MCP Playwright) mis à disposition des agents. */
   browser?: boolean;
@@ -26,15 +27,47 @@ export interface RunnerStatus {
   containerName: string | null;
   image: string | null;
   memory: string | null;
+  /** Plafond CPU ; null : aucun (tous les cœurs de l'hôte). */
   cpus: string | null;
   startedAt: Date | null;
   error: string | null;
+  /** Le conteneur existe mais a été créé avec une autre configuration ou une autre image : à recréer. */
+  outdated: boolean;
+  /** Raisons lisibles de `outdated` (« option --init ajoutée », « image reconstruite le … »). */
+  outdatedReasons: string[];
+  /** Processus zombies (terminés, non récoltés) dans le conteneur ; null s'il ne tourne pas ou si le comptage a échoué. */
+  zombies: number | null;
 }
 
 export interface SpawnSpec {
   command: string;
   args: string[];
   env?: Record<string, string>;
+}
+
+/** Commande exécutée dans un conteneur jetable (`runIsolated`). */
+export interface IsolatedCommand {
+  /** Dossier de l'hôte monté (lecture et écriture) et dossier courant de la commande ; seul chemin du projet visible. */
+  cwd: string;
+  /** Programme et arguments, exécutés sans shell. */
+  command: string[];
+  /** Variables d'environnement de la commande (jamais sur la ligne de commande de `docker` : transmises par l'environnement). */
+  env: Record<string, string>;
+  /** Délai au-delà duquel le conteneur est supprimé et la commande échoue. */
+  timeoutMs: number;
+  /** Taille maximale conservée par flux (stdout, stderr) ; défaut 64 Ko. */
+  maxBytes?: number;
+  /** Limite mémoire du conteneur (défaut 512m). */
+  memory?: string;
+}
+
+export interface IsolatedResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  truncated: boolean;
+  durationMs: number;
 }
 
 /**
@@ -44,9 +77,21 @@ export interface SpawnSpec {
  */
 export interface Runner {
   readonly kind: RunnerKind;
+  containerName(project: Pick<Project, 'slug'>): string;
   status(project: Project): Promise<RunnerStatus>;
-  /** Prépare l'environnement (démarre le conteneur si besoin). */
+  /** Mémoire, CPU et processus Claude du conteneur en marche ; null s'il est arrêté ou absent. `fresh` : sans le cache de quelques secondes. */
+  stats(project: Project, opts?: { fresh?: boolean }): Promise<ContainerStats | null>;
+  /** Applique à chaud au conteneur existant les limites mémoire et CPU du projet (sans effet s'il n'existe pas). */
+  applyLimits(project: Project): Promise<boolean>;
+  /**
+   * Prépare l'environnement (démarre le conteneur si besoin). Un conteneur obsolète (`outdated`) est
+   * recréé au passage si le projet est inactif selon `setIdleCheck`.
+   */
   ensureReady(project: Project): Promise<RunnerStatus>;
+  /** Déclare comment savoir qu'aucun processus du projet ne tourne (sessions, terminaux) : condition de la recréation automatique. */
+  setIdleCheck(check: (project: Project) => Promise<boolean>): void;
+  /** Au démarrage du serveur : supprime les conteneurs obsolètes de ces projets (rien ne tourne encore) ; ils seront recréés à la demande. */
+  recreateOutdated(projects: Project[]): Promise<string[]>;
   stop(project: Project): Promise<RunnerStatus>;
   /** Supprime l'environnement (conteneur) ; les fichiers du projet ne sont pas touchés. */
   remove(project: Project): Promise<void>;
@@ -78,6 +123,12 @@ export interface Runner {
   opencodeCommand(project: Project, cwd: string, envKeys: string[]): Promise<SpawnSpec>;
   /** Adresse à laquelle un processus de l'environnement joint le serveur Skipper (ponts MCP d'OpenCode). */
   hostAddress(project: Project): Promise<string>;
+  /**
+   * Exécute une commande dans un conteneur jetable de l'image du projet (ou de l'image par défaut sans projet), hors du conteneur du projet : seul
+   * `cwd` y est monté, et l'environnement de la commande (identifiants du coffre) n'est jamais visible des
+   * processus du projet. Sert aux outils du coffre qui lancent un CLI (AWS). Rien n'est lancé sur le serveur.
+   */
+  runIsolated(project: Project | null, cmd: IsolatedCommand): Promise<IsolatedResult>;
 }
 
 export interface BrowserMcpOptions {

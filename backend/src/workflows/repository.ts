@@ -1,8 +1,10 @@
-import { scheduleOf } from '../agents/repository.js';
-import type { RunStatus, RunTrigger } from '../agents/types.js';
 import { toJson } from '../db/json.js';
 import { pool } from '../db/pool.js';
-import type { LogLevel, NodeRunStatus, Workflow, WorkflowDefinition, WorkflowNodeType, WorkflowRun, WorkflowRunFilter, WorkflowRunLog, WorkflowRunNode } from './types.js';
+import type { AutomationSchedule, LogLevel, NodeRunStatus, RunStatus, RunTrigger, Workflow, WorkflowDefinition, WorkflowNodeType, WorkflowRun, WorkflowRunFilter, WorkflowRunLog, WorkflowRunNode } from './types.js';
+
+/** Colonnes de planification d'un workflow. */
+const scheduleOf = (r: { cron: string | null; timezone: string; schedule_enabled: boolean; next_run_at: Date | null; last_run_at: Date | null; last_result: string | null }): AutomationSchedule | null =>
+  r.cron ? { cron: r.cron, timezone: r.timezone, enabled: r.schedule_enabled, nextRunAt: r.next_run_at, lastRunAt: r.last_run_at, lastResult: r.last_result } : null;
 
 interface WorkflowRow {
   id: string;
@@ -54,7 +56,6 @@ interface NodeRow {
   input: unknown | null;
   output: unknown | null;
   error: string | null;
-  agent_run_id: string | null;
   started_at: Date | null;
   finished_at: Date | null;
 }
@@ -105,7 +106,7 @@ const toRun = (r: RunRow): WorkflowRun => ({
   finishedAt: r.finished_at,
 });
 
-const toNode = (r: NodeRow): WorkflowRunNode => ({ id: r.id, runId: r.run_id, nodeKey: r.node_key, nodeType: r.node_type, status: r.status, input: r.input ?? null, output: r.output ?? null, error: r.error, agentRunId: r.agent_run_id, startedAt: r.started_at, finishedAt: r.finished_at });
+const toNode = (r: NodeRow): WorkflowRunNode => ({ id: r.id, runId: r.run_id, nodeKey: r.node_key, nodeType: r.node_type, status: r.status, input: r.input ?? null, output: r.output ?? null, error: r.error, startedAt: r.started_at, finishedAt: r.finished_at });
 const toLog = (r: LogRow): WorkflowRunLog => ({ id: String(r.id), runId: r.run_id, nodeKey: r.node_key, level: r.level, message: r.message, data: r.data ?? null, createdAt: r.created_at });
 
 export interface WorkflowValues {
@@ -141,7 +142,6 @@ export interface NodePatch {
   input?: unknown | null;
   output?: unknown | null;
   error?: string | null;
-  agentRunId?: string | null;
   startedAt?: Date | null;
   finishedAt?: Date | null;
 }
@@ -179,12 +179,6 @@ export const workflowRepository = {
     if (filter.projectId) where.push(`project_id = $${params.push(filter.projectId)}`);
     if (filter.projectIds) where.push(`project_id = ANY($${params.push(filter.projectIds)}::uuid[])`);
     const { rows } = await pool.query<WorkflowRow>(`SELECT * FROM workflows ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY lower(name)`, params);
-    return rows.map(toWorkflow);
-  },
-
-  /** Workflows dont le graphe exécute cet agent (pour prévenir avant de le supprimer). */
-  async listUsingAgent(agentId: string): Promise<Workflow[]> {
-    const { rows } = await pool.query<WorkflowRow>(`SELECT * FROM workflows WHERE definition->'nodes' @> $1::jsonb ORDER BY lower(name)`, [toJson([{ agentId }])]);
     return rows.map(toWorkflow);
   },
 
@@ -308,18 +302,17 @@ export const workflowRepository = {
   async upsertNode(runId: string, nodeKey: string, nodeType: WorkflowNodeType, patch: NodePatch): Promise<WorkflowRunNode> {
     const json = (v: unknown) => (v === undefined || v === null ? null : toJson(v));
     const { rows } = await pool.query<NodeRow>(
-      `INSERT INTO workflow_run_nodes (run_id, node_key, node_type, status, input, output, error, agent_run_id, started_at, finished_at)
-       VALUES ($1, $2, $3, COALESCE($4, 'pending'), $5::jsonb, $6::jsonb, $7, $8, $9, $10)
+      `INSERT INTO workflow_run_nodes (run_id, node_key, node_type, status, input, output, error, started_at, finished_at)
+       VALUES ($1, $2, $3, COALESCE($4, 'pending'), $5::jsonb, $6::jsonb, $7, $8, $9)
        ON CONFLICT (run_id, node_key) DO UPDATE SET
          status = COALESCE(EXCLUDED.status, workflow_run_nodes.status),
          input = COALESCE(EXCLUDED.input, workflow_run_nodes.input),
          output = COALESCE(EXCLUDED.output, workflow_run_nodes.output),
          error = COALESCE(EXCLUDED.error, workflow_run_nodes.error),
-         agent_run_id = COALESCE(EXCLUDED.agent_run_id, workflow_run_nodes.agent_run_id),
          started_at = COALESCE(EXCLUDED.started_at, workflow_run_nodes.started_at),
          finished_at = COALESCE(EXCLUDED.finished_at, workflow_run_nodes.finished_at)
        RETURNING *`,
-      [runId, nodeKey, nodeType, patch.status ?? null, json(patch.input), json(patch.output), patch.error ?? null, patch.agentRunId ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
+      [runId, nodeKey, nodeType, patch.status ?? null, json(patch.input), json(patch.output), patch.error ?? null, patch.startedAt ?? null, patch.finishedAt ?? null],
     );
     return toNode(rows[0]);
   },

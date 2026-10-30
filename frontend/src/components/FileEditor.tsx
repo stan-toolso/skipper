@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Spinner } from 'react-bootstrap';
 import CodeMirror from '@uiw/react-codemirror';
-import { EditorView, keymap } from '@codemirror/view';
+import { keymap } from '@codemirror/view';
 import { Prec, type Extension } from '@codemirror/state';
 import { LanguageDescription } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
@@ -11,34 +11,9 @@ import { fileViewUrl } from '../apollo';
 import { WORKSPACE_FILE, WRITE_WORKSPACE_FILE, type FileContent } from '../graphql/operations';
 import { fileIcon, formatSize, type WorkspaceRef } from '../lib/files';
 import { useTheme } from '../lib/theme';
+import { darkAppTheme, lightAppTheme } from '../lib/codemirrorTheme';
 import PageLoading from './PageLoading';
 import PublishPageModal from './pages/PublishPageModal';
-
-/** Accorde CodeMirror au thème de l'application. */
-const darkAppTheme = EditorView.theme(
-  {
-    '&': { backgroundColor: '#141414', fontSize: '13px', height: '100%' },
-    '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', lineHeight: '1.5' },
-    '.cm-gutters': { backgroundColor: '#141414', borderRight: '1px solid #262626' },
-    '.cm-activeLineGutter': { backgroundColor: '#1a1a1a' },
-    '.cm-activeLine': { backgroundColor: '#1a1a1a' },
-    '&.cm-focused .cm-cursor': { borderLeftColor: '#d97757' },
-    '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(217, 119, 87, 0.3)' },
-  },
-  { dark: true },
-);
-const lightAppTheme = EditorView.theme(
-  {
-    '&': { backgroundColor: '#ffffff', fontSize: '13px', height: '100%' },
-    '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', lineHeight: '1.5' },
-    '.cm-gutters': { backgroundColor: '#f6f7f8', borderRight: '1px solid #d5d9dd', color: '#8a9097' },
-    '.cm-activeLineGutter': { backgroundColor: '#eceef0' },
-    '.cm-activeLine': { backgroundColor: '#f6f7f8' },
-    '&.cm-focused .cm-cursor': { borderLeftColor: '#b85c3a' },
-    '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(184, 92, 58, 0.25)' },
-  },
-  { dark: false },
-);
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 const isHtml = (name: string) => /\.html?$/i.test(name);
@@ -166,7 +141,7 @@ export default function FileEditor({ wsRef, path, onDirty, refreshKey = 0 }: Pro
   if (error) return <Alert variant="danger" className="m-3">{error.message}</Alert>;
   if (!file) return null;
   const html = isHtml(file.name);
-  const viewUrl = fileViewUrl(wsRef.projectId, wsRef.worktreeId, path);
+  const viewUrl = fileViewUrl(wsRef.projectId, wsRef.worksessionId, path);
   return (
     <div className="fe-page">
       <div className="fe-header">
@@ -196,7 +171,7 @@ export default function FileEditor({ wsRef, path, onDirty, refreshKey = 0 }: Pro
               </Button>
             </div>
           )}
-          <a className="btn btn-sm btn-outline-secondary" href={fileViewUrl(wsRef.projectId, wsRef.worktreeId, path, true)} title="Télécharger le fichier tel qu'enregistré">
+          <a className="btn btn-sm btn-outline-secondary" href={fileViewUrl(wsRef.projectId, wsRef.worksessionId, path, true)} title="Télécharger le fichier tel qu'enregistré">
             <i className="bi bi-download" />
           </a>
           {html && (
@@ -237,7 +212,7 @@ export default function FileEditor({ wsRef, path, onDirty, refreshKey = 0 }: Pro
       {file.binary ? (
         <div className="p-3 fx-muted">
           Fichier binaire ({formatSize(file.size)}) : pas d'aperçu.{' '}
-          <a href={fileViewUrl(wsRef.projectId, wsRef.worktreeId, path, true)}>Télécharger</a>
+          <a href={fileViewUrl(wsRef.projectId, wsRef.worksessionId, path, true)}>Télécharger</a>
         </div>
       ) : html && preview ? (
         <iframe key={previewKey} className="preview-frame" title={file.name} src={viewUrl} sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads" />
@@ -253,7 +228,7 @@ export default function FileEditor({ wsRef, path, onDirty, refreshKey = 0 }: Pro
           />
         </div>
       )}
-      {publishing && <PublishPageModal projectId={wsRef.projectId} worktreeId={wsRef.worktreeId} path={path} html={saved} onClose={() => setPublishing(false)} />}
+      {publishing && <PublishPageModal projectId={wsRef.projectId} worksessionId={wsRef.worksessionId} path={path} html={saved} onClose={() => setPublishing(false)} />}
     </div>
   );
 }

@@ -3,13 +3,13 @@ import { vaultService } from '../vault/service.js';
 import { kindLabels as vaultKindLabels } from '../vault/types.js';
 
 /**
- * Recherche globale (palette ⌘K) : projets, worktrees, sessions, terminaux, tâches et éléments du coffre
+ * Recherche globale (palette ⌘K) : projets, sessions, terminaux, tâches et éléments du coffre
  * que la personne peut voir. Chaque mot de la requête doit apparaître ; les titres qui commencent par la
  * requête viennent d'abord, puis ceux qui la contiennent, puis le reste par date de mise à jour.
  */
 
-export type SearchKind = 'PROJECT' | 'WORKTREE' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
-export const SEARCH_KINDS: SearchKind[] = ['PROJECT', 'WORKTREE', 'SESSION', 'TERMINAL', 'TASK', 'VAULT_ITEM'];
+export type SearchKind = 'PROJECT' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
+export const SEARCH_KINDS: SearchKind[] = ['PROJECT', 'SESSION', 'TERMINAL', 'TASK', 'VAULT_ITEM'];
 
 export interface SearchHit {
   kind: SearchKind;
@@ -20,7 +20,7 @@ export interface SearchHit {
   projectName: string | null;
   /** Projet dont la personne n'est pas membre (super administrateur). */
   outsideProjects: boolean;
-  worktreeBranch: string | null;
+  worksessionBranch: string | null;
   status: string | null;
   activity: string | null;
   updatedAt: Date;
@@ -50,7 +50,7 @@ interface RawRow {
   detail: string | null;
   project_id: string | null;
   project_name: string | null;
-  worktree_branch: string | null;
+  worksession_branch: string | null;
   status: string | null;
   activity: string | null;
   updated_at: Date;
@@ -58,7 +58,7 @@ interface RawRow {
 }
 
 /** Requête d'un type : `haystack` concatène les colonnes cherchées, `title` sert au classement. */
-async function searchKind(kind: SearchKind, sql: { from: string; title: string; detail: string; haystack: string; projectId: string; worktreeBranch: string; status: string; activity: string; updatedAt: string; where: string }, scope: SearchScope, query: string, limit: number): Promise<SearchGroup | null> {
+async function searchKind(kind: SearchKind, sql: { from: string; title: string; detail: string; haystack: string; projectId: string; worksessionBranch: string; status: string; activity: string; updatedAt: string; where: string }, scope: SearchScope, query: string, limit: number): Promise<SearchGroup | null> {
   if (!scope.projectIds.length) return null;
   const params: unknown[] = [scope.projectIds];
   const terms = words(query).map((w) => `${sql.haystack} ILIKE $${params.push(`%${escapeLike(w)}%`)}`);
@@ -66,7 +66,7 @@ async function searchKind(kind: SearchKind, sql: { from: string; title: string; 
   const rank = q ? `CASE WHEN lower(${sql.title}) LIKE $${params.push(`${escapeLike(q)}%`)} THEN 0 WHEN lower(${sql.title}) LIKE $${params.push(`%${escapeLike(q)}%`)} THEN 1 ELSE 2 END` : '2';
   params.push(limit);
   const { rows } = await pool.query<RawRow>(
-    `SELECT x.id, ${sql.title} AS title, ${sql.detail} AS detail, ${sql.projectId} AS project_id, p.name AS project_name, ${sql.worktreeBranch} AS worktree_branch,
+    `SELECT x.id, ${sql.title} AS title, ${sql.detail} AS detail, ${sql.projectId} AS project_id, p.name AS project_name, ${sql.worksessionBranch} AS worksession_branch,
             ${sql.status} AS status, ${sql.activity} AS activity, ${sql.updatedAt} AS updated_at, count(*) OVER () AS total
      FROM ${sql.from} LEFT JOIN projects p ON p.id = ${sql.projectId}
      WHERE ${sql.projectId} = ANY($1::uuid[]) ${sql.where} ${terms.map((t) => `AND ${t}`).join(' ')}
@@ -87,7 +87,7 @@ async function searchKind(kind: SearchKind, sql: { from: string; title: string; 
       projectId: r.project_id,
       projectName: r.project_name,
       outsideProjects: Boolean(r.project_id) && !members.has(r.project_id!),
-      worktreeBranch: r.worktree_branch,
+      worksessionBranch: r.worksession_branch,
       status: r.status,
       activity: r.activity,
       updatedAt: r.updated_at,
@@ -103,15 +103,13 @@ export const searchService = {
     const wanted = kinds?.length ? SEARCH_KINDS.filter((k) => kinds.includes(k)) : SEARCH_KINDS;
     const jobs: Record<SearchKind, () => Promise<SearchGroup | null>> = {
       PROJECT: () =>
-        searchKind('PROJECT', { from: 'projects x', title: 'x.name', detail: 'x.description', haystack: "(x.name || ' ' || x.slug || ' ' || coalesce(x.description, ''))", projectId: 'x.id', worktreeBranch: 'NULL', status: 'NULL', activity: 'NULL', updatedAt: 'x.updated_at', where: '' }, scope, query, n),
-      WORKTREE: () =>
-        searchKind('WORKTREE', { from: 'worktrees x', title: 'coalesce(x.label, x.branch)', detail: "CASE WHEN x.label IS NULL THEN x.name ELSE x.branch END", haystack: "(x.branch || ' ' || x.name || ' ' || coalesce(x.label, ''))", projectId: 'x.project_id', worktreeBranch: 'x.branch', status: "CASE WHEN x.archived_at IS NULL THEN NULL ELSE 'archived' END", activity: 'NULL', updatedAt: 'x.created_at', where: '' }, scope, query, n),
+        searchKind('PROJECT', { from: 'projects x', title: 'x.name', detail: 'x.description', haystack: "(x.name || ' ' || x.slug || ' ' || coalesce(x.description, ''))", projectId: 'x.id', worksessionBranch: 'NULL', status: 'NULL', activity: 'NULL', updatedAt: 'x.updated_at', where: '' }, scope, query, n),
       SESSION: () =>
-        searchKind('SESSION', { from: 'sessions x LEFT JOIN worktrees w ON w.id = x.worktree_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worktreeBranch: 'w.branch', status: 'x.status::text', activity: 'x.activity', updatedAt: 'x.updated_at', where: 'AND x.archived_at IS NULL' }, scope, query, n),
+        searchKind('SESSION', { from: 'sessions x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'x.activity', updatedAt: 'x.updated_at', where: "AND x.archived_at IS NULL AND x.kind = 'session'" }, scope, query, n),
       TERMINAL: () =>
-        searchKind('TERMINAL', { from: 'terminals x LEFT JOIN worktrees w ON w.id = x.worktree_id', title: 'x.name', detail: 'NULL', haystack: 'x.name', projectId: 'x.project_id', worktreeBranch: 'w.branch', status: 'x.status::text', activity: 'NULL', updatedAt: 'x.created_at', where: `AND (x.created_by IS NULL OR x.created_by = '${scope.userId}')` }, scope, query, n),
+        searchKind('TERMINAL', { from: 'terminals x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'NULL', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'NULL', updatedAt: 'x.created_at', where: `AND (x.created_by IS NULL OR x.created_by = '${scope.userId}')` }, scope, query, n),
       TASK: () =>
-        searchKind('TASK', { from: 'tasks x', title: 'x.title', detail: 'x.priority::text', haystack: "(x.title || ' ' || x.description || ' ' || coalesce(x.branch, ''))", projectId: 'x.project_id', worktreeBranch: 'x.branch', status: 'x.status::text', activity: 'NULL', updatedAt: 'x.updated_at', where: '' }, scope, query, n),
+        searchKind('TASK', { from: 'tasks x', title: 'x.title', detail: 'x.priority::text', haystack: "(x.title || ' ' || x.description || ' ' || coalesce(x.branch, ''))", projectId: 'x.project_id', worksessionBranch: 'x.branch', status: 'x.status::text', activity: 'NULL', updatedAt: 'x.updated_at', where: '' }, scope, query, n),
       VAULT_ITEM: async () => {
         const items = await vaultService.listAccessible(scope.userId);
         const q = normalize(query.trim());
@@ -124,7 +122,7 @@ export const searchService = {
         return {
           kind: 'VAULT_ITEM' as const,
           total: matching.length,
-          hits: matching.slice(0, n).map((i) => ({ kind: 'VAULT_ITEM' as const, id: i.id, title: i.name, detail: vaultKindLabels[i.kind], projectId: i.ownerProjectId, projectName: null, outsideProjects: Boolean(i.ownerProjectId) && !members.has(i.ownerProjectId!), worktreeBranch: null, status: i.kind, activity: null, updatedAt: i.updatedAt })),
+          hits: matching.slice(0, n).map((i) => ({ kind: 'VAULT_ITEM' as const, id: i.id, title: i.name, detail: vaultKindLabels[i.kind], projectId: i.ownerProjectId, projectName: null, outsideProjects: Boolean(i.ownerProjectId) && !members.has(i.ownerProjectId!), worksessionBranch: null, status: i.kind, activity: null, updatedAt: i.updatedAt })),
         };
       },
     };

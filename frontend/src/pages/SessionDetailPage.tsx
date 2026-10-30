@@ -5,37 +5,31 @@ import { Link, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { useSessionEvents } from '../lib/sessionEvents';
+import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
-import { useDeletions } from '../workbench/useDeletions';
-import RelaunchModal from '../components/RelaunchModal';
-import { ARCHIVE_SESSION, UNARCHIVE_SESSION } from '../graphql/sessions';
 import { useAuth } from '../auth/AuthContext';
 
-import { bypassConnectionsWarning, permissionModeLabels, sessionStatusLabels } from '../lib/humanize';
+import { bypassConnectionsWarning, permissionModeLabels, permissionModeShortLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
-import ScheduleModal from '../components/ScheduleModal';
-import SessionSettingsModal from '../components/SessionSettingsModal';
+import { SessionChildren, SessionParentNote, parentStateHint, useSessionActions } from '../components/SessionControls';
+import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript from '../components/Transcript';
-import SessionChanges from '../components/SessionChanges';
 import { fileToolResultCount } from '../lib/sessionChanges';
 import { isImageType, toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import { confirmedPending, newPendingInstruction, withPendingInstructions, type PendingInstruction } from '../lib/pendingInstructions';
 import '../components/terminal.css';
+import '../components/chat.css';
 import {
-  END_SESSION,
   INTERRUPT_SESSION,
-  RESUME_SESSION,
   PROVIDERS,
-  RUN_SESSION_SCHEDULE_NOW,
   SEND_SESSION_MESSAGE,
   SESSION,
-  SESSION_CHANGES,
   SESSION_NAME,
-  STOP_SESSION,
   UPDATE_SESSION_CONFIG,
+  type ChildSession,
   type ConfigField,
   type HumanRequest,
   type Provider,
@@ -43,7 +37,7 @@ import {
   type SessionChanges as SessionChangesData,
 } from '../graphql/operations';
 
-type SessionWithRequests = Session & { requests: HumanRequest[] };
+type SessionWithRequests = Session & { requests: HumanRequest[]; childSessions: ChildSession[] };
 
 const TECH_KEY = 'skipper.session.technical';
 const draftKey = (id: string) => `skipper.session.draft.${id}`;
@@ -62,30 +56,19 @@ const writeDraft = (id: string, value: string) => {
     /* ignore */
   }
 };
-const TAB_KEY = 'skipper.session.tab';
-type PageTab = 'conversation' | 'changes';
-
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
-  const { events, loaded: eventsLoaded, refresh: refreshEvents } = useSessionEvents(id);
+  const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
+  const { events, loaded: eventsLoaded, draft, refresh: refreshEvents } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
-  const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
-  const [resumeSession, { loading: resuming, error: resumeError }] = useMutation(RESUME_SESSION);
-  const [endSession, { error: endError }] = useMutation(END_SESSION);
-  const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
-  const { confirm } = useDialogs();
-  const { deleteSession } = useDeletions();
+  const [interruptSession] = useMutation(INTERRUPT_SESSION, { onError: (err) => void showError(err) });
+  const { confirm, showError } = useDialogs();
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
-  const [scheduling, setScheduling] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [relaunching, setRelaunching] = useState(false);
+  // L'en-tête tient sur une ligne (nom, détail tronqué, jauge) ; un chevron déplie le détail complet, les actions et les sous-agents.
+  const [headerOpen, setHeaderOpen] = useState(false);
   const { user } = useAuth();
-  const [archiveSession, { error: archiveError }] = useMutation(ARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
-  const [unarchiveSession, { error: unarchiveError }] = useMutation(UNARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
 
   // Brouillon conservé par session dans ce navigateur : fermer l'onglet ne perd pas une instruction en cours de rédaction.
   const [text, setTextState] = useState(() => readDraft(id));
@@ -130,24 +113,8 @@ export default function SessionDetailPage() {
       return !v;
     });
   };
-  const [tab, setTab] = useState<PageTab>(() => {
-    try {
-      return localStorage.getItem(TAB_KEY) === 'changes' ? 'changes' : 'conversation';
-    } catch {
-      return 'conversation';
-    }
-  });
-  const selectTab = (next: PageTab) => {
-    setTab(next);
-    try {
-      localStorage.setItem(TAB_KEY, next);
-    } catch {
-      /* ignore */
-    }
-  };
-  // Onglet « Modifications » : la liste est rechargée après chaque résultat d'un outil qui modifie des fichiers
-  // (Edit, Write, Bash...) et à chaque changement d'état de la session (fin de tour d'un agent sans outils).
-  const changesQ = useQuery<{ sessionChanges: SessionChangesData }>(SESSION_CHANGES, { variables: { sessionId: id }, fetchPolicy: 'cache-and-network' });
+  // Onglet « Modifications » du panneau de droite : sa liste est rechargée après chaque résultat d'un outil qui modifie
+  // des fichiers (Edit, Write, Bash...) et à chaque changement d'état de la session (fin de tour d'un agent sans outils).
   const toolResults = useMemo(() => fileToolResultCount(events), [events]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Instructions déjà envoyées, dans l'ordre, sans doublons consécutifs : parcourues avec flèche haut / bas, comme dans Claude Code.
@@ -175,26 +142,26 @@ export default function SessionDetailPage() {
   const session = data?.session;
   const cachedName = useCachedName(SESSION_NAME, 'Session', id);
   useTabTitle(session?.name ?? cachedName);
-  useGitTarget(session ? { projectId: session.project.id, worktreeId: session.worktree?.id ?? null, label: session.worktree ? `${session.project.name} · ${session.worktree.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
+  // Chat : conversation légère de l'espace personnel, sans dossier de travail (ni panneau de droite, ni planification).
+  const chat = session?.kind === 'CHAT';
   const archived = Boolean(session?.archivedAt);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
   const changesKey = `${toolResults}:${session?.status}:${session?.activity}`;
-  const [refreshCount, setRefreshCount] = useState(0);
-  const refetchChanges = changesQ.refetch;
-  const firstKey = useRef(changesKey);
-  useEffect(() => {
-    if (changesKey === firstKey.current) return;
-    firstKey.current = changesKey;
-    void refetchChanges().catch(() => undefined);
-    setRefreshCount((n) => n + 1);
-  }, [changesKey, refetchChanges]);
-  const refreshChanges = () => {
-    void refetchChanges().catch(() => undefined);
-    setRefreshCount((n) => n + 1);
-  };
-  const changedFiles = changesQ.data?.sessionChanges.files.length ?? 0;
+  useGitTarget(
+    session && !chat
+      ? {
+          projectId: session.project.id,
+          worksessionId: session.worksession?.id ?? null,
+          label: session.worksession ? `${session.project.name} · ${session.worksession.branch}` : session.project.name,
+          taskId: session.task?.id ?? null,
+          sessionId: session.id,
+          changesKey,
+        }
+      : null,
+  );
+  const actions = useSessionActions(session);
 
   // Focus dans la zone de saisie à l'ouverture, sauf sur mobile (le clavier virtuel masquerait la page).
   useEffect(() => {
@@ -259,14 +226,17 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? archiveError ?? unarchiveError;
+  const actionError = sendError ?? configError;
   const schedule = session.schedule;
+  const parentHint = session.parentSession ? parentStateHint(session.parentSession) : null;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
   // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
   const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
   const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
   const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
+  // Un chat n'a ni fichiers ni commandes : seuls « demander » et « tout autoriser » ont un sens.
+  const permissionOptions = (permissionField?.options ?? []).filter((o) => !chat || o.value === 'default' || o.value === 'bypassPermissions');
   const bypassWarning = (force = false) => (force || permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(session.project.approvalConnections ?? []) : null);
   const changeSetting = async (field: ConfigField, value: string) => {
     if (field.key === 'permissionMode' && value === 'bypassPermissions') {
@@ -284,7 +254,7 @@ export default function SessionDetailPage() {
   const statusLine = pending.length
     ? `⏸ L'agent attend votre réponse ci-dessus`
     : busy
-      ? "✻ L'agent travaille… (touche échap pour l'interrompre)"
+      ? "L'agent travaille… (Échap pour l'interrompre)"
       : running
         ? "⏵ L'agent attend vos instructions"
         : archived
@@ -297,16 +267,29 @@ export default function SessionDetailPage() {
 
   return (
     <div className="cc">
-      <div className="cc-header">
-        <div>
-          <span className="cc-title">✻ {session.name}</span>
+      <div className={`cc-header${headerOpen ? ' open' : ''}`}>
+        <div className="cc-header-main">
+          <span className="cc-title" title={session.name}>{chat ? <i className="bi bi-chat-left-text-fill cc-chat-icon" /> : '✻ '}{session.name}</span>
           <span className="cc-meta">
             {' '}
-            · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
-            {session.worktree && (
+            ·{' '}
+            {chat ? (
+              <Link to="/chats" className="cc-meta" title="Chat de votre espace personnel : tous vos chats">
+                chat
+              </Link>
+            ) : (
+              <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            )}
+            {session.worksession && (
               <>
                 {' '}
-                · <i className="bi bi-diagram-2" /> {session.worktree.label}
+                · <Link to={`/sessions/${session.id}/files`} className="cc-meta" title="Branche de la session · ouvrir ses fichiers"><i className="bi bi-git" /> {session.worksession.branch}</Link>
+              </>
+            )}
+            {!session.worksession && session.formerWorksession && (
+              <>
+                {' '}
+                · <span title={`La session a travaillé sur la branche ${session.formerWorksession.branch} ; son dossier de travail a été supprimé depuis`}><i className="bi bi-git" /> {session.formerWorksession.branch} <span className="cc-dimmer">(dossier supprimé)</span></span>
               </>
             )}
             {session.owner && (
@@ -321,25 +304,27 @@ export default function SessionDetailPage() {
                 · <Link to={`/tasks/${session.task.id}`} className="cc-meta" title="Tâche liée"><i className="bi bi-check2-square" /> {session.task.title}</Link>
               </>
             )}
-            {archived && <> · <span className="cc-yellow">archivée</span></>}
             {session.parentSession && (
               <>
                 {' '}
-                · lancée par{' '}
-                <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title="Session d'agent qui a lancé celle-ci">
-                  <i className="bi bi-robot" /> {session.parentSession.name}
-                </Link>
+                · <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title={`Sous-agent : lancée par l'agent de la session « ${session.parentSession.name} »${parentHint ? ` (${parentHint})` : ''}`}><i className="bi bi-robot" /> sous-agent de « {session.parentSession.name} »</Link>
               </>
             )}
-            {session.agent && (
+            {session.childSessions.length > 0 && (
               <>
                 {' '}
-                · exécution de l'agent{' '}
-                <Link to={`/agents/${session.agent.id}${session.agentRun ? `?run=${session.agentRun.id}` : ''}`} className="cc-meta" title="Agent dont une exécution a ouvert cette session">
-                  <i className="bi bi-robot" /> {session.agent.name}
-                </Link>
+                · <button type="button" className="cc-link" title="Sous-agents : sessions lancées par l'agent de cette session (déplier pour les voir)" onClick={() => setHeaderOpen(true)}><i className="bi bi-robot" /> {session.childSessions.length > 1 ? `${session.childSessions.length} sous-agents` : '1 sous-agent'}</button>
               </>
             )}
+            {archived && <> · <span className="cc-yellow">archivée</span></>}
+          </span>
+          {session.context.tokens !== null && (
+            <span className="cc-header-gauge">
+              <span className="cc-sep"> · </span>
+              <ContextGauge context={session.context} onClick={actions.openSettings} />
+            </span>
+          )}
+          <span className="cc-meta cc-meta-more">
             {session.workflowRun && (
               <>
                 {' '}
@@ -353,7 +338,7 @@ export default function SessionDetailPage() {
               <>
                 {' '}
                 ·{' '}
-                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={() => setScheduling(true)}>
+                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={actions.openSchedule}>
                   <i className="bi bi-alarm" />{' '}
                   {schedule.enabled ? (schedule.nextRunAt ? `prochaine exécution le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'planification désactivée'}
                 </button>
@@ -368,118 +353,37 @@ export default function SessionDetailPage() {
             )}
           </span>
         </div>
-        <div className="cc-actions">
-          <button type="button" className="cc-btn" title="Nom de la session et nettoyage automatique de l'historique" onClick={() => setSettingsOpen(true)}>
-            <i className="bi bi-gear" /> Réglages
-          </button>
-          <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
-            <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
-          </button>
-          {schedule && !busy && (
-            <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
-              Exécuter maintenant
-            </button>
-          )}
-          {session?.status === 'INTERRUPTED' && (
-            <button
-              type="button"
-              className="cc-btn accent"
-              disabled={resuming}
-              title={session.activity === 'BUSY' ? "L'agent reprend le travail coupé par le redémarrage du serveur" : "Rouvre la conversation ; l'agent attend votre prochaine instruction"}
-              onClick={() => void resumeSession({ variables: { id } }).catch(() => undefined)}
-            >
-              <i className="bi bi-play-fill" /> Reprendre
-            </button>
-          )}
-          {session.status === 'QUEUED' && (
-            <button type="button" className="cc-btn danger" title="La session ne démarrera pas ; un message la remettra en file si la limite est encore atteinte" onClick={() => stopSession({ variables: { id } })}>
-              Retirer de la file
-            </button>
-          )}
-          {busy && (
-            <button type="button" className="cc-btn" title="Arrête ce que l'agent est en train de faire ; la session reste ouverte" onClick={() => interruptSession({ variables: { id } })}>
-              Interrompre
-            </button>
-          )}
-          {running && (
-            <button type="button" className="cc-btn accent" title="L'agent finit ce qu'il fait, puis la session se termine" onClick={() => endSession({ variables: { id } })}>
-              Terminer la session
-            </button>
-          )}
-          {running && (
-            <button type="button" className="cc-btn danger" title="Arrêt immédiat, sans attendre" onClick={() => stopSession({ variables: { id } })}>
-              Arrêter
-            </button>
-          )}
-          <button type="button" className="cc-btn" title="Repart d'une nouvelle session avec un résumé de celle-ci" onClick={() => setRelaunching(true)}>
-            <i className="bi bi-arrow-repeat" /> Relancer
-          </button>
-          {archived ? (
-            <>
-              <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
-                Restaurer
-              </button>
-              <button
-                type="button"
-                className="cc-btn danger"
-                onClick={async () => {
-                  await deleteSession({ id, name: session.name, worktreeId: session.worktree?.id ?? null });
-                }}
-              >
-                Supprimer
-              </button>
-            </>
-          ) : (
-            <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ variables: { id } }).catch(() => undefined)}>
-              <i className="bi bi-archive" /> Archiver
-            </button>
-          )}
-        </div>
+        <button type="button" className="cc-header-toggle" aria-expanded={headerOpen} title={headerOpen ? 'Replier le détail de la session' : 'Détail et actions de la session (aussi dans le panneau de droite)'} onClick={() => setHeaderOpen((v) => !v)}>
+          <i className={`bi bi-chevron-${headerOpen ? 'up' : 'down'}`} />
+        </button>
       </div>
+      {headerOpen && (
+        <div className="cc-header-detail">
+          <div className="cc-actions">{actions.buttons}</div>
+          <SessionParentNote session={session} />
+          <SessionChildren children={session.childSessions} />
+        </div>
+      )}
+
+      {/* Le bandeau de contexte vit dans l'onglet « Session » du panneau de droite ; un chat n'a pas de panneau, il le garde ici. */}
+      {chat && <ContextBanner session={session} busy={Boolean(busy)} />}
 
       <div className="cc-toggle">
-        <div className="cc-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === 'conversation'} className={`cc-tab${tab === 'conversation' ? ' active' : ''}`} onClick={() => selectTab('conversation')}>
-            Conversation
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'changes'}
-            className={`cc-tab${tab === 'changes' ? ' active' : ''}`}
-            title="Fichiers modifiés dans le dossier de travail depuis le début de la session"
-            onClick={() => selectTab('changes')}
-          >
-            Modifications
-            {changedFiles > 0 && <span className="cc-tab-count">{changedFiles}</span>}
-          </button>
-        </div>
-        {tab === 'conversation' && (
-          <label>
-            <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
-          </label>
-        )}
+        <label>
+          <input type="checkbox" checked={technical} onChange={toggleTechnical} /> <span className="d-none d-md-inline">Afficher les détails techniques</span>
+          <span className="d-md-none">Détails techniques</span>
+        </label>
       </div>
-      {tab === 'conversation' ? (
-        <Transcript events={shownEvents} loading={!eventsLoaded} technical={technical} />
-      ) : (
-        <SessionChanges
-          sessionId={id}
-          workspace={{ projectId: session.project.id, worktreeId: session.worktree?.id ?? null }}
-          changes={changesQ.data?.sessionChanges}
-          loading={changesQ.loading}
-          error={changesQ.error}
-          refreshKey={refreshCount}
-          onRefresh={refreshChanges}
-        />
-      )}
-      {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
-      {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
-      {relaunching && <RelaunchModal session={session} projectName={session.project.name} worktrees={session.worktree ? [{ id: session.worktree.id, label: session.worktree.label }] : []} onClose={() => setRelaunching(false)} />}
+      <Transcript events={shownEvents} draft={draft} loading={!eventsLoaded} technical={technical} />
+      {actions.modals}
 
-      {pending.map((r) => (
-        <RequestPrompt key={r.id} request={r} />
-      ))}
+      {pending.length > 0 && (
+        <div className="cc-prompts">
+          {pending.map((r) => (
+            <RequestPrompt key={r.id} request={r} />
+          ))}
+        </div>
+      )}
 
       <div className="cc-status">
         <span>
@@ -491,57 +395,24 @@ export default function SessionDetailPage() {
           {actionError && <span className="cc-red">{actionError.message} · </span>}
           {bypassWarning() && (
             <span className="cc-yellow" title={bypassWarning() ?? undefined}>
-              ⚠ connexions non soumises ·{' '}
+              <i className="bi bi-exclamation-triangle" /> connexions non soumises
             </span>
           )}
-          <span className="cc-settings">
-            {modelField ? (
-              <select
-                className="cc-select"
-                title="Modèle de cette session (modifiable à tout moment)"
-                aria-label="Modèle"
-                value={model ?? ''}
-                disabled={updatingConfig}
-                onChange={(e) => changeSetting(modelField, e.target.value)}
-              >
-                {model && !(modelField.options ?? []).some((o) => o.value === model) && <option value={model}>{model}</option>}
-                {(modelField.options ?? []).map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              model && <span title="Modèle de cette session">{model}</span>
-            )}
-            {permissionField ? (
-              <select
-                className="cc-select"
-                title="Autorisations de cette session (modifiables à tout moment)"
-                aria-label="Autorisations"
-                value={permissionMode}
-                disabled={updatingConfig}
-                onChange={(e) => changeSetting(permissionField, e.target.value)}
-              >
-                {(permissionField.options ?? []).map((o) => (
-                  <option key={o.value} value={o.value} title={o.description ?? undefined}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span title="Autorisations de cette session">{permissionModeLabels[permissionMode] ?? permissionMode}</span>
-            )}
-          </span>
         </span>
       </div>
 
       {!archived && (
-      <div className="cc-input" onClick={() => inputRef.current?.focus()} onDrop={attachments.onDrop} onDragOver={attachments.onDragOver}>
+      <div
+        className="cc-input"
+        onClick={(e) => {
+          // Un clic sur la boîte ramène le curseur dans la saisie, sauf sur un contrôle (listes, boutons, puces).
+          if (!(e.target as HTMLElement).closest('select, button, label, a')) inputRef.current?.focus();
+        }}
+        onDrop={attachments.onDrop}
+        onDragOver={attachments.onDragOver}
+      >
         <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={sending || encoding} showButton={false} error={attachments.error} />
-        <div className="cc-input-row">
-          <span className="cc-caret">&gt;</span>
-          <textarea
+        <textarea
             ref={inputRef}
             rows={1}
             value={text}
@@ -577,8 +448,10 @@ export default function SessionDetailPage() {
               }
             }}
           />
-          <label className="cc-attach" title="Joindre des fichiers (ou collez une image, ou déposez des fichiers ici)">
-            <i className="bi bi-paperclip" />
+        {/* Rangée d'outils : fichiers joints, modèle et autorisations de la session (modifiables à tout moment), envoi. */}
+        <div className="cc-input-tools">
+          <label className="cc-attach" title="Joindre des fichiers (ou collez une image, ou déposez des fichiers ici)" aria-label="Joindre des fichiers">
+            <i className="bi bi-plus-lg" />
             <input
               type="file"
               multiple
@@ -590,15 +463,57 @@ export default function SessionDetailPage() {
               }}
             />
           </label>
-          <button type="button" className="cc-send" title="Envoyer" aria-label="Envoyer" disabled={!canSend} onClick={() => void submit()}>
-            <i className="bi bi-send" />
+          {modelField ? (
+            <span className="cc-pill" title="Modèle de cette session (modifiable à tout moment)">
+              <span className="cc-pill-label">{(modelField.options ?? []).find((o) => o.value === model)?.label ?? model ?? '—'}</span>
+              <i className="bi bi-chevron-down" />
+              <select className="cc-select" aria-label="Modèle" value={model ?? ''} disabled={updatingConfig} onChange={(e) => changeSetting(modelField, e.target.value)}>
+                {model && !(modelField.options ?? []).some((o) => o.value === model) && <option value={model}>{model}</option>}
+                {(modelField.options ?? []).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+          ) : (
+            model && (
+              <span className="cc-pill static" title="Modèle de cette session">
+                {model}
+              </span>
+            )
+          )}
+          {permissionField ? (
+            <span
+              className={`cc-pill${permissionMode === 'bypassPermissions' ? ' warn' : ''}`}
+              title={`Autorisations de cette session (modifiables à tout moment) : ${permissionModeLabels[permissionMode] ?? permissionMode}.${bypassWarning() ? ` ${bypassWarning()}` : ''}`}
+            >
+              {permissionMode === 'bypassPermissions' && <i className="bi bi-exclamation-triangle" />}
+              <span className="cc-pill-label">{permissionModeShortLabels[permissionMode] ?? (permissionField.options ?? []).find((o) => o.value === permissionMode)?.label ?? permissionMode}</span>
+              <i className="bi bi-chevron-down" />
+              <select className="cc-select" aria-label="Autorisations" value={permissionMode} disabled={updatingConfig} onChange={(e) => changeSetting(permissionField, e.target.value)}>
+                {permissionOptions.map((o) => (
+                  <option key={o.value} value={o.value} title={o.description ?? undefined}>
+                    {permissionModeShortLabels[o.value] ?? o.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+          ) : (
+            <span className={`cc-pill static${permissionMode === 'bypassPermissions' ? ' warn' : ''}`} title={`Autorisations de cette session : ${permissionModeLabels[permissionMode] ?? permissionMode}`}>
+              {permissionMode === 'bypassPermissions' && <i className="bi bi-exclamation-triangle" />}
+              {permissionModeShortLabels[permissionMode] ?? permissionMode}
+            </span>
+          )}
+          <button type="button" className="cc-send" title="Envoyer (Entrée)" aria-label="Envoyer" disabled={!canSend} onClick={() => void submit()}>
+            <i className="bi bi-arrow-up" />
           </button>
         </div>
       </div>
       )}
-      {technical && (
+      {technical && !chat && (
         <div className="cc-hint justify-content-end">
-          <span title="Dossier de travail de la session">{session.worktree?.path ?? session.project.workspacePath}</span>
+          <span title="Dossier de travail de la session">{session.worksession?.path ?? session.project.workspacePath}</span>
         </div>
       )}
     </div>

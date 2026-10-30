@@ -15,6 +15,8 @@ export type TabKind =
   | 'context'
   | 'vault'
   | 'session'
+  | 'chat'
+  | 'chats'
   | 'browser'
   | 'terminal'
   | 'tasks'
@@ -24,11 +26,9 @@ export type TabKind =
   | 'users'
   | 'files'
   | 'file'
-  | 'worktree'
+  | 'workspace'
   | 'shared-pages'
   | 'shared-page'
-  | 'agents'
-  | 'agent'
   | 'workflows'
   | 'workflow'
   | 'workflow-run'
@@ -67,10 +67,12 @@ const TabsContext = createContext<TabsState | null>(null);
 const STORAGE_KEY = 'skipper.workbench.tabs';
 const REOPEN_MAX = 20;
 
-/** Clé d'un chemin hors dossier : l'explorateur ramène chaque fichier à son onglet Fichiers. */
+/** Clé d'un chemin hors index : les fichiers d'un projet vont dans son onglet Fichiers, ceux d'une session (et son navigateur) dans l'onglet de la session. */
 export function tabKey(pathname: string): string {
-  const files = pathname.match(/^(\/(?:projects|worktrees)\/[^/]+\/files)(?:\/|$)/);
-  return files ? files[1] : pathname;
+  const files = pathname.match(/^(\/projects\/[^/]+\/files)(?:\/|$)/);
+  if (files) return files[1];
+  const session = pathname.match(/^(\/sessions\/[^/]+)\/(?:files|browser)(?:\/|$)/);
+  return session ? session[1] : pathname;
 }
 
 const pathOf = (url: string) => url.split('?')[0];
@@ -88,8 +90,6 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/tasks') return { title: 'Tâches', kind: 'tasks' };
   if (/^\/tasks\/[^/]+$/.test(pathname)) return { title: 'Tâche', kind: 'task' };
   if (pathname === '/vault') return { title: 'Coffre', kind: 'vault' };
-  if (pathname === '/agents' || /^\/projects\/[^/]+\/agents$/.test(pathname)) return { title: 'Agents', kind: 'agents' };
-  if (/^\/agents\/[^/]+$/.test(pathname)) return { title: 'Agent', kind: 'agent' };
   if (pathname === '/workflows' || /^\/projects\/[^/]+\/workflows$/.test(pathname)) return { title: 'Workflows', kind: 'workflows' };
   if (/^\/workflows\/[^/]+\/runs\/[^/]+$/.test(pathname)) return { title: 'Exécution', kind: 'workflow-run' };
   if (/^\/workflows\/[^/]+$/.test(pathname)) return { title: 'Workflow', kind: 'workflow' };
@@ -98,11 +98,14 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/users') return { title: 'Utilisateurs', kind: 'users' };
   if (/^\/projects\/[^/]+$/.test(pathname)) return { title: 'Projet', kind: 'project' };
   if (pathname === '/sessions') return { title: 'Sessions', kind: 'sessions' };
+  if (pathname === '/chats') return { title: 'Chats', kind: 'chats' };
+  if (/^\/chats\/[^/]+$/.test(pathname)) return { title: 'Chat', kind: 'chat' };
+  if (pathname === '/me') return { title: 'Mon espace', kind: 'project' };
   if (/^\/sessions\/[^/]+$/.test(pathname)) return { title: 'Session', kind: 'session' };
   if (/^\/sessions\/[^/]+\/browser$/.test(pathname)) return { title: 'Navigateur', kind: 'browser' };
   if (pathname === '/requests') return { title: 'Demandes', kind: 'requests' };
   if (pathname === '/settings') return { title: 'Paramètres', kind: 'settings' };
-  const files = pathname.match(/^\/(?:projects|worktrees)\/[^/]+\/files(?:\/(.*))?$/);
+  const files = pathname.match(/^\/(?:projects|sessions)\/[^/]+\/files(?:\/(.*))?$/);
   if (files) {
     if (!files[1]) return { title: 'Fichiers', kind: 'files' };
     const name = files[1].split('/').pop() ?? files[1];
@@ -120,7 +123,13 @@ function loadTabs(): Tab[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Tab[]) : [];
-    return Array.isArray(parsed) ? parsed.filter((t) => t && typeof t.key === 'string' && typeof t.url === 'string') : [];
+    // Onglets enregistrés quand les dossiers (worktrees, puis work sessions) avaient leurs propres adresses : ces pages n'existent plus.
+    const gone = (u: string) => /^\/(?:worktrees|worksessions)\//.test(u);
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((t) => t && typeof t.key === 'string' && typeof t.url === 'string' && !gone(t.key) && !gone(t.url))
+          .map((t) => ({ ...t, kind: (t.kind as string) === 'worktree' || (t.kind as string) === 'worksession' ? 'workspace' : t.kind }))
+      : [];
   } catch {
     return [];
   }
@@ -145,7 +154,7 @@ export function groupTabs(tabs: Tab[], index: WorkspaceIndex, currentPath: strin
       if (pathOf(tab.url) === currentPath) out[existing] = { ...out[existing], url: tab.url };
       continue;
     }
-    const next: Tab = ws ? { key, url: tab.url, title: workspaceTitle(ws), kind: 'worktree' } : tab;
+    const next: Tab = ws ? { key, url: tab.url, title: workspaceTitle(ws), kind: 'workspace' } : tab;
     if (next.key !== tab.key || next.title !== tab.title || next.kind !== tab.kind) changed = true;
     positions.set(key, out.length);
     out.push(next);
@@ -180,7 +189,7 @@ export function TabsProvider({ children }: { children: ReactNode }) {
       const existing = grouped.find((t) => t.key === key);
       if (existing) return existing.url === url ? grouped : grouped.map((t) => (t.key === key ? { ...t, url } : t));
       const ws = workspaces.get(key);
-      const { title, kind } = ws ? { title: workspaceTitle(ws), kind: 'worktree' as TabKind } : describeRoute(key);
+      const { title, kind } = ws ? { title: workspaceTitle(ws), kind: 'workspace' as TabKind } : describeRoute(key);
       return [...grouped, { key, url, title, kind }];
     });
   }, [location.pathname, location.search, workspaces, resolveKey]);
@@ -197,8 +206,8 @@ export function TabsProvider({ children }: { children: ReactNode }) {
     (match: (key: string) => boolean) => {
       const current = tabsRef.current;
       const removed = current.filter((t) => match(t.key));
-      // Un onglet de dossier dont seule la page affichée est retirée (session supprimée...) revient sur ses fichiers.
-      const remaining = current.filter((t) => !match(t.key)).map((t) => (t.kind === 'worktree' && t.key !== pathOf(t.url) && match(pathOf(t.url)) ? { ...t, url: t.key } : t));
+      // Un onglet de dossier dont seule la page affichée est retirée (terminal supprimé...) revient sur sa session ou ses fichiers.
+      const remaining = current.filter((t) => !match(t.key)).map((t) => (t.kind === 'workspace' && t.key !== pathOf(t.url) && match(pathOf(t.url)) ? { ...t, url: t.key } : t));
       tabsRef.current = remaining;
       if (removed.length || remaining.some((t, i) => t !== current[i])) setTabs(remaining);
       if (removed.length) setClosed((prev) => [...prev, ...removed].slice(-REOPEN_MAX));
@@ -236,7 +245,7 @@ export function TabsProvider({ children }: { children: ReactNode }) {
 
   const setTitle = useCallback((key: string, title: string) => {
     // Un onglet de dossier garde le nom de son dossier quelle que soit la page affichée.
-    setTabs((prev) => (prev.some((t) => t.key === key && t.kind !== 'worktree' && t.title !== title) ? prev.map((t) => (t.key === key && t.kind !== 'worktree' ? { ...t, title } : t)) : prev));
+    setTabs((prev) => (prev.some((t) => t.key === key && t.kind !== 'workspace' && t.title !== title) ? prev.map((t) => (t.key === key && t.kind !== 'workspace' ? { ...t, title } : t)) : prev));
   }, []);
 
   const step = useCallback(

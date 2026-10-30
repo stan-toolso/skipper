@@ -12,7 +12,9 @@ export interface ToolDescription {
 const str = (input: Record<string, unknown>, key: string): string | undefined => (typeof input[key] === 'string' ? (input[key] as string) : undefined);
 const baseName = (p?: string) => (p ? p.split('/').filter(Boolean).pop() ?? p : '');
 
-export function describeTool(name: string, input: Record<string, unknown> = {}): ToolDescription {
+export function describeTool(rawName: string, input: Record<string, unknown> = {}): ToolDescription {
+  // Transcripts d'avant le renommage : l'outil s'appelait `worktrees`.
+  const name = rawName.replace(/^mcp__worktrees__/, 'mcp__worksessions__');
   switch (name) {
     case 'Bash': {
       const cmd = str(input, 'command') ?? '';
@@ -57,13 +59,19 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
     case 'Skill':
       return { label: `Utilisation du savoir-faire ${str(input, 'skill') ?? ''}`, action: `utiliser le savoir-faire ${str(input, 'skill') ?? ''}` };
     default: {
+      // Depuis un espace personnel, les outils visent un projet de la personne (paramètre project).
+      const inProject = str(input, 'project') ? ` dans le projet ${str(input, 'project')}` : '';
+      if (name.startsWith('mcp__projects__')) {
+        const op = name.slice('mcp__projects__'.length);
+        return op === 'get' ? { label: `Consultation du projet ${str(input, 'project') ?? ''}`, action: `consulter le projet ${str(input, 'project') ?? ''}` } : { label: 'Consultation de la liste des projets', action: 'consulter la liste de vos projets' };
+      }
       if (name.startsWith('mcp__tasks__')) {
         const op = name.slice('mcp__tasks__'.length);
         const title = str(input, 'title');
         const verbs: Record<string, [string, string]> = {
-          list: ['Consultation des tâches du projet', 'consulter les tâches'],
+          list: [`Consultation des tâches${inProject || ' du projet'}`, `consulter les tâches${inProject}`],
           get: ["Consultation d'une tâche", 'consulter une tâche'],
-          create: [`Création de la tâche « ${title ?? ''} »`, `créer la tâche « ${title ?? ''} »`],
+          create: [`Création de la tâche « ${title ?? ''} »${inProject}`, `créer la tâche « ${title ?? ''} »${inProject}`],
           update: [`Mise à jour d'une tâche${str(input, 'status') ? ` (${str(input, 'status')})` : ''}`, 'mettre à jour une tâche'],
           claim: ["Prise en charge d'une tâche", 'prendre une tâche en charge'],
         };
@@ -89,9 +97,9 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
       if (name.startsWith('mcp__sessions__')) {
         const op = name.slice('mcp__sessions__'.length);
         const short = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
-        const target = str(input, 'new_branch') ? ` dans un nouveau worktree (${str(input, 'new_branch')})` : str(input, 'worktree') ? ` dans le worktree ${str(input, 'worktree')}` : '';
+        const target = `${str(input, 'new_branch') ? ` sur la branche ${str(input, 'new_branch')}` : str(input, 'worksession') ? ` dans le dossier ${str(input, 'worksession')}` : ''}${inProject}`;
         const verbs: Record<string, [string, string | undefined, string]> = {
-          list: ['Consultation des sessions du projet', undefined, 'consulter les sessions du projet'],
+          list: [`Consultation des sessions${inProject || ' du projet'}`, undefined, `consulter les sessions${inProject || ' du projet'}`],
           get: ["Consultation d'une session", undefined, 'consulter une session'],
           create: [`Lancement d'une session d'agent${target}`, short(str(input, 'prompt') ?? ''), `lancer une autre session d'agent${target}`],
           wait: ["Attente de la réponse d'une session", undefined, "attendre la réponse d'une session"],
@@ -101,20 +109,21 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
         const [label, detail, action] = verbs[op] ?? [`Sessions : ${op}`, undefined, `utiliser les sessions (${op})`];
         return { label, detail, action };
       }
-      if (name.startsWith('mcp__worktrees__')) {
-        const op = name.slice('mcp__worktrees__'.length);
+      if (name.startsWith('mcp__worksessions__')) {
+        const op = name.slice('mcp__worksessions__'.length);
         const branch = str(input, 'branch') ?? str(input, 'name') ?? '';
         const verbs: Record<string, [string, string]> = {
-          list: ['Consultation des worktrees du projet', 'consulter les worktrees'],
-          create: [`Création du worktree ${branch}`, `créer le worktree ${branch}`],
-          delete: [`Suppression du worktree ${branch}${input.delete_branch ? ' et de sa branche' : ''}`, `supprimer le worktree ${branch}${input.delete_branch ? ' et sa branche' : ''}`],
+          list: [`Consultation des dossiers de travail${inProject || ' du projet'}`, `consulter les dossiers de travail${inProject}`],
+          create: [`Création du dossier de travail ${branch}${inProject}`, `créer le dossier de travail ${branch}${inProject}`],
+          delete: [`Suppression du dossier de travail ${branch}${input.delete_branch ? ' et de sa branche' : ''}${inProject}`, `supprimer le dossier de travail ${branch}${input.delete_branch ? ' et sa branche' : ''}${inProject}`],
         };
-        const [label, action] = verbs[op] ?? [`Worktrees : ${op}`, `utiliser les worktrees (${op})`];
+        const [label, action] = verbs[op] ?? [`Dossiers de travail : ${op}`, `utiliser les dossiers de travail (${op})`];
         return { label, action };
       }
-      if (name.startsWith('mcp__connections__')) {
-        const op = name.slice('mcp__connections__'.length);
-        const conn = str(input, 'connection') ?? '';
+      if (name.startsWith('mcp__connections__') || name.startsWith('mcp__vault__')) {
+        const op = name.replace(/^mcp__(connections|vault)__/, '');
+        const conn = str(input, 'connection') ?? str(input, 'item') ?? '';
+        const db = str(input, 'database') ? ` (base ${str(input, 'database')})` : '';
         const cmd = str(input, 'command') ?? '';
         const sql = str(input, 'sql') ?? '';
         const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
@@ -123,10 +132,15 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
           ssh_run: [`Commande sur ${conn} (SSH)`, cmd, `exécuter sur ${conn} : ${short(cmd)}`],
           ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
-          sql_query: [`Requête SQL sur ${conn}`, sql, `exécuter sur ${conn} : ${short(sql)}`],
-          sql_schema: [`Schéma de ${conn}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}`],
+          sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],
+          sql_schema: [`Schéma de ${conn}${db}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}${db}`],
+          aws_run: [`Commande AWS sur ${conn}`, cmd ? `aws ${cmd}` : undefined, `exécuter sur ${conn} : aws ${short(cmd)}`],
+          scw_run: [`Commande Scaleway sur ${conn}`, cmd ? `scw ${cmd}` : undefined, `exécuter sur ${conn} : scw ${short(cmd)}`],
+          scw_api: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} de l'API Scaleway (${conn})`, undefined, `appeler l'API Scaleway avec ${conn} : ${str(input, 'method') ?? 'GET'} ${short(str(input, 'path') ?? '')}`],
+          http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${short(str(input, 'path') ?? '')}`],
+          browser_fill: [`Saisie du champ « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`, str(input, 'page'), `saisir « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`],
         };
-        const [label, detail, action] = verbs[op] ?? [`Connexions : ${op}`, undefined, `utiliser une connexion (${op})`];
+        const [label, detail, action] = verbs[op] ?? [`Coffre : ${op}`, undefined, `utiliser le coffre (${op})`];
         return { label, detail, action };
       }
       const json = JSON.stringify(input);
@@ -136,6 +150,20 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
 }
 
 /** Titre lisible d'une demande : pour une autorisation, l'action demandée ("Autorisation de lire le fichier x"). */
+/**
+ * Message d'une demande d'autorisation, sans ce que le détail de l'outil montre déjà : les outils du coffre passent la
+ * commande (ou `[base] requête`) en message, parfois suivie d'une remarque (élément personnel). On ne garde que le reste.
+ */
+export function requestNote(message: string | null | undefined, ...shown: (string | undefined)[]): string | undefined {
+  let rest = message ?? '';
+  for (const s of shown) {
+    const t = s?.trim();
+    if (t && rest.includes(t)) rest = rest.replace(t, '');
+  }
+  rest = rest.replace(/^\s*\[[^\]\n]*\]\s*$/m, '').trim();
+  return rest || undefined;
+}
+
 export function requestTitle(r: { type: string; title: string; payload: Record<string, unknown> }): string {
   const p = r.payload as { toolName?: string; input?: Record<string, unknown> };
   if (r.type === 'permission' && p.toolName) return `Autorisation de ${describeTool(p.toolName, p.input ?? {}).action}`;
@@ -176,6 +204,15 @@ export const permissionModeLabels: Record<string, string> = {
   bypassPermissions: 'Tout est autorisé',
 };
 
+/** Libellés courts des modes d'autorisation, pour la rangée d'outils de la zone de saisie (le libellé complet reste en infobulle). */
+export const permissionModeShortLabels: Record<string, string> = {
+  default: 'Demander avant d\'agir',
+  acceptEdits: 'Modifier les fichiers',
+  plan: 'Plan seulement',
+  dontAsk: 'Ne jamais demander',
+  bypassPermissions: 'Tout autoriser',
+};
+
 /** Avertissement pour le mode « tout autoriser » : les appels aux connexions soumises à approbation passent sans demande. */
 export function bypassConnectionsWarning(connections: string[]): string | null {
   if (!connections.length) return null;
@@ -193,6 +230,12 @@ export function formatDuration(ms: number): string {
 
 export function formatCost(usd: number): string {
   return `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
+}
+
+/** Nombre de tokens en milliers (« 208 k »), ou en millions au-delà (« 1,2 M »). */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace('.', ',')} M`;
+  return `${Math.round(n / 1000)} k`;
 }
 
 export const sessionStatusLabels: Record<string, string> = {
@@ -235,7 +278,7 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
  * acceptEdits (setMode), décrit par les outils qu'il libère.
  */
 /** Commandes dont le deuxième mot est une sous-commande : la règle proposée la garde (`git checkout *`). */
-const SUBCOMMAND_TOOLS = new Set(['git', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'docker', 'pm2', 'gh', 'cargo', 'go', 'kubectl', 'pip', 'pip3', 'make', 'systemctl', 'apt', 'apt-get', 'brew', 'terraform', 'aws', 'gcloud']);
+const SUBCOMMAND_TOOLS = new Set(['git', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'docker', 'pm2', 'gh', 'cargo', 'go', 'kubectl', 'pip', 'pip3', 'make', 'systemctl', 'apt', 'apt-get', 'brew', 'terraform', 'aws', 'gcloud', 'scw']);
 /** Commandes trop puissantes pour être autorisées par simple préfixe : la règle proposée reste la commande exacte. */
 const EXACT_ONLY = new Set(['rm', 'sudo', 'su', 'sh', 'bash', 'zsh', 'eval', 'exec', 'xargs', 'env', 'ssh', 'scp', 'dd', 'chmod', 'chown', 'kill', 'pkill', 'killall', 'curl', 'wget', 'python', 'python3', 'node', 'perl', 'ruby', 'find', 'awk', 'tee', 'source', '.']);
 

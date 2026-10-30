@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Form, Modal } from 'react-bootstrap';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { RunStatusBadge } from '../components/automation/RunBadges';
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
@@ -12,6 +12,7 @@ import { timeAgo } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { emptyDefinition } from '../lib/workflowGraph';
 import { useTabTitle } from '../workbench/TabsContext';
+import ProjectHeader from '../components/ProjectHeader';
 import '../components/automation/automation.css';
 
 function CreateWorkflowModal({ projects, projectId: fixed, onClose, onCreated }: { projects: Project[]; projectId: string | null; onClose: () => void; onCreated: (w: Workflow) => void }) {
@@ -81,7 +82,12 @@ export default function WorkflowsPage() {
   const { data, loading, error } = usePollingQuery<{ workflows: Workflow[] }>(WORKFLOWS, { variables: { projectId }, pollInterval: 10_000 });
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS);
   const [toggle] = useMutation(UPDATE_WORKFLOW);
-  const [creating, setCreating] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // « ?new=1 » (menu du projet dans la sidebar) : ouvre tout de suite la création, puis s'efface de l'adresse.
+  const [creating, setCreating] = useState(searchParams.has('new'));
+  useEffect(() => {
+    if (searchParams.has('new')) setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [search, setSearch] = useState('');
   const project = routeProjectId ? projectsData?.projects.find((p) => p.id === routeProjectId) : null;
   useTabTitle(project ? `Workflows · ${project.name}` : 'Workflows');
@@ -95,14 +101,10 @@ export default function WorkflowsPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   return (
     <>
-      {project && (
-        <Link to={`/projects/${project.id}`} className="small">
-          ← {project.name}
-        </Link>
-      )}
+      {project && <ProjectHeader project={project} active="workflows" />}
       <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-        <h1 className="h3 mb-0">Workflows</h1>
-        <div className="d-flex gap-2 align-items-center">
+        {!project && <h1 className="h3 mb-0">Workflows</h1>}
+        <div className="d-flex gap-2 align-items-center flex-wrap ms-auto">
           {!routeProjectId && (
             <Form.Select size="sm" value={filterProject} onChange={(e) => setFilterProject(e.target.value)} style={{ width: 'auto' }}>
               <option value="">Tous les projets</option>
@@ -122,7 +124,7 @@ export default function WorkflowsPage() {
         </div>
       </div>
       <p className="text-secondary small">
-        Un workflow enchaîne des <Link to="/agents">agents</Link>, des sessions et des tâches selon un graphe à branches, lancé à la main, par planification ou quand une tâche est créée.
+        Un workflow enchaîne des appels de modèle, des sessions et des tâches selon un graphe à branches, lancé à la main, par planification ou quand une tâche est créée.
       </p>
       {workflows.length === 0 ? (
         <div className="text-secondary fst-italic">Aucun workflow{search ? ' ne correspond' : ''}.</div>

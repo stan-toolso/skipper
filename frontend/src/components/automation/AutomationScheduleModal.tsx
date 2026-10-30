@@ -20,7 +20,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** Planification d'un agent ou d'un workflow : fréquence, fuseau, entrées des exécutions, aperçu des échéances. */
+/** Planification d'un workflow : fréquence, fuseau, entrées des exécutions, aperçu des échéances. */
 export default function AutomationScheduleModal({ title, schedule, scheduleInputs, variables, saving, error, onSave, onClear, onClose }: Props) {
   const detected = useMemo(() => detectCronPreset(schedule?.cron ?? '0 9 * * 1-5'), [schedule?.cron]);
   const [preset, setPreset] = useState<CronPreset>(schedule ? detected.preset : 'weekdays');

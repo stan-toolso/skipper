@@ -78,12 +78,17 @@ export const userService = {
 
   members: (projectId: string) => userRepository.listMembers(projectId),
 
-  /** Rôle effectif : l'appartenance, sinon administrateur pour un super administrateur. */
+  /** Rôle effectif : l'appartenance, sinon administrateur pour un super administrateur (sauf sur l'espace personnel d'une autre personne). */
   async roleFor(userId: string, projectId: string): Promise<ProjectRole | null> {
     const m = await userRepository.findMembership(projectId, userId);
     if (m) return m.role;
     const user = await userRepository.findById(userId);
-    return user?.isSuperAdmin ? 'admin' : null;
+    return user?.isSuperAdmin && !(await this.isPersonalProject(projectId)) ? 'admin' : null;
+  },
+
+  /** Le projet est-il l'espace personnel d'une personne ? (Jamais ouvert à quelqu'un d'autre, super administrateur compris.) */
+  async isPersonalProject(projectId: string): Promise<boolean> {
+    return (await projectService.personalOwnerOf(projectId)) !== null;
   },
 
   /** Rôle d'appartenance seul (null pour un super administrateur non membre). */

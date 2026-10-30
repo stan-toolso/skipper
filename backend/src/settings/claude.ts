@@ -18,6 +18,7 @@ export interface ClaudeSettingsPatch {
   monthlyBudgetUsd?: number | null;
   sessionBudgetUsd?: number | null;
   defaultMaxTurns?: number | null;
+  contextWarnTokens?: number | null;
 }
 
 /** Modèles proposés tant que la connexion n'a pas été vérifiée (liste rafraîchie par `verify()`). */
@@ -202,6 +203,11 @@ export class UserClaudeSettings {
       const v = patch.defaultMaxTurns;
       if (v !== null && (!Number.isInteger(v) || v <= 0)) throw new AppError('defaultMaxTurns doit être un entier positif');
       next.defaultMaxTurns = v;
+    }
+    if (patch.contextWarnTokens !== undefined) {
+      const v = patch.contextWarnTokens;
+      if (v !== null && (!Number.isInteger(v) || v <= 0)) throw new AppError('contextWarnTokens doit être un nombre entier de tokens positif, ou null pour ne jamais signaler');
+      next.contextWarnTokens = v;
     }
     if (next.allowedModels.length) {
       const ok = (m: string | null) => !m || this.modelIsIn(m, next.allowedModels);

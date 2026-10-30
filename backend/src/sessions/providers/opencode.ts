@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { createInterface } from 'node:readline';
 import { createOpencodeClient, type Event as OpencodeEvent, type OpencodeClient, type Part, type PermissionRequest, type QuestionRequest } from '@opencode-ai/sdk/v2';
-import { agentService } from '../../agents/service.js';
 import { liveBrowserService } from '../../browser/live.js';
 import { createContextMcpServer } from '../../context/mcp.js';
 import { contextService } from '../../context/service.js';
@@ -27,7 +26,7 @@ import { createTasksMcpServer } from '../../tasks/mcp.js';
 import { taskService } from '../../tasks/service.js';
 import { createVaultMcpServer, type VaultApproval } from '../../vault/mcp.js';
 import { vaultService } from '../../vault/service.js';
-import { createWorktreesMcpServer } from '../../worktrees/mcp.js';
+import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
 import { attachmentsNote, publicAttachment } from '../attachments.js';
 import { sessionIdentityPrompt } from '../identity.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
@@ -67,7 +66,7 @@ const BROWSER_READ_TOOLS = ['browser_snapshot', 'browser_take_screenshot', 'brow
 const BROWSER_FIELD_READERS = ['browser_evaluate', 'browser_run_code'];
 
 /** Outils des serveurs MCP de Skipper autorisés d'office (mêmes règles que pour une session Claude). */
-const SKIPPER_FREE_TOOLS = ['mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worktrees__list', 'mcp__worktrees__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list'];
+const SKIPPER_FREE_TOOLS = ['mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list'];
 
 /** Autorisations d'OpenCode lui-même : lectures et recherches libres, tout le reste demande — à cet exécuteur, qui applique le mode et les règles de la session puis interroge l'humain. */
 const BASE_PERMISSION: Record<string, string> = { '*': 'ask', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow', lsp: 'allow', todowrite: 'allow', todoread: 'allow', question: 'allow', skill: 'allow', task: 'allow' };
@@ -270,7 +269,7 @@ class OpencodeRun {
       return this.finish({ exitCode: 1, error: `Le serveur OpenCode s'est arrêté (${signal ? `signal ${signal}` : `code ${code}`}) ; conteneur à court de mémoire ?` });
     });
     await Promise.race([this.connected, new Promise((resolve) => setTimeout(resolve, 10_000))]);
-    await this.prompt(ctx.initialMessage, ctx.initialAttachments);
+    await this.prompt(ctx.initialMessage, ctx.initialAttachments, ctx.initialPreamble);
     return this.handle();
   }
 
@@ -294,7 +293,6 @@ class OpencodeRun {
     const googleAccounts = await googleAccountService.accountsFor(ctx.project.id, this.ownerId);
     this.systemPrompt = [
       ctx.project.systemPrompt.trim(),
-      await agentService.systemPromptFor(ctx.session),
       sessionIdentityPrompt(ctx.session, ctx.project),
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),
@@ -328,7 +326,7 @@ class OpencodeRun {
       context: () => createContextMcpServer(ctx.project, ctx.session.id),
       tasks: () => createTasksMcpServer(ctx.project, ctx.session.id, ctx.session.name),
       ...(vaultTools ? { vault: () => createVaultMcpServer(vaultContext) } : {}),
-      worktrees: () => createWorktreesMcpServer(ctx.project, ctx.session.id),
+      worksessions: () => createWorksessionsMcpServer(ctx.project, ctx.session.id),
       sessions: () => createSessionsMcpServer(ctx.project, ctx.session.id),
       pages: () => createSharedPagesMcpServer({ project: ctx.project, session: ctx.session, cwd: ctx.cwd }),
       ...(googleAccounts.length ? { google: () => createGoogleMcpServer({ project: ctx.project, accounts: googleAccounts, sessionId: ctx.session.id, cwd: ctx.cwd, emit: ctx.emit }) } : {}),
@@ -489,10 +487,10 @@ class OpencodeRun {
   // ---- Instructions ------------------------------------------------------------------------------
 
   /** Journalise l'instruction et l'envoie : texte, note des pièces jointes, images et PDF en parties fichier. */
-  private async prompt(text: string, attachments: Attachment[]): Promise<void> {
+  private async prompt(text: string, attachments: Attachment[], preamble?: string | null): Promise<void> {
     const { ctx } = this;
     this.beginTurn();
-    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}) });
+    await ctx.emit('instruction', { text, ...(attachments.length ? { attachments: attachments.map(publicAttachment) } : {}), ...(preamble ? { preamble: true } : {}) });
     await ctx.setActivity('busy');
     // Le nettoyage du contexte demande une compaction : OpenCode résume la conversation.
     if (text.trim() === '/compact' && !attachments.length) {
@@ -500,7 +498,8 @@ class OpencodeRun {
       if (res.error) throw new AppError(`Compaction OpenCode impossible : ${describeError(res.error)}`);
       return;
     }
-    const parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; filename: string; url: string }> = [{ type: 'text', text: attachments.length ? `${text}\n\n${attachmentsNote(attachments)}` : text }];
+    const body = preamble ? `${preamble}\n\n${text}` : text;
+    const parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; filename: string; url: string }> = [{ type: 'text', text: attachments.length ? `${body}\n\n${attachmentsNote(attachments)}` : body }];
     for (const a of attachments) {
       if (a.mediaType.startsWith('image/') || a.mediaType === 'application/pdf') parts.push({ type: 'file', mime: a.mediaType, filename: a.name, url: `file://${a.path}` });
     }
