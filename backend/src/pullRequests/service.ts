@@ -1,16 +1,19 @@
 import { AppError, NotFoundError } from '../errors.js';
 import type { WorkspaceRef } from '../files/service.js';
-import { parseGithubRepo, pullRequestService, type PullRequest } from '../git/pullRequests.js';
+import { buildDraftText, parseGithubRepo, parseRepoFullName, pullRequestService, repoFullName, type GithubRepoRef, type PullRequest } from '../git/pullRequests.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
+import type { Project } from '../projects/types.js';
 import { taskService } from '../tasks/service.js';
 import { worksessionRepository } from '../worksessions/repository.js';
+import { localBranchWork } from './local.js';
 import { pullRequestRepository } from './repository.js';
 import {
   describePullRequest,
   PR_STAGES,
+  sameRepo,
+  SETTABLE_PR_STATUSES,
   stageLabels,
-  TRACKED_PR_STATUSES,
   type CreateTrackedPullRequestInput,
   type PullRequestActor,
   type PullRequestStage,
@@ -23,16 +26,17 @@ import {
 /**
  * Pull requests suivies : création (depuis GitHub, depuis une URL, ou en ouvrant la PR sur GitHub), mise à jour
  * (statut, note, déploiement), synchronisation avec GitHub (statut, brouillon, checks, revue, conflits, et adoption
- * des PR ouvertes sur la branche d'une tâche), notifications et textes pour les agents.
+ * des PR ouvertes sur la branche d'une tâche), PR « en préparation » (branche qui porte des modifications sans PR
+ * ouverte), PR d'autres dépôts GitHub que celui du projet, notifications et textes pour les agents.
  */
 
 export const SYSTEM: PullRequestActor = { type: 'system' };
 
 const MAX_NOTE = 2000;
 const MAX_TITLE = 500;
-/** Une synchronisation GitHub par projet au plus toutes les 30 s (les pages sondent). */
+/** Une synchronisation (GitHub et travail local des branches) par projet au plus toutes les 30 s (les pages sondent). */
 const SYNC_INTERVAL_MS = 30_000;
-/** PR suivies absentes des 100 dernières du dépôt : interrogées une à une, au plus ce nombre par synchronisation. */
+/** PR suivies absentes des 100 dernières du dépôt (ou d'un autre dépôt) : interrogées une à une, au plus ce nombre par synchronisation. */
 const MAX_INDIVIDUAL_FETCHES = 10;
 
 const lastSync = new Map<string, number>();
@@ -50,11 +54,24 @@ export function parsePullRequestRef(ref: string): number | null {
   return parsePullRequestUrl(t)?.number ?? null;
 }
 
+/** « owner/name » du dépôt GitHub d'un projet, vide sans dépôt GitHub. */
+export function projectRepoName(project: Pick<Project, 'gitUrl'>): string {
+  const repo = parseGithubRepo(project.gitUrl);
+  return repo ? repoFullName(repo) : '';
+}
+
+/** Dépôt d'une PR suivie quand il diffère de celui du projet (à passer aux lectures GitHub), null sinon. */
+export function foreignRepoOf(pr: Pick<TrackedPullRequest, 'repo'>, projectRepo: string): GithubRepoRef | null {
+  if (!pr.repo || sameRepo(pr.repo, projectRepo)) return null;
+  return parseRepoFullName(pr.repo);
+}
+
 const statusOf = (state: PullRequest['state']): TrackedPullRequestStatus => (state === 'MERGED' ? 'merged' : state === 'CLOSED' ? 'closed' : 'open');
 
 /** Champs d'une PR suivie recopiés depuis la PR GitHub. */
-function fromGithub(pr: PullRequest): Omit<CreateTrackedPullRequestInput, 'taskId' | 'note'> {
+function fromGithub(pr: PullRequest): Omit<CreateTrackedPullRequestInput, 'taskId' | 'note'> & { number: number } {
   return {
+    repo: pr.repo,
     number: pr.number,
     url: pr.url,
     title: pr.title,
@@ -84,6 +101,7 @@ export const trackedPullRequestService = {
   list: (filter?: TrackedPullRequestFilter) => pullRequestRepository.list(filter),
   forTask: (taskId: string) => pullRequestRepository.list({ taskId, limit: 100 }),
   countPending: (projectIds: string[]) => pullRequestRepository.countPending(projectIds),
+  projectRepo: projectRepoName,
 
   async get(id: string): Promise<TrackedPullRequest> {
     const pr = await pullRequestRepository.findById(id);
@@ -91,42 +109,56 @@ export const trackedPullRequestService = {
     return pr;
   },
 
-  /** PR suivie désignée par son identifiant, ou par son numéro GitHub (« 42 », « #42 », URL) dans le projet. */
+  /**
+   * PR suivie désignée par son identifiant, par son numéro GitHub (« 42 », « #42 » : dans le dépôt du projet de
+   * préférence) ou par son URL (qui dit le dépôt) dans le projet.
+   */
   async resolve(projectId: string, ref: string): Promise<TrackedPullRequest> {
-    const number = parsePullRequestRef(ref);
-    const pr = number != null ? await pullRequestRepository.findByNumber(projectId, number) : await pullRequestRepository.findById(ref.trim());
-    if (!pr || pr.projectId !== projectId) throw new NotFoundError(number != null ? `Aucune pull request suivie n'a le numéro #${number} dans ce projet` : 'Pull request suivie introuvable dans ce projet');
+    const t = ref.trim();
+    const url = parsePullRequestUrl(t);
+    const number = url?.number ?? parsePullRequestRef(t);
+    let pr: TrackedPullRequest | null;
+    if (url) pr = await pullRequestRepository.findByNumber(projectId, url.number, `${url.owner}/${url.name}`);
+    else if (number != null) pr = await pullRequestRepository.findByNumber(projectId, number, undefined, projectRepoName(await projectService.get(projectId)));
+    else pr = await pullRequestRepository.findById(t);
+    if (!pr || pr.projectId !== projectId) throw new NotFoundError(number != null ? `Aucune pull request suivie n'a le numéro #${number}${url ? ` dans ${url.owner}/${url.name}` : ''} dans ce projet` : 'Pull request suivie introuvable dans ce projet');
     return pr;
   },
 
   /**
-   * Enregistre (ou met à jour, si elle est déjà suivie) une PR GitHub connue. Sans `taskId`, la tâche traitée sur
-   * la branche de la PR est reliée. Un agent qui ouvre ou déclare une PR prévient les membres du projet.
+   * Enregistre (ou met à jour, si elle est déjà suivie) une PR GitHub connue. Une PR « en préparation » sur la même
+   * branche du dépôt du projet devient cette PR (identifiant, note et tâche conservés). Sans `taskId`, la tâche
+   * traitée sur la branche de la PR est reliée. Un agent qui ouvre ou déclare une PR prévient les membres du projet.
    */
   async recordGithub(projectId: string, pr: PullRequest, actor: PullRequestActor, extra: { taskId?: string | null; note?: string | null } = {}): Promise<TrackedPullRequest> {
-    const existing = await pullRequestRepository.findByNumber(projectId, pr.number);
-    const taskId = extra.taskId !== undefined ? extra.taskId : existing?.taskId ?? (await taskService.forBranch(projectId, pr.headRefName))?.id ?? null;
+    const project = await projectService.get(projectId).catch(() => null);
+    const projectRepo = project ? projectRepoName(project) : '';
+    const existing = await pullRequestRepository.findByNumber(projectId, pr.number, pr.repo);
+    const pending = !existing && sameRepo(pr.repo, projectRepo) ? (await pullRequestRepository.list({ projectId, headBranch: pr.headRefName, status: ['pending'], limit: 1 }))[0] ?? null : null;
+    const taskId = extra.taskId !== undefined ? extra.taskId : existing?.taskId ?? pending?.taskId ?? (await taskService.forBranch(projectId, pr.headRefName))?.id ?? null;
     const note = validateNote(extra.note);
     const fields = fromGithub(pr);
     if (existing) {
       const updated = await pullRequestRepository.update(existing.id, { ...fields, taskId, syncedAt: new Date(), note });
       return updated ?? existing;
     }
-    const created = await pullRequestRepository.create(projectId, { ...fields, taskId, note }, actor);
-    if (!created.taskId && taskId === null) {
-      // Rien à relier : la PR reste au niveau du projet.
+    let created: TrackedPullRequest;
+    if (pending) {
+      // La PR en préparation devient la PR ouverte : même objet, numéro et URL en plus, travail local oublié.
+      created = (await pullRequestRepository.update(pending.id, { ...fields, taskId, note, syncedAt: new Date(), localCommits: null, localChanges: null })) ?? pending;
+    } else {
+      created = await pullRequestRepository.create(projectId, { ...fields, taskId, note }, actor);
     }
     if (created.taskId) await this.linkTaskBranch(created.taskId, created.headBranch);
     if (actor.type === 'agent') {
-      const project = await projectService.get(projectId).catch(() => null);
       void notificationService.notify({
         type: 'pull_request.opened',
         title: 'Pull request ouverte par un agent',
-        message: `#${created.number} ${created.title}${project ? ` · ${project.name}` : ''}`,
+        message: `${created.repo && !sameRepo(created.repo, projectRepo) ? `${created.repo}` : ''}#${created.number} ${created.title}${project ? ` · ${project.name}` : ''}`,
         link: `/projects/${projectId}/pull-requests`,
         projectId,
         sessionId: actor.sessionId ?? null,
-        payload: { pullRequestId: created.id, number: created.number, taskId: created.taskId },
+        payload: { pullRequestId: created.id, number: created.number, repo: created.repo, taskId: created.taskId },
       });
     }
     return created;
@@ -139,8 +171,9 @@ export const trackedPullRequestService = {
   },
 
   /**
-   * Suit une PR déjà ouverte, désignée par son URL ou son numéro. Ses détails sont lus sur GitHub avec le compte de
-   * `userId` ; quand GitHub n'est pas joignable (pas de compte connecté), `fallback` (titre, branche) suffit.
+   * Suit une PR déjà ouverte, désignée par son URL (dépôt du projet ou tout autre dépôt GitHub) ou son numéro (dépôt
+   * du projet). Ses détails sont lus sur GitHub avec le compte de `userId` ; quand GitHub n'est pas joignable (pas de
+   * compte connecté), `fallback` (titre, branche) suffit.
    */
   async register(
     projectId: string,
@@ -149,15 +182,15 @@ export const trackedPullRequestService = {
     actor: PullRequestActor,
   ): Promise<TrackedPullRequest> {
     const project = await projectService.get(projectId);
-    const repo = parseGithubRepo(project.gitUrl);
+    const projectRepo = parseGithubRepo(project.gitUrl);
     let number = ref.number ?? null;
     let url: string | null = null;
+    /** Dépôt de la PR quand ce n'est pas celui du projet. */
+    let foreign: GithubRepoRef | null = null;
     if (ref.url?.trim()) {
       const parsed = parsePullRequestUrl(ref.url);
       if (!parsed) throw new AppError(`URL de pull request GitHub attendue (https://github.com/<owner>/<repo>/pull/<n>) : ${ref.url}`);
-      if (repo && (parsed.owner.toLowerCase() !== repo.owner.toLowerCase() || parsed.name.toLowerCase() !== repo.name.toLowerCase())) {
-        throw new AppError(`Cette pull request appartient à ${parsed.owner}/${parsed.name}, pas au dépôt du projet (${repo.owner}/${repo.name})`);
-      }
+      if (!projectRepo || parsed.owner.toLowerCase() !== projectRepo.owner.toLowerCase() || parsed.name.toLowerCase() !== projectRepo.name.toLowerCase()) foreign = { owner: parsed.owner, name: parsed.name };
       number = parsed.number;
       url = ref.url.trim();
     }
@@ -166,31 +199,36 @@ export const trackedPullRequestService = {
       const task = await taskService.get(opts.taskId);
       if (task.projectId !== projectId) throw new AppError('La tâche n’appartient pas à ce projet');
     }
-    const github = repo ? await pullRequestService.get(projectId, opts.userId, number).catch(() => null) : null;
+    const repo = foreign ?? projectRepo;
+    const github = repo ? await pullRequestService.get(projectId, opts.userId, number, foreign).catch(() => null) : null;
     if (github) return this.recordGithub(projectId, github, actor, { taskId: opts.taskId, note: opts.note });
 
     // GitHub injoignable : on enregistre ce que l'on sait.
-    const existing = await pullRequestRepository.findByNumber(projectId, number);
+    const repoName = repo ? repoFullName(repo) : '';
+    const existing = await pullRequestRepository.findByNumber(projectId, number, repoName);
     if (existing) {
       const updated = await pullRequestRepository.update(existing.id, { taskId: opts.taskId !== undefined ? opts.taskId : undefined, note: validateNote(opts.note), title: opts.fallback?.title?.trim() || undefined });
       return updated ?? existing;
     }
     const title = opts.fallback?.title?.trim();
     const headBranch = opts.fallback?.headBranch?.trim();
-    if (!title || !headBranch) throw new AppError(repo ? `GitHub n'a pas répondu pour la PR #${number} : donne aussi son titre et sa branche` : "Ce projet n'est pas relié à un dépôt GitHub : donne l'URL, le titre et la branche de la pull request");
+    if (!title || !headBranch) throw new AppError(repo ? `GitHub n'a pas répondu pour la PR ${repoName}#${number} : donne aussi son titre et sa branche` : "Ce projet n'est pas relié à un dépôt GitHub : donne l'URL, le titre et la branche de la pull request");
     if (title.length > MAX_TITLE) throw new AppError(`Le titre dépasse ${MAX_TITLE} caractères`);
-    const taskId = opts.taskId ?? (await taskService.forBranch(projectId, headBranch))?.id ?? null;
+    const taskId = opts.taskId ?? (foreign ? null : (await taskService.forBranch(projectId, headBranch))?.id ?? null);
     const created = await pullRequestRepository.create(
       projectId,
-      { number, url: url ?? (repo ? `https://github.com/${repo.owner}/${repo.name}/pull/${number}` : ''), title, headBranch, baseBranch: project.gitBranch ?? '', taskId, note: validateNote(opts.note) },
+      { repo: repoName, number, url: url ?? (repoName ? `https://github.com/${repoName}/pull/${number}` : ''), title, headBranch, baseBranch: foreign ? '' : project.gitBranch ?? '', taskId, note: validateNote(opts.note) },
       actor,
     );
     if (created.taskId) await this.linkTaskBranch(created.taskId, headBranch);
     return created;
   },
 
-  /** Ouvre la PR sur GitHub depuis la branche courante du dossier de travail (poussée au besoin), puis la suit. */
-  async open(ref: WorkspaceRef, userId: string | null | undefined, input: { title: string; body?: string | null; base?: string | null; draft?: boolean | null }, opts: { taskId?: string | null; note?: string | null }, actor: PullRequestActor): Promise<TrackedPullRequest> {
+  /**
+   * Ouvre la PR sur GitHub depuis la branche courante du dossier de travail (poussée au besoin), puis la suit.
+   * `input.path` : sous-dossier contenant un autre clone, pour ouvrir la PR sur ce dépôt-là.
+   */
+  async open(ref: WorkspaceRef, userId: string | null | undefined, input: { title: string; body?: string | null; base?: string | null; draft?: boolean | null; path?: string | null }, opts: { taskId?: string | null; note?: string | null }, actor: PullRequestActor): Promise<TrackedPullRequest> {
     if (opts.taskId) {
       const task = await taskService.get(opts.taskId);
       if (task.projectId !== ref.projectId) throw new AppError('La tâche n’appartient pas à ce projet');
@@ -199,10 +237,14 @@ export const trackedPullRequestService = {
     return this.recordGithub(ref.projectId, pr, actor, { taskId: opts.taskId, note: opts.note });
   },
 
-  /** Statut, note, tâche reliée, déploiement. Une PR marquée fusionnée ou fermée garde son instantané GitHub. */
+  /**
+   * Statut, note, tâche reliée, déploiement. Une PR marquée fusionnée ou fermée garde son instantané GitHub. Une PR en
+   * préparation ne change pas de statut ici : elle le reçoit en étant ouverte sur GitHub (open, pr_open) ou déclarée.
+   */
   async update(id: string, input: { status?: TrackedPullRequestStatus | null; note?: string | null; taskId?: string | null; deployed?: boolean | null; deployNote?: string | null; isDraft?: boolean | null }, actor: PullRequestActor): Promise<TrackedPullRequest> {
     const before = await this.get(id);
-    if (input.status != null && !TRACKED_PR_STATUSES.includes(input.status)) throw new AppError(`Statut invalide : ${input.status}`);
+    if (input.status != null && !SETTABLE_PR_STATUSES.includes(input.status)) throw new AppError(`Statut invalide : ${input.status}`);
+    if (input.status != null && before.status === 'pending') throw new AppError("Cette pull request n'est pas encore ouverte sur GitHub : ouvre-la (pr_open, ou « Créer la pull request ») ou déclare-la (pr_register) plutôt que de changer son statut");
     if (input.taskId) {
       const task = await taskService.get(input.taskId);
       if (task.projectId !== before.projectId) throw new AppError('La tâche n’appartient pas à ce projet');
@@ -238,17 +280,23 @@ export const trackedPullRequestService = {
   },
 
   /**
-   * Rafraîchit les PR suivies d'un projet depuis GitHub (avec le compte de `userId`) : statut, brouillon, titre,
-   * checks, revue, conflits ; une PR fusionnée hors de Skipper est notifiée. Les PR ouvertes du dépôt sur la
-   * branche d'une tâche ou d'une work session sont adoptées. Au plus une fois toutes les 30 s par projet, sauf
-   * `force`. Sans GitHub (projet sans dépôt GitHub, compte absent, panne), renvoie la liste telle quelle.
+   * Rafraîchit les PR suivies d'un projet : travail local des work sessions (PR en préparation créées, mises à jour
+   * ou retirées), puis GitHub (avec le compte de `userId`) : statut, brouillon, titre, checks, revue, conflits ; une
+   * PR fusionnée hors de Skipper est notifiée. Les PR ouvertes du dépôt sur la branche d'une tâche ou d'une work
+   * session sont adoptées. Au plus une fois toutes les 30 s par projet, sauf `force`. Sans GitHub (dépôt ailleurs,
+   * compte absent, panne), la partie GitHub est passée et la liste est rendue telle quelle.
    */
   async sync(projectId: string, userId: string | null | undefined, opts: { force?: boolean } = {}): Promise<TrackedPullRequest[]> {
     const current = () => pullRequestRepository.list({ projectId, limit: 1000 });
     const last = lastSync.get(projectId) ?? 0;
     if (!opts.force && Date.now() - last < SYNC_INTERVAL_MS) return current();
-    if (!(await pullRequestService.isGithubProject(projectId).catch(() => false))) return current();
+    const project = await projectService.get(projectId).catch(() => null);
+    if (!project?.gitUrl) return current();
     lastSync.set(projectId, Date.now());
+    await this.refreshPending(project).catch((err) => console.error('[pull-requests] travail local des branches', err));
+    const projectRepo = parseGithubRepo(project.gitUrl);
+    if (!projectRepo) return current();
+    const projectRepoName = repoFullName(projectRepo);
     let github: PullRequest[];
     try {
       github = await pullRequestService.list(projectId, userId, 'ALL', 100);
@@ -259,15 +307,17 @@ export const trackedPullRequestService = {
     const tracked = await current();
     let individual = 0;
     for (const t of tracked) {
-      let g = byNumber.get(t.number) ?? null;
+      if (t.number == null) continue;
+      const foreign = foreignRepoOf(t, projectRepoName);
+      let g = foreign ? null : byNumber.get(t.number) ?? null;
       if (!g && t.status === 'open' && individual < MAX_INDIVIDUAL_FETCHES) {
         individual++;
-        g = await pullRequestService.get(projectId, userId, t.number).catch(() => null);
+        g = await pullRequestService.get(projectId, userId, t.number, foreign).catch(() => null);
       }
       if (g) await this.applyGithub(t, g);
     }
     // Adoption : PR ouvertes du dépôt dont la branche est celle d'une tâche ou d'une work session du projet.
-    const known = new Set(tracked.map((t) => t.number));
+    const known = new Set(tracked.filter((t) => t.number != null && !foreignRepoOf(t, projectRepoName)).map((t) => t.number));
     for (const g of github) {
       if (g.state !== 'OPEN' || g.isCrossRepository || known.has(g.number)) continue;
       const task = await taskService.forBranch(projectId, g.headRefName);
@@ -275,6 +325,55 @@ export const trackedPullRequestService = {
       if (task || ws) await this.recordGithub(projectId, g, SYSTEM, { taskId: task?.id ?? ws?.taskId ?? null });
     }
     return current();
+  },
+
+  /**
+   * PR « en préparation » d'un projet git : une par work session active dont la branche porte des modifications
+   * (commits en avance sur la base, ou fichiers non commités) sans PR ouverte dans le dépôt du projet. Créée avec la
+   * tâche de la work session (sinon celle de la branche) et un titre dérivé ; mise à jour (travail local) ; retirée
+   * quand la branche n'a plus rien à proposer, que la PR est ouverte, ou que la work session disparaît. Après une
+   * fusion, seuls les commits postérieurs à la fusion comptent (un squash laisse les anciens commits « en avance »).
+   */
+  async refreshPending(project: Project): Promise<void> {
+    const worksessions = await worksessionRepository.listByProject(project.id);
+    const tracked = await pullRequestRepository.list({ projectId: project.id, limit: 1000 });
+    const projectRepo = projectRepoName(project);
+    const pendings = tracked.filter((t) => t.status === 'pending');
+    const seen = new Set<string>();
+    for (const ws of worksessions) {
+      const onBranch = tracked.filter((t) => t.status !== 'pending' && sameRepo(t.repo, projectRepo) && t.headBranch === ws.branch);
+      const pending = pendings.find((p) => p.worksessionId === ws.id) ?? null;
+      if (pending) seen.add(pending.id);
+      const drop = async () => {
+        if (pending) await pullRequestRepository.delete(pending.id);
+      };
+      if (onBranch.some((t) => t.status === 'open')) {
+        await drop();
+        continue;
+      }
+      const lastMerged = onBranch.map((t) => t.mergedAt).filter((d): d is Date => Boolean(d)).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+      const work = await localBranchWork(project, ws, { since: lastMerged }).catch(() => null);
+      if (!work || (work.commits === 0 && work.changes === 0)) {
+        await drop();
+        continue;
+      }
+      if (pending) {
+        if (pending.localCommits !== work.commits || pending.localChanges !== work.changes || pending.headBranch !== work.branch) {
+          await pullRequestRepository.update(pending.id, { localCommits: work.commits, localChanges: work.changes, headBranch: work.branch, baseBranch: work.baseBranch, syncedAt: new Date() });
+        }
+        continue;
+      }
+      const task = ws.taskId ? await taskService.get(ws.taskId).catch(() => null) : await taskService.forBranch(project.id, work.branch);
+      const created = await pullRequestRepository.create(
+        project.id,
+        { repo: projectRepo, number: null, url: '', title: buildDraftText(work.branch, [], task?.title).title, headBranch: work.branch, baseBranch: work.baseBranch, status: 'pending', taskId: task?.id ?? null, worksessionId: ws.id, localCommits: work.commits, localChanges: work.changes },
+        SYSTEM,
+      );
+      seen.add(created.id);
+      if (created.taskId) await this.linkTaskBranch(created.taskId, work.branch);
+    }
+    // PR en préparation dont la work session a disparu ou a été archivée.
+    for (const p of pendings) if (!seen.has(p.id)) await pullRequestRepository.delete(p.id);
   },
 
   /** Recopie l'état GitHub sur une PR suivie ; une fusion ou une fermeture constatée est notifiée. */
@@ -294,13 +393,14 @@ export const trackedPullRequestService = {
     });
     if (updated && tracked.status === 'open' && status !== 'open') {
       const project = await projectService.get(tracked.projectId).catch(() => null);
+      const ref = `${project && !sameRepo(updated.repo, projectRepoName(project)) ? updated.repo : ''}#${updated.number}`;
       void notificationService.notify({
         type: status === 'merged' ? 'pull_request.merged' : 'pull_request.closed',
         title: status === 'merged' ? 'Pull request fusionnée' : 'Pull request fermée sans fusion',
-        message: `#${updated.number} ${updated.title}${project ? ` · ${project.name}` : ''}${status === 'merged' ? ' · à déployer' : ''}`,
+        message: `${ref} ${updated.title}${project ? ` · ${project.name}` : ''}${status === 'merged' ? ' · à déployer' : ''}`,
         link: `/projects/${tracked.projectId}/pull-requests`,
         projectId: tracked.projectId,
-        payload: { pullRequestId: updated.id, number: updated.number, taskId: updated.taskId },
+        payload: { pullRequestId: updated.id, number: updated.number, repo: updated.repo, taskId: updated.taskId },
       });
     }
     return updated ?? tracked;
@@ -308,7 +408,7 @@ export const trackedPullRequestService = {
 
   /** Paragraphe du prompt système : les outils de suivi des PR du serveur `tasks`. */
   promptSummary(): string {
-    return "Les pull requests se suivent au niveau de la tâche avec les outils `tasks` : `pr_open` pousse la branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session (soumis à son autorisation), `pr_register` déclare une PR déjà ouverte (URL ou numéro), `pr_update` tient à jour son statut (open, merged, closed), sa note et son déploiement (deployed), `pr_list` les liste par étape (brouillon, à fusionner, à déployer, déployée, annulée). Quand tu ouvres une PR par un autre moyen, déclare-la avec `pr_register` pour qu'elle apparaisse dans le suivi ; quand tu mets une PR fusionnée en production, marque-la déployée.";
+    return "Les pull requests se suivent au niveau de la tâche avec les outils `tasks` : dès qu'une branche porte des modifications, Skipper y voit une PR « en préparation » (pr_list stage pending) ; `pr_open` pousse la branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session (soumis à son autorisation ; paramètre `path` pour un autre dépôt cloné dans un sous-dossier), `pr_register` déclare une PR déjà ouverte (URL, du dépôt du projet ou d'un autre dépôt GitHub, ou numéro), `pr_update` tient à jour son statut (open, merged, closed), sa note et son déploiement (deployed), `pr_list` les liste par étape (en préparation, brouillon, à fusionner, à déployer, déployée, annulée). Quand tu ouvres une PR par un autre moyen, déclare-la avec `pr_register` pour qu'elle apparaisse dans le suivi ; quand tu mets une PR fusionnée en production, marque-la déployée.";
   },
 
   stages: PR_STAGES,

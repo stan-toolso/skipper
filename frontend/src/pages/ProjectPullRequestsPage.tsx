@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import PageLoading from '../components/PageLoading';
 import ProjectHeader from '../components/ProjectHeader';
 import { RegisterPullRequestModal, TrackedPullRequestTable } from '../components/TrackedPullRequests';
-import { PULL_REQUESTS, PULL_REQUESTS_PROJECT, STAGE_LABELS, STAGE_ORDER, SYNC_PULL_REQUESTS, type PullRequestStage, type TrackedPullRequest } from '../graphql/pullRequests';
+import { prRef, PULL_REQUESTS, PULL_REQUESTS_PROJECT, STAGE_LABELS, STAGE_ORDER, SYNC_PULL_REQUESTS, type PullRequestStage, type TrackedPullRequest } from '../graphql/pullRequests';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -20,14 +20,16 @@ interface PageProject {
 }
 
 type Filter = 'pending' | 'all' | PullRequestStage;
-const PENDING: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'TO_DEPLOY'];
+/** Étapes « à traiter » : ce qui attend une action, PR en préparation comprises (à ouvrir). */
+const PENDING: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'PENDING', 'TO_DEPLOY'];
 const FILTER_KEY = 'skipper.pullRequests.filter';
 
 const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /**
- * Pull requests suivies d'un projet, par étape : à fusionner, brouillons, à déployer, déployées, annulées. La liste est
- * synchronisée avec GitHub au chargement (au plus toutes les 30 s) ; « Rafraîchir » force la synchronisation.
+ * Pull requests suivies d'un projet, par étape : à fusionner, brouillons, en préparation (branches avec des modifications
+ * sans PR ouverte), à déployer, déployées, annulées. La liste est synchronisée avec le travail local des branches et avec
+ * GitHub au chargement (au plus toutes les 30 s) ; « Rafraîchir » force la synchronisation.
  */
 export default function ProjectPullRequestsPage() {
   const { id = '' } = useParams();
@@ -49,7 +51,7 @@ export default function ProjectPullRequestsPage() {
   }, [all]);
   const shown = useMemo(() => {
     const q = fold(search.trim());
-    return all.filter((pr) => (filter === 'all' ? true : filter === 'pending' ? PENDING.includes(pr.stage) : pr.stage === filter)).filter((pr) => !q || fold(`#${pr.number} ${pr.title} ${pr.headBranch} ${pr.note} ${pr.task?.title ?? ''}`).includes(q));
+    return all.filter((pr) => (filter === 'all' ? true : filter === 'pending' ? PENDING.includes(pr.stage) : pr.stage === filter)).filter((pr) => !q || fold(`${prRef(pr)} ${pr.title} ${pr.headBranch} ${pr.note} ${pr.task?.title ?? ''} ${pr.foreignRepo ? pr.repo : ''}`).includes(q));
   }, [all, filter, search]);
   const groups = useMemo(() => STAGE_ORDER.map((stage) => ({ stage, prs: shown.filter((pr) => pr.stage === stage) })).filter((g) => g.prs.length > 0), [shown]);
   const pick = (f: Filter) => {
@@ -61,14 +63,14 @@ export default function ProjectPullRequestsPage() {
   if (projectQ.error) return <Alert variant="danger">Erreur : {projectQ.error.message}</Alert>;
   if (!project) return <Alert variant="warning">Projet introuvable.</Alert>;
   const canWrite = project.myRole === 'ADMIN' || project.myRole === 'MEMBER';
-  const pending = counts.TO_MERGE + counts.DRAFT + counts.TO_DEPLOY;
+  const pending = counts.TO_MERGE + counts.DRAFT + counts.PENDING + counts.TO_DEPLOY;
 
   return (
     <>
       <ProjectHeader project={project} active="pullRequests" />
       <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
         <ButtonGroup size="sm" className="flex-wrap">
-          <Button variant={filter === 'pending' ? 'secondary' : 'outline-secondary'} onClick={() => pick('pending')} title="À fusionner, brouillons et à déployer">
+          <Button variant={filter === 'pending' ? 'secondary' : 'outline-secondary'} onClick={() => pick('pending')} title="À fusionner, brouillons, en préparation et à déployer">
             À traiter {pending > 0 && <Badge bg="light" text="dark" className="ms-1">{pending}</Badge>}
           </Button>
           {STAGE_ORDER.map((s) => (
@@ -80,9 +82,9 @@ export default function ProjectPullRequestsPage() {
             Toutes
           </Button>
         </ButtonGroup>
-        <Form.Control size="sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrer (titre, numéro, branche, tâche, note)" style={{ width: 260 }} />
+        <Form.Control size="sm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filtrer (titre, numéro, branche, dépôt, tâche, note)" style={{ width: 260 }} />
         <div className="ms-auto d-flex gap-2">
-          <Button size="sm" variant="outline-secondary" disabled={syncing || !project.gitUrl} title="Relire l'état des pull requests sur GitHub" onClick={() => void sync({ variables: { projectId: id } }).catch(() => undefined)}>
+          <Button size="sm" variant="outline-secondary" disabled={syncing || !project.gitUrl} title="Relire le travail des branches et l'état des pull requests sur GitHub" onClick={() => void sync({ variables: { projectId: id } }).catch(() => undefined)}>
             <i className={`bi bi-arrow-clockwise me-1${syncing ? ' spin' : ''}`} /> Rafraîchir
           </Button>
           {canWrite && (
@@ -98,7 +100,7 @@ export default function ProjectPullRequestsPage() {
       {prsQ.data && groups.length === 0 && (
         <div className="text-secondary fst-italic small">
           {all.length === 0
-            ? "Aucune pull request suivie. Les agents les déclarent avec les outils tasks.pr_open et pr_register ; les PR ouvertes depuis le panneau git ou sur la branche d'une tâche sont suivies automatiquement."
+            ? "Aucune pull request suivie. Dès qu'une branche porte des modifications, une PR « en préparation » apparaît ici ; les agents ouvrent et déclarent les PR avec les outils tasks.pr_open et pr_register ; les PR ouvertes depuis le panneau git ou sur la branche d'une tâche sont suivies automatiquement."
             : 'Aucune pull request ne correspond à ce filtre.'}
         </div>
       )}

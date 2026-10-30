@@ -38,6 +38,8 @@ export interface DashboardCounts {
   openPullRequests: number;
   /** Pull requests suivies fusionnées, pas encore déployées. */
   toDeployPullRequests: number;
+  /** Pull requests en préparation : branches avec des modifications, sans pull request ouverte. */
+  pendingPullRequests: number;
 }
 
 export interface DashboardUsageDay {
@@ -141,7 +143,7 @@ async function projectStats(projectIds: string[], monthStart: Date): Promise<Map
   return new Map(rows.map((r) => [r.project_id, r]));
 }
 
-async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests' | 'toDeployPullRequests'>> {
+async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests' | 'toDeployPullRequests' | 'pendingPullRequests'>> {
   if (!projectIds.length) return { failedSessions24h: 0, endedSessions24h: 0, doneTasks7d: 0 };
   const { rows } = await pool.query<{ failed: string; ended: string; done: string }>(
     `SELECT
@@ -277,6 +279,7 @@ export const dashboardService = {
         unreadNotifications: unread,
         openPullRequests: prCounts.open,
         toDeployPullRequests: prCounts.toDeploy,
+        pendingPullRequests: prCounts.pending,
         ...extra,
       },
       usage: usageData,

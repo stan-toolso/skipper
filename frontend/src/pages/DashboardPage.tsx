@@ -13,7 +13,7 @@ import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
 import ChatComposer from '../components/ChatComposer';
 import { PullRequestStageBadge, TrackedPullRequestIndicators } from '../components/TrackedPullRequests';
-import type { TrackedPullRequest } from '../graphql/pullRequests';
+import { prRef, type TrackedPullRequest } from '../graphql/pullRequests';
 import './dashboard.css';
 
 /**
@@ -145,6 +145,7 @@ export default function DashboardPage() {
                 Pull requests à traiter
                 {counts.openPullRequests > 0 && <Badge bg="success" className="ms-2 fw-normal" title="À fusionner">{counts.openPullRequests} à fusionner</Badge>}
                 {counts.toDeployPullRequests > 0 && <Badge bg="warning" text="dark" className="ms-2 fw-normal" title="Fusionnées, pas encore déployées">{counts.toDeployPullRequests} à déployer</Badge>}
+                {counts.pendingPullRequests > 0 && <Badge bg="secondary" className="ms-2 fw-normal" title="Branches avec des modifications, sans pull request ouverte">{counts.pendingPullRequests} en préparation</Badge>}
               </span>
             </h2>
             <ul className="dash-list">
@@ -460,7 +461,7 @@ function PullRequestRow({ pr }: { pr: TrackedPullRequest }) {
       <i className={`bi ${toDeploy ? 'bi-box-arrow-up warn' : 'bi-git'} icon`} />
       <div className="main">
         <a href={pr.url} target="_blank" rel="noreferrer" className="title" title="Ouvrir sur GitHub">
-          <span className="text-secondary">#{pr.number}</span> {pr.title}
+          <span className="text-secondary">{prRef(pr)}</span> {pr.title}
         </a>
         <div className="meta">
           <Link to={`/projects/${pr.project.id}/pull-requests`}>{pr.project.name}</Link>

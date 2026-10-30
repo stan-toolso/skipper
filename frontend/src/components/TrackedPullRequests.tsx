@@ -4,6 +4,8 @@ import { Alert, Button, Form, Modal, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import {
   DELETE_PULL_REQUEST,
+  localWorkText,
+  prRef,
   REGISTER_PULL_REQUEST,
   STAGE_LABELS,
   TRACKED_PR_REFETCH,
@@ -15,12 +17,14 @@ import {
 import { timeAgo } from '../lib/humanize';
 import { useDialogs } from './Dialogs';
 import PopMenu, { type MenuItem } from './PopMenu';
-import { PullRequestIndicators, PullRequestModal } from './PullRequests';
+import { CreatePullRequestModal, PullRequestIndicators, PullRequestModal } from './PullRequests';
 
 /**
  * Pull requests suivies : pastille d'étape, puce compacte (cartes et grilles de tâches), tableau avec actions
  * (détail et fusion via la fenêtre GitHub, déploiement, statut, note, tâche, arrêt du suivi) et fenêtre « Suivre
- * une pull request ». La PR GitHub en direct (checks, revues, fusion) reste `PullRequestModal`.
+ * une pull request ». Une PR « en préparation » (branche avec des modifications, pas encore ouverte) propose de la
+ * créer (fenêtre de création du panneau git). La PR GitHub en direct (checks, revues, fusion) reste `PullRequestModal`,
+ * qui reçoit le dépôt quand la PR n'est pas dans celui du projet.
  */
 
 const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
@@ -35,24 +39,52 @@ export function PullRequestStageBadge({ stage, className = '' }: { stage: PullRe
   );
 }
 
-/** Indicateurs GitHub (checks, conflits, revue) d'une PR suivie, à partir de son instantané. */
+/** Indicateurs GitHub (checks, conflits, revue) d'une PR suivie, à partir de son instantané ; travail local d'une PR en préparation. */
 export function TrackedPullRequestIndicators({ pr }: { pr: TrackedPullRequestSummary }) {
+  if (pr.status === 'PENDING') {
+    const work = localWorkText(pr);
+    return work ? <span className="small text-secondary">{work}</span> : null;
+  }
   if (pr.status !== 'OPEN') return null;
-  return <PullRequestIndicators pr={{ number: pr.number, title: pr.title, url: pr.url, state: 'OPEN', isDraft: pr.isDraft, mergeable: pr.mergeable ?? 'UNKNOWN', reviewDecision: pr.reviewDecision, checksState: pr.checksState, headRefName: '', baseRefName: '' }} showState={false} />;
+  return <PullRequestIndicators pr={{ number: pr.number ?? 0, title: pr.title, url: pr.url, state: 'OPEN', isDraft: pr.isDraft, mergeable: pr.mergeable ?? 'UNKNOWN', reviewDecision: pr.reviewDecision, checksState: pr.checksState, headRefName: '', baseRefName: '' }} showState={false} />;
 }
 
-/** Puce compacte d'une PR suivie (grille, carte, fiche de tâche) : numéro, étape, indicateurs ; ouvre la fenêtre GitHub. */
+/** Fenêtre à ouvrir pour une PR suivie : son détail GitHub, ou sa création quand elle est en préparation. */
+type Window = { kind: 'github'; number: number; repo: string | null } | { kind: 'create'; worksessionId: string };
+
+/** La fenêtre qui convient à une PR suivie : création pour une PR en préparation (dossier de travail connu), détail GitHub sinon. */
+export function windowFor(pr: TrackedPullRequestSummary): Window | null {
+  if (pr.number == null) return pr.worksession ? { kind: 'create', worksessionId: pr.worksession.id } : null;
+  return { kind: 'github', number: pr.number, repo: pr.foreignRepo ? pr.repo : null };
+}
+
+/** Rend la fenêtre demandée (détail GitHub ou création) ; après une création, enchaîne sur le détail de la PR ouverte. */
+export function PullRequestWindow({ projectId, window, onClose }: { projectId: string; window: Window; onClose: () => void }) {
+  const [created, setCreated] = useState<number | null>(null);
+  if (window.kind === 'github') return <PullRequestModal projectId={projectId} number={window.number} repo={window.repo} onClose={onClose} />;
+  if (created != null) return <PullRequestModal projectId={projectId} number={created} onClose={onClose} />;
+  return <CreatePullRequestModal projectId={projectId} worksessionId={window.worksessionId} onClose={onClose} onCreated={(pr) => setCreated(pr.number)} />;
+}
+
+/** Puce compacte d'une PR suivie (grille, carte, fiche de tâche) : référence, étape, indicateurs ; ouvre la fenêtre qui convient. */
 export function TrackedPullRequestChip({ projectId, pr, showTitle = false }: { projectId: string; pr: TrackedPullRequestSummary; showTitle?: boolean }) {
   const [open, setOpen] = useState(false);
+  const target = windowFor(pr);
   return (
     <>
-      <button type="button" className="btn btn-link btn-sm p-0 text-decoration-none small d-inline-flex align-items-center gap-1 text-reset" title={`Pull request #${pr.number} : ${pr.title} (${STAGE_LABELS[pr.stage].label})`} onClick={() => setOpen(true)}>
-        <span className="text-secondary">#{pr.number}</span>
+      <button
+        type="button"
+        className="btn btn-link btn-sm p-0 text-decoration-none small d-inline-flex align-items-center gap-1 text-reset"
+        title={pr.number == null ? `En préparation sur ${pr.headBranch} : ${pr.title}${target ? ' (créer la pull request)' : ''}` : `Pull request ${prRef(pr)} : ${pr.title} (${STAGE_LABELS[pr.stage].label})`}
+        disabled={!target}
+        onClick={() => setOpen(true)}
+      >
+        <span className="text-secondary">{pr.number == null ? <i className="bi bi-code-slash" /> : prRef(pr)}</span>
         <PullRequestStageBadge stage={pr.stage} />
         <TrackedPullRequestIndicators pr={pr} />
         {showTitle && <span className="text-truncate">{pr.title}</span>}
       </button>
-      {open && <PullRequestModal projectId={projectId} number={pr.number} onClose={() => setOpen(false)} />}
+      {open && target && <PullRequestWindow projectId={projectId} window={target} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -66,24 +98,24 @@ export function useTrackedPullRequestActions() {
 
   return {
     markDeployed: async (pr: TrackedPullRequest) => {
-      const note = await prompt({ title: `Marquer #${pr.number} comme déployée`, message: 'Où et comment a-t-elle été mise en production ? (facultatif)', placeholder: 'ex. skipper-1, 30/10 18:40', required: false });
+      const note = await prompt({ title: `Marquer ${prRef(pr)} comme déployée`, message: 'Où et comment a-t-elle été mise en production ? (facultatif)', placeholder: 'ex. skipper-1, 30/10 18:40', required: false });
       if (note === null) return;
       await run(update({ variables: { id: pr.id, input: { deployed: true, deployNote: note } } }));
     },
     undeploy: (pr: TrackedPullRequest) => run(update({ variables: { id: pr.id, input: { deployed: false } } })),
     setStatus: async (pr: TrackedPullRequest, status: 'OPEN' | 'MERGED' | 'CLOSED') => {
       const labels = { OPEN: 'rouvrir', MERGED: 'marquer comme fusionnée', CLOSED: 'marquer comme annulée (fermée sans fusion)' };
-      if (!(await confirm({ title: `Pull request #${pr.number}`, message: `Voulez-vous ${labels[status]} le suivi de « ${pr.title} » ? La PR sur GitHub n'est pas modifiée.`, confirmLabel: 'Oui' }))) return;
+      if (!(await confirm({ title: `Pull request ${prRef(pr)}`, message: `Voulez-vous ${labels[status]} le suivi de « ${pr.title} » ? La PR sur GitHub n'est pas modifiée.`, confirmLabel: 'Oui' }))) return;
       await run(update({ variables: { id: pr.id, input: { status } } }));
     },
     editNote: async (pr: TrackedPullRequest) => {
-      const note = await prompt({ title: `Note de suivi de #${pr.number}`, defaultValue: pr.note, placeholder: 'ex. attend la CI, revue demandée à…', required: false });
+      const note = await prompt({ title: `Note de suivi de ${prRef(pr)}`, defaultValue: pr.note, placeholder: 'ex. attend la CI, revue demandée à…', required: false });
       if (note === null) return;
       await run(update({ variables: { id: pr.id, input: { note } } }));
     },
     detachTask: (pr: TrackedPullRequest) => run(update({ variables: { id: pr.id, input: { taskId: null } } })),
     untrack: async (pr: TrackedPullRequest) => {
-      if (!(await confirm({ title: 'Ne plus suivre', message: `Retirer « #${pr.number} ${pr.title} » du suivi ? La PR GitHub n'est pas touchée ; on peut la suivre de nouveau plus tard.`, confirmLabel: 'Ne plus suivre', danger: true }))) return;
+      if (!(await confirm({ title: 'Ne plus suivre', message: `Retirer « ${prRef(pr)} ${pr.title} » du suivi ? La PR GitHub n'est pas touchée ; on peut la suivre de nouveau plus tard.`, confirmLabel: 'Ne plus suivre', danger: true }))) return;
       await run(remove({ variables: { id: pr.id } }));
     },
   };
@@ -92,28 +124,34 @@ export function useTrackedPullRequestActions() {
 function ActionsMenu({ pr, onOpen }: { pr: TrackedPullRequest; onOpen: () => void }) {
   const actions = useTrackedPullRequestActions();
   const [at, setAt] = useState<{ top: number; right: number } | null>(null);
-  const items: MenuItem[] = [
-    { label: 'Détail et fusion', icon: 'bi-git', onClick: onOpen },
-    { label: 'Ouvrir sur GitHub', icon: 'bi-box-arrow-up-right', onClick: () => window.open(pr.url, '_blank', 'noopener') },
-    { label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) },
-  ];
-  if (pr.status === 'MERGED' && !pr.deployedAt) items.push({ label: 'Marquer comme déployée', icon: 'bi-box-arrow-up', onClick: () => void actions.markDeployed(pr) });
-  if (pr.deployedAt) items.push({ label: 'Annuler le déploiement', icon: 'bi-arrow-counterclockwise', onClick: () => void actions.undeploy(pr) });
-  if (pr.status === 'OPEN') {
-    items.push({ label: 'Marquer comme fusionnée', icon: 'bi-check2-circle', onClick: () => void actions.setStatus(pr, 'MERGED') });
-    items.push({ label: 'Marquer comme annulée', icon: 'bi-x-circle', onClick: () => void actions.setStatus(pr, 'CLOSED') });
+  const pending = pr.status === 'PENDING';
+  const items: MenuItem[] = [];
+  if (pending) {
+    if (pr.worksession) items.push({ label: 'Créer la pull request', icon: 'bi-git', onClick: onOpen });
+    items.push({ label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) });
+    if (pr.task) items.push({ label: 'Détacher de la tâche', icon: 'bi-link-45deg', onClick: () => void actions.detachTask(pr) });
   } else {
-    items.push({ label: 'Rouvrir le suivi', icon: 'bi-arrow-repeat', onClick: () => void actions.setStatus(pr, 'OPEN') });
+    items.push({ label: 'Détail et fusion', icon: 'bi-git', onClick: onOpen });
+    items.push({ label: 'Ouvrir sur GitHub', icon: 'bi-box-arrow-up-right', onClick: () => window.open(pr.url, '_blank', 'noopener') });
+    items.push({ label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) });
+    if (pr.status === 'MERGED' && !pr.deployedAt) items.push({ label: 'Marquer comme déployée', icon: 'bi-box-arrow-up', onClick: () => void actions.markDeployed(pr) });
+    if (pr.deployedAt) items.push({ label: 'Annuler le déploiement', icon: 'bi-arrow-counterclockwise', onClick: () => void actions.undeploy(pr) });
+    if (pr.status === 'OPEN') {
+      items.push({ label: 'Marquer comme fusionnée', icon: 'bi-check2-circle', onClick: () => void actions.setStatus(pr, 'MERGED') });
+      items.push({ label: 'Marquer comme annulée', icon: 'bi-x-circle', onClick: () => void actions.setStatus(pr, 'CLOSED') });
+    } else {
+      items.push({ label: 'Rouvrir le suivi', icon: 'bi-arrow-repeat', onClick: () => void actions.setStatus(pr, 'OPEN') });
+    }
+    if (pr.task) items.push({ label: 'Détacher de la tâche', icon: 'bi-link-45deg', onClick: () => void actions.detachTask(pr) });
+    items.push({ label: 'Ne plus suivre', icon: 'bi-trash', danger: true, onClick: () => void actions.untrack(pr) });
   }
-  if (pr.task) items.push({ label: 'Détacher de la tâche', icon: 'bi-link-45deg', onClick: () => void actions.detachTask(pr) });
-  items.push({ label: 'Ne plus suivre', icon: 'bi-trash', danger: true, onClick: () => void actions.untrack(pr) });
   return (
     <>
       <button
         type="button"
         className="btn btn-sm btn-outline-secondary py-0 px-1"
         title="Actions"
-        aria-label={`Actions sur la pull request #${pr.number}`}
+        aria-label={`Actions sur la pull request ${prRef(pr)}`}
         onClick={(e) => {
           e.stopPropagation();
           const r = e.currentTarget.getBoundingClientRect();
@@ -128,18 +166,23 @@ function ActionsMenu({ pr, onOpen }: { pr: TrackedPullRequest; onOpen: () => voi
 }
 
 /**
- * Barre d'actions d'une PR suivie (fiche de tâche) : détail et fusion (fenêtre GitHub), déploiement, puis le menu des
- * autres actions. Sans droit d'écriture, seul le détail reste.
+ * Barre d'actions d'une PR suivie (fiche de tâche) : détail et fusion (fenêtre GitHub) ou création (PR en
+ * préparation), déploiement, puis le menu des autres actions. Sans droit d'écriture, seul le détail reste.
  */
 export function TrackedPullRequestActions({ pr, canWrite }: { pr: TrackedPullRequest; canWrite: boolean }) {
   const actions = useTrackedPullRequestActions();
   const [open, setOpen] = useState(false);
+  const target = windowFor(pr);
+  const pending = pr.status === 'PENDING';
+  if (pending && !canWrite) return null;
   return (
     <div className="d-flex align-items-center gap-2 flex-wrap">
-      <Button size="sm" variant="outline-secondary" className="py-0" onClick={() => setOpen(true)}>
-        <i className="bi bi-git me-1" />
-        {pr.status === 'OPEN' && canWrite ? 'Détail et fusion' : 'Détail'}
-      </Button>
+      {target && (
+        <Button size="sm" variant={pending ? 'primary' : 'outline-secondary'} className="py-0" onClick={() => setOpen(true)}>
+          <i className="bi bi-git me-1" />
+          {pending ? 'Créer la pull request' : pr.status === 'OPEN' && canWrite ? 'Détail et fusion' : 'Détail'}
+        </Button>
+      )}
       {canWrite && pr.status === 'MERGED' && !pr.deployedAt && (
         <Button size="sm" variant="outline-success" className="py-0" onClick={() => void actions.markDeployed(pr)}>
           <i className="bi bi-box-arrow-up me-1" />
@@ -147,26 +190,31 @@ export function TrackedPullRequestActions({ pr, canWrite }: { pr: TrackedPullReq
         </Button>
       )}
       {canWrite && <ActionsMenu pr={pr} onOpen={() => setOpen(true)} />}
-      {open && <PullRequestModal projectId={pr.project.id} number={pr.number} onClose={() => setOpen(false)} />}
+      {open && target && <PullRequestWindow projectId={pr.project.id} window={target} onClose={() => setOpen(false)} />}
     </div>
   );
 }
 
 /** Qui a ouvert ou déployé : personne, session d'agent (lien) ou synchronisation. */
-function By({ type, user, session }: { type: string | null; user: { id: string; name: string } | null; session: { id: string; name: string } | null }) {
+function By({ type, user, session, pending = false }: { type: string | null; user: { id: string; name: string } | null; session: { id: string; name: string } | null; pending?: boolean }) {
   if (session) return <Link to={`/sessions/${session.id}`} title="Session d'agent">{session.name}</Link>;
   if (user) return <>{user.name}</>;
-  if (type === 'system') return <span className="text-secondary">GitHub</span>;
+  if (type === 'system') return <span className="text-secondary">{pending ? 'branche' : 'GitHub'}</span>;
   return <span className="text-secondary">—</span>;
 }
 
 /**
  * Tableau des PR suivies. `showProject` (vue multi-projets), `showTask` (hors fiche de tâche). Chaque ligne ouvre la
- * fenêtre GitHub (checks, revues, fusion avec nettoyage) ; le menu porte les actions de suivi.
+ * fenêtre GitHub (checks, revues, fusion avec nettoyage), ou la création pour une PR en préparation ; le menu porte
+ * les actions de suivi.
  */
 export function TrackedPullRequestTable({ prs, showProject = false, showTask = true, compact = false }: { prs: TrackedPullRequest[]; showProject?: boolean; showTask?: boolean; compact?: boolean }) {
-  const [open, setOpen] = useState<TrackedPullRequest | null>(null);
+  const [open, setOpen] = useState<{ projectId: string; window: Window } | null>(null);
   if (prs.length === 0) return null;
+  const openFor = (pr: TrackedPullRequest) => {
+    const window = windowFor(pr);
+    if (window) setOpen({ projectId: pr.project.id, window });
+  };
   return (
     <>
       <Table size="sm" hover responsive className={`mb-0 table-stack pr-table${compact ? ' pr-table-compact' : ''}`}>
@@ -184,14 +232,24 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
         </thead>
         <tbody>
           {prs.map((pr) => {
-            const when =
-              pr.stage === 'DEPLOYED' && pr.deployedAt ? { label: 'déployée', at: pr.deployedAt } : pr.mergedAt ? { label: 'fusionnée', at: pr.mergedAt } : pr.closedAt ? { label: 'fermée', at: pr.closedAt } : { label: 'ouverte', at: pr.openedAt };
+            const pending = pr.status === 'PENDING';
+            const when = pending
+              ? { label: 'depuis', at: pr.openedAt }
+              : pr.stage === 'DEPLOYED' && pr.deployedAt
+                ? { label: 'déployée', at: pr.deployedAt }
+                : pr.mergedAt
+                  ? { label: 'fusionnée', at: pr.mergedAt }
+                  : pr.closedAt
+                    ? { label: 'fermée', at: pr.closedAt }
+                    : { label: 'ouverte', at: pr.openedAt };
+            const clickable = Boolean(windowFor(pr));
             return (
-              <tr key={pr.id} className="pr-row" onClick={() => setOpen(pr)} role="button">
+              <tr key={pr.id} className={clickable ? 'pr-row' : undefined} onClick={() => openFor(pr)} role={clickable ? 'button' : undefined}>
                 <td className="pr-cell-title">
-                  <span className="text-secondary me-1">#{pr.number}</span>
+                  {pr.number != null && <span className="text-secondary me-1">{prRef(pr)}</span>}
+                  {pending && <i className="bi bi-code-slash text-secondary me-1" title="Pas encore ouverte sur GitHub" />}
                   <span className="fw-semibold">{pr.title}</span>
-                  <TrackedPullRequestIndicators pr={pr} />
+                  {!pending && <TrackedPullRequestIndicators pr={pr} />}
                   {pr.note && (
                     <div className="small text-secondary text-truncate" title={pr.note}>
                       <i className="bi bi-sticky me-1" />
@@ -201,6 +259,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                 </td>
                 <td>
                   <PullRequestStageBadge stage={pr.stage} />
+                  {pending && <div className="small text-secondary text-truncate">{localWorkText(pr) || 'modifications sur la branche'}</div>}
                   {pr.deployNote && pr.stage === 'DEPLOYED' && (
                     <div className="small text-secondary text-truncate" title={pr.deployNote}>
                       {pr.deployNote}
@@ -233,7 +292,7 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                 )}
                 {!compact && (
                   <td className="d-none d-lg-table-cell small" onClick={(e) => e.stopPropagation()}>
-                    <By type={pr.createdByType} user={pr.createdBy} session={pr.createdBySession} />
+                    <By type={pr.createdByType} user={pr.createdBy} session={pr.createdBySession} pending={pending} />
                   </td>
                 )}
                 <td className="d-none d-md-table-cell small text-secondary" title={fmt(when.at)}>
@@ -246,19 +305,19 @@ export function TrackedPullRequestTable({ prs, showProject = false, showTask = t
                   )}
                 </td>
                 <td className="text-end text-nowrap" onClick={(e) => e.stopPropagation()}>
-                  <ActionsMenu pr={pr} onOpen={() => setOpen(pr)} />
+                  <ActionsMenu pr={pr} onOpen={() => openFor(pr)} />
                 </td>
               </tr>
             );
           })}
         </tbody>
       </Table>
-      {open && <PullRequestModal projectId={open.project.id} number={open.number} onClose={() => setOpen(null)} />}
+      {open && <PullRequestWindow projectId={open.projectId} window={open.window} onClose={() => setOpen(null)} />}
     </>
   );
 }
 
-/** Suivre une PR GitHub déjà ouverte : URL (ou numéro), tâche reliée (facultative), note. */
+/** Suivre une PR GitHub déjà ouverte : URL (dépôt du projet ou autre dépôt) ou numéro, tâche reliée (facultative), note. */
 export function RegisterPullRequestModal({ projectId, taskId = null, onClose }: { projectId: string; taskId?: string | null; onClose: () => void }) {
   const [ref, setRef] = useState('');
   const [note, setNote] = useState('');
@@ -281,10 +340,11 @@ export function RegisterPullRequestModal({ projectId, taskId = null, onClose }: 
           <Modal.Title className="h6">Suivre une pull request</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          <p className="small text-secondary">Une pull request déjà ouverte sur GitHub (par un agent, en ligne de commande ou par quelqu'un d'autre). Ses détails sont lus avec votre compte GitHub.</p>
+          <p className="small text-secondary">Une pull request déjà ouverte sur GitHub (par un agent, en ligne de commande ou par quelqu'un d'autre), dans le dépôt du projet ou dans un autre dépôt. Ses détails sont lus avec votre compte GitHub.</p>
           <Form.Group className="mb-2">
             <Form.Label className="small mb-1">URL ou numéro</Form.Label>
             <Form.Control value={ref} onChange={(e) => setRef(e.target.value)} placeholder="https://github.com/owner/repo/pull/42 ou 42" required autoFocus />
+            <Form.Text className="text-secondary">Un numéro seul désigne une PR du dépôt du projet ; l'URL permet n'importe quel dépôt GitHub.</Form.Text>
           </Form.Group>
           <Form.Group>
             <Form.Label className="small mb-1">Note de suivi (facultative)</Form.Label>

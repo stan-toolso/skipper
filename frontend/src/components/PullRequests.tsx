@@ -14,8 +14,8 @@ import {
 import Markdown from './Markdown';
 import { usePollingQuery } from '../lib/usePollingQuery';
 
-/** Requêtes à rafraîchir après une création ou une fusion (panneau git, tâches, sidebar). */
-const PR_REFETCH = ['GithubPullRequests', 'Tasks', 'Sidebar', 'GitStatus', 'GitBranches', 'GitLog'];
+/** Requêtes à rafraîchir après une création ou une fusion (panneau git, tâches, sidebar, PR suivies, tableau de bord). */
+const PR_REFETCH = ['GithubPullRequests', 'Tasks', 'Sidebar', 'GitStatus', 'GitBranches', 'GitLog', 'PullRequests', 'TaskPage', 'Dashboard'];
 
 const stateLabels: Record<string, { label: string; bg: string; icon: string }> = {
   OPEN: { label: 'ouverte', bg: 'success', icon: 'bi-git' },
@@ -83,9 +83,15 @@ export function PullRequestChip({ projectId, pr }: { projectId: string; pr: Pull
   );
 }
 
-function DetailsLine({ pr }: { pr: PullRequest }) {
+function DetailsLine({ pr, showRepo = false }: { pr: PullRequest; showRepo?: boolean }) {
   return (
     <div className="small text-secondary d-flex flex-wrap gap-2 align-items-center">
+      {showRepo && pr.repo && (
+        <span className="font-monospace" title="Dépôt GitHub de la pull request">
+          <i className="bi bi-github me-1" />
+          {pr.repo}
+        </span>
+      )}
       <span className="font-monospace">
         {pr.headRefName} <i className="bi bi-arrow-right" /> {pr.baseRefName}
       </span>
@@ -100,10 +106,12 @@ function DetailsLine({ pr }: { pr: PullRequest }) {
 
 /**
  * Détail d'une PR : checks, revues, possibilité de fusion ; fusion (merge, squash, rebase) avec
- * nettoyage du dossier de travail, des branches et des tâches liées.
+ * nettoyage du dossier de travail, des branches et des tâches liées. `repo` (« owner/name ») : la PR est dans un
+ * autre dépôt que celui du projet ; seule la branche distante peut alors être nettoyée.
  */
-export function PullRequestModal({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose: () => void; onMerged?: (deletedWorksessionIds: string[]) => void }) {
-  const q = usePollingQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
+export function PullRequestModal({ projectId, number, repo = null, onClose, onMerged }: { projectId: string; number: number; repo?: string | null; onClose: () => void; onMerged?: (deletedWorksessionIds: string[]) => void }) {
+  const foreign = Boolean(repo);
+  const q = usePollingQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number, repo }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
   const pr = q.data?.githubPullRequest;
   const [method, setMethod] = useState<PullRequestMergeMethod>('SQUASH');
   const [deleteRemoteBranch, setDeleteRemoteBranch] = useState(true);
@@ -147,7 +155,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                 Ouvrir sur GitHub <i className="bi bi-box-arrow-up-right" />
               </a>
             </div>
-            <DetailsLine pr={pr} />
+            <DetailsLine pr={pr} showRepo={foreign} />
             {pr.body.trim() && (
               <div className="border rounded p-2 mt-2 small" style={{ maxHeight: 220, overflowY: 'auto' }}>
                 <Markdown text={pr.body} />
@@ -208,14 +216,16 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                 </Form.Group>
                 <div className="small">
                   <Form.Check id="pr-del-remote" label={`Supprimer la branche ${pr.headRefName} sur GitHub`} checked={deleteRemoteBranch} disabled={pr.isCrossRepository} onChange={(e) => setDeleteRemoteBranch(e.target.checked)} />
-                  <Form.Check
-                    id="pr-del-wt"
-                    label={pr.worksession ? `Supprimer la branche locale et le dossier de travail de la branche (ses sessions sont archivées)` : 'Supprimer la branche locale'}
-                    checked={deleteWorksession}
-                    disabled={pr.isCrossRepository}
-                    onChange={(e) => setDeleteWorksession(e.target.checked)}
-                  />
-                  {deleteWorksession && runningSessions.length > 0 && (
+                  {!foreign && (
+                    <Form.Check
+                      id="pr-del-wt"
+                      label={pr.worksession ? `Supprimer la branche locale et le dossier de travail de la branche (ses sessions sont archivées)` : 'Supprimer la branche locale'}
+                      checked={deleteWorksession}
+                      disabled={pr.isCrossRepository}
+                      onChange={(e) => setDeleteWorksession(e.target.checked)}
+                    />
+                  )}
+                  {!foreign && deleteWorksession && runningSessions.length > 0 && (
                     <Form.Check
                       className="ms-4"
                       id="pr-stop-sessions"
@@ -224,7 +234,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
                       onChange={(e) => setStopSessions(e.target.checked)}
                     />
                   )}
-                  {openTasks.length > 0 && (
+                  {!foreign && openTasks.length > 0 && (
                     <Form.Check
                       id="pr-complete-tasks"
                       label={`Marquer comme terminée : ${openTasks.map((t) => `« ${t.title} »`).join(', ')}`}
@@ -261,7 +271,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
             variant="success"
             disabled={merging || pr.isDraft || pr.mergeable === 'CONFLICTING'}
             onClick={() =>
-              merge({ variables: { projectId, number, method, cleanup: { deleteRemoteBranch, deleteWorksession, stopSessions: deleteWorksession && stopSessions, completeTasks: completeTasks && openTasks.length > 0 } } }).catch(() => undefined)
+              merge({ variables: { projectId, number, repo, method, cleanup: { deleteRemoteBranch, deleteWorksession: !foreign && deleteWorksession, stopSessions: !foreign && deleteWorksession && stopSessions, completeTasks: !foreign && completeTasks && openTasks.length > 0 } } }).catch(() => undefined)
             }
           >
             {merging ? 'Fusion…' : 'Fusionner'}

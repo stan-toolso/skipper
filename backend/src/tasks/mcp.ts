@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { inScope, targetProject, withProjectParam, type ProjectScope } from '../personal/scope.js';
 import type { Project } from '../projects/types.js';
 import { trackedPullRequestService } from '../pullRequests/service.js';
-import { describePullRequest, PR_STAGES, TRACKED_PR_STATUSES, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
+import { describePullRequest, PR_STAGES, SETTABLE_PR_STATUSES, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { sessionService } from '../sessions/service.js';
 import { describeAttachments, imageBlocks, type McpContent } from './attachments.js';
 import { describeComment, formatPerson, statusTagText, taskService } from './service.js';
@@ -23,14 +23,14 @@ const line = (t: Task, sessionId: string) =>
   `- ${t.id} · [${t.status}${statusTagText(t)}] [${t.priority}] ${t.title}${t.tags.length ? ` · étiquettes ${t.tags.join(', ')}` : ''}${t.sessionId ? (t.sessionId === sessionId ? ' (assignée à cette session)' : ' (prise par une autre session)') : ''}${t.dueDate ? ` · échéance ${t.dueDate}` : ''}${t.assignee ? ` · responsable ${formatPerson(t.assignee)}` : ''}${t.commentCount ? ` · ${t.commentCount} commentaire${t.commentCount > 1 ? 's' : ''}` : ''}`;
 
 
-function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[], pullRequests: TrackedPullRequest[] = []): string {
+function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[], pullRequests: TrackedPullRequest[] = [], projectRepo = ''): string {
   const own = attachments.filter((a) => !a.commentId);
   const parts = [t.description || '(pas de description)'];
   if (own.length) parts.push(...describeAttachments(own, 'tool'));
   if (t.assignee) parts.push(`Responsable : ${formatPerson(t.assignee)}`);
   if (t.reporter) parts.push(`Rapporteur : ${formatPerson(t.reporter)}`);
   if (t.branch) parts.push(`Branche : ${t.branch}`);
-  if (pullRequests.length) parts.push('Pull requests suivies (pr_update pour les tenir à jour) :', ...pullRequests.map(describePullRequest));
+  if (pullRequests.length) parts.push('Pull requests suivies (pr_update pour les tenir à jour) :', ...pullRequests.map((pr) => describePullRequest(pr, projectRepo)));
   if (t.customFields.length) parts.push('Champs personnalisés :', ...t.customFields.map((f) => `- ${f.key} : ${f.value}`));
   if (comments.length) {
     parts.push('Commentaires (du plus ancien au plus récent) :');
@@ -41,7 +41,7 @@ function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[],
 
 const statusSchema = z.enum(TASK_STATUSES as [string, ...string[]]);
 const prioritySchema = z.enum(TASK_PRIORITIES as [string, ...string[]]);
-const prStatusSchema = z.enum(TRACKED_PR_STATUSES as [string, ...string[]]);
+const prStatusSchema = z.enum(SETTABLE_PR_STATUSES as [string, ...string[]]);
 const prStageSchema = z.enum(PR_STAGES as [string, ...string[]]);
 const fieldSchema = z.object({ key: z.string(), value: z.string() });
 const tagsSchema = z.array(z.string()).optional();
@@ -70,6 +70,8 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
   const where = scope ? ' (par défaut ton espace personnel ; project : un de tes projets)' : '';
   /** Qui agit sur une PR suivie : cette session. */
   const prActor = { type: 'agent' as const, sessionId };
+  /** Dépôt GitHub du projet (« owner/name »), pour ne nommer le dépôt d'une PR que quand il est ailleurs. */
+  const projectRepo = trackedPullRequestService.projectRepo(project);
   /** Dossier de travail et personne de la session, pour ouvrir une PR sur GitHub avec son compte. */
   const sessionContext = async () => {
     const s = await sessionService.get(sessionId);
@@ -80,7 +82,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
   return createSdkMcpServer({
     name: 'tasks',
     version: '1.0.0',
-    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : draft, to_merge, to_deploy, deployed, cancelled).`,
+    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante, ou depuis un autre dépôt cloné dans un sous-dossier), pr_register (déclare une PR déjà ouverte, dans le dépôt du projet ou un autre), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : pending = en préparation, c'est-à-dire une branche avec des modifications sans PR ouverte, draft, to_merge, to_deploy, deployed, cancelled).`,
     tools: [
       tool(
         'list',
@@ -106,7 +108,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
         try {
           const t = await own(id, { write: false });
           const [comments, attachments, pullRequests] = await Promise.all([taskService.comments(id), taskService.attachments(id), trackedPullRequestService.forTask(id)]);
-          const content: McpContent[] = [{ type: 'text', text: `${line(t, sessionId)}\n\n${detail(t, comments, attachments, pullRequests)}` }, ...(await imageBlocks([...attachments.filter((a) => !a.commentId), ...attachments.filter((a) => a.commentId)]))];
+          const content: McpContent[] = [{ type: 'text', text: `${line(t, sessionId)}\n\n${detail(t, comments, attachments, pullRequests, projectRepo)}` }, ...(await imageBlocks([...attachments.filter((a) => !a.commentId), ...attachments.filter((a) => a.commentId)]))];
           return { content };
         } catch (err) {
           return failure(`Erreur : ${(err as Error).message}`);
@@ -186,7 +188,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       // ---- Pull requests suivies ----------------------------------------------------------------------------
       tool(
         'pr_list',
-        "Liste les pull requests suivies du projet, ou celles d'une tâche, par étape (draft, to_merge, to_deploy, deployed, cancelled ; défaut : toutes).",
+        "Liste les pull requests suivies du projet, ou celles d'une tâche, par étape (pending = en préparation : branche avec des modifications sans PR ouverte ; draft, to_merge, to_deploy, deployed, cancelled ; défaut : toutes).",
         {
           task_id: z.string().optional().describe("Tâche dont on veut les PR ; absent : tout le projet"),
           stage: z.array(prStageSchema).optional().describe('Étapes gardées ; défaut : toutes'),
@@ -195,12 +197,12 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
           run(async () => {
             if (task_id) await own(task_id, { write: false });
             const prs = await trackedPullRequestService.list({ projectId: project.id, taskId: task_id, stage: stage as PullRequestStage[] | undefined, limit: 200 });
-            return prs.length ? prs.map(describePullRequest).join('\n') : 'Aucune pull request suivie.';
+            return prs.length ? prs.map((pr) => describePullRequest(pr, projectRepo)).join('\n') : 'Aucune pull request suivie.';
           }),
       ),
       tool(
         'pr_open',
-        "Pousse la branche courante du dossier de travail de cette session et ouvre une pull request sur GitHub (compte GitHub de la personne qui pilote la session), puis la suit au niveau de la tâche. Commite d'abord ; la base est la branche principale du projet.",
+        "Pousse la branche courante du dossier de travail de cette session et ouvre une pull request sur GitHub (compte GitHub de la personne qui pilote la session), puis la suit au niveau de la tâche. Commite d'abord ; la base est la branche principale du projet. Avec path, la PR est ouverte sur le dépôt d'un autre clone (sous-dossier du dossier de travail), sa base par défaut étant la branche par défaut de ce dépôt.",
         {
           task_id: z.string().describe('Tâche à laquelle rattacher la PR (celle que tu réalises)'),
           title: z.string().describe('Titre de la PR'),
@@ -208,24 +210,25 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
           base: z.string().optional().describe('Branche de base ; défaut : branche principale du projet'),
           draft: z.boolean().optional().describe('Ouvrir en brouillon'),
           note: z.string().optional().describe('Note de suivi (« attend la CI », « à relire par X »…)'),
+          path: z.string().optional().describe("Sous-dossier du dossier de travail contenant un autre dépôt git (clone d'un autre dépôt GitHub) ; absent : le dossier de travail lui-même"),
         },
-        async ({ task_id, title, body, base, draft, note }) =>
+        async ({ task_id, title, body, base, draft, note, path }) =>
           run(async () => {
             const t = await own(task_id);
             if (t.projectId !== project.id) throw new Error('pr_open ouvre une PR du projet de cette session seulement');
             const s = await sessionContext();
             if (!s.worksessionId) throw new Error("Cette session travaille dans le dossier principal : ouvre une PR depuis une work session (branche dédiée)");
-            const pr = await trackedPullRequestService.open({ projectId: project.id, worksessionId: s.worksessionId }, s.ownerId, { title, body, base, draft }, { taskId: task_id, note }, prActor);
-            return `Pull request ouverte et suivie :\n${describePullRequest(pr)}`;
+            const pr = await trackedPullRequestService.open({ projectId: project.id, worksessionId: s.worksessionId }, s.ownerId, { title, body, base, draft, path }, { taskId: task_id, note }, prActor);
+            return `Pull request ouverte et suivie :\n${describePullRequest(pr, projectRepo)}`;
           }),
       ),
       tool(
         'pr_register',
-        "Déclare une pull request déjà ouverte (par curl, gh, ou quelqu'un d'autre) pour la suivre au niveau de la tâche. Ses détails sont lus sur GitHub ; donne le titre et la branche si GitHub n'est pas joignable.",
+        "Déclare une pull request déjà ouverte (par curl, gh, ou quelqu'un d'autre), dans le dépôt du projet ou dans n'importe quel autre dépôt GitHub (URL), pour la suivre au niveau de la tâche. Ses détails sont lus sur GitHub ; donne le titre et la branche si GitHub n'est pas joignable.",
         {
           task_id: z.string().optional().describe("Tâche à relier ; absent : la tâche traitée sur la branche de la PR, s'il y en a une"),
-          url: z.string().optional().describe('URL de la PR (https://github.com/<owner>/<repo>/pull/<n>)'),
-          number: z.number().int().min(1).optional().describe("Numéro de la PR, si l'URL n'est pas donnée"),
+          url: z.string().optional().describe('URL de la PR (https://github.com/<owner>/<repo>/pull/<n>), dans le dépôt du projet ou dans un autre'),
+          number: z.number().int().min(1).optional().describe("Numéro de la PR dans le dépôt du projet, si l'URL n'est pas donnée"),
           title: z.string().optional().describe("Titre, utilisé seulement si GitHub ne répond pas"),
           head_branch: z.string().optional().describe("Branche de la PR, utilisée seulement si GitHub ne répond pas"),
           note: z.string().optional().describe('Note de suivi'),
@@ -235,14 +238,14 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             if (task_id) await own(task_id);
             const s = await sessionContext();
             const pr = await trackedPullRequestService.register(project.id, { url, number }, { taskId: task_id, note, userId: s.ownerId, fallback: { title, headBranch: head_branch } }, prActor);
-            return `Pull request suivie :\n${describePullRequest(pr)}`;
+            return `Pull request suivie :\n${describePullRequest(pr, projectRepo)}`;
           }),
       ),
       tool(
         'pr_update',
-        "Met à jour une pull request suivie : statut (open, merged, closed = annulée), note, déploiement (deployed true quand elle est en production, avec deploy_note), tâche reliée.",
+        "Met à jour une pull request suivie : statut (open, merged, closed = annulée), note, déploiement (deployed true quand elle est en production, avec deploy_note), tâche reliée. Une PR en préparation (pas encore ouverte) n'accepte que la note et la tâche : ouvre-la avec pr_open.",
         {
-          id: z.string().describe("Identifiant de la PR suivie (donné par pr_list ou get), ou son numéro GitHub (« 42 », « #42 »)"),
+          id: z.string().describe("Identifiant de la PR suivie (donné par pr_list ou get), son numéro GitHub dans le dépôt du projet (« 42 », « #42 ») ou son URL"),
           status: prStatusSchema.optional(),
           note: z.string().optional().describe('Remplace la note ; chaîne vide pour la retirer'),
           deployed: z.boolean().optional().describe('true : mise en production (PR fusionnée seulement) ; false : annule'),
@@ -254,7 +257,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             const current = await trackedPullRequestService.resolve(project.id, id);
             if (task_id) await own(task_id);
             const pr = await trackedPullRequestService.update(current.id, { status: status as TrackedPullRequestStatus | undefined, note, deployed, deployNote: deploy_note, taskId: task_id }, prActor);
-            return `Pull request mise à jour :\n${describePullRequest(pr)}`;
+            return `Pull request mise à jour :\n${describePullRequest(pr, projectRepo)}`;
           }),
       ),
     ],

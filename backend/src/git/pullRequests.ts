@@ -3,6 +3,8 @@ import { resolveRoot, type WorkspaceRef } from '../files/service.js';
 import { removeWorksessionKeepingSessions } from '../projects/cleanup.js';
 import { projectService } from '../projects/service.js';
 import { git, gitAuthFor, workspacePath } from '../projects/workspace.js';
+import path from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { sessionService } from '../sessions/service.js';
 import { githubOwnerOf, githubService } from '../settings/github.js';
 import { taskRepository } from '../tasks/repository.js';
@@ -40,6 +42,8 @@ export interface PullRequestReview {
 
 export interface PullRequest {
   projectId: string;
+  /** Dépôt GitHub « owner/name » de la PR (celui du projet, ou un autre). */
+  repo: string;
   number: number;
   title: string;
   body: string;
@@ -100,6 +104,23 @@ export interface MergeResult {
   warnings: string[];
 }
 
+/** « owner/name » d'un dépôt. */
+export const repoFullName = (repo: GithubRepoRef): string => `${repo.owner}/${repo.name}`;
+
+/** Dépôt depuis un « owner/name » (ou une URL GitHub) ; null si la forme n'est pas reconnue. */
+export function parseRepoFullName(text: string | null | undefined): GithubRepoRef | null {
+  if (!text) return null;
+  const t = text.trim();
+  const m = t.match(/^([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+?)(?:\.git)?$/);
+  return m ? { owner: m[1], name: m[2] } : parseGithubRepo(t);
+}
+
+/** Dépôt GitHub du remote `origin` d'un dossier git ; null sans remote ou hors GitHub. */
+export async function remoteRepoOf(cwd: string): Promise<GithubRepoRef | null> {
+  const url = await git(['remote', 'get-url', 'origin'], cwd).catch(() => '');
+  return parseGithubRepo(url);
+}
+
 /** owner/nom d'un dépôt GitHub depuis son URL (https, ssh, alias ssh `github-xxx`). */
 export function parseGithubRepo(url: string | null | undefined): GithubRepoRef | null {
   if (!url) return null;
@@ -127,10 +148,10 @@ export function buildDraftText(branch: string, commits: { subject: string }[], t
 
 // --- Appels GitHub -----------------------------------------------------------
 
-/** Jeton GitHub de la personne qui agit, pour le dépôt du projet (compte qui le sert, sinon compte par défaut). */
-async function requireToken(projectId: string, userId: string | null | undefined): Promise<string> {
-  const project = await projectService.get(projectId);
-  const token = await githubService.token(userId, githubOwnerOf(project.gitUrl));
+/** Jeton GitHub de la personne qui agit, pour un dépôt (compte qui le sert, sinon compte par défaut) ; par défaut celui du projet. */
+async function requireToken(projectId: string, userId: string | null | undefined, repo?: GithubRepoRef | null): Promise<string> {
+  const owner = repo ? repo.owner : githubOwnerOf((await projectService.get(projectId)).gitUrl);
+  const token = await githubService.token(userId, owner);
   if (!token) throw new AppError('GitHub non connecté : connectez un compte dans Paramètres → GitHub', 'GITHUB_NOT_CONNECTED');
   return token;
 }
@@ -258,10 +279,11 @@ function checkState(c: { __typename: string; status?: string; conclusion?: strin
   return 'FAILURE';
 }
 
-function toPullRequest(projectId: string, p: GqlPullRequest): PullRequest {
+function toPullRequest(projectId: string, repo: GithubRepoRef, p: GqlPullRequest): PullRequest {
   const rollup = p.commits.nodes[0]?.commit.statusCheckRollup ?? null;
   return {
     projectId,
+    repo: repoFullName(repo),
     number: p.number,
     title: p.title,
     body: p.body,
@@ -338,14 +360,19 @@ async function currentBranch(cwd: string): Promise<string> {
 export const pullRequestService = {
   isGithubProject: async (projectId: string) => Boolean(parseGithubRepo((await projectService.get(projectId)).gitUrl)),
 
-  /** PR du dépôt du projet, les plus récemment mises à jour d'abord. */
-  /** `userId` : personne qui consulte, dont le compte GitHub interroge le dépôt. */
-  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50): Promise<PullRequest[]> {
-    const project = await projectService.get(projectId);
-    // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
-    if (!project.gitUrl) return [];
-    const repo = repoOf(project);
-    const token = await requireToken(projectId, userId);
+  /**
+   * PR d'un dépôt (celui du projet, ou `repo`), les plus récemment mises à jour d'abord. `userId` : personne qui
+   * consulte, dont le compte GitHub interroge le dépôt.
+   */
+  async list(projectId: string, userId: string | null | undefined, filter: PullRequestFilter = 'OPEN', limit = 50, repoRef?: GithubRepoRef | null): Promise<PullRequest[]> {
+    let repo = repoRef ?? null;
+    if (!repo) {
+      const project = await projectService.get(projectId);
+      // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
+      if (!project.gitUrl) return [];
+      repo = repoOf(project);
+    }
+    const token = await requireToken(projectId, userId, repoRef);
     const states = filter === 'ALL' ? ['OPEN', 'CLOSED', 'MERGED'] : [filter];
     const first = Math.min(Math.max(limit, 1), 100);
     const nodes = await cached(repoKey(repo, `list:${states.join(',')}:${first}:${userId ?? ''}`), async () => {
@@ -360,19 +387,21 @@ export const pullRequestService = {
       );
       return data.repository.pullRequests.nodes;
     });
-    return nodes.map((p) => toPullRequest(projectId, p));
+    const r = repo;
+    return nodes.map((p) => toPullRequest(projectId, r, p));
   },
 
-  async get(projectId: string, userId: string | null | undefined, number: number): Promise<PullRequest> {
-    const repo = await projectRepo(projectId);
-    const token = await requireToken(projectId, userId);
+  /** Une PR du dépôt du projet, ou de `repo` (un autre dépôt GitHub, lu avec le compte de la personne qui le sert). */
+  async get(projectId: string, userId: string | null | undefined, number: number, repoRef?: GithubRepoRef | null): Promise<PullRequest> {
+    const repo = repoRef ?? (await projectRepo(projectId));
+    const token = await requireToken(projectId, userId, repoRef);
     const data = await graphql<{ repository: { pullRequest: GqlPullRequest | null } }>(
       token,
       `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PR_FIELDS} } } }`,
       { owner: repo.owner, name: repo.name, number },
     );
-    if (!data.repository.pullRequest) throw new AppError(`Pull request #${number} introuvable`);
-    return toPullRequest(projectId, data.repository.pullRequest);
+    if (!data.repository.pullRequest) throw new AppError(`Pull request #${number} introuvable dans ${repoFullName(repo)}`);
+    return toPullRequest(projectId, repo, data.repository.pullRequest);
   },
 
   /**
@@ -414,18 +443,42 @@ export const pullRequestService = {
     return { branch, base, title, body, commits, needsPush: !upstream, existing };
   },
 
-  /** Pousse la branche courante du workspace puis ouvre la PR. */
-  async create(ref: WorkspaceRef, userId: string | null | undefined, input: { title: string; body?: string | null; base?: string | null; draft?: boolean | null }): Promise<PullRequest> {
-    const repo = await projectRepo(ref.projectId);
+  /**
+   * Pousse la branche courante du workspace puis ouvre la PR. Avec `path` (sous-dossier du dossier de travail
+   * contenant un autre clone), la PR est ouverte sur le dépôt GitHub du remote `origin` de ce clone, avec le compte
+   * de la personne qui sert ce dépôt.
+   */
+  async create(ref: WorkspaceRef, userId: string | null | undefined, input: { title: string; body?: string | null; base?: string | null; draft?: boolean | null; path?: string | null }): Promise<PullRequest> {
     const project = await projectService.get(ref.projectId);
-    const token = await requireToken(ref.projectId, userId);
     const title = input.title.trim();
     if (!title) throw new AppError('Le titre de la pull request est vide');
-    const cwd = await resolveRoot(ref);
+    const root = await resolveRoot(ref);
+    const sub = input.path?.trim().replace(/^\/+|\/+$/g, '') ?? '';
+    let cwd = root;
+    let repo: GithubRepoRef;
+    if (sub && sub !== '.') {
+      cwd = await realpath(path.join(root, sub)).catch(() => {
+        throw new AppError(`Dossier introuvable : ${sub}`);
+      });
+      if (cwd !== root && !cwd.startsWith(root + path.sep)) throw new AppError('Le dossier doit être dans le dossier de travail');
+      const remote = await remoteRepoOf(cwd);
+      if (!remote) throw new AppError(`Le dossier ${sub} n'a pas de remote origin sur GitHub`);
+      repo = remote;
+    } else {
+      repo = (await remoteRepoOf(cwd)) ?? repoOf(project);
+    }
+    const projectRepoRef = parseGithubRepo(project.gitUrl);
+    const sameAsProject = Boolean(projectRepoRef && repoFullName(projectRepoRef).toLowerCase() === repoFullName(repo).toLowerCase());
+    const token = await requireToken(ref.projectId, userId, sameAsProject ? null : repo);
     const branch = await currentBranch(cwd);
-    const base = validateBranchName(input.base?.trim() || project.gitBranch || (await defaultBranch(repo, token)));
+    const base = validateBranchName(input.base?.trim() || (sameAsProject ? project.gitBranch : null) || (await defaultBranch(repo, token)));
     if (branch === base) throw new AppError('La branche et la base sont identiques');
-    await gitService.push(ref, userId);
+    if (cwd === root) await gitService.push(ref, userId);
+    else {
+      const auth = await githubService.gitConfigArgs(userId, `https://github.com/${repoFullName(repo)}.git`);
+      const hasUpstream = await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd).then(() => true, () => false);
+      await (hasUpstream ? git(['push'], cwd, auth) : git(['push', '-u', 'origin', branch], cwd, auth));
+    }
     let created: { number: number };
     try {
       created = await rest<{ number: number }>(token, 'POST', `/repos/${repo.owner}/${repo.name}/pulls`, { title, head: branch, base, body: input.body ?? '', draft: Boolean(input.draft) });
@@ -435,7 +488,7 @@ export const pullRequestService = {
       throw err;
     }
     invalidate(repo);
-    return this.get(ref.projectId, userId, created.number);
+    return this.get(ref.projectId, userId, created.number, sameAsProject ? null : repo);
   },
 
   /**
@@ -443,10 +496,10 @@ export const pullRequestService = {
    * la branche de la PR (sessions encore ouvertes arrêtées si `stopSessions`), tâches liées terminées.
    * Le checkout principal est ensuite mis à jour (fetch, et pull si sa branche est la base).
    */
-  async merge(projectId: string, userId: string | null | undefined, number: number, method: MergeMethod = 'MERGE', cleanup: MergeCleanup = {}): Promise<MergeResult> {
-    const repo = await projectRepo(projectId);
-    const token = await requireToken(projectId, userId);
-    const pr = await this.get(projectId, userId, number);
+  async merge(projectId: string, userId: string | null | undefined, number: number, method: MergeMethod = 'MERGE', cleanup: MergeCleanup = {}, repoRef?: GithubRepoRef | null): Promise<MergeResult> {
+    const repo = repoRef ?? (await projectRepo(projectId));
+    const token = await requireToken(projectId, userId, repoRef);
+    const pr = await this.get(projectId, userId, number, repoRef);
     if (pr.state !== 'OPEN') throw new AppError(`La pull request #${number} n'est pas ouverte`);
     if (pr.isDraft) throw new AppError('Pull request en brouillon : marquez-la prête pour la revue sur GitHub avant de la fusionner');
     let sha: string | null = null;
@@ -464,9 +517,6 @@ export const pullRequestService = {
     const deletedWorksessionIds: string[] = [];
     const completedTaskIds: string[] = [];
     const branch = pr.headRefName;
-    const project = await projectService.get(projectId);
-    const main = workspacePath(project);
-    const auth = await gitAuthFor(project, userId);
 
     if (cleanup.deleteRemoteBranch && !pr.isCrossRepository) {
       try {
@@ -476,6 +526,15 @@ export const pullRequestService = {
         if (!(err instanceof RestError && err.status === 422)) warnings.push(`Branche distante ${branch} conservée : ${(err as Error).message}`);
       }
     }
+
+    // PR d'un autre dépôt que celui du projet : ni dossier de travail, ni tâche, ni checkout principal à mettre à jour.
+    if (repoRef) {
+      const merged = await this.get(projectId, userId, number, repoRef).catch(() => ({ ...pr, state: 'MERGED' as const, mergedAt: new Date() }));
+      return { pullRequest: merged, sha, deletedWorksessionIds, completedTaskIds, warnings };
+    }
+    const project = await projectService.get(projectId);
+    const main = workspacePath(project);
+    const auth = await gitAuthFor(project, userId);
 
     if (cleanup.deleteWorksession && !pr.isCrossRepository) {
       const worksessions = (await worksessionRepository.listByProject(projectId)).filter((w) => w.branch === branch);

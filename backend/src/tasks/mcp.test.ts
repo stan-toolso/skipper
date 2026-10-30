@@ -30,6 +30,7 @@ const pr = (over: Partial<TrackedPullRequest> = {}): TrackedPullRequest => ({
   id: 'pr1',
   projectId: 'p',
   taskId: 't1',
+  repo: 'acme/app',
   number: 42,
   url: 'https://github.com/acme/app/pull/42',
   title: 'Ma PR',
@@ -37,6 +38,9 @@ const pr = (over: Partial<TrackedPullRequest> = {}): TrackedPullRequest => ({
   baseBranch: 'main',
   status: 'open',
   isDraft: false,
+  worksessionId: null,
+  localCommits: null,
+  localChanges: null,
   checksState: 'SUCCESS',
   reviewDecision: null,
   mergeable: 'MERGEABLE',
@@ -82,10 +86,11 @@ beforeEach(() => {
     attachments: async () => [],
   });
   Object.assign(m.prs, {
+    projectRepo: () => 'acme/app',
     forTask: async () => [pr()],
     list: async (f: unknown) => {
       record('list')(f);
-      return [pr(), pr({ id: 'pr2', number: 43, status: 'merged', mergedAt: new Date(), taskId: null })];
+      return [pr(), pr({ id: 'pr2', number: 43, status: 'merged', mergedAt: new Date(), taskId: null }), pr({ id: 'pr3', repo: 'autre/depot', number: 5, url: 'https://github.com/autre/depot/pull/5' }), pr({ id: 'pr4', status: 'pending', number: null, url: '', headBranch: 'feat/wip', localCommits: 2, localChanges: 1 })];
     },
     register: async (...args: unknown[]) => {
       record('register')(...args);
@@ -129,6 +134,8 @@ describe('serveur MCP tasks', () => {
     const text = textOf(await client.callTool({ name: 'pr_list', arguments: { task_id: 't1', stage: ['to_merge', 'to_deploy'] } }));
     expect(text).toContain('PR #42');
     expect(text).toContain('PR #43');
+    expect(text).toContain('PR autre/depot#5'); // dépôt nommé seulement quand ce n'est pas celui du projet
+    expect(text).toContain('branche feat/wip « Ma PR » · en préparation (2 commits, 1 fichier non commité)');
     expect(m.calls[0]).toEqual(['list', [{ projectId: 'p', taskId: 't1', stage: ['to_merge', 'to_deploy'], limit: 200 }]]);
     const res = await client.callTool({ name: 'pr_list', arguments: { task_id: 'autre' } });
     expect(res.isError).toBe(true);
@@ -159,9 +166,9 @@ describe('serveur MCP tasks', () => {
 
   it('pr_open ouvre la PR depuis la work session de la session, et refuse depuis le dossier principal', async () => {
     const client = await connect();
-    const text = textOf(await client.callTool({ name: 'pr_open', arguments: { task_id: 't1', title: 'Ouverte', body: 'Détail', draft: false } }));
+    const text = textOf(await client.callTool({ name: 'pr_open', arguments: { task_id: 't1', title: 'Ouverte', body: 'Détail', draft: false, path: 'vendor/lib' } }));
     expect(text).toContain('PR #44 « Ouverte »');
-    expect(m.calls[0]).toEqual(['open', [{ projectId: 'p', worksessionId: 'w1' }, 'u1', { title: 'Ouverte', body: 'Détail', base: undefined, draft: false }, { taskId: 't1', note: undefined }, { type: 'agent', sessionId: 's1' }]]);
+    expect(m.calls[0]).toEqual(['open', [{ projectId: 'p', worksessionId: 'w1' }, 'u1', { title: 'Ouverte', body: 'Détail', base: undefined, draft: false, path: 'vendor/lib' }, { taskId: 't1', note: undefined }, { type: 'agent', sessionId: 's1' }]]);
     m.session.worksessionId = null;
     const res = await client.callTool({ name: 'pr_open', arguments: { task_id: 't1', title: 'x' } });
     expect(res.isError).toBe(true);
