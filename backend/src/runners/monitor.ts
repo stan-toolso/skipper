@@ -147,7 +147,9 @@ export const containerMonitor = {
     if (containerKilled) return `Le conteneur du projet a dépassé sa limite mémoire et a été arrêté par le noyau. ${advice}`;
     if (recent && killed) return `Le conteneur du projet a dépassé sa limite mémoire : le noyau a tué le processus de l'agent${usage}. ${advice}`;
     if (recent) return `Le conteneur du projet a dépassé sa limite mémoire peu avant la fin de la session : un processus a été tué par le noyau${usage}, probablement celui de l'agent ou d'une commande qu'il exécutait. ${advice}`;
-    if (killed) return `Le processus de l'agent a été tué (SIGKILL, code 137), probablement faute de mémoire dans le conteneur${usage}. ${advice}`;
+    // Aucune trace de manque de mémoire : le conteneur a pu être arrêté ou supprimé en dehors de Skipper (docker stop / rm), ou
+    // le compteur du cgroup n'a pas vu le processus. On ne conclut pas au manque de mémoire, on le laisse comme hypothèse.
+    if (killed) return `Le processus de l'agent a été tué (SIGKILL, code 137) sans manque de mémoire constaté dans le conteneur${usage} : conteneur arrêté ou recréé en dehors de Skipper, ou mémoire manquante malgré tout. ${advice}`;
     return null;
   },
 

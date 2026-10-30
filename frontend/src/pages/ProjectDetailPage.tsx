@@ -238,7 +238,7 @@ function RunnerCard({ project }: { project: Project }) {
             </Button>
           )}
           {s.ready && (
-            <Button size="sm" variant="outline-warning" disabled={busy} onClick={() => stop({ variables: { id: project.id } })}>
+            <Button size="sm" variant="outline-warning" disabled={busy} title="Les sessions en cours sont interrompues (bouton « Reprendre » sur leur page) et les terminaux fermés" onClick={() => stop({ variables: { id: project.id } })}>
               {stopping ? 'Arrêt…' : 'Arrêter'}
             </Button>
           )}
@@ -247,12 +247,12 @@ function RunnerCard({ project }: { project: Project }) {
               size="sm"
               variant={s.outdated ? 'warning' : 'outline-secondary'}
               disabled={busy}
-              title="Supprime le conteneur pour le recréer avec l'image et les limites actuelles ; les fichiers du projet sont conservés"
+              title="Supprime le conteneur et le recrée avec l'image et les limites actuelles ; les sessions en cours sont interrompues puis reprises, les fichiers du projet sont conservés"
               onClick={async () => {
-                if (await confirm({ title: 'Recréer le conteneur', message: 'Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues. Les fichiers sont conservés.', confirmLabel: 'Recréer', danger: true })) reset({ variables: { id: project.id } });
+                if (await confirm({ title: 'Recréer le conteneur', message: 'Recréer le conteneur ? Les sessions en cours dans ce projet seront interrompues le temps de la recréation, puis reprises automatiquement. Les terminaux ouverts seront fermés. Les fichiers sont conservés.', confirmLabel: 'Recréer', danger: true })) reset({ variables: { id: project.id } });
               }}
             >
-              {resetting ? 'Suppression…' : 'Recréer'}
+              {resetting ? 'Recréation…' : 'Recréer'}
             </Button>
           )}
         </div>

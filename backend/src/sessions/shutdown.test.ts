@@ -12,7 +12,7 @@ const store = vi.hoisted(() => ({
 const repo = vi.hoisted(() => ({
   list: vi.fn(async () => []),
   create: vi.fn(async (input: Record<string, unknown>) => {
-    const s = { id: `s${++store.seq}`, projectId: 'p', worksessionId: null, parentSessionId: null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null };
+    const s = { id: `s${++store.seq}`, projectId: (input.projectId as string) ?? 'p', worksessionId: null, parentSessionId: null, name: input.name, provider: input.provider, status: 'pending', activity: null, prompt: input.prompt, promptAttachments: [], config: {}, externalId: null, exitCode: null, error: null };
     store.sessions.set(s.id, s);
     return { ...s };
   }),
@@ -47,7 +47,7 @@ vi.mock('./repository.js', () => ({ sessionRepository: repo }));
 vi.mock('../requests/service.js', () => ({ requestService: requests }));
 vi.mock('../notifications/service.js', () => ({ notificationService: notifications }));
 vi.mock('../settings/repository.js', () => ({ settingsRepository: settingsRepo }));
-vi.mock('../projects/service.js', () => ({ projectService: { get: async () => ({ id: 'p', name: 'Projet' }) } }));
+vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, name: 'Projet' }) } }));
 vi.mock('../worksessions/service.js', () => ({ worksessionService: { resolveCwd: async () => '/tmp', assertUsable: async () => ({}) } }));
 vi.mock('../pubsub.js', () => ({ pubSub: { publish: vi.fn() } }));
 vi.mock('./providers/registry.js', () => ({ getProvider: () => providers.current }));
@@ -209,5 +209,80 @@ describe('reprise manuelle (bouton « Reprendre »)', () => {
     expect(starts).not.toContain('consigne initiale');
     expect(eventsOf('b').some((e) => e.type === 'system' && e.payload.reason === 'manual_resume')).toBe(true);
     await expect(sessionService.resume('c')).rejects.toThrow(/interrompue/);
+  });
+});
+
+describe("recréation de l'environnement d'exécution (conteneur)", () => {
+  it('interrompt les sessions du projet sans erreur, puis les reprend toutes avec la bonne explication', async () => {
+    const { sessionService } = await load();
+    const fake = fakeProvider();
+    const starts: (string | null)[] = [];
+    providers.current = {
+      ...fake.provider,
+      start: async (ctx) => {
+        starts.push(ctx.initialMessage);
+        return fake.provider.start(ctx);
+      },
+    };
+    const busy = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'busy', provider: 'fake', prompt: 'x' });
+    const idle = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'idle', provider: 'fake', prompt: 'x' });
+    await repo.update(idle.id, { activity: 'idle' });
+    // Une session d'un autre projet n'est pas concernée.
+    const other = await sessionService.create({ projectId: 'q', worksessionId: 'w2', name: 'other', provider: 'fake', prompt: 'x' });
+    starts.length = 0;
+
+    const interrupted = await sessionService.interruptForRunner('p', 'runner_reset');
+    expect(interrupted.map((s) => s.id).sort()).toEqual([busy.id, idle.id].sort());
+    for (const id of [busy.id, idle.id]) {
+      expect(session(id)).toMatchObject({ status: 'interrupted', exitCode: null, error: null });
+      const notices = eventsOf(id).filter((e) => e.type === 'system' && e.payload.reason === 'runner_reset');
+      expect(notices).toHaveLength(1);
+      expect(String(notices[0].payload.message)).toMatch(/recréation de l'environnement d'exécution/);
+      expect(requests.cancelAllForSession).toHaveBeenCalledWith(id, 'expired');
+    }
+    expect(String(eventsOf(busy.id).find((e) => e.payload.reason === 'runner_reset')!.payload.message)).toMatch(/pendant que l'agent travaillait/);
+    expect(session(other.id).status).toBe('running');
+    expect(notifications.notify).not.toHaveBeenCalled();
+    expect(sessionService.runningCountByProject('p')).toBe(0);
+
+    // Conteneur recréé : toutes les sessions reprennent, chacune avec l'instruction qui correspond à son activité.
+    const resumed = await sessionService.resumeAfterRunner(interrupted);
+    expect(resumed.sort()).toEqual([busy.id, idle.id].sort());
+    expect(session(busy.id).status).toBe('running');
+    expect(session(idle.id).status).toBe('running');
+    expect(starts).toHaveLength(2);
+    expect(starts[0]).toMatch(/environnement d'exécution .* a été recréé pendant ton tour/);
+    expect(starts[0]).toMatch(/demandes .* annulées/);
+    expect(starts[1]).toMatch(/a été recréé pendant que tu attendais une instruction/);
+    expect(eventsOf(busy.id).some((e) => e.type === 'system' && e.payload.reason === 'auto_resume')).toBe(true);
+  });
+
+  it("une reprise manuelle après un arrêt du conteneur explique l'arrêt, pas un redémarrage du serveur", async () => {
+    const { sessionService } = await load();
+    const fake = fakeProvider();
+    const starts: (string | null)[] = [];
+    providers.current = {
+      ...fake.provider,
+      start: async (ctx) => {
+        starts.push(ctx.initialMessage);
+        return fake.provider.start(ctx);
+      },
+    };
+    const s = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    await sessionService.interruptForRunner('p', 'runner_stop');
+    expect(session(s.id).status).toBe('interrupted');
+    expect(String(eventsOf(s.id).find((e) => e.payload.reason === 'runner_stop')!.payload.message)).toMatch(/arrêt de l'environnement d'exécution/);
+    await sessionService.resume(s.id);
+    expect(starts.at(-1)).toMatch(/a été arrêté puis relancé pendant ton tour/);
+  });
+
+  it("ne reprend pas une session qui n'est plus interrompue entre-temps", async () => {
+    const { sessionService } = await load();
+    providers.current = fakeProvider().provider;
+    const s = await sessionService.create({ projectId: 'p', worksessionId: 'w1', name: 'a', provider: 'fake', prompt: 'x' });
+    const interrupted = await sessionService.interruptForRunner('p', 'runner_reset');
+    await repo.update(s.id, { status: 'stopped' });
+    expect(await sessionService.resumeAfterRunner(interrupted)).toEqual([]);
+    expect(session(s.id).status).toBe('stopped');
   });
 });

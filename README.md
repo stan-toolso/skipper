@@ -523,7 +523,15 @@ conteneur de l'agent.
   alors un badge « à recréer » avec les raisons. Un conteneur obsolète est **recréé de lui-même** : au
   démarrage du backend (rien n'y tourne encore), puis par `ensureReady` dès que le projet est inactif
   (aucune session dont le processus tourne, aucun terminal ouvert) ; sinon il reste signalé jusqu'au
-  clic « Recréer ». La carte compte aussi les processus zombies du conteneur (`docker top`), à titre de
+  clic « Recréer ». **Recréer** et **Arrêter** (`runners/lifecycle.ts`) interrompent d'abord proprement
+  les sessions du projet qui tournent (statut `interrupted`, sans erreur, événement `system` de raison
+  `runner_reset` ou `runner_stop`, demandes expirées) : leur processus meurt avec le conteneur et cette mort
+  ne doit pas passer pour un manque de mémoire (code 137). Après « Recréer », le nouveau conteneur est
+  démarré aussitôt et **toutes** les sessions interrompues sont reprises (celle qui travaillait reprend
+  son tour, celle qui attendait retrouve sa conversation ouverte), avec une instruction qui explique la
+  recréation ; une reprise impossible laisse la session interrompue, avec l'explication dans son
+  transcript. Après « Arrêter », elles restent interrompues (bouton « Reprendre »). Les terminaux
+  ouverts sont fermés. La carte compte aussi les processus zombies du conteneur (`docker top`), à titre de
   diagnostic : un conteneur recréé avec `--init` n'en a pas.
 
 - **Mémoire et CPU des conteneurs** (`runners/stats.ts`, `runners/monitor.ts`) : `Project.containerStats`
@@ -582,8 +590,11 @@ flux sont fermés, et aucune notification n'est émise. L'arrêt est borné à 1
 processus au bout de 1,6 s par défaut). Au démarrage suivant, ce qui est encore `running` en base
 (arrêt brutal) passe de même à `interrupted`, les demandes en attente à `expired` et les terminaux à
 `closed`. Une session interrompue reprend sa conversation au prochain message, ou avec le bouton
-**Reprendre** de sa page (`resumeSession`) : l'agent reprend son tour avec une instruction qui explique
-la coupure s'il travaillait, sinon la conversation est rouverte et il attend la suite. Le provider distingue
+**Reprendre** de sa page (barre d'état et en-tête déplié ; aussi sur l'accueil) (`resumeSession`) :
+l'agent reprend son tour avec une instruction qui explique la coupure s'il travaillait, sinon la
+conversation est rouverte et il attend la suite. L'instruction nomme la cause (redémarrage du serveur,
+ou environnement d'exécution du projet recréé ou arrêté), mémorisée par le serveur pour les sessions
+qu'il a lui-même interrompues ; après un redémarrage, la cause est le redémarrage. Le provider distingue
 un flux fermé par le serveur (`RunResult.closedByServer`) d'un agent qui s'est arrêté au milieu d'un
 tour (erreur).
 

@@ -77,10 +77,12 @@ describe('fin de session en erreur', () => {
     expect(message).toMatch(/dépassé sa limite mémoire : le noyau a tué le processus de l'agent/);
   });
 
-  it('signale un code 137 sans trace de manque de mémoire comme probable', async () => {
+  it('signale un code 137 sans trace de manque de mémoire sans conclure au manque de mémoire', async () => {
     containerMonitor.recordSample('p1', sample(60, 2));
     stats.mockResolvedValue(sample(60, 2));
-    expect(await containerMonitor.explainFailure(project, { exitCode: 137 })).toMatch(/probablement faute de mémoire/);
+    const message = await containerMonitor.explainFailure(project, { exitCode: 137 });
+    expect(message).toMatch(/sans manque de mémoire constaté/);
+    expect(message).toMatch(/arrêté ou recréé en dehors de Skipper/);
   });
 
   it('détecte un conteneur arrêté par le noyau (State.OOMKilled)', async () => {
