@@ -64,6 +64,6 @@ for i in $(seq 1 30); do
   sleep 1
   [ "$i" = 30 ] && { echo "le backend ne répond pas : sudo journalctl -u skipper -n 50" >&2; exit 1; }
 done
-sudo systemctl status skipper --no-pager | head -5
+systemctl status skipper --no-pager | head -5
 echo
 echo "Skipper installé. Le premier compte administrateur est créé par la migration 011 (stan@toolso.io) ; pour une migration de données, lancer migrate-from-ec2.sh."

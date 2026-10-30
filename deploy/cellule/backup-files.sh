@@ -5,7 +5,10 @@
 #   sudo ./backup-files.sh            (une sauvegarde maintenant, avec la configuration de /etc/skipper/restic.env)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "à lancer en root (sudo)" >&2; exit 2; }
-INSTALL=0; S3_BUCKET=""; S3_KEY=""; S3_SECRET=""; S3_REGION="fr-par"
+# Paramètres S3 : arguments, sinon /etc/skipper/s3.env (S3_BUCKET, S3_KEY, S3_SECRET, S3_REGION), déposé par l'administrateur.
+INSTALL=0; S3_REGION="fr-par"
+[ -r /etc/skipper/s3.env ] && . /etc/skipper/s3.env
+S3_BUCKET="${S3_BUCKET:-}"; S3_KEY="${S3_KEY:-}"; S3_SECRET="${S3_SECRET:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --install) INSTALL=1; shift ;;
