@@ -6,8 +6,8 @@ import { trackedPullRequestService } from '../pullRequests/service.js';
 import { describePullRequest, PR_STAGES, TRACKED_PR_STATUSES, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { sessionService } from '../sessions/service.js';
 import { describeAttachments, imageBlocks, type McpContent } from './attachments.js';
-import { describeComment, formatPerson, statusTagText, taskService } from './service.js';
-import { TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskActor, type TaskAttachment, type TaskComment } from './types.js';
+import { describeThread, formatPerson, statusTagText, summarizeReactions, taskService } from './service.js';
+import { TASK_PRIORITIES, TASK_STATUSES, type Task, type TaskActor, type TaskAttachment, type TaskComment, type TaskReaction } from './types.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
@@ -17,13 +17,13 @@ const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }],
  * n'y est pas : il pousse la branche et ouvre une pull request sur GitHub avec le compte de la personne, donc
  * passe par la demande d'autorisation.
  */
-export const TASKS_FREE_TOOLS = ['list', 'get', 'create', 'update', 'claim', 'comment', 'pr_list', 'pr_register', 'pr_update'].map((t) => `mcp__tasks__${t}`);
+export const TASKS_FREE_TOOLS = ['list', 'get', 'create', 'update', 'claim', 'comment', 'react', 'people', 'pr_list', 'pr_register', 'pr_update'].map((t) => `mcp__tasks__${t}`);
 
 const line = (t: Task, sessionId: string) =>
   `- ${t.id} · [${t.status}${statusTagText(t)}] [${t.priority}] ${t.title}${t.tags.length ? ` · étiquettes ${t.tags.join(', ')}` : ''}${t.sessionId ? (t.sessionId === sessionId ? ' (assignée à cette session)' : ' (prise par une autre session)') : ''}${t.dueDate ? ` · échéance ${t.dueDate}` : ''}${t.assignee ? ` · responsable ${formatPerson(t.assignee)}` : ''}${t.commentCount ? ` · ${t.commentCount} commentaire${t.commentCount > 1 ? 's' : ''}` : ''}`;
 
 
-function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[], pullRequests: TrackedPullRequest[] = []): string {
+function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[], pullRequests: TrackedPullRequest[] = [], reactions: TaskReaction[] = []): string {
   const own = attachments.filter((a) => !a.commentId);
   const parts = [t.description || '(pas de description)'];
   if (own.length) parts.push(...describeAttachments(own, 'tool'));
@@ -32,10 +32,9 @@ function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[],
   if (t.branch) parts.push(`Branche : ${t.branch}`);
   if (pullRequests.length) parts.push('Pull requests suivies (pr_update pour les tenir à jour) :', ...pullRequests.map(describePullRequest));
   if (t.customFields.length) parts.push('Champs personnalisés :', ...t.customFields.map((f) => `- ${f.key} : ${f.value}`));
-  if (comments.length) {
-    parts.push('Commentaires (du plus ancien au plus récent) :');
-    for (const c of comments) parts.push(...describeComment(c, attachments.filter((a) => a.commentId === c.id), 'tool'));
-  }
+  const own_reactions = reactions.filter((r) => !r.commentId);
+  if (own_reactions.length) parts.push(`Réactions sur la tâche : ${summarizeReactions(own_reactions)}`);
+  if (comments.length) parts.push(...describeThread(comments, attachments, reactions, 'tool'));
   return parts.join('\n');
 }
 
@@ -80,7 +79,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
   return createSdkMcpServer({
     name: 'tasks',
     version: '1.0.0',
-    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : draft, to_merge, to_deploy, deployed, cancelled).`,
+    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Le fil d'une tâche est une conversation : comment poste un message (reply_to pour répondre dans le fil d'un message), react pose ou retire un emoji, une mention (« @Nom » ou « @e-mail » d'un membre, « @session:<id> » d'une session d'agent ; people liste qui l'on peut mentionner) prévient la personne ou transmet le message à la session, qui est alors reliée à la tâche. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : draft, to_merge, to_deploy, deployed, cancelled).`,
     tools: [
       tool(
         'list',
@@ -101,12 +100,12 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             return tasks.length ? tasks.map((t) => line(t, sessionId)).join('\n') : 'Aucune tâche.';
           }),
       ),
-      tool("get", "Détail d'une tâche : description, personnes, champs personnalisés, commentaires et fichiers joints (les images sont montrées).", { id: z.string() }, async ({ id }) => {
+      tool("get", "Détail d'une tâche : description, personnes, champs personnalisés, fil de discussion (messages avec leur identifiant, réponses, réactions) et fichiers joints (les images sont montrées).", { id: z.string() }, async ({ id }) => {
         // Les images jointes à la tâche ou à ses commentaires suivent le texte, en blocs image, dans l'ordre où elles sont nommées.
         try {
           const t = await own(id, { write: false });
-          const [comments, attachments, pullRequests] = await Promise.all([taskService.comments(id), taskService.attachments(id), trackedPullRequestService.forTask(id)]);
-          const content: McpContent[] = [{ type: 'text', text: `${line(t, sessionId)}\n\n${detail(t, comments, attachments, pullRequests)}` }, ...(await imageBlocks([...attachments.filter((a) => !a.commentId), ...attachments.filter((a) => a.commentId)]))];
+          const [comments, attachments, pullRequests, reactions] = await Promise.all([taskService.comments(id), taskService.attachments(id), trackedPullRequestService.forTask(id), taskService.reactions(id)]);
+          const content: McpContent[] = [{ type: 'text', text: `${line(t, sessionId)}\n\n${detail(t, comments, attachments, pullRequests, reactions)}` }, ...(await imageBlocks([...attachments.filter((a) => !a.commentId), ...attachments.filter((a) => a.commentId)]))];
           return { content };
         } catch (err) {
           return failure(`Erreur : ${(err as Error).message}`);
@@ -175,12 +174,43 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
           return `Tâche prise en charge : ${line(t, sessionId)}`;
         }),
       ),
-      tool('comment', 'Ajoute un commentaire à une tâche (Markdown accepté) : compte rendu, question, blocage.', { id: z.string(), body: z.string() }, async ({ id, body }) =>
-        run(async () => {
-          await own(id);
-          await taskService.addComment(id, body, actor);
-          return 'Commentaire ajouté.';
-        }),
+      tool(
+        'comment',
+        "Poste un message dans le fil d'une tâche (Markdown accepté) : compte rendu, question, blocage, réponse. Mentionne quelqu'un avec « @Nom » ou « @e-mail » (membre du projet) ou une session avec « @session:<id> » (people liste les deux) : la personne est notifiée, la session reçoit le message.",
+        {
+          id: z.string().describe('Tâche'),
+          body: z.string(),
+          reply_to: z.string().optional().describe("Identifiant du message auquel répondre (donné par get) : la réponse rejoint son fil ; absent : nouveau message de premier niveau"),
+        },
+        async ({ id, body, reply_to }) =>
+          run(async () => {
+            await own(id);
+            const c = await taskService.addComment(id, body, actor, null, { parentId: reply_to });
+            return `Message posté (${c.id})${c.parentId ? ` dans le fil de ${c.parentId}` : ''}${c.mentions.length ? ` ; mentionne ${c.mentions.map((m) => m.label).join(', ')}` : ''}.`;
+          }),
+      ),
+      tool(
+        'react',
+        "Pose un emoji sur un message du fil (comment_id) ou sur la tâche elle-même (sans comment_id) ; le retire si tu l'avais déjà posé. Accusé de lecture, accord (👍), vote, fait (✅)…",
+        { id: z.string().describe('Tâche'), comment_id: z.string().optional().describe('Message visé ; absent : la tâche'), emoji: z.string().describe('Un seul emoji, ex. 👍 ✅ 👀 🎉') },
+        async ({ id, comment_id, emoji }) =>
+          run(async () => {
+            await own(id);
+            const { added, reaction } = await taskService.toggleReaction(id, comment_id ?? null, emoji, actor);
+            return `Réaction ${reaction.emoji} ${added ? 'posée' : 'retirée'}${comment_id ? ` sur le message ${comment_id}` : ' sur la tâche'}.`;
+          }),
+      ),
+      tool(
+        'people',
+        "Qui l'on peut mentionner dans le fil des tâches du projet : membres (nom, e-mail) et sessions d'agent non archivées, avec le texte à écrire pour chacun.",
+        withProjectParam({}, scope),
+        async ({ project: ref }) =>
+          run(async () => {
+            const p = await targetProject(project, scope, ref);
+            const all = await taskService.mentionables(p.id);
+            if (!all.length) return 'Personne à mentionner.';
+            return all.map((m) => `- ${m.text} → ${m.kind === 'user' ? 'membre' : 'session'} ${m.label}${m.detail ? ` (${m.detail})` : ''}${m.kind === 'session' && m.id === sessionId ? ' (cette session)' : ''}`).join('\n');
+          }),
       ),
 
       // ---- Pull requests suivies ----------------------------------------------------------------------------

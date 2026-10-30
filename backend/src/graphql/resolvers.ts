@@ -66,7 +66,7 @@ import { worksessionRepository } from '../worksessions/repository.js';
 import { worksessionLabel, type Worksession } from '../worksessions/types.js';
 import { startTaskSession } from '../tasks/launch.js';
 import { taskService } from '../tasks/service.js';
-import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskStatus, ProjectApiKey } from '../tasks/types.js';
+import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskReaction, TaskStatus, ProjectApiKey } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
 import type { AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionStatus } from '../sessions/types.js';
 import type { OpenItems, User } from '../users/types.js';
@@ -173,6 +173,18 @@ const fromGqlPermission = (p: string): VaultPermission => p.toLowerCase() as Vau
 const fromGqlScope = (sc: string): VaultLinkScope => sc.toLowerCase() as VaultLinkScope;
 const vaultActor = (ctx: Ctx) => ({ userId: requireUser(ctx).id });
 const userOrNull = (id: string | null | undefined) => (id ? userService.get(id).catch(() => null) : null);
+/** Réactions regroupées par emoji (ordre de première apparition), avec les noms et si l'utilisateur connecté en est. */
+function groupReactions(reactions: TaskReaction[], userId: string | undefined): { emoji: string; count: number; actors: string[]; mine: boolean }[] {
+  const groups = new Map<string, { emoji: string; count: number; actors: string[]; mine: boolean }>();
+  for (const r of reactions) {
+    const g = groups.get(r.emoji) ?? { emoji: r.emoji, count: 0, actors: [], mine: false };
+    g.count += 1;
+    g.actors.push(r.actorName);
+    if (userId && r.userId === userId) g.mine = true;
+    groups.set(r.emoji, g);
+  }
+  return [...groups.values()];
+}
 /** Projet renvoyé seulement si l'utilisateur y a accès (sinon null, le nom restant disponible à part). */
 const projectIfAccessible = async (ctx: Ctx, id: string | null | undefined) => (id && (await roleFor(ctx, id)) ? projectService.get(id).catch(() => null) : null);
 const fromGqlRequestStatus = (s?: GqlRequestStatus | null): RequestStatus | undefined =>
@@ -265,7 +277,13 @@ export const resolvers = {
       return ids.map((id) => sessions.find((s) => s.id === id)).filter((s): s is Session => Boolean(s));
     },
     createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
-    comments: (t: Task) => taskService.comments(t.id),
+    // Les réactions de toute la tâche sont lues une fois et accrochées à chaque message (évite une requête par message).
+    comments: async (t: Task) => {
+      const [comments, reactions] = await Promise.all([taskService.comments(t.id), taskService.reactions(t.id)]);
+      return comments.map((c) => ({ ...c, reactionRows: reactions.filter((r) => r.commentId === c.id) }));
+    },
+    reactions: async (t: Task, _: unknown, ctx: Ctx) => groupReactions((await taskService.reactions(t.id)).filter((r) => !r.commentId), ctx.user?.id),
+    mentionables: (t: Task) => taskService.mentionables(t.projectId),
     pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
     pullRequests: (t: Task) => trackedPullRequestService.forTask(t.id),
     worksession: async (t: Task) => (await worksessionRepository.findByTask(t.id))[0] ?? null,
@@ -273,6 +291,7 @@ export const resolvers = {
   },
 
   TaskComment: {
+    reactions: async (c: TaskComment & { reactionRows?: TaskReaction[] }, _: unknown, ctx: Ctx) => groupReactions(c.reactionRows ?? (await taskService.reactions(c.taskId)).filter((r) => r.commentId === c.id), ctx.user?.id),
     attachments: (c: TaskComment) => taskService.attachments(c.taskId, c.id),
     author: (c: TaskComment) => userOrNull(c.authorUserId),
     authorSession: (c: TaskComment) => (c.authorSessionId ? sessionService.get(c.authorSessionId) : null),
@@ -1250,9 +1269,13 @@ export const resolvers = {
       await guardTask(ctx, args.id, 'member');
       return taskService.delete(args.id);
     },
-    addTaskComment: async (_: unknown, args: { taskId: string; body: string; attachments?: AttachmentInput[] | null }, ctx: Ctx) => {
+    addTaskComment: async (_: unknown, args: { taskId: string; body: string; attachments?: AttachmentInput[] | null; parentId?: string | null }, ctx: Ctx) => {
       await guardTask(ctx, args.taskId, 'member');
-      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)), args.attachments ?? null);
+      return taskService.addComment(args.taskId, args.body, actorOf(requireUser(ctx)), args.attachments ?? null, { parentId: args.parentId ?? null });
+    },
+    toggleTaskReaction: async (_: unknown, args: { taskId: string; commentId?: string | null; emoji: string }, ctx: Ctx) => {
+      await guardTask(ctx, args.taskId, 'member');
+      return (await taskService.toggleReaction(args.taskId, args.commentId ?? null, args.emoji, actorOf(requireUser(ctx)))).added;
     },
     updateTaskComment: async (_: unknown, args: { id: string; body: string; attachments?: AttachmentInput[] | null; removeAttachmentIds?: string[] | null }, ctx: Ctx) => {
       const { comment } = await guardComment(ctx, args.id);
