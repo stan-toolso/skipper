@@ -665,6 +665,18 @@ conversation), tâches, pages et éléments du coffre ; **raccourcis** listés p
 modifiable) et **Git** (état, branche comparée à sa base avec diff par fichier, commits, PR).
 Les listes ne se rafraîchissent plus quand l'onglet du navigateur est caché (`usePollingQuery`).
 
+Fluidité (30/10/2026) : le fil d'une session (`lib/sessionEvents.ts`) ne change d'état qu'à l'arrivée d'un
+événement ou d'un brouillon différent, et garde son curseur quand l'onglet du workbench est caché (pas de
+rechargement de l'historique au retour) ; le transcript mémoïse ses nœuds (`useMemo`) et `Markdown` est
+mémoïsé : pendant qu'un agent écrit, seul le bloc « en direct » est re-rendu. Les pages lourdes ou rares
+(éditeurs CodeMirror, terminal xterm, workflows, réglages, coffre…) sont chargées à la demande (`lazy` dans
+`App.tsx`) : le bundle principal passe de 2,4 Mo à 1,1 Mo. Côté backend, les résolveurs de champ appelés une
+fois par objet (propriétaire, work session, projet, tâche, demandes en attente) passent par des chargeurs
+groupés par requête (`graphql/loaders.ts`, `loadersOf(ctx)`) : la sidebar coûte quelques requêtes SQL par
+relevé au lieu de plusieurs centaines ; une opération GraphQL de plus de 500 ms est journalisée en `warn`
+(`operationTimingPlugin`, toutes en `debug`). nginx compresse bundles et réponses GraphQL et sert en HTTP/2
+(voir DEPLOY.md).
+
 **Tableau de bord** (page d'accueil, `frontend/src/pages/DashboardPage.tsx`) : ce qui attend
 l'utilisateur sur l'ensemble de ses projets. Quatre tuiles (demandes en attente, agents au travail
 et en attente d'instructions, tâches ouvertes avec les retards, consommation du mois avec le

@@ -50,6 +50,13 @@ export const userRepository = {
     return rows[0] ? toUser(rows[0]) : null;
   },
 
+  /** Utilisateurs de ces identifiants (chargement groupé par requête GraphQL), sans ordre garanti. */
+  async findByIds(ids: string[]): Promise<User[]> {
+    if (!ids.length) return [];
+    const { rows } = await pool.query<UserRow>('SELECT * FROM users WHERE id = ANY($1::uuid[])', [ids]);
+    return rows.map(toUser);
+  },
+
   async findByEmail(email: string): Promise<User | null> {
     const { rows } = await pool.query<UserRow>('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
     return rows[0] ? toUser(rows[0]) : null;

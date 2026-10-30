@@ -244,6 +244,19 @@ Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no
 (bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
 prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 
+## Compression et HTTP/2
+
+Le `gzip on` global de `/etc/nginx/nginx.conf` (Ubuntu) ne compresse que `text/html` tant que `gzip_types` y
+reste commenté : le bundle (2,4 Mo brut, 0,7 Mo gzippé), le CSS et toutes les réponses GraphQL (JSON, dont les
+pages d'événements d'une session) partaient bruts. Le site nginx (`deploy/nginx-skipper.conf`,
+`deploy/cellule/templates/nginx-site.conf`) porte désormais ses propres directives `gzip_*` (sans
+`text/event-stream` : les subscriptions SSE restent sans tampon). HTTP/2 se déclare sur les écoutes TLS que
+certbot ajoute (`listen 443 ssl http2;`, nginx 1.24 n'a pas `http2 on`) : `bootstrap.sh` le fait après certbot ;
+sur une cellule déjà installée, reporter les directives `gzip_*` et ajouter `http2` aux deux lignes
+`listen … 443 ssl` de `/etc/nginx/sites-available/skipper`, puis `sudo nginx -t && sudo systemctl reload nginx`.
+Vérification : `curl -sI --http2 -H 'Accept-Encoding: gzip' https://skipper.toolso.io/assets/<index>.js` doit
+répondre `HTTP/2 200` avec `content-encoding: gzip`.
+
 ## Image du runner Docker
 
 Après une modification de `deploy/runner/Dockerfile` (CLI Claude Code, CLI OpenCode pour les
