@@ -3,7 +3,7 @@ import type { Session, SessionCleanup } from './types.js';
 
 /**
  * Seuil par défaut (tokens) au-delà duquel l'interface signale le contexte d'une session et propose de le nettoyer :
- * jauge en couleur dans l'en-tête, pastille dans la sidebar, bandeau « Compacter / Repartir de zéro / Ignorer ».
+ * jauge en couleur dans l'en-tête, pastille dans les onglets, bandeau « Compacter / Repartir de zéro / Ignorer ».
  * Chaque personne peut le remplacer, ou désactiver le signalement, dans ses réglages Claude (`contextWarnTokens`).
  * Aucune action automatique : une session manuelle n'est jamais compactée sans l'accord de l'utilisateur.
  */
