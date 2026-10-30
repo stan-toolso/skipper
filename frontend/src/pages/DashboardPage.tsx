@@ -56,7 +56,7 @@ export default function DashboardPage() {
         <h1 className="h3 mb-0">Tableau de bord</h1>
         <div className="d-flex align-items-center gap-2">
           <span className="text-secondary small d-none d-sm-inline">Mis à jour {timeAgo(d.generatedAt)}</span>
-          <Button size="sm" variant="outline-secondary" onClick={() => refetch()} title="Rafraîchir">
+          <Button size="sm" variant="outline-secondary" className="d-none d-sm-inline-block" onClick={() => refetch()} title="Rafraîchir">
             <i className="bi bi-arrow-clockwise" />
           </Button>
           <Button size="sm" variant="primary" onClick={() => openNewSession()}>

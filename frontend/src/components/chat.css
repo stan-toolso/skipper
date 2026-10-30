@@ -19,12 +19,23 @@
 /* Page de chat : l'en-tête ne montre pas de dossier de travail. */
 .cc-chat-icon { color: var(--cc-accent); margin-right: 4px; }
 
+/* Mobile : plus minimaliste. Pas de carte autour de la zone (la page a déjà ses marges), salut sur une ligne
+   à gauche avec le lien « Tous les chats » à droite, rangée d'outils sur une seule ligne (autorisations en
+   icône seule, modèle tronqué), suggestions en ligne qui défile. Sur la page des chats, le lien est inutile. */
 @media (max-width: 767.98px) {
-  .chat-composer { padding: 14px 10px 12px; }
-  .chat-composer.with-greeting { padding-top: 36px; }
-  .chat-composer-greeting { font-size: 20px; }
-  .chat-composer-all { top: 10px; right: 10px; }
-  .chat-composer-suggestions { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: -10px; margin-right: -10px; padding: 0 10px; }
+  .chat-composer { margin: 0 0 16px; padding: 0; border: 0; border-radius: 0; background: none; }
+  .chat-composer.with-greeting { padding-top: 0; }
+  .chat-composer:not(.with-greeting) .chat-composer-all { display: none; }
+  .chat-composer-all { position: static; display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  .chat-composer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+  .chat-composer-greeting { justify-content: flex-start; gap: 8px; margin: 0; font-size: 18px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-composer-greeting svg { display: none; }
+  .chat-composer-box { padding: 10px 12px 8px; border-radius: 14px; background: var(--cc-bg-elevated); }
+  .chat-composer-box .cc-input-tools { flex-wrap: nowrap; gap: 2px; }
+  .chat-composer-box .cc-pill { flex: 0 1 auto; min-width: 0; padding: 0 6px; }
+  .chat-composer-box .cc-pill-mode .cc-pill-label { display: none; }
+  .chat-composer-box .cc-pill-model .cc-pill-label { max-width: 180px; }
+  .chat-composer-suggestions { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 10px -12px 0; padding: 0 12px; gap: 6px; }
   .chat-composer-suggestions::-webkit-scrollbar { display: none; }
-  .chat-composer-chip { flex: 0 0 auto; }
+  .chat-composer-chip { flex: 0 0 auto; padding: 5px 12px; font-size: 12.5px; }
 }
