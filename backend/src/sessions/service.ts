@@ -15,7 +15,9 @@ import type { RunningHandle } from './providers/provider.js';
 import { serverSettings } from '../settings/server.js';
 import { headCommitOf } from '../git/service.js';
 import { containerMonitor } from '../runners/monitor.js';
-import type { Project } from '../projects/types.js';
+import { isPersonalProject, type Project } from '../projects/types.js';
+import { userService } from '../users/service.js';
+import { ROLE_RANK } from '../users/types.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
@@ -250,8 +252,15 @@ export const sessionService = {
     }
     provider.validateConfig?.(input.config ?? {});
     if (input.worksessionId && input.newWorksession) throw new AppError('Choisissez une work session existante ou une nouvelle, pas les deux');
-    // Une session s'exécute toujours dans une work session : rien ne tourne dans le checkout principal.
-    if (!input.worksessionId && !input.newWorksession) throw new AppError('Une session travaille dans une work session : choisissez-en une ou créez-en une');
+    if (input.kind === 'chat') {
+      // Un chat est une session légère d'un espace personnel : pas de work session (il n'a pas de dossier de travail), provider Claude.
+      if (!isPersonalProject(project)) throw new AppError("Un chat ne s'ouvre que dans un espace personnel");
+      if (input.worksessionId || input.newWorksession) throw new AppError("Un chat n'a pas de work session");
+      if (input.provider !== 'claude') throw new AppError('Un chat est toujours une conversation Claude');
+    } else if (!input.worksessionId && !input.newWorksession) {
+      // Une session s'exécute toujours dans une work session : rien ne tourne dans le checkout principal.
+      throw new AppError('Une session travaille dans une work session : choisissez-en une ou créez-en une');
+    }
     if (input.worksessionId) await worksessionService.assertUsable(project, input.worksessionId); // vérifie l'appartenance et l'archivage
 
     let parentSessionId: string | null = null;
@@ -259,7 +268,13 @@ export const sessionService = {
     if (actor.type === 'agent' && actor.sessionId) {
       const parent = await sessionRepository.findById(actor.sessionId);
       if (!parent) throw new NotFoundError('Session parente introuvable');
-      if (parent.projectId !== project.id) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
+      if (parent.projectId !== project.id) {
+        // Seule une session d'un espace personnel lance des sessions ailleurs : dans les projets de son propriétaire, avec ses droits.
+        const parentProject = await projectService.get(parent.projectId);
+        if (!isPersonalProject(parentProject) || !parent.ownerId) throw new AppError('Un agent ne peut lancer des sessions que dans son propre projet');
+        const role = await userService.memberRoleFor(parent.ownerId, project.id);
+        if (!role || ROLE_RANK[role] < ROLE_RANK.member) throw new AppError(`Lancer une session dans « ${project.name} » demande le rôle membre sur ce projet`);
+      }
       // La session lancée par un agent appartient à la personne qui pilote la session parente.
       ownerId = parent.ownerId;
       if ((await depthOf(parent.id)) >= MAX_AGENT_DEPTH) throw new AppError(`Imbrication maximale atteinte : une session lancée par un agent lancé par un agent ne peut pas en lancer d'autres`);
@@ -613,11 +628,14 @@ export const sessionService = {
     if (!source) throw new NotFoundError('Session introuvable');
     const prompt = await relaunchPrompt(source, input.instruction);
     // Par défaut dans sa propre work session (restaurée si elle était archivée), sinon dans une nouvelle nommée d'après la session.
-    const worksessionId = input.newWorksession ? null : (input.worksessionId ?? source.worksessionId ?? null);
+    // Un chat relancé reste un chat : sans work session.
+    const chat = source.kind === 'chat';
+    const worksessionId = chat || input.newWorksession ? null : (input.worksessionId ?? source.worksessionId ?? null);
     if (worksessionId) await worksessionService.restore(worksessionId);
-    const newWorksession = input.newWorksession ?? (worksessionId ? null : { label: source.name, name: namesFromText(source.name).name });
+    const newWorksession = chat ? null : input.newWorksession ?? (worksessionId ? null : { label: source.name, name: namesFromText(source.name).name });
     return this.create({
       projectId: source.projectId,
+      kind: source.kind,
       worksessionId,
       newWorksession,
       ownerId: input.ownerId ?? null,

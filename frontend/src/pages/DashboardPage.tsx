@@ -9,6 +9,7 @@ import { DASHBOARD, type Dashboard, type DashboardProject, type DashboardUsage, 
 import { formatCost, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
+import ChatComposer from '../components/ChatComposer';
 import './dashboard.css';
 
 /**
@@ -32,7 +33,13 @@ export default function DashboardPage() {
   }
   if (!d) return <Alert variant="danger">{error?.message ?? 'Tableau de bord indisponible.'}</Alert>;
 
-  if (d.projects.length === 0) return <EmptyState />;
+  if (d.projects.length === 0)
+    return (
+      <>
+        <ChatComposer withGreeting />
+        <EmptyState />
+      </>
+    );
 
   const { counts, usage } = d;
   const waiting = counts.pendingRequests + counts.idleSessions;
@@ -54,6 +61,8 @@ export default function DashboardPage() {
         </div>
       </div>
       {error && <Alert variant="warning" className="py-2 small">Dernier rafraîchissement en échec : {error.message}</Alert>}
+
+      <ChatComposer withGreeting />
 
       <div className="dash-tiles mb-4">
         <Link to="/requests" className={`dash-tile${counts.pendingRequests ? ' alert' : ''}`}>

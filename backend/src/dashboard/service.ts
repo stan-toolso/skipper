@@ -102,7 +102,7 @@ async function projectStats(projectIds: string[], monthStart: Date): Promise<Map
               count(*) FILTER (WHERE status = 'running' AND activity = 'busy') AS busy,
               count(*) FILTER (WHERE status = 'running' AND activity IS DISTINCT FROM 'busy') AS idle,
               max(updated_at) AS last_session_at
-         FROM sessions WHERE project_id = ANY($1::uuid[]) GROUP BY project_id),
+         FROM sessions WHERE project_id = ANY($1::uuid[]) AND kind = 'session' GROUP BY project_id),
      r AS (
        SELECT s.project_id, count(*) AS pending_requests
          FROM requests q JOIN sessions s ON s.id = q.session_id
@@ -137,8 +137,8 @@ async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts,
   if (!projectIds.length) return { failedSessions24h: 0, endedSessions24h: 0, doneTasks7d: 0 };
   const { rows } = await pool.query<{ failed: string; ended: string; done: string }>(
     `SELECT
-       (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND status = 'failed' AND ended_at >= now() - interval '24 hours')::text AS failed,
-       (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND status IN ('completed', 'failed', 'stopped', 'interrupted') AND ended_at >= now() - interval '24 hours')::text AS ended,
+       (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND kind = 'session' AND status = 'failed' AND ended_at >= now() - interval '24 hours')::text AS failed,
+       (SELECT count(*) FROM sessions WHERE project_id = ANY($1::uuid[]) AND kind = 'session' AND status IN ('completed', 'failed', 'stopped', 'interrupted') AND ended_at >= now() - interval '24 hours')::text AS ended,
        (SELECT count(*) FROM tasks WHERE project_id = ANY($1::uuid[]) AND status = 'done' AND completed_at >= now() - interval '7 days')::text AS done`,
     [projectIds],
   );
@@ -215,7 +215,7 @@ async function recentSessions(projectIds: string[]): Promise<Session[]> {
   if (!projectIds.length) return [];
   const { rows } = await pool.query<{ id: string }>(
     `SELECT id FROM sessions
-      WHERE project_id = ANY($1::uuid[]) AND status IN ('completed', 'failed', 'stopped', 'interrupted')
+      WHERE project_id = ANY($1::uuid[]) AND kind = 'session' AND status IN ('completed', 'failed', 'stopped', 'interrupted')
       ORDER BY COALESCE(ended_at, updated_at) DESC LIMIT 8`,
     [projectIds],
   );
@@ -227,7 +227,8 @@ export const dashboardService = {
   async build(userId: string, projectIds: string[], now = new Date(), isAdmin = false): Promise<Dashboard> {
     const monthStart = currentMonthStart(now);
     const [projects, stats, extra, usageData, pending, running, recent, tasks, unread] = await Promise.all([
-      projectService.listForUser(userId),
+      // L'espace personnel compte comme un projet du tableau de bord (ses sessions et tâches sont celles de la personne).
+      projectService.listForUser(userId, { includePersonal: true }),
       projectStats(projectIds, monthStart),
       globalCounts(projectIds),
       usage(userId, projectIds, monthStart),

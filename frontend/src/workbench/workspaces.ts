@@ -47,6 +47,8 @@ export interface SidebarProject {
   gitUrl: string | null;
   gitBranch: string | null;
   isMember: boolean;
+  /** Espace personnel de la personne connectée : affiché en tête, à part des projets. */
+  isPersonal: boolean;
   /** Rôle de la personne : ADMIN peut modifier et supprimer le projet. */
   myRole: ProjectRole;
   sessions: SidebarSession[];

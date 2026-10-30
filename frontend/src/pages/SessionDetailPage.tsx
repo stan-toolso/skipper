@@ -26,6 +26,7 @@ import SessionChanges from '../components/SessionChanges';
 import { fileToolResultCount } from '../lib/sessionChanges';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
+import '../components/chat.css';
 import {
   END_SESSION,
   INTERRUPT_SESSION,
@@ -161,7 +162,9 @@ export default function SessionDetailPage() {
   const session = data?.session;
   const cachedName = useCachedName(SESSION_NAME, 'Session', id);
   useTabTitle(session?.name ?? cachedName);
-  useGitTarget(session ? { projectId: session.project.id, worksessionId: session.worksession?.id ?? null, label: session.worksession ? `${session.project.name} · ${session.worksession.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
+  // Chat : conversation légère de l'espace personnel, sans dossier de travail (ni panneau git, ni onglet Modifications, ni planification).
+  const chat = session?.kind === 'CHAT';
+  useGitTarget(session && !chat ? { projectId: session.project.id, worksessionId: session.worksession?.id ?? null, label: session.worksession ? `${session.project.name} · ${session.worksession.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
   const archived = Boolean(session?.archivedAt);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
@@ -242,6 +245,8 @@ export default function SessionDetailPage() {
   const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
   const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
   const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
+  // Un chat n'a ni fichiers ni commandes : seuls « demander » et « tout autoriser » ont un sens.
+  const permissionOptions = (permissionField?.options ?? []).filter((o) => !chat || o.value === 'default' || o.value === 'bypassPermissions');
   const bypassWarning = (force = false) => (force || permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(session.project.approvalConnections ?? []) : null);
   const changeSetting = async (field: ConfigField, value: string) => {
     if (field.key === 'permissionMode' && value === 'bypassPermissions') {
@@ -274,10 +279,17 @@ export default function SessionDetailPage() {
     <div className="cc">
       <div className={`cc-header${headerOpen ? ' open' : ''}`}>
         <div className="cc-header-main">
-          <span className="cc-title">✻ {session.name}</span>
+          <span className="cc-title">{chat ? <i className="bi bi-chat-left-text-fill cc-chat-icon" /> : '✻ '}{session.name}</span>
           <span className="cc-meta">
             {' '}
-            · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            ·{' '}
+            {chat ? (
+              <Link to="/chats" className="cc-meta" title="Chat de votre espace personnel : tous vos chats">
+                chat
+              </Link>
+            ) : (
+              <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            )}
             {session.worksession && (
               <>
                 {' '}
@@ -346,9 +358,11 @@ export default function SessionDetailPage() {
           <button type="button" className="cc-btn" title="Nom de la session et nettoyage automatique de l'historique" onClick={() => setSettingsOpen(true)}>
             <i className="bi bi-gear" /> Réglages
           </button>
-          <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
-            <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
-          </button>
+          {!chat && (
+            <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
+              <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
+            </button>
+          )}
           {schedule && !busy && (
             <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
               Exécuter maintenant
@@ -388,11 +402,13 @@ export default function SessionDetailPage() {
           <button type="button" className="cc-btn" title="Repart d'une nouvelle session avec un résumé de celle-ci" onClick={() => setRelaunching(true)}>
             <i className="bi bi-arrow-repeat" /> Relancer
           </button>
-          {archived ? (
+          {archived || chat ? (
             <>
-              <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
-                Restaurer
-              </button>
+              {archived && (
+                <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
+                  Restaurer
+                </button>
+              )}
               <button
                 type="button"
                 className="cc-btn danger"
@@ -461,26 +477,28 @@ export default function SessionDetailPage() {
           <button type="button" role="tab" aria-selected={tab === 'conversation'} className={`cc-tab${tab === 'conversation' ? ' active' : ''}`} onClick={() => selectTab('conversation')}>
             Conversation
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'changes'}
-            className={`cc-tab${tab === 'changes' ? ' active' : ''}`}
-            title="Fichiers modifiés dans le dossier de travail depuis le début de la session"
-            onClick={() => selectTab('changes')}
-          >
-            Modifications
-            {changedFiles > 0 && <span className="cc-tab-count">{changedFiles}</span>}
-          </button>
+          {!chat && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'changes'}
+              className={`cc-tab${tab === 'changes' ? ' active' : ''}`}
+              title="Fichiers modifiés dans le dossier de travail depuis le début de la session"
+              onClick={() => selectTab('changes')}
+            >
+              Modifications
+              {changedFiles > 0 && <span className="cc-tab-count">{changedFiles}</span>}
+            </button>
+          )}
         </div>
-        {tab === 'conversation' && (
+        {(tab === 'conversation' || chat) && (
           <label>
             <input type="checkbox" checked={technical} onChange={toggleTechnical} /> <span className="d-none d-md-inline">Afficher les détails techniques</span>
             <span className="d-md-none">Détails techniques</span>
           </label>
         )}
       </div>
-      {tab === 'conversation' ? (
+      {tab === 'conversation' || chat ? (
         <Transcript events={events} draft={draft} loading={!eventsLoaded} technical={technical} />
       ) : (
         <SessionChanges
@@ -613,7 +631,7 @@ export default function SessionDetailPage() {
               <span className="cc-pill-label">{permissionModeShortLabels[permissionMode] ?? (permissionField.options ?? []).find((o) => o.value === permissionMode)?.label ?? permissionMode}</span>
               <i className="bi bi-chevron-down" />
               <select className="cc-select" aria-label="Autorisations" value={permissionMode} disabled={updatingConfig} onChange={(e) => changeSetting(permissionField, e.target.value)}>
-                {(permissionField.options ?? []).map((o) => (
+                {permissionOptions.map((o) => (
                   <option key={o.value} value={o.value} title={o.description ?? undefined}>
                     {permissionModeShortLabels[o.value] ?? o.label}
                   </option>
@@ -632,7 +650,7 @@ export default function SessionDetailPage() {
         </div>
       </div>
       )}
-      {technical && (
+      {technical && !chat && (
         <div className="cc-hint justify-content-end">
           <span title="Dossier de travail de la session">{session.worksession?.path ?? session.project.workspacePath}</span>
         </div>

@@ -36,6 +36,14 @@ Trois notions :
   lancer d'autres sessions (outils MCP `sessions` et `worksessions`) ; elles gardent la trace de la
   session qui les a lancées. Les sessions d'avant les work sessions, sans work session, reprennent
   dans le dossier principal.
+- **Espace personnel** : un projet qui n'appartient qu'à une personne (jamais partagé, créé à sa
+  première visite de `/me`), sans dépôt git, où elle ouvre des sessions, des chats et des tâches. Ses
+  sessions ont accès à **toutes ses ressources** : projets, sessions, work sessions et tâches, avec ses
+  droits (lancer une session dans un projet, attendre sa réponse, créer une tâche…).
+- **Chat** : conversation légère de l'espace personnel, sans work session ni conteneur (le CLI tourne
+  sur le serveur sans outil de fichiers ni de commande, avec les seuls outils MCP de Skipper), ouverte
+  en une question depuis le tableau de bord ; elle pilote des sessions en arrière-plan si besoin.
+  Voir « Espace personnel et chats » plus bas.
 - **Demande** : intervention humaine attendue par un agent (autorisation d'outil, question, saisie).
   La session reste en cours jusqu'à la réponse.
 - **Contexte** : bibliothèque d'instructions propre à chaque projet, rangée en dossiers, stockée en
@@ -154,6 +162,10 @@ backend/
       workspace.ts             # dossier du projet, clone git, infos de branche
     requests/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
+    personal/
+      service.ts               # espace personnel (un projet par personne, créé à la demande), chats, prompt de la portée
+      scope.ts                 # portée d'une session personnelle : résolution d'un projet, droits, paramètre `project` des outils
+      mcp.ts                   # serveur MCP `projects` (list, get) des sessions d'un espace personnel
     worksessions/
       names.ts                 # noms dérivés de la consigne (libellé, dossier, branche), uniques dans le projet
       service.ts               # work sessions : création (git worktree ou dossier), tâche, archivage, suppression, cwd
@@ -616,10 +628,12 @@ et en attente d'instructions, tâches ouvertes avec les retards, consommation du
 plafond), puis la liste « À traiter » (demandes, sessions qui attendent des instructions, sessions
 en erreur depuis 24 h), les agents au travail, les tâches à surveiller (urgentes, hautes, en retard
 ou à échéance proche), la consommation (par jour sur 30 jours, sessions les plus coûteuses du
-mois), l'activité récente et une ligne par projet. Tout vient de la query `dashboard`
+mois), l'activité récente et une ligne par projet (espace personnel compris). Tout vient de la query `dashboard`
 (`backend/src/dashboard/service.ts`), agrégée en SQL et restreinte aux projets de l'utilisateur ;
-la page se rafraîchit toutes les dix secondes. Sur mobile, le tableau des projets devient une
-liste de cartes. Sans projet, la page redevient le parcours d'accueil en trois étapes.
+la page se rafraîchit toutes les dix secondes. En tête, la **zone de chat** (`components/ChatComposer.tsx`) :
+une question, le mode d'autorisation et le modèle, et un chat de l'espace personnel s'ouvre sur sa page
+(voir « Espace personnel et chats »). Sur mobile, le tableau des projets devient une
+liste de cartes. Sans projet, la page redevient le parcours d'accueil en trois étapes, sous la zone de chat.
 
 Sur les pages d'un projet ou d'une work session (projet, session, terminal, fichiers, tâches, contexte),
 un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
@@ -809,6 +823,53 @@ son robot. La page d'un sous-agent s'ouvre par un bandeau « Sous-agent · lanc�
 état, un lien et de quoi les terminer (`Session.parentSession`, `Session.childSessions`). Dans le transcript,
 les identifiants de session cités par les outils `sessions` (dont celui renvoyé par `create`) sont des liens.
 Rien ne change pour les sessions lancées par un humain.
+
+## Espace personnel et chats
+
+Chaque personne a un **espace personnel** (`backend/src/personal/`) : un projet ordinaire en base
+(`projects.personal_owner_id`, un par personne, index unique), sans dépôt git, nommé « Espace
+personnel », dossier `WORKSPACES_ROOT/moi-<partie locale de l'e-mail>`, créé à la première demande
+(query `personalSpace`, route `/me` qui redirige vers `/projects/:id`). La personne en est l'unique
+membre (administratrice) ; il ne se partage pas (`inviteProjectMember`, `updateProjectMemberRole`,
+`removeProjectMember` et `deleteProject` le refusent), un super administrateur n'y a **pas** accès
+(`roleFor` ne lui accorde pas le rôle administrateur sur l'espace personnel d'un autre), et il
+n'apparaît pas dans la liste des projets (`projects(includePersonal: true)` pour l'obtenir, ce que fait
+la modale de lancement) mais en tête de la sidebar (« Mon espace ») et dans le tableau de bord. Ses
+pages sont celles d'un projet (`ProjectHeader` en mode personnel : Aperçu, Chats, Tâches, Contexte,
+Coffre, Historique ; ni membres, ni clés d'API, ni suppression), avec son conteneur, ses work sessions
+(simples dossiers), sa bibliothèque de contexte et ses tâches. Les tâches et sessions de l'espace
+figurent dans les listes globales (Tâches, Sessions) comme celles d'un projet.
+
+**Portée d'une session personnelle** (`personal/scope.ts`). Toute session (ou chat) de l'espace
+personnel reçoit une `ProjectScope` : les projets dont la personne est membre, résolus par nom,
+dossier ou identifiant, avec ses droits (lecture dès le rôle lecteur, écriture à partir du rôle
+membre). Les serveurs MCP `sessions`, `tasks` et `worksessions` acceptent alors un paramètre
+`project` sur leurs outils de liste et de création (`withProjectParam` : le schéma des sessions
+ordinaires ne change pas), et leurs outils par identifiant (`get`, `wait`, `update`, `claim`,
+`comment`…) atteignent les objets de tous les projets de la portée ; un serveur `projects` (`list`,
+`get`, lecture seule, toujours autorisé) décrit les projets et leur activité. Le prompt système
+décrit la portée et liste les projets (`personalService.promptSummary`). Garde-fou côté service :
+`sessionService.create` n'accepte une session lancée par un agent dans un autre projet que si la session
+parente appartient à un espace personnel et que son propriétaire a le rôle membre sur le projet visé ;
+la session créée appartient à cette personne et travaille avec ses comptes, dans une nouvelle work
+session du projet par défaut.
+
+**Chats.** Un chat est une session de l'espace personnel avec `sessions.kind = 'chat'` (migration
+`040_personal_spaces.sql`) : même transcript, mêmes demandes d'autorisation, même coût relevé, mais
+sans work session (`worksessionId` null, dossier de travail = celui de l'espace) et **sans conteneur** :
+le provider Claude lance le CLI du serveur (`CLAUDE_BIN`, sinon celui du SDK, comme la vérification des
+identifiants) avec `tools: []` (aucun outil intégré : ni fichiers, ni commandes, ni web), `settingSources: []`
+(aucun réglage lu sur le disque), un dossier de configuration propre à l'espace
+(`CLAUDE_CONFIG_DIR = WORKSPACES_ROOT/.runners/<slug>/chat-home`, où ses conversations sont reprises) et
+les serveurs MCP `context`, `tasks`, `sessions`, `worksessions`, `projects`, `vault` et `google`
+(pas de `pages` ni de navigateur). Les chats sont exclus des listes de sessions (`SessionFilter.kind`,
+« session » par défaut ; « all » pour une liste par identifiants ou par session parente), de la sidebar,
+du tableau de bord et de la recherche ; ils se listent par `chats(limit)` (page `/chats`) et s'ouvrent
+par `createChat(text, attachments, config)` (zone de chat du tableau de bord et de la page des chats :
+mode d'autorisation « demander » ou « tout autoriser », modèle, fichiers joints, suggestions de départ).
+La page d'un chat est celle d'une session (`/chats/:id`, `SessionDetailPage` en mode chat : pas de
+panneau git, d'onglet Modifications ni de planification). Un chat relancé reste un chat ; l'arrêt des
+sessions inactives le termine comme une session, un message le reprend.
 
 ## Sessions planifiées
 

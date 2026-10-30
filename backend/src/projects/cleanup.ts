@@ -16,7 +16,8 @@ import { workspacePath } from './workspace.js';
 async function deleteSessions(filter: { projectId?: string; worksessionId?: string; archived?: 'exclude' | 'only' | 'all' }): Promise<number> {
   let count = 0;
   for (;;) {
-    const batch = await sessionService.list({ ...filter, limit: 200 });
+    // Chats compris (sessions légères d'un espace personnel).
+    const batch = await sessionService.list({ ...filter, kind: 'all', limit: 200 });
     if (batch.length === 0) return count;
     for (const s of batch) {
       await sessionService.delete(s.id); // arrête la session si elle tourne encore

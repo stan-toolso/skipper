@@ -708,6 +708,8 @@ export default function ProjectDetailPage() {
   const actionError = prepareError ?? deleteError;
   const isAdmin = project.myRole === 'ADMIN';
   const canWrite = isAdmin || project.myRole === 'MEMBER';
+  // Espace personnel : ni membres, ni clés d'API, ni suppression (il n'appartient qu'à la personne).
+  const personal = project.isPersonal;
 
   return (
     <>
@@ -715,7 +717,7 @@ export default function ProjectDetailPage() {
         project={project}
         active="overview"
         actions={
-          isAdmin && (
+          isAdmin && !personal && (
             <Button
               size="sm"
               variant="outline-danger"
@@ -798,10 +800,10 @@ export default function ProjectDetailPage() {
         </Col>
       </Row>
 
-      <MembersCard projectId={project.id} canManage={isAdmin} />
+      {!personal && <MembersCard projectId={project.id} canManage={isAdmin} />}
       <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
-      {isAdmin && <ApiKeysCard projectId={project.id} />}
+      {isAdmin && !personal && <ApiKeysCard projectId={project.id} />}
       <WorksessionsCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>

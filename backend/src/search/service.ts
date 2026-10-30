@@ -107,7 +107,7 @@ export const searchService = {
       WORKSESSION: () =>
         searchKind('WORKSESSION', { from: 'worksessions x', title: 'coalesce(x.label, x.branch)', detail: "CASE WHEN x.label IS NULL THEN x.name ELSE x.branch END", haystack: "(x.branch || ' ' || x.name || ' ' || coalesce(x.label, ''))", projectId: 'x.project_id', worksessionBranch: 'x.branch', status: "CASE WHEN x.archived_at IS NULL THEN NULL ELSE 'archived' END", activity: 'NULL', updatedAt: 'x.created_at', where: '' }, scope, query, n),
       SESSION: () =>
-        searchKind('SESSION', { from: 'sessions x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'x.activity', updatedAt: 'x.updated_at', where: 'AND x.archived_at IS NULL' }, scope, query, n),
+        searchKind('SESSION', { from: 'sessions x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'x.activity', updatedAt: 'x.updated_at', where: "AND x.archived_at IS NULL AND x.kind = 'session'" }, scope, query, n),
       TERMINAL: () =>
         searchKind('TERMINAL', { from: 'terminals x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'NULL', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'NULL', updatedAt: 'x.created_at', where: `AND (x.created_by IS NULL OR x.created_by = '${scope.userId}')` }, scope, query, n),
       TASK: () =>

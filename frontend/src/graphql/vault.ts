@@ -385,6 +385,7 @@ export const VAULT_PROJECT = gql`
       name
       description
       myRole
+      isPersonal
       runnerConfig
       vaultItems {
         via

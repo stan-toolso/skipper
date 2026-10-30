@@ -7,6 +7,7 @@ const userService = vi.hoisted(() => ({
   roleFor: vi.fn<(userId: string, projectId: string) => Promise<ProjectRole | null>>(),
   memberRoleFor: vi.fn<(userId: string, projectId: string) => Promise<ProjectRole | null>>(),
   projectIdsFor: vi.fn<(userId: string) => Promise<string[]>>(),
+  isPersonalProject: vi.fn<(projectId: string) => Promise<boolean>>(async () => false),
 }));
 vi.mock('../users/service.js', () => ({ userService }));
 

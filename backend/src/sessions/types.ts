@@ -1,4 +1,9 @@
 export type SessionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+/**
+ * Session d'agent ordinaire, ou « chat » : session légère d'un espace personnel, sans work session ni
+ * conteneur (le CLI tourne sur le serveur sans outil de fichiers ni de commande, avec les seuls outils MCP de Skipper).
+ */
+export type SessionKind = 'session' | 'chat';
 /** Pour une session en cours : l'agent travaille ('busy') ou attend des instructions ('idle'). */
 export type SessionActivity = 'busy' | 'idle';
 
@@ -47,6 +52,7 @@ export interface FormerWorksession {
 export interface Session {
   id: string;
   projectId: string;
+  kind: SessionKind;
   worksessionId: string | null;
   /** Utilisateur qui a lancé la session (hérité de la session parente pour une session lancée par un agent) ; null : ouverte à tous les membres. */
   ownerId: string | null;
@@ -110,7 +116,9 @@ export interface NewWorksessionInput {
 
 export interface CreateSessionInput {
   projectId: string;
-  /** Work session où la session s'exécute : obligatoire, sauf `newWorksession`. */
+  /** Chat (espace personnel seulement, sans work session) ; défaut : session. */
+  kind?: SessionKind | null;
+  /** Work session où la session s'exécute : obligatoire, sauf `newWorksession` (et pour un chat, qui n'en a pas). */
   worksessionId?: string | null;
   /** Crée d'abord cette work session et y lance la session (exclusif avec worksessionId). */
   newWorksession?: NewWorksessionInput | null;
@@ -128,6 +136,8 @@ export interface CreateSessionInput {
 
 export interface SessionFilter {
   projectId?: string;
+  /** Sessions ordinaires (défaut), chats seuls, ou tout. */
+  kind?: SessionKind | 'all';
   /** Restreint aux projets listés (projets accessibles à l'utilisateur). */
   projectIds?: string[];
   worksessionId?: string;
