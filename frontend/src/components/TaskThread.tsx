@@ -72,7 +72,7 @@ function Reactions({ reactions, onToggle, canWrite, compact }: { reactions: Task
       ))}
       {canWrite && (
         <span className="tt-react-wrap">
-          <button type="button" className={`tt-reaction tt-react-add${picking ? ' open' : ''}${reactions.length || !compact ? '' : ' tt-react-quiet'}`} title="Réagir" aria-label="Ajouter une réaction" onClick={() => setPicking((p) => !p)}>
+          <button type="button" className={`tt-reaction tt-react-add${picking ? ' open' : ''}${reactions.length || !compact ? '' : ' tt-react-quiet'}`} title="Réagir" aria-label="Ajouter une réaction" onClick={(e) => { e.stopPropagation(); setPicking((p) => !p); }}>
             <i className="bi bi-emoji-smile" />
             <i className="bi bi-plus" />
           </button>
@@ -83,7 +83,7 @@ function Reactions({ reactions, onToggle, canWrite, compact }: { reactions: Task
   );
 }
 
-/** Choix d'un emoji : les plus courants, ou un emoji tapé au clavier. */
+/** Choix d'un emoji : les plus courants, ou un emoji tapé au clavier. Se ferme au clic ailleurs (le bouton qui l'ouvre arrête la propagation de son clic) et à l'échappement. */
 function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
   const [custom, setCustom] = useState('');
   useEffect(() => {
@@ -178,7 +178,8 @@ function Composer({
     const q = fold(mention.query.trim());
     const hits = mentionables.filter((m) => !q || fold(m.label).includes(q) || fold(m.text).includes(q) || (m.detail ? fold(m.detail).includes(q) : false));
     // Les personnes d'abord, puis les sessions ; au plus huit.
-    return [...hits.filter((m) => m.kind === 'user'), ...hits.filter((m) => m.kind === 'session')].slice(0, 8);
+    const rank = (m: TaskMentionable) => (m.kind === 'user' ? 0 : m.kind === 'session' ? 1 : 2);
+    return [...hits].sort((x, y) => rank(x) - rank(y)).slice(0, 8);
   }, [mention, mentionables]);
   const insert = (m: TaskMentionable) => {
     if (!mention) return;
@@ -331,7 +332,7 @@ function Message({
           <span className="tt-msg-actions">
             {canWrite && (
               <span className="tt-react-wrap">
-                <button type="button" className="tt-icon-btn" title="Réagir" aria-label="Réagir" onClick={() => setPicking((p) => !p)}>
+                <button type="button" className="tt-icon-btn" title="Réagir" aria-label="Réagir" onClick={(e) => { e.stopPropagation(); setPicking((p) => !p); }}>
                   <i className="bi bi-emoji-smile" />
                 </button>
                 {picking && <EmojiPicker onPick={(e) => { onToggleReaction(e); setPicking(false); }} onClose={() => setPicking(false)} />}
