@@ -11,12 +11,14 @@ const m = vi.hoisted(() => ({
   updateTask: vi.fn(async () => undefined),
   fetch: vi.fn(),
   gitUrl: 'https://github.com/acme/app.git' as string | null,
+  /** Propriétaires de dépôt pour lesquels un jeton a été demandé. */
+  tokenOwners: [] as Array<string | null>,
 }));
 
 vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, slug: id, gitUrl: m.gitUrl, gitBranch: 'main' }) } }));
 vi.mock('../projects/workspace.js', () => ({ git: m.git, workspacePath: () => '/ws/main', gitAuthFor: async () => [] }));
 vi.mock('../files/service.js', () => ({ resolveRoot: async () => '/ws/wt' }));
-vi.mock('../settings/github.js', () => ({ githubService: { token: async () => 'ghp_test' }, githubOwnerOf: () => 'acme' }));
+vi.mock('../settings/github.js', () => ({ githubService: { token: async (_u: string, owner?: string | null) => { m.tokenOwners.push(owner ?? null); return 'ghp_test'; } }, githubOwnerOf: () => 'acme' }));
 vi.mock('./service.js', () => ({ gitService: { push: vi.fn(async () => '') } }));
 vi.mock('../sessions/service.js', () => ({ sessionService: { list: async () => m.running, stop: m.stop } }));
 vi.mock('../terminals/service.js', () => ({ terminalService: { listByProject: async () => [], delete: vi.fn() } }));
@@ -28,7 +30,7 @@ vi.mock('../tasks/repository.js', () => ({ taskRepository: { list: async () => m
 vi.mock('../tasks/service.js', () => ({ taskService: { update: m.updateTask } }));
 vi.stubGlobal('fetch', m.fetch);
 
-const { buildDraftText, parseGithubRepo, pullRequestService } = await import('./pullRequests.js');
+const { buildDraftText, parseGithubRepo, parseRepoFullName, pullRequestService } = await import('./pullRequests.js');
 
 const gqlPr = (state = 'OPEN') => ({
   number: 7,
@@ -67,6 +69,32 @@ describe('parseGithubRepo', () => {
   it('refuse les autres hébergeurs', () => {
     expect(parseGithubRepo('https://gitlab.com/acme/app.git')).toBeNull();
     expect(parseGithubRepo(null)).toBeNull();
+  });
+  it('lit un « owner/name » ou une URL (parseRepoFullName)', () => {
+    expect(parseRepoFullName('autre/depot')).toEqual({ owner: 'autre', name: 'depot' });
+    expect(parseRepoFullName('https://github.com/autre/depot.git')).toEqual({ owner: 'autre', name: 'depot' });
+    expect(parseRepoFullName('pas un dépôt')).toBeNull();
+    expect(parseRepoFullName('')).toBeNull();
+  });
+});
+
+describe('pullRequestService.get', () => {
+  beforeEach(() => {
+    m.fetch.mockReset();
+    m.tokenOwners = [];
+  });
+
+  it("lit une PR d'un autre dépôt dans ce dépôt, avec le compte GitHub qui sert ce dépôt", async () => {
+    m.fetch.mockImplementation(async () => json({ data: { repository: { pullRequest: { ...gqlPr(), url: 'https://github.com/autre/depot/pull/7' } } } }));
+    const pr = await pullRequestService.get('p1', 'u1', 7, { owner: 'autre', name: 'depot' });
+    expect(pr.repo).toBe('autre/depot');
+    expect(m.tokenOwners).toEqual(['autre']);
+    const body = JSON.parse((m.fetch.mock.calls[0][1] as RequestInit).body as string) as { variables: Record<string, unknown> };
+    expect(body.variables).toMatchObject({ owner: 'autre', name: 'depot', number: 7 });
+    // Sans dépôt : celui du projet, avec le compte qui le sert.
+    const own = await pullRequestService.get('p1', 'u1', 7);
+    expect(own.repo).toBe('acme/app');
+    expect(m.tokenOwners).toEqual(['autre', 'acme']);
   });
 });
 

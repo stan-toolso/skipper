@@ -22,6 +22,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { parseRepoFullName, pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pullRequests/service.js';
+import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { gitService } from '../git/service.js';
 import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
@@ -338,6 +339,7 @@ export const resolvers = {
       const foreign = foreignRepoOf(pr, projectRepoName(await projectService.get(pr.projectId)));
       return pullRequestService.get(pr.projectId, ctx.user?.id, pr.number, foreign).catch(() => null);
     },
+    session: (pr: TrackedPullRequest) => pullRequestSession(pr),
   },
 
   VaultItem: {
@@ -943,6 +945,11 @@ export const resolvers = {
     syncPullRequests: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return trackedPullRequestService.sync(args.projectId, requireUser(ctx).id, { force: true });
+    },
+    resolvePullRequestConflicts: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const pr = await trackedPullRequestService.get(args.id);
+      await requireProject(ctx, pr.projectId, 'member');
+      return requestConflictResolution(args.id, { type: 'human', userId: requireUser(ctx).id });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');

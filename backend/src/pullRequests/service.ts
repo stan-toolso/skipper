@@ -293,18 +293,24 @@ export const trackedPullRequestService = {
     const project = await projectService.get(projectId).catch(() => null);
     if (!project?.gitUrl) return current();
     lastSync.set(projectId, Date.now());
-    await this.refreshPending(project).catch((err) => console.error('[pull-requests] travail local des branches', err));
+    // GitHub d'abord (une PR fusionnée ailleurs l'est avant d'examiner sa branche), puis le travail local des branches.
     const projectRepo = parseGithubRepo(project.gitUrl);
-    if (!projectRepo) return current();
+    if (projectRepo) await this.syncGithub(projectId, userId, projectRepo).catch((err) => console.error('[pull-requests] synchronisation GitHub', err));
+    await this.refreshPending(project).catch((err) => console.error('[pull-requests] travail local des branches', err));
+    return current();
+  },
+
+  /** Partie GitHub de la synchronisation : rafraîchissement des PR suivies et adoption. Sans réponse de GitHub, ne fait rien. */
+  async syncGithub(projectId: string, userId: string | null | undefined, projectRepo: GithubRepoRef): Promise<void> {
     const projectRepoName = repoFullName(projectRepo);
     let github: PullRequest[];
     try {
       github = await pullRequestService.list(projectId, userId, 'ALL', 100);
     } catch {
-      return current();
+      return;
     }
     const byNumber = new Map(github.map((p) => [p.number, p]));
-    const tracked = await current();
+    const tracked = await pullRequestRepository.list({ projectId, limit: 1000 });
     let individual = 0;
     for (const t of tracked) {
       if (t.number == null) continue;
@@ -324,7 +330,6 @@ export const trackedPullRequestService = {
       const ws = task ? null : await worksessionRepository.findByBranch(projectId, g.headRefName);
       if (task || ws) await this.recordGithub(projectId, g, SYSTEM, { taskId: task?.id ?? ws?.taskId ?? null });
     }
-    return current();
   },
 
   /**

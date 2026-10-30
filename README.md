@@ -1009,8 +1009,8 @@ La taille du contexte (`Session.contextTokens`) est relevée par le provider Cla
 (tokens d'entrée, cache compris, du dernier appel au modèle) et sur les frontières de compaction
 (`compact_boundary`, `post_tokens`). Elle est **visible sans ouvrir les réglages** : jauge dans l'en-tête de la
 page de session (`Session.context` : tokens, part de la fenêtre du modèle, coût approximatif de la relecture du
-contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans la sidebar et les
-onglets au-delà du seuil de signalement. Ce seuil est **propre à chaque personne** (Paramètres › Claude ›
+contexte à froid, d'après le dernier modèle facturé ; `sessions/context.ts`), pastille dans les onglets au-delà
+du seuil de signalement (la sidebar n'en affiche pas, pour rester lisible). Ce seuil est **propre à chaque personne** (Paramètres › Claude ›
 « Signaler le contexte d'une session à partir de », en milliers de tokens, `ClaudeSettings.contextWarnTokens`) :
 150 000 tokens par défaut (`CONTEXT_WARN_TOKENS`), vide pour ne jamais être signalé. Au-delà de ce seuil, un bandeau dans l'onglet
 « Session » du panneau de droite (dans la page elle-même pour un chat, qui n'a pas de panneau) propose

@@ -204,7 +204,13 @@ export const pullRequestRepository = {
       sets.push(`status = $${params.push(input.status)}`);
       if (input.status === 'merged' && input.mergedAt === undefined) sets.push('merged_at = COALESCE(merged_at, now())');
       if (input.status === 'closed' && input.closedAt === undefined) sets.push('closed_at = COALESCE(closed_at, now())');
-      if (input.status === 'open') sets.push('merged_at = NULL', 'closed_at = NULL', 'merge_sha = NULL');
+      // Rouverte : les traces de fusion et de fermeture sont effacées, sauf celles que l'appelant fournit lui-même
+      // (recordGithub passe mergedAt / closedAt / mergeSha de GitHub, souvent null) : une colonne ne s'assigne qu'une fois.
+      if (input.status === 'open') {
+        if (input.mergedAt === undefined) sets.push('merged_at = NULL');
+        if (input.closedAt === undefined) sets.push('closed_at = NULL');
+        if (input.mergeSha === undefined) sets.push('merge_sha = NULL');
+      }
     }
     if (input.deployed === true) {
       sets.push('deployed_at = COALESCE(deployed_at, now())');

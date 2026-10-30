@@ -471,8 +471,10 @@ describe('PR en préparation (refreshPending)', () => {
     await trackedPullRequestService.recordGithub('p', gh(1, 'OPEN'), human);
     await trackedPullRequestService.sync('p', 'u1', { force: true });
     expect(m.rows.map((r) => r.status)).toEqual(['open']);
-    // Fusionnée (squash : les anciens commits restent « en avance ») : seuls les commits depuis la fusion comptent.
+    // Fusionnée (squash : les anciens commits restent « en avance ») : seuls les commits depuis la fusion comptent,
+    // et la branche est examinée après GitHub (la fusion est connue quand on la regarde).
     m.github.push(gh(1, 'MERGED'));
+    m.local.w1 = { branch: 'task/t1', baseBranch: 'main', commits: 0, changes: 0 };
     await trackedPullRequestService.sync('p', 'u1', { force: true });
     expect(m.rows.map((r) => r.status)).toEqual(['merged']);
     expect(m.localCalls.at(-1)).toEqual(['w1', new Date('2026-10-02T10:00:00Z')]);

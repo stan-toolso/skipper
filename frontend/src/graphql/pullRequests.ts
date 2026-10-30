@@ -49,7 +49,12 @@ export interface TrackedPullRequest {
   createdBySession: { id: string; name: string } | null;
   deployedBy: { id: string; name: string } | null;
   deployedBySession: { id: string; name: string } | null;
+  /** Session d'agent rattachée (dossier de la branche, sinon session qui a ouvert la PR) : reçoit la demande de résolution des conflits. */
+  session: { id: string; name: string; status: string } | null;
 }
+
+/** Une PR ouverte dont GitHub signale des conflits avec la base, et à laquelle une session peut les résoudre. */
+export const canResolveConflicts = (pr: Pick<TrackedPullRequest, 'status' | 'mergeable' | 'session'>) => pr.status === 'OPEN' && pr.mergeable === 'CONFLICTING' && pr.session != null;
 
 /** Sous-ensemble porté par une tâche (listes, grille, carte). */
 export type TrackedPullRequestSummary = Pick<TrackedPullRequest, 'id' | 'repo' | 'foreignRepo' | 'number' | 'url' | 'title' | 'status' | 'isDraft' | 'stage' | 'checksState' | 'reviewDecision' | 'mergeable' | 'headBranch' | 'baseBranch' | 'note' | 'deployedAt' | 'worksession' | 'localCommits' | 'localChanges'>;
@@ -128,6 +133,11 @@ export const TRACKED_PULL_REQUEST_FIELDS = gql`
       id
       name
     }
+    session {
+      id
+      name
+      status
+    }
   }
 `;
 
@@ -190,6 +200,16 @@ export const UPDATE_PULL_REQUEST = gql`
 export const DELETE_PULL_REQUEST = gql`
   mutation DeletePullRequest($id: ID!) {
     deletePullRequest(id: $id)
+  }
+`;
+
+export const RESOLVE_PULL_REQUEST_CONFLICTS = gql`
+  mutation ResolvePullRequestConflicts($id: ID!) {
+    resolvePullRequestConflicts(id: $id) {
+      id
+      name
+      status
+    }
   }
 `;
 
