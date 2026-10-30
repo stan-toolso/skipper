@@ -20,7 +20,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { gitService } from '../git/service.js';
-import { archiveWorksessionCascade, deleteProjectCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
+import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
 import { runner, type RunnerConfig } from '../runners/index.js';
 import { containerMonitor } from '../runners/monitor.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
@@ -1085,7 +1085,7 @@ export const resolvers = {
     archiveSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
       await scheduleService.remove(args.id).catch(() => undefined);
-      return sessionService.archive(args.id);
+      return archiveSessionCascade(args.id);
     },
     unarchiveSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
@@ -1095,9 +1095,9 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return sessionService.relaunch(args.id, { ...args.input, ownerId: requireUser(ctx).id });
     },
-    deleteSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+    deleteSession: async (_: unknown, args: { id: string; deleteBranch?: boolean | null }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
-      return sessionService.delete(args.id);
+      return deleteSessionCascade(args.id, args.deleteBranch ?? false);
     },
     sendSessionMessage: async (_: unknown, args: { id: string; text: string; attachments?: AttachmentInput[] | null }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
@@ -1198,7 +1198,7 @@ export const resolvers = {
       if (comment.authorUserId !== requireUser(ctx).id && role !== 'admin') throw new AppError("Seuls l'auteur et les administrateurs du projet suppriment un commentaire", 'FORBIDDEN');
       return taskService.deleteComment(args.id);
     },
-    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; worksessionId?: string | null; prompt?: string | null }, ctx: Ctx) => {
+    startTaskSession: async (_: unknown, args: { id: string; provider?: string | null; config?: Record<string, unknown> | null; prompt?: string | null }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'member');
       return startTaskSession(args.id, { ...args, ownerId: requireUser(ctx).id });
     },

@@ -17,7 +17,7 @@ export type TaskColumnKey =
   | 'reporter'
   | 'dueDate'
   | 'session'
-  | 'worksession'
+  | 'branch'
   | 'pullRequest'
   | 'comments'
   | 'attachments'
@@ -67,7 +67,7 @@ export const TASK_COLUMNS: TaskColumn[] = [
   { key: 'reporter', label: 'Rapporteur', width: 130, minWidth: 70, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
   { key: 'dueDate', label: 'Échéance', width: 100, minWidth: 80, defaultVisible: true, sortable: true, filter: { kind: 'select', options: DUE_FILTER_OPTIONS } },
   { key: 'session', label: 'Session', width: 160, minWidth: 80, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
-  { key: 'worksession', label: 'Work session', width: 160, minWidth: 80, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
+  { key: 'branch', label: 'Branche', width: 160, minWidth: 80, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
   { key: 'pullRequest', label: 'PR', width: 96, minWidth: 60, defaultVisible: true, sortable: true, filter: { kind: 'text' } },
   { key: 'comments', label: 'Comm.', width: 76, minWidth: 50, defaultVisible: true, sortable: true, filter: null, align: 'end' },
   { key: 'attachments', label: 'Fichiers', width: 70, minWidth: 50, defaultVisible: false, sortable: true, filter: null, align: 'end' },
@@ -221,8 +221,8 @@ export function cellText(t: Task, key: TaskColumnKey): string {
       return t.dueDate ?? '';
     case 'session':
       return t.session?.name ?? '';
-    case 'worksession':
-      return t.worksession?.label ?? t.branch ?? '';
+    case 'branch':
+      return t.worksession?.branch ?? t.branch ?? '';
     case 'pullRequest':
       return t.pullRequest ? `#${t.pullRequest.number} ${t.pullRequest.title}` : '';
     case 'comments':
@@ -321,8 +321,8 @@ export function sortValue(t: Task, key: TaskColumnKey): string | number | null {
       return t.dueDate ?? null;
     case 'session':
       return t.session ? fold(t.session.name) : null;
-    case 'worksession':
-      return t.worksession ? fold(t.worksession.label) : t.branch ? fold(t.branch) : null;
+    case 'branch':
+      return t.worksession ? fold(t.worksession.branch) : t.branch ? fold(t.branch) : null;
     case 'pullRequest':
       return t.pullRequest ? t.pullRequest.number : null;
     case 'comments':

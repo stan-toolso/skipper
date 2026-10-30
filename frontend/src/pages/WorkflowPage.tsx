@@ -10,7 +10,7 @@ import WorkflowCanvas, { dragNodeType } from '../components/automation/workflow/
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
 import { CLEAR_WORKFLOW_SCHEDULE, DELETE_WORKFLOW, SET_WORKFLOW_SCHEDULE, UPDATE_WORKFLOW, VALIDATE_WORKFLOW, WORKFLOW, type InputVariable, type Workflow, type WorkflowDefinition, type WorkflowIssue, type WorkflowNodeType, type WorkflowRunSummary } from '../graphql/automation';
-import { PROJECT_WORKSESSIONS, PROVIDERS, type Provider, type Worksession } from '../graphql/operations';
+import { PROVIDERS, type Provider } from '../graphql/operations';
 import { fmtDateTime, nodeTypeInfo, runDurationMs } from '../lib/automation';
 import { formatCost, formatDuration } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
@@ -95,9 +95,7 @@ export default function WorkflowPage() {
   const workflow = data?.workflow;
   useTabTitle(workflow ? workflow.name : null);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const { data: worksessionsData } = useQuery<{ project: { worksessions: Worksession[] } | null }>(PROJECT_WORKSESSIONS, { variables: { id: workflow?.project.id }, skip: !workflow });
   const providers = providersData?.providers ?? [];
-  const worksessions = (worksessionsData?.project?.worksessions ?? []).filter((w) => !w.archivedAt);
 
   // Définition locale : repart de la version serveur tant qu'aucune modification n'est en attente.
   const [def, setDef] = useState<WorkflowDefinition | null>(null);
@@ -253,7 +251,6 @@ export default function WorkflowPage() {
                 setSelected(null);
               }}
               providers={providers}
-              worksessions={worksessions}
               issues={issues.filter((i) => i.nodeKey === selectedNode.key)}
             />
           ) : (

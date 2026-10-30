@@ -27,7 +27,7 @@ const icons: Record<TabKind, string> = {
   users: 'bi-people',
   files: 'bi-folder2-open',
   file: 'bi-file-earmark-code',
-  worksession: 'bi-layers',
+  workspace: 'bi-chat-dots',
   'shared-pages': 'bi-file-earmark-richtext',
   'shared-page': 'bi-file-earmark-richtext',
   workflows: 'bi-diagram-3',

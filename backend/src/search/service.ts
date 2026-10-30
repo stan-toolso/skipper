@@ -3,13 +3,13 @@ import { vaultService } from '../vault/service.js';
 import { kindLabels as vaultKindLabels } from '../vault/types.js';
 
 /**
- * Recherche globale (palette ⌘K) : projets, worksessions, sessions, terminaux, tâches et éléments du coffre
+ * Recherche globale (palette ⌘K) : projets, sessions, terminaux, tâches et éléments du coffre
  * que la personne peut voir. Chaque mot de la requête doit apparaître ; les titres qui commencent par la
  * requête viennent d'abord, puis ceux qui la contiennent, puis le reste par date de mise à jour.
  */
 
-export type SearchKind = 'PROJECT' | 'WORKSESSION' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
-export const SEARCH_KINDS: SearchKind[] = ['PROJECT', 'WORKSESSION', 'SESSION', 'TERMINAL', 'TASK', 'VAULT_ITEM'];
+export type SearchKind = 'PROJECT' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
+export const SEARCH_KINDS: SearchKind[] = ['PROJECT', 'SESSION', 'TERMINAL', 'TASK', 'VAULT_ITEM'];
 
 export interface SearchHit {
   kind: SearchKind;
@@ -104,8 +104,6 @@ export const searchService = {
     const jobs: Record<SearchKind, () => Promise<SearchGroup | null>> = {
       PROJECT: () =>
         searchKind('PROJECT', { from: 'projects x', title: 'x.name', detail: 'x.description', haystack: "(x.name || ' ' || x.slug || ' ' || coalesce(x.description, ''))", projectId: 'x.id', worksessionBranch: 'NULL', status: 'NULL', activity: 'NULL', updatedAt: 'x.updated_at', where: '' }, scope, query, n),
-      WORKSESSION: () =>
-        searchKind('WORKSESSION', { from: 'worksessions x', title: 'coalesce(x.label, x.branch)', detail: "CASE WHEN x.label IS NULL THEN x.name ELSE x.branch END", haystack: "(x.branch || ' ' || x.name || ' ' || coalesce(x.label, ''))", projectId: 'x.project_id', worksessionBranch: 'x.branch', status: "CASE WHEN x.archived_at IS NULL THEN NULL ELSE 'archived' END", activity: 'NULL', updatedAt: 'x.created_at', where: '' }, scope, query, n),
       SESSION: () =>
         searchKind('SESSION', { from: 'sessions x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'x.activity', updatedAt: 'x.updated_at', where: "AND x.archived_at IS NULL AND x.kind = 'session'" }, scope, query, n),
       TERMINAL: () =>

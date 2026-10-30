@@ -6,14 +6,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import ProjectHeader from '../components/ProjectHeader';
-import { useSessionLauncher } from '../components/SessionLauncher';
 
 import { CREATE_PROJECT_API_KEY, DELETE_PROJECT_API_KEY, PROJECT_API_KEYS, type ProjectApiKey } from '../graphql/tasks';
-import { useRenameWorksession } from '../workbench/RenameWorksession';
 import { apiBaseUrl } from '../apollo';
 import StatusBadge from '../components/StatusBadge';
 import { useDialogs } from '../components/Dialogs';
-import { useDeletions } from '../workbench/useDeletions';
 import { formatDuration as formatSeconds, formatMb, Gauge } from '../components/ServerHealthCard';
 
 /** Activité d'une session vue depuis son processus Claude. */
@@ -273,7 +270,6 @@ import {
   PROJECT,
   PROJECTS,
   PROJECT_MEMBERS,
-  PROJECT_WORKSESSIONS,
   PROJECT_CONTAINER_STATS,
   UPDATE_PROJECT,
   type ContainerProcess,
@@ -287,7 +283,6 @@ import {
   type ProjectMember,
   type ProjectRole,
   type Session,
-  type Worksession,
 } from '../graphql/operations';
 import { projectRoleLabels, timeAgo } from '../lib/humanize';
 import { useAuth } from '../auth/AuthContext';
@@ -548,73 +543,6 @@ function MembersCard({ projectId, canManage }: { projectId: string; canManage: b
   );
 }
 
-/** Work sessions du projet : liste, création (modale, avec une session si une consigne est donnée), renommage, archivage, suppression. */
-function WorksessionsCard({ projectId }: { projectId: string }) {
-  const { data } = usePollingQuery<{ project: { gitUrl: string | null; git: { branch: string; commit: string } | null; worksessions: Worksession[] } | null }>(PROJECT_WORKSESSIONS, { variables: { id: projectId }, pollInterval: 5000 });
-  const { deleteWorksession, archiveWorksession } = useDeletions();
-  const { openRenameWorksession } = useRenameWorksession();
-  const { openNewSession, openNewWorksession } = useSessionLauncher();
-  const project = data?.project;
-  if (!project) return null;
-  return (
-    <Card className="mt-3">
-      <Card.Header>Work sessions</Card.Header>
-      <Card.Body className="small">
-        <p className="text-secondary">
-          Sessions et terminaux travaillent toujours dans une work session : un dossier à elle
-          {project.gitUrl ? (
-            <>
-              , sur sa propre branche (git worktree), à côté du dossier principal qui suit <code>{project.git?.branch ?? 'la branche par défaut'}</code>
-            </>
-          ) : null}
-          . Rien ne s'exécute dans le dossier principal. Une work session archivée garde son dossier et ses sessions : voyez l'<Link to={`/projects/${projectId}/history`}>historique</Link>.
-        </p>
-        <Table size="sm" className="mb-3 table-stack">
-          <tbody>
-            {project.worksessions.length === 0 && (
-              <tr>
-                <td className="text-secondary">Aucune work session.</td>
-              </tr>
-            )}
-            {project.worksessions.map((w) => (
-              <tr key={w.id}>
-                <td>
-                  <i className="bi bi-layers me-1" />
-                  <strong>{w.label}</strong>
-                  {project.gitUrl && w.label !== w.branch && <span className="text-secondary"> · {w.branch}</span>}
-                  {w.git && <span className="text-secondary"> · {w.git.commit}</span>}
-                  {!w.exists && <span className="text-warning"> · dossier absent (recréé à la prochaine utilisation)</span>}
-                  <div className="text-secondary">
-                    <code>{w.path}</code>
-                  </div>
-                </td>
-                <td className="text-end text-nowrap">
-                  <Button size="sm" variant="outline-primary" className="me-1" onClick={() => openNewSession({ projectId, worksessionId: w.id })}>
-                    Session
-                  </Button>
-                  <Button size="sm" variant="outline-secondary" className="me-1" title="Renommer le libellé ou le dossier" onClick={() => openRenameWorksession(w)}>
-                    Renommer
-                  </Button>
-                  <Button size="sm" variant="outline-secondary" className="me-1" title="Archiver : sessions archivées, dossier et branche conservés" onClick={() => void archiveWorksession(w)}>
-                    Archiver
-                  </Button>
-                  <Button size="sm" variant="outline-danger" onClick={() => void deleteWorksession(w)}>
-                    Supprimer
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-        <Button size="sm" onClick={() => openNewWorksession({ projectId })}>
-          <i className="bi bi-layers me-1" />
-          Nouvelle work session
-        </Button>
-      </Card.Body>
-    </Card>
-  );
-}
-
 /** Clés d'API du projet : accès REST aux tâches (`/api/v1/tasks`) pour les outils externes. */
 function ApiKeysCard({ projectId }: { projectId: string }) {
   const { data } = useQuery<{ project: { id: string; apiKeys: ProjectApiKey[] } | null }>(PROJECT_API_KEYS, { variables: { id: projectId } });
@@ -804,7 +732,6 @@ export default function ProjectDetailPage() {
       <PermissionRulesCard projectId={project.id} canManage={canWrite} />
       <RunnerCard project={project} />
       {isAdmin && !personal && <ApiKeysCard projectId={project.id} />}
-      <WorksessionsCard projectId={project.id} />
 
       <h2 className="h5 mt-4">Sessions</h2>
       <Table hover responsive size="sm" className="align-middle">
@@ -836,7 +763,7 @@ export default function ProjectDetailPage() {
               <td>
                 <StatusBadge status={s.status} pendingRequests={s.pendingRequestCount} />
               </td>
-              <td className="text-secondary small d-none d-md-table-cell">{s.worksession ? s.worksession.label : '—'}</td>
+              <td className="text-secondary small d-none d-md-table-cell font-monospace">{s.worksession ? s.worksession.branch : '—'}</td>
               <td className="text-secondary small">{new Date(s.createdAt).toLocaleString()}</td>
             </tr>
           ))}

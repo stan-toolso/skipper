@@ -30,7 +30,7 @@ interface TaskSession {
   startedAt: string | null;
   endedAt: string | null;
   owner: { id: string; name: string } | null;
-  worksession: { id: string; label: string } | null;
+  worksession: { id: string; branch: string } | null;
 }
 
 type TaskWithSessions = Task & { sessions: TaskSession[] };
@@ -47,7 +47,7 @@ export default function TaskPage() {
   const task = data?.task;
   useTabTitle(task?.title ?? null);
   const current = task?.sessions.find((s) => s.id === task.session?.id);
-  useGitTarget(task && task.session?.worksession ? { projectId: task.project.id, worksessionId: task.session.worksession.id, label: task.session.worksession.label } : null);
+  useGitTarget(task && task.session?.worksession ? { projectId: task.project.id, worksessionId: task.session.worksession.id, label: `${task.project.name} · ${task.session.worksession.branch}` } : null);
 
   if (loading && !data) return <PageLoading />;
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
@@ -115,7 +115,7 @@ export default function TaskPage() {
                     <tr>
                       <th>Session</th>
                       <th>État</th>
-                      <th className="d-none d-md-table-cell">Work session</th>
+                      <th className="d-none d-md-table-cell">Branche</th>
                       <th className="d-none d-md-table-cell">Par</th>
                       <th className="d-none d-md-table-cell">Démarrée</th>
                       <th className="text-end">Coût</th>
@@ -135,7 +135,7 @@ export default function TaskPage() {
                           <StatusBadge status={s.status} />
                           {s.pendingRequestCount > 0 && <Badge bg="warning" text="dark" className="ms-1">{s.pendingRequestCount}</Badge>}
                         </td>
-                        <td className="d-none d-md-table-cell">{s.worksession ? <Link to={`/worksessions/${s.worksession.id}/files`}>{s.worksession.label}</Link> : <span className="text-secondary">dossier principal</span>}</td>
+                        <td className="d-none d-md-table-cell font-monospace">{s.worksession ? <Link to={`/sessions/${s.id}/files`} title="Fichiers de la session">{s.worksession.branch}</Link> : <span className="text-secondary">dossier principal</span>}</td>
                         <td className="d-none d-md-table-cell">{s.owner?.name ?? <span className="text-secondary">—</span>}</td>
                         <td className="d-none d-md-table-cell" title={s.startedAt ? fmt(s.startedAt) : ''}>
                           {s.startedAt ? timeAgo(s.startedAt) : '—'}
@@ -166,20 +166,17 @@ export default function TaskPage() {
             <Card className="mt-3">
               <Card.Header>Code</Card.Header>
               <Card.Body className="small">
-                {task.worksession || current?.worksession ? (
-                  <div title="Work session de la tâche : ses sessions y travaillent toutes">
-                    <i className="bi bi-layers me-1" />
-                    <Link to={`/worksessions/${(task.worksession ?? current!.worksession!).id}/files`}>{(task.worksession ?? current!.worksession!).label}</Link>
-                    {task.worksession?.archivedAt && <span className="text-secondary"> (archivée, restaurée à la prochaine session)</span>}
-                  </div>
-                ) : (
-                  task.branch && (
-                    <div className="font-monospace">
-                      <i className="bi bi-layers me-1" />
-                      {task.branch} <span className="text-secondary">(work session supprimée)</span>
+                {(() => {
+                  const branch = task.worksession?.branch ?? current?.worksession?.branch ?? task.branch;
+                  const alive = Boolean(task.worksession && !task.worksession.archivedAt);
+                  return branch ? (
+                    <div className="font-monospace" title="Branche de la tâche : ses sessions y travaillent toutes">
+                      <i className="bi bi-git me-1" />
+                      {current && current.worksession && alive ? <Link to={`/sessions/${current.id}/files`} title="Fichiers de la session en charge">{branch}</Link> : branch}
+                      {!task.worksession && <span className="text-secondary"> (dossier de travail supprimé)</span>}
                     </div>
-                  )
-                )}
+                  ) : null;
+                })()}
                 {task.pullRequest && (
                   <div className="mt-1">
                     <PullRequestChip projectId={task.project.id} pr={task.pullRequest} /> {task.pullRequest.title}

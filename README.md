@@ -14,33 +14,37 @@ Trois notions :
 - **Environnement d'exécution** : chaque projet a son conteneur Docker (limite de mémoire, plafond CPU
   optionnel, ne voit que le code de ce projet). Agents, terminaux et commandes y tournent **toujours** : rien ne
   s'exécute directement sur le serveur avec l'utilisateur de Skipper.
-- **Work session** : l'unité de travail d'un projet, et le **seul endroit où tournent sessions et
-  terminaux** : rien ne s'exécute dans le dossier principal. C'est un dossier à elle, à côté du checkout
-  principal — un `git worktree` sur sa propre branche pour un projet relié à un dépôt, un simple dossier
-  sinon. Elle est nommée d'après ce dont elle parle : la première ligne de la consigne devient son libellé,
-  un slug de ses premiers mots son dossier et sa branche (modifiables). Une tâche a **sa** work session,
-  créée à sa première session et réutilisée par les suivantes. Archiver ou supprimer la dernière session (ou
-  le dernier terminal) d'une work session propose (case à cocher, cochée d'avance à l'archivage) de
-  l'archiver aussi. Supprimer une work session
-  (interface, fusion d'une PR depuis le panneau git, outil MCP `worksessions.delete`) n'efface jamais ses
-  sessions : elles sont archivées avec leur transcript, leur coût, leur planification et leur lien de tâche,
-  et gardent le nom de la work session disparue (`Session.formerWorksession`) ; seule la mutation
-  `deleteWorksession(deleteSessions: true)` les supprime définitivement. Les work sessions s'appelaient
-  « worksessions » jusqu'à la migration `036_worksessions.sql` ; leurs dossiers restent sous
-  `WORKSPACES_ROOT/<slug>.worktrees/`.
-- **Session** : une conversation interactive avec un agent, rattachée à un projet et lancée dans une de
-  ses work sessions (existante ou créée pour l'occasion). La consigne de départ est
-  facultative : sans consigne, la session est créée sans démarrer et la première instruction envoyée
-  depuis sa page la lance. On peut lui envoyer des instructions à tout moment, comme dans Claude Code ; une session
-  terminée est relancée (reprise de la conversation) par un simple message. Un agent peut lui-même
-  lancer d'autres sessions (outils MCP `sessions` et `worksessions`) ; elles gardent la trace de la
-  session qui les a lancées. Les sessions d'avant les work sessions, sans work session, reprennent
-  dans le dossier principal.
+- **Session** : une conversation interactive avec un agent, rattachée à un projet, et **l'unité de travail
+  de l'interface**. Chaque session a **son propre dossier de travail**, à côté du checkout principal — un
+  `git worktree` sur sa propre branche pour un projet relié à un dépôt, un simple dossier sinon — où
+  tournent son agent et ses terminaux : rien ne s'exécute dans le dossier principal. La branche est nommée
+  d'après la consigne (un slug de ses premiers mots ; modifiable, avec son point de départ, à la création).
+  Une tâche a **son** dossier et sa branche `task/<slug>`, créés à sa première session et repris par les
+  suivantes. La consigne de départ est facultative : sans consigne, la session est créée sans démarrer et
+  la première instruction envoyée depuis sa page la lance. On peut lui envoyer des instructions à tout
+  moment, comme dans Claude Code ; une session terminée est relancée (reprise de la conversation) par un
+  simple message. Un agent peut lui-même lancer d'autres sessions (outil MCP `sessions`) ; elles gardent
+  la trace de la session qui les a lancées.
+- **Work session** : le nom technique de ce dossier de travail (table `worksessions`, serveur MCP
+  `worksessions`, champs `worksessionId` de l'API). **L'interface ne la nomme jamais** : elle crée et
+  gère des sessions, et ne montre du dossier que sa branche. Règle : **une work session n'héberge qu'une
+  session active** (`sessionService.create` refuse une work session occupée) ; archiver une session archive
+  sa work session (terminaux fermés, dossier et branche conservés), la restaurer la restaure (refusé si une
+  autre session y travaille depuis), la supprimer supprime le dossier (branche conservée sauf demande ; une
+  work session dont il ne reste que des sessions archivées est archivée). Relancer une session, ou confier
+  à nouveau une tâche à un agent, archive la session précédente et donne le dossier à la nouvelle
+  (`sessionService.vacateWorksession`). Supprimer une work session par l'API ou l'outil MCP
+  (`worksessions.delete`, fusion d'une PR depuis le panneau git) n'efface jamais ses sessions : elles sont
+  archivées avec leur transcript, leur coût, leur planification et leur lien de tâche, et gardent le nom du
+  dossier disparu (`Session.formerWorksession`) ; seule la mutation `deleteWorksession(deleteSessions:
+  true)` les supprime définitivement. Les work sessions s'appelaient « worktrees » jusqu'à la migration
+  `036_worksessions.sql` ; leurs dossiers restent sous `WORKSPACES_ROOT/<slug>.worktrees/`. Les sessions
+  d'avant les work sessions, sans dossier à elles, reprennent dans le dossier principal.
 - **Espace personnel** : un projet qui n'appartient qu'à une personne (jamais partagé, créé à sa
   première visite de `/me`), sans dépôt git, où elle ouvre des sessions, des chats et des tâches. Ses
-  sessions ont accès à **toutes ses ressources** : projets, sessions, work sessions et tâches, avec ses
+  sessions ont accès à **toutes ses ressources** : projets, sessions et tâches, avec ses
   droits (lancer une session dans un projet, attendre sa réponse, créer une tâche…).
-- **Chat** : conversation légère de l'espace personnel, sans work session ni conteneur (le CLI tourne
+- **Chat** : conversation légère de l'espace personnel, sans dossier de travail ni conteneur (le CLI tourne
   sur le serveur sans outil de fichiers ni de commande, avec les seuls outils MCP de Skipper), ouverte
   en une question depuis le tableau de bord ; elle pilote des sessions en arrière-plan si besoin.
   Voir « Espace personnel et chats » plus bas.
@@ -168,7 +172,7 @@ backend/
       mcp.ts                   # serveur MCP `projects` (list, get) des sessions d'un espace personnel
     worksessions/
       names.ts                 # noms dérivés de la consigne (libellé, dossier, branche), uniques dans le projet
-      service.ts               # work sessions : création (git worktree ou dossier), tâche, archivage, suppression, cwd
+      service.ts               # work sessions (dossier de travail de chaque session) : création (git worktree ou dossier), tâche, archivage, suppression, cwd
       mcp.ts                   # serveur MCP `worksessions` (list, create, delete)
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
@@ -220,7 +224,7 @@ backend/
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
     sharedPages/               # pages partagées : publication, versions, membres, route de lecture en bac à sable, MCP `pages`
-    search/                    # recherche globale (projets, sessions, tâches, work sessions, pages, coffre)
+    search/                    # recherche globale (projets, sessions, tâches, pages, coffre)
     apiKeys/                   # clés d'API des projets
     context/
       service.ts               # bibliothèque de contexte : dossiers, instructions, versions, journal
@@ -232,7 +236,7 @@ backend/
     sessions/
       types.ts                 # modèle Session / SessionEvent
       repository.ts            # accès SQL
-      service.ts               # orchestration : création (avec une nouvelle work session au besoin), démarrage, arrêt, suivi des processus
+      service.ts               # orchestration : création (avec le dossier de travail de la session), démarrage, arrêt, suivi des processus
       scheduledRuns.ts         # sessions dont l'exécution en cours vient de leur planification
       cleanup.ts               # nettoyage automatique : purge du transcript, compaction ou remise à zéro de la conversation
       mcp.ts                   # serveur MCP `sessions` (list, get, create, wait, send, end) : sessions lancées par un agent
@@ -268,7 +272,7 @@ frontend/
 - **ProjectMember** : `(projectId, userId)`, `role` et qui a invité. Rôles, du plus au moins
   puissant :
   - `admin` : modifier / supprimer le projet, gérer les membres, et tout ce qui suit ;
-  - `member` : sessions, terminaux, work sessions, tâches, contexte, réponses aux demandes ;
+  - `member` : sessions, terminaux, tâches, contexte, réponses aux demandes ;
   - `viewer` : lecture seule.
   Le créateur d'un projet en est administrateur. Un projet garde toujours au moins un
   administrateur. Inviter une adresse crée l'utilisateur s'il n'existe pas (« en attente » jusqu'à sa
@@ -397,7 +401,8 @@ conteneur de l'agent.
   par `git worktree add` depuis le checkout principal : branche locale ou distante existante extraite,
   sinon nouvelle branche depuis `baseRef` (défaut : HEAD) ; pour un projet sans dépôt, un dossier vide. La
   suppression retire le dossier et conserve la branche sauf demande contraire. Sessions et terminaux portent
-  un `worksessionId`, obligatoire à la création, qui fixe leur dossier de travail.
+  un `worksessionId`, obligatoire à la création, qui fixe leur dossier de travail ; une work session
+  n'héberge qu'une session active (voir « Work session » plus haut).
 - **Session** : `projectId`, `worksessionId`, `ownerId` (auteur ; hérité de la session parente pour une
   session lancée par un agent), `archivedAt`, `parentSessionId` (session d'agent qui l'a lancée, null
   pour une session humaine), `name`, `provider`, `status` (`pending`, `queued`, `running`, `completed`, `failed`,
@@ -469,9 +474,8 @@ conteneur de l'agent.
   (`human` ou `agent` avec sa session), `dueDate`. Les sessions Claude reçoivent la liste des tâches
   ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,
   `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
-  cours ; l'agent la passe en `done` quand il a fini. Les serveurs MCP `worksessions` et `sessions`
-  (voir « Lancer des sessions et des work sessions ») lui permettent de déléguer du travail à d'autres
-  sessions, dans des work sessions séparés.
+  cours ; l'agent la passe en `done` quand il a fini. Le serveur MCP `sessions` (voir « Lancer des
+  sessions ») lui permet de déléguer du travail à d'autres sessions, chacune dans son dossier.
 
 - **Runner** (`backend/src/runners/`) : un seul, Docker, pour tous les projets (`projects.runner_config`
   = `{ image, memory, cpus, browser }`). Le runner fournit l'exécutable Claude Code donné au SDK, la
@@ -607,19 +611,22 @@ en tâche de fond et gardé 10 minutes). Réglages (clé `server` de `app_settin
 
 Disposition façon Cursor (`frontend/src/workbench/`) : à gauche une sidebar avec les menus (Accueil,
 Projets, Sessions, Tâches, Demandes, Pages, Coffre…) et un explorateur des projets ; à droite un
-panneau à onglets. L'unité de navigation est le **dossier de travail** : le checkout principal d'un
-projet et chacun de ses work sessions forment une carte dans la sidebar (état de ses sessions, tâche liée,
-pull request colorée selon son état, « absent » si le dossier manque) avec des pastilles pour ses
-sessions, terminaux et navigateurs ; un dossier ouvert occupe **un seul onglet** dans la barre du haut,
-et une **sous-barre** liste ses fichiers, sessions, navigateurs et terminaux (`WorkspaceTabs`). Les
+panneau à onglets. L'unité de navigation est la **session** : chaque session de premier niveau forme une
+carte dans la sidebar (son état, sa tâche liée, l'icône de sa branche colorée selon l'état de la pull
+request, « absent » si son dossier manque) avec des pastilles pour son navigateur, ses sous-agents qui
+réclament l'attention et ses terminaux ; les sous-agents (sessions lancées par son agent) sont rangés
+sous elle. Une session ouverte occupe **un seul onglet** dans la barre du haut (clé `/sessions/:id`,
+`workbench/workspaces.ts`), et une **sous-barre** liste la session, son navigateur, ses fichiers
+(`/sessions/:id/files`) et ses terminaux (`WorkspaceTabs`). Le checkout principal ne garde une carte
+(« principal ») que pour les sessions et terminaux d'avant les work sessions. Les
 pages restent montées quand on change d'onglet (React 19 `<Activity>`), les onglets ouverts sont
 mémorisés dans le navigateur, un onglet fermé se rouvre (Alt+Maj+T), et la sidebar se replie. Le filtre
 « Mes sessions / Tout le monde » cache les sessions des autres ; les pastilles portent les initiales de
-leur auteur. Menu « ⋮ » d'une work session : fichiers, nouvelle session, terminal, renommer,
+leur auteur. Menu « ⋮ » d'une session : ouvrir, fichiers, nouveau terminal, arrêter, renommer,
 archiver, supprimer. **Recherche** (⌘K ou Ctrl+K, `search`) sur les projets, sessions (nom et
-conversation), tâches, work sessions, pages et éléments du coffre ; **raccourcis** listés par « ? »
-(`lib/shortcuts.ts`). Le panneau de droite a deux onglets : **Tâche** (la tâche liée à la session ou au
-worksession, modifiable) et **Git** (état, branche comparée à sa base avec diff par fichier, commits, PR).
+conversation), tâches, pages et éléments du coffre ; **raccourcis** listés par « ? »
+(`lib/shortcuts.ts`). Le panneau de droite a deux onglets : **Tâche** (la tâche liée à la session,
+modifiable) et **Git** (état, branche comparée à sa base avec diff par fichier, commits, PR).
 Les listes ne se rafraîchissent plus quand l'onglet du navigateur est caché (`usePollingQuery`).
 
 **Tableau de bord** (page d'accueil, `frontend/src/pages/DashboardPage.tsx`) : ce qui attend
@@ -635,7 +642,7 @@ une question, le mode d'autorisation et le modèle, et un chat de l'espace perso
 (voir « Espace personnel et chats »). Sur mobile, le tableau des projets devient une
 liste de cartes. Sans projet, la page redevient le parcours d'accueil en trois étapes, sous la zone de chat.
 
-Sur les pages d'un projet ou d'une work session (projet, session, terminal, fichiers, tâches, contexte),
+Sur les pages d'un projet ou d'une session (projet, session, terminal, fichiers, tâches, contexte),
 un **panneau git** à droite (`frontend/src/workbench/GitPanel.tsx`) montre la branche courante et son
 avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons indexer, désindexer,
 abandonner), une zone de commit, les branches (bascule, création) et l'historique (clic : diff du
@@ -650,8 +657,8 @@ compte choisi d'après le propriétaire du dépôt, sinon le compte par défaut)
 commits, base = branche du projet sinon celle du dépôt ; la branche est poussée au besoin), puis les
 autres PR ouvertes avec l'état des checks, des conflits et des revues (API GraphQL de GitHub, une
 requête, cache de 20 s). La fenêtre d'une PR la fusionne (squash, commit de fusion, rebase) et
-propose le nettoyage : branche distante, work session et branche locale (sessions encore ouvertes
-arrêtées au choix, historique conservé, terminaux fermés), tâches liées passées à « terminée » ; le
+propose le nettoyage : branche distante, dossier de travail et branche locale (sessions encore ouvertes
+arrêtées au choix, archivées, historique conservé, terminaux fermés), tâches liées passées à « terminée » ; le
 dossier principal est ensuite mis à jour (fetch, pull s'il est sur la base). API : queries
 `githubPullRequests`, `githubPullRequest`, `githubPullRequestDraft` ; mutations `createPullRequest`,
 `mergePullRequest`.
@@ -728,17 +735,17 @@ fichiers SVG dans `frontend/public/` : `favicon.svg` (pastille sombre), `logo-ma
 sombre), `logo-mark-dark.svg` (fond clair), `logo-mark-mono.svg` (masque CSS, utilisé devant les
 titres `h1`). Mot-symbole : « Skipper » en Fraunces 600 pour les supports hors interface.
 
-## Tâches et work sessions
+## Tâches et branches
 
-« Confier à un agent » lance la session dans la **work session de la tâche** : créée à sa première
+« Confier à un agent » lance la session dans le **dossier de la tâche** : créé à sa première
 session — dossier `task-<slug du titre>`, et branche `task/<slug>` à partir du checkout principal pour un
-projet git (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà) —, puis réutilisée
-par toutes ses sessions suivantes (colonne `worksessions.task_id`, restaurée si elle était archivée). La
-modale permet de préférer une autre work session existante. La work session apparaît dans la sidebar
-avec sa session, et la tâche affiche sa branche (colonne `tasks.branch`, conservée après suppression de
-la work session) et sa pull request GitHub avec ses checks et revues ; un clic ouvre la fenêtre de
-fusion. Cycle complet sans quitter Skipper : tâche → work session → PR (panneau git) → fusion →
-nettoyage de la work session et de la branche.
+projet git (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà) —, puis repris
+par toutes ses sessions suivantes (colonne `worksessions.task_id`, restauré s'il était archivé) ; la
+session précédente de la tâche, si elle est encore active, est arrêtée et archivée (une seule session par
+dossier), ce que la modale annonce. La tâche affiche sa branche (colonne `tasks.branch`, conservée après
+suppression du dossier) et sa pull request GitHub avec ses checks et revues ; un clic ouvre la fenêtre de
+fusion. Cycle complet sans quitter Skipper : tâche → session sur sa branche → PR (panneau git) → fusion →
+nettoyage du dossier et de la branche.
 
 Une tâche porte aussi un **responsable** et un **rapporteur** (membre du projet, ou nom et/ou e-mail libres ;
 une nouvelle tâche est rapportée par et assignée à sa créatrice ou son créateur), une **étiquette d'état**
@@ -764,21 +771,20 @@ montre la consigne envoyée à l'agent et permet de la modifier avant le lanceme
 (`/api/v1/tasks`, clés `skp_…` créées sur la fiche du projet, haché en base) permet à un outil externe de
 lister et créer des tâches.
 
-## Lancer des sessions et des work sessions
+## Lancer des sessions
 
-**Depuis l'interface.** « Nouvelle session » et « Nouvelle work session » (sidebar, pages Projets,
-Sessions, projet, accueil) ouvrent la même modale (`frontend/src/components/SessionLauncher.tsx`, fournie
-à toute l'application par `SessionLauncherProvider` dans le layout), qui pose une seule question : « que
-voulez-vous faire ? ». Par défaut, une **nouvelle work session** est créée, nommée d'après la consigne
-(dossier et branche affichés sous la zone de texte, modifiables avec le point de départ) ; un sélecteur
-permet de choisir une work session existante, et le menu « ⋮ » d'une work session ouvre la modale sur
-elle. Type d'agent, modèle et autorisations sont des options repliées. Sans consigne, seule la work
-session est créée (on y ouvrira une session ou un terminal). Côté API,
-`CreateSessionInput.worksessionId` ou `CreateSessionInput.newWorksession { name, branch, label, baseRef }`
-est **obligatoire** : la work session est créée puis la session dans la même mutation (la work session est
-retirée si la session ne peut pas être créée) ; sans nom, branche ni libellé, elle est nommée d'après la
-consigne (`backend/src/worksessions/names.ts`, miroir côté front dans `frontend/src/lib/worksessions.ts`).
-`createTerminal` exige aussi un `worksessionId`.
+**Depuis l'interface.** « Nouvelle session » (sidebar, pages Projets, Sessions, projet, accueil) ouvre la
+modale `frontend/src/components/SessionLauncher.tsx` (fournie à toute l'application par
+`SessionLauncherProvider` dans le layout), qui pose une seule question : « que voulez-vous faire ? ». La
+session reçoit son propre dossier de travail ; pour un projet git, la branche nommée d'après la consigne
+est affichée sous la zone de texte, modifiable avec son point de départ. Type d'agent, modèle et
+autorisations sont des options repliées. Sans consigne, la session est créée sans démarrer. Côté API,
+`CreateSessionInput.newWorksession { name, branch, label, baseRef }` (ou `worksessionId`, pour une work
+session existante et libre) est **obligatoire** : la work session est créée puis la session dans la même
+mutation (la work session est retirée si la session ne peut pas être créée) ; sans nom, branche ni
+libellé, elle est nommée d'après la consigne (`backend/src/worksessions/names.ts`, miroir côté front dans
+`frontend/src/lib/worksessions.ts`). `createTerminal` exige aussi un `worksessionId` : l'interface ouvre
+les terminaux depuis le menu d'une session, dans son dossier.
 
 **Fichiers joints.** La consigne (modale de lancement) comme toute instruction envoyée ensuite (zone de
 saisie de la session) peut être accompagnée de fichiers : bouton trombone, collage d'une image depuis le
@@ -797,13 +803,14 @@ fichiers joints. ».
 **Depuis un agent.** Chaque session Claude reçoit deux serveurs MCP supplémentaires, décrits dans son
 prompt système :
 
-- `worksessions` : `list` (work sessions avec libellé, branche, commit et sessions en cours),
+- `worksessions` : `list` (dossiers de travail avec libellé, branche, commit et sessions en cours),
   `create(name?, branch?, label?, base_ref?)`, `delete(name, delete_branch?)`. Lister et créer sont toujours
   autorisés ; supprimer passe par la demande d'autorisation habituelle.
 - `sessions` : `list`, `get(id)` (état et dernière réponse de l'agent), `create(prompt, name?,
   worksession? | new_branch?, base_ref?, permission_mode?, model?)` (même provider et même configuration
   que la session appelante par défaut ; sans `worksession` ni `new_branch`, une nouvelle work session nommée
-  d'après la consigne), `wait(id, timeout_seconds?)` (attend la fin du tour, 120 s par
+  d'après la consigne ; `worksession` doit être libre : une work session n'héberge qu'une session active,
+  jamais celle de l'appelant), `wait(id, timeout_seconds?)` (attend la fin du tour, 120 s par
   défaut, 600 s au plus, à rappeler si l'agent travaille encore), `send(id, text)`, `end(id)`. Un agent
   ne peut envoyer une instruction ou terminer que les sessions qu'il a lancées. `create` et `send`
   consomment du budget : ils passent par la demande d'autorisation (mode « me demander »), ou sont
@@ -836,8 +843,8 @@ membre (administratrice) ; il ne se partage pas (`inviteProjectMember`, `updateP
 n'apparaît pas dans la liste des projets (`projects(includePersonal: true)` pour l'obtenir, ce que fait
 la modale de lancement) mais en tête de la sidebar (« Mon espace ») et dans le tableau de bord. Ses
 pages sont celles d'un projet (`ProjectHeader` en mode personnel : Aperçu, Chats, Tâches, Contexte,
-Coffre, Historique ; ni membres, ni clés d'API, ni suppression), avec son conteneur, ses work sessions
-(simples dossiers), sa bibliothèque de contexte et ses tâches. Les tâches et sessions de l'espace
+Coffre, Historique ; ni membres, ni clés d'API, ni suppression), avec son conteneur, les dossiers de ses
+sessions (simples dossiers), sa bibliothèque de contexte et ses tâches. Les tâches et sessions de l'espace
 figurent dans les listes globales (Tâches, Sessions) comme celles d'un projet.
 
 **Portée d'une session personnelle** (`personal/scope.ts`). Toute session (ou chat) de l'espace
@@ -856,7 +863,7 @@ session du projet par défaut.
 
 **Chats.** Un chat est une session de l'espace personnel avec `sessions.kind = 'chat'` (migration
 `040_personal_spaces.sql`) : même transcript, mêmes demandes d'autorisation, même coût relevé, mais
-sans work session (`worksessionId` null, dossier de travail = celui de l'espace) et **sans conteneur** :
+sans dossier de travail (`worksessionId` null, dossier = celui de l'espace) et **sans conteneur** :
 le provider Claude lance le CLI du serveur (`CLAUDE_BIN`, sinon celui du SDK, comme la vérification des
 identifiants) avec `tools: []` (aucun outil intégré : ni fichiers, ni commandes, ni web), `settingSources: []`
 (aucun réglage lu sur le disque), un dossier de configuration propre à l'espace
@@ -961,7 +968,8 @@ Côté serveur (`backend/src/files/service.ts`), tout chemin est normalisé puis
 de la racine du workspace, liens symboliques résolus compris ; les fichiers de plus de 2 Mo ou
 binaires ne sont pas ouverts. API : `workspaceEntries`, `workspaceFile`, `writeWorkspaceFile`,
 `createWorkspaceEntry`, `renameWorkspaceEntry`, `deleteWorkspaceEntry` (arguments `projectId` et
-`worksessionId` optionnel : sans lui, le dossier principal).
+`worksessionId` optionnel : sans lui, le dossier principal). L'explorateur d'une session est sous
+`/sessions/:id/files` (`lib/files.ts` résout son dossier par la query `session`).
 
 ## Historique et archives
 
@@ -969,11 +977,12 @@ Une session s'**archive** (bouton sur sa page, menu de la sidebar, liste des ses
 sidebar et reste consultable, restaurable et relançable depuis l'**historique** du projet
 (`/projects/:id/history`, recherche dans les noms, consignes et conversations). « Relancer » crée une
 nouvelle session avec un résumé de la précédente (`<previous_conversation>`, 40 k caractères au plus).
-Par défaut, la relance travaille dans la work session de la session d'origine (restaurée si besoin).
-Restaurer une session archivée restaure aussi sa work session. Une work session s'archive de même (ses
-sessions sont archivées, ses terminaux fermés, dossier et branche conservés) et se restaure avec ses
-sessions ; un dossier de work session disparue est recréé à la prochaine utilisation. Une work session se
-renomme (libellé libre, et dossier par `git worktree move`).
+La relance travaille dans le dossier et sur la branche de la session d'origine (restaurés si besoin ;
+la session d'origine est archivée, arrêtée si elle tournait : une seule session par dossier), ou dans un
+nouveau dossier si le sien a été supprimé. Archiver une session archive son dossier (terminaux fermés,
+dossier et branche conservés) ; la restaurer le restaure ; un dossier disparu est recréé à la prochaine
+utilisation. Une session se renomme depuis la sidebar ou ses réglages. Les mutations `archiveWorksession`,
+`restoreWorksession`, `renameWorksession` et `deleteWorksession` restent dans l'API (sans interface).
 
 ## Pages partagées
 
@@ -1047,7 +1056,7 @@ en choisissant un **jeton personnel** déposé dans le coffre (élément `github
 compte est un jeton applicatif du coffre ; un jeton OAuth expirant est renouvelé par Skipper. Pour
 chaque dépôt, le compte retenu est celui dont l'identifiant ou l'une des organisations possède le
 dépôt, sinon le compte par défaut. Ce compte sert aux actions git de la personne (clone, fetch, pull,
-push, création de work session), à ses pull requests, et aux agents de ses sessions (credential helper
+push, création du dossier d'une session), à ses pull requests, et aux agents de ses sessions (credential helper
 par variables d'environnement, jamais écrit sur disque ; identité des commits = celle du compte).
 
 **OpenCode** (`settings/opencode.ts`) : modèle par défaut (`fournisseur/modèle`), budget par session,
@@ -1082,8 +1091,9 @@ puis par les demandes humaines, comme pour Claude.
 plusieurs **déclencheurs** (manuel, avec ses **variables** déclarées — clé, libellé, obligatoire, valeur
 par défaut, disponibles comme `{{input.ticket}}` ou `{{ticket | default: "…"}}` —, ou « tâche créée »
 avec un filtre visuel sur la tâche), des nœuds **appel de modèle**, **tâche** (session qui traite une
-tâche existante, dans la work session de la tâche ou une work session choisie), **session**
-(session libre, avec ou sans attente du tour, terminée ou non ensuite), **créer une tâche**,
+tâche existante, dans le dossier de la tâche), **session** (session libre sur une branche donnée ou
+propre à l'exécution — dossier repris s'il existe, sa session précédente archivée —, avec ou sans
+attente du tour, terminée ou non ensuite), **créer une tâche**,
 **condition** (règles visuelles imbriquées ou formule `nodes.review.json.approved and input.env ==
 "prod"`, voir `expressions.ts`) et **fin** (sortie de l'exécution). Les arêtes d'une condition portent
 sa branche oui / non ; un appel de modèle, une tâche, une session ou une création de tâche peuvent avoir
@@ -1133,15 +1143,15 @@ Toutes les opérations exigent une session (cookie), sauf `me`. Les erreurs de d
 - `providers` : types d'agents disponibles et leurs options
 - `projects`, `project(id)` ; `createProject`, `updateProject`, `prepareProjectWorkspace`, `deleteProject`
 - `sessions(projectId, status, provider, limit, offset)`, `session(id)` avec `events(after, limit)` et `requests(status)`
-- `createSession(input)` (`input.worksessionId` ou `input.newWorksession { name, branch, label, baseRef }`, l'un des deux obligatoire), `startSession(id)`, `stopSession(id)`, `deleteSession(id)` ; `Session.parentSession`, `Session.childSessions`
-- `sendSessionMessage(id, text, attachments)`, `resumeSession(id)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions et des work sessions »)
+- `createSession(input)` (`input.newWorksession { name, branch, label, baseRef }` ou `input.worksessionId` d'une work session libre, l'un des deux obligatoire), `startSession(id)`, `stopSession(id)`, `archiveSession(id)` (avec son dossier), `unarchiveSession(id)`, `relaunchSession(id, { name, instruction })`, `deleteSession(id, deleteBranch)` (avec son dossier) ; `Session.parentSession`, `Session.childSessions`
+- `sendSessionMessage(id, text, attachments)`, `resumeSession(id)`, `interruptSession(id)`, `endSession(id)`, `updateSessionConfig(id, config)` ; `CreateSessionInput.attachments` et `Session.promptAttachments` (fichiers joints, voir « Lancer des sessions »)
 - `requests(status, sessionId, limit, newestFirst)` (statut à null = tout l'historique), `request(id)` ; `answerRequest(id, response)`, `cancelRequest(id)`
 - `Project.contextFolders`, `Project.contextInstructions`, `Project.contextChanges(limit)`, `contextInstruction(id)` avec `versions`, `searchContext(projectId, query)`
 - `createContextFolder`, `renameContextFolder`, `moveContextFolder`, `deleteContextFolder`, `createContextInstruction`, `updateContextInstruction`, `deleteContextInstruction`, `restoreContextInstructionVersion`
 - `notifications(unreadOnly, limit)`, `unreadNotificationCount` ; `markNotificationRead(id)`, `markAllNotificationsRead` ; subscription `notificationCreated`
 - `Project.tasks(status)`, `tasks(projectId, status, priority, limit)`, `task(id)` ; `createTask`, `updateTask`, `deleteTask`, `startTaskSession(id, provider, config)`
 - `githubPullRequests(projectId, state, limit)`, `githubPullRequest(projectId, number)`, `githubPullRequestDraft(projectId, worksessionId)` ; `createPullRequest(projectId, worksessionId, title, body, base, draft)`, `mergePullRequest(projectId, number, method, cleanup)` ; `Task.branch`, `Task.pullRequest`
-- `Project.worksessions`, `worksession(id)` avec `sessions` et `terminals` ; `createWorksession(projectId, branch?, name?, baseRef?, label?)`, `deleteWorksession(id, deleteBranch)` ; `CreateSessionInput.worksessionId`, `createTerminal(..., worksessionId)`, `startTaskSession(..., worksessionId)`
+- `Project.worksessions`, `worksession(id)` avec `sessions` et `terminals` ; `createWorksession(projectId, branch?, name?, baseRef?, label?)`, `deleteWorksession(id, deleteBranch)` ; `CreateSessionInput.worksessionId`, `createTerminal(..., worksessionId)` (API technique : l'interface ne manipule que des sessions)
 - `Project.terminals`, `terminal(id)` ; `createTerminal(projectId, name)`, `closeTerminal(id)`, `deleteTerminal(id)` ; WebSocket `/terminals/<id>` (messages JSON `input`, `resize` / `data`, `exit`)
 - Subscriptions SSE : `sessionEvents(sessionId)`, `sessionUpdated`, `requestCreated`, `requestUpdated`
 

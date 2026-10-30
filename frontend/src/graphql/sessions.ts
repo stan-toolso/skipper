@@ -79,21 +79,6 @@ export const HISTORY_PROJECT = gql`
       myRole
       isPersonal
       gitUrl
-      worksessions {
-        id
-        branch
-        label
-      }
-      archivedWorksessions {
-        id
-        name
-        branch
-        label
-        archivedAt
-        git {
-          commit
-        }
-      }
     }
   }
 `;

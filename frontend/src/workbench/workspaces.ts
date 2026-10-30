@@ -1,10 +1,28 @@
 import type { ProjectRole, SessionActivity, SessionStatus, TerminalStatus } from '../graphql/operations';
 
 /**
- * Dossiers de travail : le checkout principal d'un projet (« primary ») ou l'un de ses work sessions. Tout ce qui
- * s'ouvre *dans* un dossier (fichiers, sessions, navigateur d'une session, terminaux) vit dans un seul onglet
- * du workbench, celui du dossier, avec une sous-barre qui liste ce qui y est ouvert.
+ * Dossiers de travail : chaque session a le sien (sa work session — un git worktree sur sa propre branche, notion
+ * technique que l'interface ne nomme jamais), et le checkout principal d'un projet (« primary ») n'en garde un que pour
+ * les sessions et terminaux d'avant les work sessions. Tout ce qui s'ouvre *dans* le dossier d'une session (la
+ * session, son navigateur, ses fichiers, ses terminaux) vit dans un seul onglet du workbench, celui de la session,
+ * avec une sous-barre qui liste ce qui y est ouvert.
  */
+
+export interface SidebarTask {
+  id: string;
+  title: string;
+  status: string;
+  statusTag?: string | null;
+}
+
+/** Dossier de travail d'une session (sa work session) : branche, présence sur le disque, tâche. */
+export interface SidebarWorksession {
+  id: string;
+  name: string;
+  branch: string;
+  exists: boolean;
+  task: SidebarTask | null;
+}
 
 export interface SidebarSession {
   id: string;
@@ -18,7 +36,8 @@ export interface SidebarSession {
   owner: { id: string; name: string; avatarUrl: string | null } | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain. */
   parentSession: { id: string } | null;
-  worksession?: { id: string } | null;
+  /** Dossier de travail ; null pour une session d'avant les work sessions (checkout principal) ou dont le dossier a été supprimé. */
+  worksession?: SidebarWorksession | null;
 }
 
 export interface SidebarTerminal {
@@ -26,18 +45,6 @@ export interface SidebarTerminal {
   name: string;
   status: TerminalStatus;
   worksession?: { id: string } | null;
-}
-
-export interface SidebarWorksession {
-  id: string;
-  name: string;
-  branch: string;
-  label: string;
-  customLabel: string | null;
-  exists: boolean;
-  task: { id: string; title: string; status: string; statusTag?: string | null } | null;
-  sessions: SidebarSession[];
-  terminals: SidebarTerminal[];
 }
 
 export interface SidebarProject {
@@ -53,33 +60,37 @@ export interface SidebarProject {
   myRole: ProjectRole;
   sessions: SidebarSession[];
   terminals: SidebarTerminal[];
-  worksessions: SidebarWorksession[];
 }
 
 export interface Workspace {
-  /** Clé de l'onglet : /projects/:id/files (primary) ou /worksessions/:wid/files. */
+  /** Clé de l'onglet : /sessions/:id (dossier d'une session) ou /projects/:id/files (checkout principal). */
   key: string;
   projectId: string;
   projectName: string;
+  /** Identifiant technique du dossier (work session), pour les requêtes git et fichiers ; null : checkout principal. */
   worksessionId: string | null;
-  /** Worksession : libellé (choisi, sinon branche) ; primary : branche du projet. */
+  /** Session : son nom ; primary : branche du projet. */
   name: string;
   branch: string;
-  worksession: SidebarWorksession | null;
+  /** La session dont c'est le dossier ; null pour le checkout principal. */
+  session: SidebarSession | null;
   primary: boolean;
-  task: { id: string; title: string; status: string; statusTag?: string | null } | null;
+  task: SidebarTask | null;
   exists: boolean;
+  /** Sessions du dossier : la session elle-même (plusieurs seulement pour des données d'avant la règle « une session par dossier ») ; primary : sessions d'avant les work sessions. */
   sessions: SidebarSession[];
   terminals: SidebarTerminal[];
 }
 
 export type WorkspaceState = 'ask' | 'busy' | 'idle' | null;
 
-/** Clé de l'onglet du dossier principal d'un projet ou d'une work session. */
+/** Clé de l'onglet du dossier principal d'un projet, ou du dossier d'une session (sa page). */
 export const primaryKey = (projectId: string) => `/projects/${projectId}/files`;
-export const worksessionKey = (worksessionId: string) => `/worksessions/${worksessionId}/files`;
+export const sessionKey = (sessionId: string) => `/sessions/${sessionId}`;
+/** Explorateur de fichiers d'un dossier. */
+export const filesKey = (ws: Pick<Workspace, 'key' | 'primary'>) => (ws.primary ? ws.key : `${ws.key}/files`);
 
-/** Titre de l'onglet d'un dossier : « main · Projet ». */
+/** Titre de l'onglet d'un dossier : « Nom de la session · Projet » (ou « main · Projet » pour le checkout principal). */
 export const workspaceTitle = (ws: Pick<Workspace, 'name' | 'projectName'>) => `${ws.name} · ${ws.projectName}`;
 
 /** État résumé d'un dossier d'après ses sessions : une demande en attente, un agent au travail, une session ouverte. */
@@ -111,7 +122,7 @@ export interface SessionNode<T> {
 
 /**
  * Sessions d'un dossier rangées en arbre : chaque session lancée par un agent suit sa session parente, indentée,
- * dans l'ordre de la liste. Une session dont la parente n'est pas dans la liste (autre work session, archivée,
+ * dans l'ordre de la liste. Une session dont la parente n'est pas dans la liste (autre dossier, archivée,
  * masquée par le filtre) reste au premier niveau, marquée « lancée par un agent ». Les cycles ne sont pas
  * possibles en base ; si une parente manque, on ne boucle pas.
  */
@@ -144,7 +155,7 @@ export interface SessionGroup<T> {
 
 /**
  * Sessions de premier niveau d'une liste (celles d'un dossier), chacune avec ses descendants cherchés dans `pool`
- * (toutes les sessions du projet) : un sous-agent lancé dans un autre work session se range ainsi sous sa parente, et une
+ * (toutes les sessions du projet) : un sous-agent, qui a son propre dossier, se range ainsi sous sa parente, et une
  * session dont la parente est dans un autre dossier reste de premier niveau ici, avec le nom de sa parente.
  */
 export function sessionGroups<T extends { id: string; name: string; parentSession: { id: string } | null }>(sessions: T[], pool: T[] = sessions): SessionGroup<T>[] {
@@ -198,7 +209,7 @@ export function subagentsSummary(children: Pick<SidebarSession, 'status' | 'acti
   return { label, state: workspaceState(children), pending, hint };
 }
 
-/** Index des dossiers de travail construit à partir de la requête Sidebar. */
+/** Index des dossiers de travail construit à partir de la requête Sidebar : un dossier par session, plus le checkout principal. */
 export class WorkspaceIndex {
   private readonly byKey = new Map<string, Workspace>();
   private readonly byProject = new Map<string, Workspace[]>();
@@ -208,7 +219,34 @@ export class WorkspaceIndex {
   constructor(projects: SidebarProject[]) {
     for (const p of projects) {
       const list: Workspace[] = [];
-      const worksessionIds = new Set(p.worksessions.map((w) => w.id));
+      // Les terminaux d'un dossier vont avec la session qui l'occupe (la première, pour des données d'avant la règle « une session par dossier »).
+      const terminalsOf = new Map<string, SidebarTerminal[]>();
+      for (const t of p.terminals) if (t.worksession) terminalsOf.set(t.worksession.id, [...(terminalsOf.get(t.worksession.id) ?? []), t]);
+      const seen = new Set<string>();
+      const primarySessions: SidebarSession[] = [];
+      for (const s of p.sessions) {
+        const w = s.worksession;
+        if (!w) {
+          primarySessions.push(s);
+          continue;
+        }
+        const first = !seen.has(w.id);
+        seen.add(w.id);
+        list.push({
+          key: sessionKey(s.id),
+          projectId: p.id,
+          projectName: p.name,
+          worksessionId: w.id,
+          name: s.name,
+          branch: w.branch,
+          session: s,
+          primary: false,
+          task: w.task,
+          exists: w.exists,
+          sessions: [s],
+          terminals: first ? (terminalsOf.get(w.id) ?? []) : [],
+        });
+      }
       const primary: Workspace = {
         key: primaryKey(p.id),
         projectId: p.id,
@@ -216,32 +254,15 @@ export class WorkspaceIndex {
         worksessionId: null,
         name: p.gitUrl ? p.gitBranch || 'main' : 'workspace',
         branch: p.gitUrl ? p.gitBranch || 'main' : 'workspace',
-        worksession: null,
+        session: null,
         primary: true,
         task: null,
         exists: true,
-        sessions: p.sessions.filter((s) => !s.worksession || !worksessionIds.has(s.worksession.id)),
-        terminals: p.terminals.filter((t) => !t.worksession || !worksessionIds.has(t.worksession.id)),
+        sessions: primarySessions,
+        // Terminaux sans dossier, ou dont le dossier n'a plus de session listée.
+        terminals: p.terminals.filter((t) => !t.worksession || !seen.has(t.worksession.id)),
       };
-      list.push(primary);
-      for (const w of p.worksessions) {
-        // Une session listée par le projet pour cette work session mais absente de la liste de la work session (listes plafonnées) y est rangée quand même.
-        const extra = p.sessions.filter((s) => s.worksession?.id === w.id && !w.sessions.some((x) => x.id === s.id));
-        list.push({
-          key: worksessionKey(w.id),
-          projectId: p.id,
-          projectName: p.name,
-          worksessionId: w.id,
-          name: w.label,
-          branch: w.branch,
-          worksession: w,
-          primary: false,
-          task: w.task,
-          exists: w.exists,
-          sessions: [...w.sessions, ...extra],
-          terminals: [...w.terminals, ...p.terminals.filter((t) => t.worksession?.id === w.id && !w.terminals.some((x) => x.id === t.id))],
-        });
-      }
+      list.unshift(primary);
       this.byProject.set(p.id, list);
       for (const ws of list) {
         this.byKey.set(ws.key, ws);
@@ -265,9 +286,9 @@ export class WorkspaceIndex {
 
   /** Clé du dossier auquel appartient un chemin (fichiers, session, navigateur, terminal), ou null. */
   keyOf(pathname: string): string | null {
-    const files = pathname.match(/^(\/(?:projects|worksessions)\/[^/]+\/files)(?:\/|$)/);
+    const files = pathname.match(/^(\/projects\/[^/]+\/files)(?:\/|$)/);
     if (files) return this.byKey.has(files[1]) ? files[1] : null;
-    const session = pathname.match(/^(\/sessions\/[^/]+)(?:\/browser)?$/);
+    const session = pathname.match(/^(\/sessions\/[^/]+)(?:\/browser|\/files(?:\/.*)?)?$/);
     if (session) return this.owners.get(session[1]) ?? null;
     const terminal = pathname.match(/^(\/terminals\/[^/]+)$/);
     if (terminal) return this.owners.get(terminal[1]) ?? null;
@@ -278,11 +299,10 @@ export class WorkspaceIndex {
 export const EMPTY_INDEX = new WorkspaceIndex([]);
 
 /** Identifiants (UUID) présents dans des chemins d'onglets, par type, pour la sidebar d'un super administrateur. */
-export function openItemsOf(paths: string[]): { projectIds: string[]; worksessionIds: string[]; sessionIds: string[]; terminalIds: string[]; taskIds: string[] } {
+export function openItemsOf(paths: string[]): { projectIds: string[]; sessionIds: string[]; terminalIds: string[]; taskIds: string[] } {
   const pick = (re: RegExp) => [...new Set(paths.flatMap((p) => [...p.matchAll(re)].map((m) => m[1].toLowerCase())))].filter((id) => /^[0-9a-f-]{36}$/.test(id)).sort();
   return {
     projectIds: pick(/\/projects\/([0-9a-fA-F-]{36})/g),
-    worksessionIds: pick(/\/worksessions\/([0-9a-fA-F-]{36})/g),
     sessionIds: pick(/\/sessions\/([0-9a-fA-F-]{36})/g),
     terminalIds: pick(/\/terminals\/([0-9a-fA-F-]{36})/g),
     taskIds: pick(/\/tasks\/([0-9a-fA-F-]{36})/g),

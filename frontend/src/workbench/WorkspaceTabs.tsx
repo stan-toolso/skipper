@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { formatTokens } from '../lib/humanize';
 import AddMenu from './AddMenu';
 import { useTabs } from './TabsContext';
-import { attachedElsewhere, mineFirst, sessionGroups, subagentsSummary, type SidebarSession } from './workspaces';
+import { attachedElsewhere, filesKey, mineFirst, sessionGroups, subagentsSummary, type SidebarSession } from './workspaces';
 
 export function sessionDotClass(s: Pick<SidebarSession, 'status' | 'activity' | 'pendingRequestCount'>): string {
   if (s.pendingRequestCount > 0) return 'ask';
@@ -45,9 +45,9 @@ export const initialsOf = (name: string) =>
     .toUpperCase();
 
 /**
- * Sous-barre d'un dossier de travail : Fichiers, les sessions (les miennes d'abord), le navigateur des sessions
- * qui en ont un, les terminaux, et un « + » pour y ouvrir quelque chose. Affichée seulement quand la page
- * courante appartient à un dossier.
+ * Sous-barre d'un dossier de travail (celui d'une session, ou le checkout principal pour les sessions d'avant) :
+ * la session (et ses sous-agents), son navigateur s'il est ouvert, ses fichiers, ses terminaux, et un « + » pour
+ * y ouvrir quelque chose. Affichée seulement quand la page courante appartient à un dossier.
  */
 export default function WorkspaceTabs() {
   const location = useLocation();
@@ -63,12 +63,13 @@ export default function WorkspaceTabs() {
   }, [location.pathname, ws?.sessions.length]);
 
   if (!ws) return null;
-  // Sous-agents cherchés dans tout le projet : un sous-agent lancé dans un autre work session compte pour sa parente, et n'a pas d'onglet à part ici.
+  // Sous-agents cherchés dans tout le projet : un sous-agent (qui a son propre dossier) compte pour sa parente, et n'a pas d'onglet à part ici.
   const pool = workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s) => ({ ...s, wsKey: w.key })));
   const poolById = new Map(pool.map((s) => [s.id, s]));
   const here = new Set(ws.sessions.map((s) => s.id));
   const sessions = mineFirst(ws.sessions, user?.id ?? null).filter((s) => !attachedElsewhere(s, here, poolById));
-  const filesActive = location.pathname.startsWith(ws.key);
+  const files = filesKey(ws);
+  const filesActive = location.pathname === files || location.pathname.startsWith(`${files}/`);
   const link = (to: string, active: boolean, title: string, children: React.ReactNode) => (
     <Link key={to} to={to} className={`wb-ws-tab${active ? ' active' : ''}`} title={title}>
       {children}
@@ -85,11 +86,12 @@ export default function WorkspaceTabs() {
           el.scrollLeft += e.deltaY;
         }}
       >
-        {link(ws.key, filesActive, `Fichiers · ${ws.name}`, (
-          <>
-            <i className="bi bi-folder2-open" /> Fichiers
-          </>
-        ))}
+        {ws.primary &&
+          link(files, filesActive, `Fichiers · ${ws.name}`, (
+            <>
+              <i className="bi bi-folder2-open" /> Fichiers
+            </>
+          ))}
         {sessionGroups(sessions.map((s) => ({ ...s, wsKey: ws.key })), pool).flatMap(({ root, children }) =>
           // Un onglet par session de premier niveau (avec le compte de ses sous-agents) ; un sous-agent de ce dossier n'a le sien que s'il est la page courante ou attend une réponse.
           [root, ...children.filter((c) => location.pathname.startsWith(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, depth, byAgent, parentName }) => {
@@ -118,6 +120,12 @@ export default function WorkspaceTabs() {
           );
           }),
         )}
+        {!ws.primary &&
+          link(files, filesActive, `Fichiers · ${ws.name}${ws.branch ? ` · branche ${ws.branch}` : ''}`, (
+            <>
+              <i className="bi bi-folder2-open" /> Fichiers
+            </>
+          ))}
         {ws.terminals.map((t) =>
           link(`/terminals/${t.id}`, location.pathname === `/terminals/${t.id}`, t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé', (
             <>
@@ -138,7 +146,7 @@ export default function WorkspaceTabs() {
         >
           <i className="bi bi-plus-lg" />
         </button>
-        {menu && <AddMenu projectId={ws.projectId} worksession={ws.worksession} canWorksession={false} onClose={() => setMenu(false)} />}
+        {menu && <AddMenu projectId={ws.projectId} session={ws.session ? { id: ws.session.id, name: ws.session.name, status: ws.session.status, worksessionId: ws.worksessionId, branch: ws.worksessionId ? ws.branch : null } : null} onClose={() => setMenu(false)} />}
       </span>
     </div>
   );

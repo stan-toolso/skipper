@@ -135,7 +135,7 @@ export default function SessionDetailPage() {
       ? {
           projectId: session.project.id,
           worksessionId: session.worksession?.id ?? null,
-          label: session.worksession ? `${session.project.name} · ${session.worksession.label}` : session.project.name,
+          label: session.worksession ? `${session.project.name} · ${session.worksession.branch}` : session.project.name,
           taskId: session.task?.id ?? null,
           sessionId: session.id,
           changesKey,
@@ -252,13 +252,13 @@ export default function SessionDetailPage() {
             {session.worksession && (
               <>
                 {' '}
-                · <i className="bi bi-layers" /> {session.worksession.label}
+                · <Link to={`/sessions/${session.id}/files`} className="cc-meta" title="Branche de la session · ouvrir ses fichiers"><i className="bi bi-git" /> {session.worksession.branch}</Link>
               </>
             )}
             {!session.worksession && session.formerWorksession && (
               <>
                 {' '}
-                · <span title={`La session a travaillé dans la work session ${session.formerWorksession.name} (branche ${session.formerWorksession.branch}), supprimée depuis`}><i className="bi bi-layers" /> {session.formerWorksession.label} <span className="cc-dimmer">(worksession supprimé)</span></span>
+                · <span title={`La session a travaillé sur la branche ${session.formerWorksession.branch} ; son dossier de travail a été supprimé depuis`}><i className="bi bi-git" /> {session.formerWorksession.branch} <span className="cc-dimmer">(dossier supprimé)</span></span>
               </>
             )}
             {session.owner && (

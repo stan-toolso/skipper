@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
-import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_WORKSESSION_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
+import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { sessionStateHint } from '../lib/humanize';
 import Logo from '../components/Logo';
@@ -26,7 +26,7 @@ const MAX_CHIPS = 6;
 const CHILD_INDENT = 14;
 
 /** Session annotée de son dossier (toutes celles d'un projet forment le « pool » où l'on cherche les sous-agents d'une parente). */
-type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsWorksessionId: string | null; /** Rangée dans le dossier principal parce que sa work session a été supprimée. */ wsDeleted: boolean };
+type PoolSession = SidebarSession & { wsKey: string; wsName: string; wsBranch: string | null; wsWorksessionId: string | null; /** Rangée dans le dossier principal parce que son dossier a été supprimé. */ wsDeleted: boolean };
 
 /** Note d'un dossier dont les seules sessions sont des sous-agents rangés sous leur parente, ailleurs : « 4 sous-agents de « Session » ». */
 function ElsewhereNote({ subs, poolById, row }: { subs: PoolSession[]; poolById: Map<string, PoolSession>; row?: boolean }) {
@@ -57,7 +57,7 @@ function ChatRow({ chat, indent }: { chat: SidebarSession; indent: number }) {
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/chats/${chat.id}` },
     ...(chat.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: chat.id } }).catch(showError) }] : []),
-    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteSession({ id: chat.id, name: chat.name, worksessionId: null }) },
+    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteSession({ id: chat.id, name: chat.name }) },
   ];
   return (
     <RowWithMenu to={`/chats/${chat.id}`} active={location.pathname === `/chats/${chat.id}`} indent={indent} title={`${chat.name} · ${statusTitle(chat)}`} items={items}>
@@ -172,10 +172,10 @@ function statusTitle(s: SidebarSession): string {
   return 'Pas encore démarrée';
 }
 
-/** Icône d'une work session, colorée par l'état de la pull request de sa branche. */
-function worksessionIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
-  if (!ws.exists) return { cls: 'wt-missing', title: 'Work session absente du disque' };
-  const base = `Work session · branche ${ws.branch}`;
+/** Icône du dossier d'une session, colorée par l'état de la pull request de sa branche. */
+function branchIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
+  if (!ws.exists) return { cls: 'wt-missing', title: 'Dossier de travail absent du disque (recréé à la prochaine utilisation)' };
+  const base = `Branche ${ws.branch}`;
   if (!pr) return { cls: '', title: base };
   const state = pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase();
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
@@ -219,7 +219,7 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
  * Ligne d'une session. Ses sous-agents (`children`, sessions lancées par son agent) sont repliés derrière une ligne
  * « N sous-agents » ; dépliés, ils apparaissent indentés (`depth`), reliés par └ et marqués d'un robot.
  */
-function SessionRow({ s, worksessionId, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null }: { s: SidebarSession; worksessionId: string | null; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null }) {
+function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null }: { s: SidebarSession; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null }) {
   const location = useLocation();
   const [open, setOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
   const childActive = children.some((c) => location.pathname.startsWith(`/sessions/${c.session.id}`));
@@ -233,7 +233,7 @@ function SessionRow({ s, worksessionId, indent, depth = 0, byAgent = false, pare
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
     ...(s.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: s.id } }).catch(showError) }] : []),
-    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name, worksessionId }) },
+    { label: 'Archiver', icon: 'bi-archive', separatorBefore: true, onClick: () => void archiveSession({ id: s.id, name: s.name }) },
   ];
   const browserPath = `/sessions/${s.id}/browser`;
   const left = indent + depth * CHILD_INDENT;
@@ -264,12 +264,12 @@ function SessionRow({ s, worksessionId, indent, depth = 0, byAgent = false, pare
         </Link>
       )}
       {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
-      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} worksessionId={c.session.wsWorksessionId} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'worksession supprimé' : c.session.wsName) : null} />)}
+      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'dossier supprimé' : c.session.wsBranch ?? c.session.wsName) : null} />)}
     </>
   );
 }
 
-function TerminalRow({ t, worksessionId, indent }: { t: SidebarTerminal; worksessionId: string | null; indent: number }) {
+function TerminalRow({ t, indent }: { t: SidebarTerminal; indent: number }) {
   const location = useLocation();
   const { showError } = useDialogs();
   const { deleteTerminal } = useDeletions();
@@ -277,7 +277,7 @@ function TerminalRow({ t, worksessionId, indent }: { t: SidebarTerminal; workses
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/terminals/${t.id}` },
     ...(t.status === 'RUNNING' ? [{ label: 'Fermer le shell', icon: 'bi-x-circle', onClick: () => void closeTerminal({ variables: { id: t.id } }).catch(showError) }] : []),
-    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name, worksessionId }) },
+    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteTerminal({ id: t.id, name: t.name }) },
   ];
   return (
     <RowWithMenu to={`/terminals/${t.id}`} active={location.pathname === `/terminals/${t.id}`} indent={indent} title={t.status === 'RUNNING' ? 'Terminal ouvert' : 'Terminal fermé'} items={items}>
@@ -288,25 +288,27 @@ function TerminalRow({ t, worksessionId, indent }: { t: SidebarTerminal; workses
 }
 
 /**
- * Carte d'un dossier de travail (checkout principal ou worksession) : état, nom, puces de ce qui y est ouvert,
- * et lignes détaillées quand on la déplie.
+ * Carte d'une session : son état, son nom, sa tâche, les puces de ce qui est ouvert dans son dossier (navigateur,
+ * sous-agents qui réclament l'attention, terminaux) et, dépliée, le détail (sous-agents, terminaux). Le dossier de
+ * travail (work session) reste invisible : seule sa branche apparaît, dans l'infobulle et la couleur de l'icône (PR).
+ * La carte du checkout principal (`primary`) ne subsiste que pour les sessions et terminaux d'avant les work
+ * sessions : elle liste ses sessions comme avant.
  */
-function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWorksession }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; canWorksession: boolean }) {
+function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOthers, onShowOthers }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; showOthers: boolean; onShowOthers: () => void }) {
   const location = useLocation();
   const { user } = useAuth();
   const { activeKey, workspaces } = useTabs();
   const [menu, setMenu] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [showOthers, setShowOthers] = useState(false);
+  const [subsOpen, setSubsOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
   const userId = user?.id ?? null;
   const current = location.pathname;
   const isCurrent = (path: string) => current === path || current === `${path}/browser`;
-  // Toutes les sessions du projet, annotées de leur dossier : les sous-agents lancés dans un autre work session se rangent sous leur parente.
-  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsWorksessionId: w.worksessionId, wsDeleted: Boolean(w.primary && s.worksession) }))), [workspaces, ws.projectId]);
+  // Toutes les sessions du projet, annotées de leur dossier : les sous-agents (qui ont chacun leur dossier) se rangent sous leur parente.
+  const pool = useMemo(() => workspaces.ofProject(ws.projectId).flatMap((w) => w.sessions.map((s): PoolSession => ({ ...s, wsKey: w.key, wsName: w.name, wsBranch: w.primary ? null : w.branch, wsWorksessionId: w.worksessionId, wsDeleted: Boolean(w.primary && s.worksession) }))), [workspaces, ws.projectId]);
   const poolById = useMemo(() => new Map(pool.map((s) => [s.id, s])), [pool]);
-  // Les sous-agents (sessions lancées par un agent) sont rangés sous leur session parente, même lancés dans un autre work session :
-  // ceux dont la parente est dans un autre dossier ne sont pas listés ici (`elsewhereSubs`, juste une note). Un sous-agent dont
-  // la parente a disparu du projet reste au premier niveau, avec son robot.
+  // Les sous-agents dont la parente est dans un autre dossier ne sont pas listés ici (`elsewhereSubs`, juste une note
+  // sur la carte du checkout principal). Un sous-agent dont la parente a disparu du projet reste au premier niveau, avec son robot.
   const { local, elsewhereSubs } = useMemo(() => {
     const mine = pool.filter((s) => s.wsKey === ws.key);
     const here = new Set(mine.map((s) => s.id));
@@ -320,38 +322,69 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
   }, [local, userId, filterMine, showOthers, current]);
   const groups = useMemo(() => sessionGroups(visibleSessions, pool), [visibleSessions, pool]);
   const hiddenOthers = local.length - visibleSessions.length;
-  const state = workspaceState(ws.sessions);
-  const pending = ws.sessions.reduce((n, s) => n + s.pendingRequestCount, 0);
-  const icon = worksessionIcon(ws, pr);
-  const chips = [
-    // Une puce par session de premier niveau, avec le compte de ses sous-agents ; un sous-agent n'a sa propre puce que s'il est la page courante ou attend une réponse.
-    ...groups.flatMap(({ root, children }) =>
-      [root, ...children.filter((c) => isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, ...n }) => ({
-        key: `s:${s.id}`,
-        to: `/sessions/${s.id}`,
-        active: isCurrent(`/sessions/${s.id}`),
-        label: s.name,
-        title: `${s.name} · ${statusTitle(s)}${byAgentTitle(n)}${s.owner ? ` · ${s.owner.name}` : ''}`,
-        node: (
-          <>
-            <span className={`wb-dot ${sessionDotClass(s)}`} />
-            {n.byAgent && <RobotIcon />}
-          </>
+  const session = ws.session;
+  const self = groups.find((g) => g.root.session.id === session?.id) ?? null;
+  const children = self?.children ?? [];
+  const childActive = children.some((c) => current.startsWith(`/sessions/${c.session.id}`));
+  const subsExpanded = subsOpen ?? (childActive || children.some((c) => c.session.pendingRequestCount > 0));
+  const state = workspaceState([...ws.sessions, ...children.map((c) => c.session)]);
+  const pending = [...ws.sessions, ...children.map((c) => c.session)].reduce((n, s) => n + s.pendingRequestCount, 0);
+  const icon = branchIcon(ws, pr);
+  const hint = session ? sessionStateHint(session.status, session.activity, session.pendingRequestCount) : null;
+  const mine = session ? participates(session, userId) : true;
+  const chips = ws.primary
+    ? [
+        // Checkout principal : une puce par session de premier niveau, avec le compte de ses sous-agents ; un sous-agent n'a sa propre puce que s'il est la page courante ou attend une réponse.
+        ...groups.flatMap(({ root, children }) =>
+          [root, ...children.filter((c) => isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)].map(({ session: s, ...n }) => ({
+            key: `s:${s.id}`,
+            to: `/sessions/${s.id}`,
+            active: isCurrent(`/sessions/${s.id}`),
+            label: s.name,
+            title: `${s.name} · ${statusTitle(s)}${byAgentTitle(n)}${s.owner ? ` · ${s.owner.name}` : ''}`,
+            node: (
+              <>
+                <span className={`wb-dot ${sessionDotClass(s)}`} />
+                {n.byAgent && <RobotIcon />}
+              </>
+            ),
+            extra: n.depth === 0 && children.length ? <SubagentsCount children={children.map((c) => c.session)} /> : null,
+            owner: s.owner && !participates(s, userId) ? s.owner : null,
+          })),
         ),
-        extra: n.depth === 0 && children.length ? <SubagentsCount children={children.map((c) => c.session)} /> : null,
-        owner: s.owner && !participates(s, userId) ? s.owner : null,
-      })),
-    ),
-    ...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, extra: null, owner: null })),
-  ];
+      ]
+    : [
+        // Session : son navigateur s'il est ouvert, puis ses sous-agents qui sont la page courante ou attendent une réponse.
+        ...(session?.browserActive ? [{ key: 'browser', to: `/sessions/${session.id}/browser`, active: current === `/sessions/${session.id}/browser`, label: 'Navigateur', title: "Voir en direct la page ouverte par l'agent", node: <i className="bi bi-globe2 wb-browser-icon" />, extra: null, owner: null }] : []),
+        ...children
+          .filter((c) => isCurrent(`/sessions/${c.session.id}`) || c.session.pendingRequestCount > 0)
+          .map(({ session: s, ...n }) => ({
+            key: `s:${s.id}`,
+            to: `/sessions/${s.id}`,
+            active: isCurrent(`/sessions/${s.id}`),
+            label: s.name,
+            title: `${s.name} · ${statusTitle(s)}${byAgentTitle(n)}${s.owner ? ` · ${s.owner.name}` : ''}`,
+            node: (
+              <>
+                <span className={`wb-dot ${sessionDotClass(s)}`} />
+                <RobotIcon />
+              </>
+            ),
+            extra: null,
+            owner: s.owner && !participates(s, userId) ? s.owner : null,
+          })),
+      ];
+  chips.push(...ws.terminals.map((t) => ({ key: `t:${t.id}`, to: `/terminals/${t.id}`, active: current === `/terminals/${t.id}`, label: t.name, title: `${t.name} · ${t.status === 'RUNNING' ? 'ouvert' : 'fermé'}`, node: <i className={`bi bi-terminal wb-term-icon${t.status === 'RUNNING' ? ' live' : ''}`} />, extra: null, owner: null })));
   const activeIndex = chips.findIndex((c) => c.active);
   const shown = showAll || activeIndex >= MAX_CHIPS ? chips : chips.slice(0, MAX_CHIPS);
-  // Clic sur la tête : la première session de la work session, sinon la page où l'onglet du dossier en était, sinon les fichiers.
-  const headTo = !ws.primary && groups.length ? `/sessions/${groups[0].root.session.id}` : tabUrl ?? ws.key;
-  const name = ws.task && !ws.worksession?.customLabel ? ws.task.title : ws.name;
-  const title = ws.primary ? `Dossier principal · ${ws.name} · sessions d'avant les work sessions` : `${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()}${ws.task.statusTag ? ` · ${ws.task.statusTag}` : ''} · ` : ''}${icon.title}`;
+  // Clic sur la tête : la session ; checkout principal : la page où l'onglet du dossier en était, sinon les fichiers.
+  const headTo = session ? `/sessions/${session.id}` : tabUrl ?? ws.key;
+  const title = ws.primary
+    ? `Dossier principal · ${ws.name} · sessions d'avant les work sessions`
+    : `${session ? `${statusTitle(session)}${session.owner ? ` · ${session.owner.name}` : ''} · ` : ''}${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()}${ws.task.statusTag ? ` · ${ws.task.statusTag}` : ''} · ` : ''}${icon.title}`;
+  const hasRows = ws.primary ? visibleSessions.length > 0 || ws.terminals.length > 0 || hiddenOthers > 0 || elsewhereSubs.length > 0 : children.length > 0 || ws.terminals.length > 0 || Boolean(session?.browserActive);
   return (
-    <div className={`wb-ws${activeKey === ws.key ? ' active' : ''}`}>
+    <div className={`wb-ws${activeKey === ws.key ? ' active' : ''}${session && isCurrent(`/sessions/${session.id}`) ? ' current' : ''}`}>
       <div
         className="wb-ws-head"
         title={title}
@@ -362,18 +395,24 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
         }}
       >
         <Link to={headTo} className="wb-ws-link">
-          <span className={`wb-ws-state ${state ?? 'none'}`} />
-          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-layers'} wb-icon ${icon.cls}`} />}
-          <span className="wb-ws-name">{name}</span>
+          {session ? <span className={`wb-dot ${sessionDotClass(session)}`} /> : <span className={`wb-ws-state ${state ?? 'none'}`} />}
+          {!ws.primary && <i className={`bi ${ws.task ? 'bi-check2-square' : 'bi-git'} wb-icon ${icon.cls}`} />}
+          <span className="wb-ws-name">{ws.name}</span>
           {ws.primary && ws.projectName && <span className="wb-tag" title="Sessions et terminaux d'avant les work sessions, dans le checkout principal">principal</span>}
           {!ws.exists && <span className="wb-tag missing">absent</span>}
-          {pending > 0 && <span className="wb-badge">{pending}</span>}
+          {session?.context.overThreshold && <ContextDot context={session.context} />}
+          {session?.owner && !mine && (
+            <span className="wb-owner" title={`Session de ${session.owner.name}`}>
+              {initialsOf(session.owner.name)}
+            </span>
+          )}
+          {pending > 0 ? <span className="wb-badge">{pending}</span> : hint && <span className="wb-state">{hint}</span>}
         </Link>
         <span className={`wb-row-actions${menu ? ' open' : ''}`}>
           <button
             type="button"
             className="wb-plus"
-            title={ws.primary ? 'Ouvrir quelque chose dans le dossier principal' : 'Ouvrir quelque chose ici, ou gérer la work session'}
+            title={ws.primary ? 'Ouvrir quelque chose dans le dossier principal' : 'Actions de la session : fichiers, terminal, renommer, archiver, supprimer'}
             onClick={(e) => {
               e.stopPropagation();
               setMenu((v) => !v);
@@ -381,58 +420,79 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, canWork
           >
             <i className="bi bi-three-dots" />
           </button>
-          {menu && <AddMenu projectId={ws.projectId} worksession={ws.worksession} canWorksession={canWorksession && ws.primary} onClose={() => setMenu(false)} />}
+          {menu && <AddMenu projectId={ws.projectId} session={session ? { id: session.id, name: session.name, status: session.status, worksessionId: ws.worksessionId, branch: ws.worksessionId ? ws.branch : null } : null} onClose={() => setMenu(false)} />}
         </span>
       </div>
-      <div className="wb-ws-items">
-        {ws.task && (
-          <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
-            {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
-            {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
-          </Link>
-        )}
-        {shown.map((c) => (
-          <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
-            {c.node}
-            <span className="wb-chip-label">{c.label}</span>
-            {c.extra}
-            {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
-          </Link>
-        ))}
-        {!showAll && chips.length > shown.length && (
-          <button type="button" className="wb-chip wb-chip-more" title="Tout afficher" onClick={() => setShowAll(true)}>
-            +{chips.length - shown.length}
-          </button>
-        )}
-        {hiddenOthers > 0 && (
-          <button type="button" className="wb-chip wb-chip-more" title={`Afficher les ${hiddenOthers} session(s) d'autres personnes`} onClick={() => setShowOthers(true)}>
-            <i className="bi bi-people" /> {hiddenOthers}
-          </button>
-        )}
-        {chips.length === 0 && hiddenOthers === 0 && (elsewhereSubs.length ? <ElsewhereNote subs={elsewhereSubs} poolById={poolById} /> : <span className="wb-ws-empty">rien d'ouvert</span>)}
-        <button type="button" className="wb-chevron wb-ws-chevron" title={expanded ? 'Replier' : 'Détailler'} onClick={onToggle}>
-          <i className={`bi bi-chevron-${expanded ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
-        </button>
-      </div>
-      {expanded && (
-        <div className="wb-ws-rows">
-          {groups.map(({ root, children }) => (
-            <SessionRow key={root.session.id} s={root.session} worksessionId={ws.worksessionId} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} />
-          ))}
-          {ws.terminals.map((t) => (
-            <TerminalRow key={t.id} t={t} worksessionId={ws.worksessionId} indent={30} />
-          ))}
-          {hiddenOthers > 0 && (
-            <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 30 }} onClick={() => setShowOthers(true)}>
-              + {hiddenOthers} session(s) d'autres personnes
+      {(chips.length > 0 || ws.task || ws.primary || hasRows || children.length > 0) && (
+        <div className="wb-ws-items">
+          {ws.task && (
+            <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
+              {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
+              {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
+            </Link>
+          )}
+          {!ws.primary && children.length > 0 && !expanded && (
+            <button type="button" className="wb-chip" title={`${subagentsSummary(children.map((c) => c.session)).label} lancé(s) par l'agent de cette session · cliquer pour détailler`} onClick={onToggle}>
+              <SubagentsCount children={children.map((c) => c.session)} />
             </button>
           )}
-          {elsewhereSubs.length > 0 && <ElsewhereNote subs={elsewhereSubs} poolById={poolById} row />}
-          {visibleSessions.length === 0 && ws.terminals.length === 0 && hiddenOthers === 0 && elsewhereSubs.length === 0 && (
-            <div className="wb-row wb-empty" style={{ paddingLeft: 30 }}>
-              rien d'ouvert dans ce dossier
-            </div>
+          {shown.map((c) => (
+            <Link key={c.key} to={c.to} className={`wb-chip${c.active ? ' active' : ''}`} title={c.title}>
+              {c.node}
+              <span className="wb-chip-label">{c.label}</span>
+              {c.extra}
+              {c.owner && <span className="wb-owner">{initialsOf(c.owner.name)}</span>}
+            </Link>
+          ))}
+          {!showAll && chips.length > shown.length && (
+            <button type="button" className="wb-chip wb-chip-more" title="Tout afficher" onClick={() => setShowAll(true)}>
+              +{chips.length - shown.length}
+            </button>
           )}
+          {ws.primary && hiddenOthers > 0 && (
+            <button type="button" className="wb-chip wb-chip-more" title={`Afficher les ${hiddenOthers} session(s) d'autres personnes`} onClick={onShowOthers}>
+              <i className="bi bi-people" /> {hiddenOthers}
+            </button>
+          )}
+          {ws.primary && chips.length === 0 && hiddenOthers === 0 && (elsewhereSubs.length ? <ElsewhereNote subs={elsewhereSubs} poolById={poolById} /> : <span className="wb-ws-empty">rien d'ouvert</span>)}
+          {hasRows && (
+            <button type="button" className="wb-chevron wb-ws-chevron" title={expanded ? 'Replier' : 'Détailler'} onClick={onToggle}>
+              <i className={`bi bi-chevron-${expanded ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
+            </button>
+          )}
+        </div>
+      )}
+      {expanded && hasRows && (
+        <div className="wb-ws-rows">
+          {ws.primary ? (
+            <>
+              {groups.map(({ root, children }) => (
+                <SessionRow key={root.session.id} s={root.session} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} />
+              ))}
+              {hiddenOthers > 0 && (
+                <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 30 }} onClick={onShowOthers}>
+                  + {hiddenOthers} session(s) d'autres personnes
+                </button>
+              )}
+              {elsewhereSubs.length > 0 && <ElsewhereNote subs={elsewhereSubs} poolById={poolById} row />}
+            </>
+          ) : (
+            session && (
+              <>
+                {session.browserActive && (
+                  <Link to={`/sessions/${session.id}/browser`} className={`wb-row wb-session-row wb-browser-row${current === `/sessions/${session.id}/browser` ? ' active' : ''}`} style={{ paddingLeft: 30 }} title="Voir en direct la page ouverte par l'agent">
+                    <i className="bi bi-globe2 wb-browser-icon" />
+                    <span className="wb-row-label">Navigateur</span>
+                  </Link>
+                )}
+                {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={30} expanded={subsExpanded} onToggle={() => setSubsOpen(!subsExpanded)} />}
+                {subsExpanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={30} depth={c.depth} byAgent parentName={c.parentName} elsewhere={null} />)}
+              </>
+            )
+          )}
+          {ws.terminals.map((t) => (
+            <TerminalRow key={t.id} t={t} indent={30} />
+          ))}
         </div>
       )}
     </div>
@@ -497,7 +557,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
   const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
   const chats = data?.chats ?? [];
-  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKSESSION_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
   const prByWorksession = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worksessions.map((w) => [w.id, w.pullRequest] as const))), [prData]);
@@ -530,6 +590,8 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
 
   const activeProjectId = location.pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? (activeKey ? workspaces.get(activeKey)?.projectId : undefined);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  // Projets où l'on a demandé à voir les sessions des autres malgré le filtre « les miennes ».
+  const [othersShown, setOthersShown] = useState<Set<string>>(new Set());
   const explorerRef = useRef<HTMLDivElement>(null);
   const userId = user?.id ?? null;
 
@@ -639,7 +701,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   <button
                     type="button"
                     className="wb-plus"
-                    title="Actions du projet : nouvelle work session, agent, workflow ; pages ; modification, suppression"
+                    title="Actions du projet : nouvelle session, workflow ; pages ; modification, suppression"
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenuFor(menuFor === p.id ? null : p.id);
@@ -650,28 +712,54 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   {menuFor === p.id && (
                     <AddMenu
                       projectId={p.id}
-                      project={{ id: p.id, name: p.name, canManage: p.myRole === 'ADMIN', paths: [...p.sessions.map((s) => `/sessions/${s.id}`), ...p.terminals.map((t) => `/terminals/${t.id}`), ...p.worksessions.map((w) => `/worksessions/${w.id}`)] }}
-                      canWorksession
+                      project={{ id: p.id, name: p.name, canManage: p.myRole === 'ADMIN', paths: [...p.sessions.map((s) => `/sessions/${s.id}`), ...p.terminals.map((t) => `/terminals/${t.id}`)] }}
                       onClose={() => setMenuFor(null)}
                     />
                   )}
                 </span>
               </div>
               {open && p.isPersonal && <ChatsBlock chats={chats} expanded={expanded[`chats:${p.id}`] ?? true} onToggle={() => toggle(`chats:${p.id}`, true)} />}
-              {open &&
-                // Le dossier principal n'accueille plus rien : sa carte ne reste que pour les sessions et terminaux d'avant les work sessions.
-                list.filter((ws) => !ws.primary || ws.sessions.length > 0 || ws.terminals.length > 0).map((ws) => (
-                  <WorkspaceCard
-                    key={ws.key}
-                    ws={ws}
-                    pr={ws.worksessionId ? prByWorksession.get(ws.worksessionId) : null}
-                    expanded={expanded[ws.key] ?? false}
-                    onToggle={() => toggle(ws.key, false)}
-                    tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
-                    filterMine={filter === 'mine'}
-                    canWorksession
-                  />
-                ))}
+              {open && (() => {
+                const showOthers = othersShown.has(p.id);
+                const poolById = new Map(p.sessions.map((s) => [s.id, s]));
+                // Une carte par session de premier niveau (un sous-agent est rangé sous sa parente) ; avec le filtre
+                // « les miennes », les sessions des autres sont comptées, sauf celle affichée. Le dossier principal
+                // n'accueille plus rien : sa carte ne reste que pour les sessions et terminaux d'avant les work sessions.
+                const cards = list.filter((ws) => {
+                  if (ws.primary) return ws.sessions.length > 0 || ws.terminals.length > 0;
+                  // Un sous-agent dont la parente (ou une aïeule) est dans le projet n'a pas sa carte : il est listé sous elle.
+                  return !attachedElsewhere(ws.session!, new Set([ws.session!.id]), poolById);
+                });
+                const visible = cards.filter((ws) => ws.primary || !(filter === 'mine' && !showOthers) || participates(ws.session!, userId) || location.pathname.startsWith(`/sessions/${ws.session!.id}`));
+                const hiddenOthers = cards.length - visible.length;
+                return (
+                  <>
+                    {visible.map((ws) => (
+                      <WorkspaceCard
+                        key={ws.key}
+                        ws={ws}
+                        pr={ws.worksessionId ? prByWorksession.get(ws.worksessionId) : null}
+                        expanded={expanded[ws.key] ?? false}
+                        onToggle={() => toggle(ws.key, false)}
+                        tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
+                        filterMine={filter === 'mine'}
+                        showOthers={showOthers}
+                        onShowOthers={() => setOthersShown((prev) => new Set([...prev, p.id]))}
+                      />
+                    ))}
+                    {hiddenOthers > 0 && (
+                      <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 18 }} title="Afficher les sessions d'autres personnes" onClick={() => setOthersShown((prev) => new Set([...prev, p.id]))}>
+                        <i className="bi bi-people me-1" /> + {hiddenOthers} session{hiddenOthers > 1 ? 's' : ''} d'autres personnes
+                      </button>
+                    )}
+                    {cards.length === 0 && (
+                      <div className="wb-row wb-empty" style={{ paddingLeft: 18 }}>
+                        aucune session
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           );
         })}

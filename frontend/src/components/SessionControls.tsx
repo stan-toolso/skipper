@@ -99,12 +99,12 @@ export function useSessionActions(session: ControlledSession | null | undefined)
               Restaurer
             </button>
           )}
-          <button type="button" className="cc-btn danger" onClick={() => void deleteSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null })}>
+          <button type="button" className="cc-btn danger" onClick={() => void deleteSession({ id, name: session.name, branch: session.worksession?.branch ?? null })}>
             Supprimer
           </button>
         </>
       ) : (
-        <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null })}>
+        <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ id, name: session.name })}>
           <i className="bi bi-archive" /> Archiver
         </button>
       )}
@@ -114,7 +114,7 @@ export function useSessionActions(session: ControlledSession | null | undefined)
     <>
       {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
       {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
-      {relaunching && <RelaunchModal session={session} projectName={session.project.name} worksessions={session.worksession ? [{ id: session.worksession.id, label: session.worksession.label }] : []} onClose={() => setRelaunching(false)} />}
+      {relaunching && <RelaunchModal session={session} projectName={session.project.name} onClose={() => setRelaunching(false)} />}
     </>
   );
   return { buttons, modals, openSettings, openSchedule };

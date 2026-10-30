@@ -21,8 +21,8 @@ describe('describeTool', () => {
     expect(describeTool('mcp__connections__sql_query', { connection: 'base', sql: 'SELECT 1' })).toMatchObject({ label: 'Requête SQL sur base', detail: 'SELECT 1' });
     expect(describeTool('mcp__vault__sql_query', { item: 'rds', sql: 'SELECT 1', database: 'app' })).toMatchObject({ label: 'Requête SQL sur rds (base app)', detail: 'SELECT 1', action: 'exécuter sur rds (base app) : SELECT 1' });
     expect(describeTool('mcp__vault__http_request', { item: 'stripe', path: 'v1/customers' }).action).toBe('appeler stripe : GET v1/customers');
-    expect(describeTool('mcp__worksessions__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression de la work session wt et de sa branche');
-    expect(describeTool('mcp__worktrees__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression de la work session wt et de sa branche');
+    expect(describeTool('mcp__worksessions__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression du dossier de travail wt et de sa branche');
+    expect(describeTool('mcp__worktrees__delete', { name: 'wt', delete_branch: true }).label).toBe('Suppression du dossier de travail wt et de sa branche');
   });
 
   it('se rabat sur le nom et les arguments JSON pour un outil inconnu', () => {

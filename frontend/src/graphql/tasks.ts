@@ -35,7 +35,7 @@ export const TASK_PAGE = gql`
         }
         worksession {
           id
-          label
+          branch
         }
       }
     }
@@ -185,11 +185,17 @@ export interface ProjectApiKey {
   createdBy: { id: string; name: string } | null;
 }
 
-/** Work session consacrée à une tâche : celle où « Confier à un agent » lance la session par défaut. */
-export const TASK_WORKSESSION = gql`
-  query TaskWorksession($id: ID!) {
+/** Ce que « Confier à un agent » doit savoir : la branche de la tâche (dossier repris) et la session déjà en charge, qui sera archivée. */
+export const TASK_LAUNCH_INFO = gql`
+  query TaskLaunchInfo($id: ID!) {
     task(id: $id) {
       id
+      branch
+      session {
+        id
+        name
+        archivedAt
+      }
       worksession {
         id
         name

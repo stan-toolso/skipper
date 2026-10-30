@@ -46,8 +46,8 @@ const nodeSchema = z.object({
   config: z.record(z.string(), z.unknown()).optional(),
   prompt: z.string().max(50_000).optional(),
   includeTask: z.boolean().optional(),
-  // « main » (dossier principal) n'existe plus : un ancien nœud travaille dans une nouvelle work session.
-  worksessionMode: z.preprocess((v) => (v === 'main' ? 'new' : v), z.enum(['new', 'existing'])).optional(),
+  // Anciens nœuds : le choix d'une work session (« main », « new », « existing ») n'existe plus ; toléré et ignoré.
+  worksessionMode: z.string().optional(),
   worksessionId: z.string().nullable().optional(),
   wait: z.boolean().optional(),
   sessionOwner: z.string().max(500).optional(),
@@ -103,9 +103,9 @@ export function parseDefinition(raw: unknown): WorkflowDefinition {
           timeoutMinutes: n.timeoutMinutes ?? null,
         }
       : {}),
-    ...(n.type === 'task' ? { taskId: n.taskId ?? '', provider: n.provider ?? 'claude', config: n.config ?? {}, prompt: n.prompt ?? '', includeTask: n.includeTask ?? true, worksessionMode: n.worksessionMode ?? 'new', worksessionId: n.worksessionId ?? null, wait: n.wait ?? true, timeoutMinutes: n.timeoutMinutes ?? null, sessionOwner: n.sessionOwner ?? '' } : {}),
+    ...(n.type === 'task' ? { taskId: n.taskId ?? '', provider: n.provider ?? 'claude', config: n.config ?? {}, prompt: n.prompt ?? '', includeTask: n.includeTask ?? true, wait: n.wait ?? true, timeoutMinutes: n.timeoutMinutes ?? null, sessionOwner: n.sessionOwner ?? '' } : {}),
     ...(n.type === 'session'
-      ? { sessionName: n.sessionName ?? '', provider: n.provider ?? 'claude', config: n.config ?? {}, prompt: n.prompt ?? '', worksessionMode: n.worksessionMode ?? 'new', worksessionId: n.worksessionId ?? null, branch: n.branch ?? '', wait: n.wait ?? true, endAfterTurn: n.endAfterTurn ?? false, timeoutMinutes: n.timeoutMinutes ?? null, sessionOwner: n.sessionOwner ?? '' }
+      ? { sessionName: n.sessionName ?? '', provider: n.provider ?? 'claude', config: n.config ?? {}, prompt: n.prompt ?? '', branch: n.branch ?? '', wait: n.wait ?? true, endAfterTurn: n.endAfterTurn ?? false, timeoutMinutes: n.timeoutMinutes ?? null, sessionOwner: n.sessionOwner ?? '' }
       : {}),
     ...(n.type === 'createTask'
       ? { newTask: { title: n.newTask?.title ?? '', description: n.newTask?.description ?? '', priority: n.newTask?.priority ?? '', status: n.newTask?.status ?? '', dueDate: n.newTask?.dueDate ?? '', assignee: n.newTask?.assignee ?? '', reporter: n.newTask?.reporter ?? '', fields: n.newTask?.fields ?? [] } satisfies NewTaskTemplate }
@@ -353,7 +353,6 @@ export function validateDefinition(def: WorkflowDefinition, options: { providers
       case 'task': {
         if (!n.taskId?.trim()) error(n.key, startsOf(upstream).some((t) => triggerEvent(t) === 'task.created') ? 'Nommez la tâche à traiter (ex. {{input.task.id}})' : 'Nommez la tâche à traiter (son identifiant, ou {{input.…}})');
         if (n.provider && options.providers && !options.providers.has(n.provider)) error(n.key, `Type de session inconnu « ${n.provider} »`);
-        if (n.worksessionMode === 'existing' && !n.worksessionId) error(n.key, 'Choisissez la work session où travailler');
         if (n.includeTask === false && !n.prompt?.trim()) error(n.key, "Écrivez l'instruction : le texte de la tâche n'est pas inclus");
         checkTemplates(n, upstream, [
           ['La tâche', n.taskId ?? ''],
@@ -365,12 +364,11 @@ export function validateDefinition(def: WorkflowDefinition, options: { providers
       case 'session': {
         if (!n.prompt?.trim()) error(n.key, "Écrivez l'instruction de la session");
         if (n.provider && options.providers && !options.providers.has(n.provider)) error(n.key, `Type de session inconnu « ${n.provider} »`);
-        if (n.worksessionMode === 'existing' && !n.worksessionId) error(n.key, 'Choisissez la work session où travailler');
         if (n.endAfterTurn && n.wait === false) warning(n.key, "La session n'est terminée après son premier tour que si l'exécution l'attend");
         checkTemplates(n, upstream, [
           ['Le nom', n.sessionName ?? ''],
           ["L'instruction", n.prompt ?? ''],
-          ['La branche', n.worksessionMode === 'new' ? (n.branch ?? '') : ''],
+          ['La branche', n.branch ?? ''],
           ['Le propriétaire', n.sessionOwner ?? ''],
         ]);
         break;

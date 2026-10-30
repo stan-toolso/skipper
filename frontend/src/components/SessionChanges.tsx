@@ -83,7 +83,8 @@ export default function SessionChanges({
   onRefresh,
 }: {
   sessionId: string;
-  workspace: { projectId: string; worksessionId: string | null };
+  /** Adresse de l'explorateur : sous la session quand elle a son dossier, sous le projet sinon. */
+  workspace: { projectId: string; sessionId: string | null };
   changes: Changes | undefined;
   loading: boolean;
   error?: Error;
