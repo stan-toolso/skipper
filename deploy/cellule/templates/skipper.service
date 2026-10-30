@@ -1,0 +1,31 @@
+# Backend Skipper (une cellule = une machine). Installé par deploy/cellule/bootstrap.sh.
+# Les processus Claude Code des sessions sont des enfants du backend : un redémarrage les interrompt
+# (statut « interrompue », reprise automatique des sessions au travail), d'où deploy/cellule/deploy.sh.
+[Unit]
+Description=Skipper (backend GraphQL et sessions d'agents)
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+Requires=postgresql.service docker.service
+
+[Service]
+Type=simple
+User=skipper
+Group=skipper
+WorkingDirectory=/home/skipper/skipper/backend
+ExecStart=/usr/bin/node --env-file=/home/skipper/skipper/.env /home/skipper/skipper/backend/dist/index.js
+Restart=always
+RestartSec=2
+# sessionService.shutdown est borné à 1,2 s ; au-delà de 10 s systemd tue l'arbre de processus.
+TimeoutStopSec=10
+KillMode=control-group
+Environment=NODE_ENV=production
+Environment=HOME=/home/skipper
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+LimitNOFILE=65536
+# Journal : journalctl -u skipper
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=skipper
+
+[Install]
+WantedBy=multi-user.target
