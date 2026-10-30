@@ -31,10 +31,14 @@ const SCENARIOS = [
   ['tabs-menu', '/projects/p1', async (p) => p.click('.wb-tabs-menu-anchor button')],
   ['git-panel', '/projects/p1', async (p) => p.click('.wb-git-btn')],
   ['git-panel-task', '/sessions/s1', async (p) => p.click('.wb-git-btn')],
+  // Onglets du panneau de droite d'une session : « Session » (détail et actions), « Modifs » (fichiers modifiés), « Git ».
+  ['panel-session', '/sessions/s1', async (p) => { await p.click('.wb-git-btn'); await p.click('.git-tab:has-text("Session")'); }],
+  ['panel-changes', '/sessions/s1', async (p) => { await p.click('.wb-git-btn'); await p.click('.git-tab:has-text("Modifs")'); }],
+  ['panel-git', '/sessions/s1', async (p) => { await p.click('.wb-git-btn'); await p.click('.git-tab:has-text("Git")'); }],
   ['session-launcher', '/', async (p) => p.locator('.wb-content button', { hasText: 'Session' }).first().click()],
   ['dashboard-lists', '/', async (p) => p.locator('.dash-list').first().scrollIntoViewIfNeeded()],
   ['sessions-all', '/sessions', async (p) => p.locator('button', { hasText: 'Toutes' }).first().click()],
-  // Sur mobile l'en-tête de la session est replié : le chevron déplie le détail et les actions.
+  // L'en-tête de la session tient sur une ligne : le chevron déplie le détail et les actions.
   ['session-header', '/sessions/s1', async (p) => p.click('.cc-header-toggle')],
   ['session-settings', '/sessions/s1', async (p) => { await p.click('.cc-header-toggle'); await p.click('text=Réglages'); }],
   ['session-schedule', '/sessions/s1', async (p) => { await p.click('.cc-header-toggle'); await p.click('text=Planification'); }],

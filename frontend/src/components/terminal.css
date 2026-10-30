@@ -25,7 +25,12 @@
 .cc-header .cc-title { color: var(--cc-accent); font-weight: 600; }
 .cc-header .cc-meta { color: var(--cc-dim); }
 .cc-header .cc-meta code { color: var(--cc-dim); background: none; padding: 0; font-size: inherit; }
-.cc-actions { display: flex; gap: 6px; }
+.cc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Actions empilées dans l'onglet « Session » du panneau de droite. */
+.cc-actions.stacked { padding: 4px 10px 8px; font-family: var(--bs-font-sans-serif); font-size: 12px; }
+/* Détail déplié sous l'en-tête d'une ligne : actions, note de sous-agent, sous-agents. */
+.cc-header-detail { font-family: var(--bs-font-sans-serif); padding: 8px 14px; border-bottom: 1px solid var(--cc-border); display: flex; flex-direction: column; gap: 8px; }
+.cc-header-detail .cc-subagent, .cc-header-detail .cc-children { padding: 0; border: 0; background: none; }
 /* Sous-agent : bandeau sous l'en-tête d'une session lancée par l'agent d'une autre session. */
 .cc-subagent { font-family: var(--bs-font-sans-serif); font-size: 12.5px; padding: 6px 14px; border-bottom: 1px solid var(--cc-border); background: var(--cc-bg-user); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cc-subagent-icon { color: var(--cc-accent); font-size: 15px; }
@@ -39,6 +44,11 @@
 .cc-child .cc-child-name { color: var(--cc-fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .cc-child .cc-child-name:hover { color: var(--cc-accent); }
 .cc-child .cc-link { font-size: inherit; }
+/* Panneau de droite : note de sous-agent et sous-agents en colonne, sans filet ni fond. */
+.cc-subagent.compact { padding: 2px 10px 6px; border: 0; background: none; font-size: 12px; }
+.cc-children.stacked { flex-direction: column; align-items: stretch; gap: 4px; padding: 2px 10px 6px; border: 0; }
+.cc-children.stacked .cc-child { flex-wrap: wrap; }
+.cc-children.stacked .cc-child-name { max-width: none; flex: 1 1 100%; white-space: normal; }
 .cc-btn {
   font: inherit;
   color: var(--cc-fg);
@@ -314,10 +324,9 @@
   /* Le conteneur défile au lieu de rogner : avec un en-tête haut (sous-agents, bandeaux) et des demandes en attente,
      la zone de saisie resterait sinon hors de l'écran. */
   .cc { min-height: 0; height: 100%; border-radius: 0; font-size: 12.5px; overflow-y: auto; }
-  .cc-header { padding: 8px 10px; gap: 6px; }
   .cc-children { padding: 5px 10px; }
   .cc-subagent { padding: 6px 10px; }
-  .cc-actions { width: 100%; flex-wrap: wrap; }
+  .cc-actions { width: 100%; }
   .cc-context-banner { padding: 6px 10px; }
   .cc-context-banner-actions { width: 100%; }
   .cc-context-banner-actions .cc-btn { flex: 1 1 auto; text-align: center; }
@@ -339,25 +348,32 @@
   .cc-result { margin-left: 8px; }
 }
 
-/* En-tête de la page de session : sur mobile, replié par défaut sur le nom et la jauge de contexte ;
-   un chevron déplie le détail (projet, work session, tâche…) et les actions. */
-.cc-header-main { min-width: 0; }
-.cc-header-toggle { display: none; }
+/* En-tête de la page de session : une seule ligne (nom, détail tronqué, jauge de contexte, chevron). Le chevron
+   (état React `headerOpen`, classe `open`) laisse le détail s'étaler sur plusieurs lignes et affiche .cc-header-detail
+   (actions, sous-agents) ; le panneau de droite (onglet « Session ») montre la même chose en permanence. */
+.cc-header { padding: 6px 14px; gap: 4px 8px; flex-wrap: nowrap; }
+.cc-header-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0 4px; }
+.cc-header-main > .cc-title, .cc-header-main > .cc-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Le nom a la priorité (jusqu'à la moitié de la ligne) ; le détail se tronque, puis le reste (workflow, planification). */
+.cc-header-main > .cc-title { flex: 0 0 auto; max-width: 50%; }
+.cc-header-main > .cc-meta { flex: 1 1 0; }
+.cc-header-main > .cc-meta-more { flex: 0 1 auto; max-width: 35%; }
+.cc-header-main > .cc-meta:empty { display: none; }
+.cc-header-gauge { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.cc-header-toggle {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 28px;
+  background: none; border: 1px solid var(--cc-border); border-radius: 4px; color: var(--cc-dim); font-size: 13px; cursor: pointer;
+}
+.cc-header-toggle:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
+.cc-header.open { align-items: flex-start; }
+.cc-header.open .cc-header-main { display: block; }
+.cc-header.open .cc-header-main > .cc-title, .cc-header.open .cc-header-main > .cc-meta { white-space: normal; overflow: visible; max-width: none; }
 @media (max-width: 767.98px) {
-  .cc-header { padding: 6px 10px; gap: 4px 6px; align-items: center; }
-  .cc-header-main { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
-  .cc-header-main .cc-meta { min-width: 0; }
-  .cc-header-gauge { flex: 0 0 auto; display: inline-flex; align-items: center; }
-  .cc-header-toggle {
-    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 28px;
-    background: none; border: 1px solid var(--cc-border); border-radius: 4px; color: var(--cc-dim); font-size: 13px; cursor: pointer;
-  }
-  .cc-header-toggle:hover { color: var(--cc-fg); border-color: var(--cc-dim); }
-  .cc-header:not(.open) .cc-header-main { flex-wrap: nowrap; }
-  .cc-header:not(.open) .cc-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cc-header:not(.open) .cc-meta, .cc-header:not(.open) .cc-sep, .cc-header:not(.open) .cc-gauge-cost, .cc-header:not(.open) .cc-actions { display: none; }
-  .cc-header.open .cc-header-toggle { align-self: flex-start; }
-  .cc-header.open .cc-actions { margin-top: 4px; }
+  .cc-header { padding: 6px 10px; gap: 4px 6px; }
+  .cc-header-detail { padding: 8px 10px; }
+  /* Replié : seuls le nom (tronqué) et la jauge restent, le détail n'a pas la place. */
+  .cc-header:not(.open) .cc-header-main > .cc-title { flex: 1; max-width: none; }
+  .cc-header:not(.open) .cc-header-main > .cc-meta, .cc-header:not(.open) .cc-sep, .cc-header:not(.open) .cc-gauge-cost { display: none; }
 }
 
 /* Markdown des agents (réponses, questions, motifs) : compact, dans la teinte du transcript */

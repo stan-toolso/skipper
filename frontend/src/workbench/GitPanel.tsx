@@ -1,5 +1,5 @@
 import { gql, useMutation, useQuery } from '@apollo/client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
 import { useLocation, useNavigate } from 'react-router-dom';
 import DiffView from '../components/DiffView';
@@ -29,7 +29,9 @@ import {
 } from '../graphql/operations';
 import { GIT_BRANCH_CHANGES, GIT_BRANCH_FILE_DIFF, type GitBranchChanges } from '../graphql/sessions';
 import { usePollingQuery } from '../lib/usePollingQuery';
+import SessionChanges, { useSessionChanges } from '../components/SessionChanges';
 import { useGitPanel } from './GitTargetContext';
+import SessionPanel from './SessionPanel';
 import TaskPanel from './TaskPanel';
 
 /** Dépôt du projet : sans `gitUrl`, pas de branche de base ni de pull requests à interroger. */
@@ -314,20 +316,69 @@ function PullRequestsSection({ projectId, worksessionId, branch }: { projectId: 
   );
 }
 
-/** Choix d'onglet mémorisé par tâche pendant la session de navigation (une page avec une tâche s'ouvre sur la tâche). */
-const panelTabChoice = new Map<string, 'task' | 'git'>();
+export type PanelTab = 'session' | 'changes' | 'task' | 'git';
 
-/** Panneau de droite : onglet « Tâche » (session en charge d'une tâche) et onglet git (modifications, commit, branche, pull requests, historique). */
-export default function GitPanel() {
+/** Onglets du panneau, dans l'ordre d'affichage : icône, libellé court (onglet) et libellé complet (infobulle, rail replié). */
+const PANEL_TABS: Record<PanelTab, { icon: string; label: string; title: string }> = {
+  session: { icon: 'bi-info-circle', label: 'Session', title: 'Session : détail et actions' },
+  changes: { icon: 'bi-file-diff', label: 'Modifs', title: 'Modifications : fichiers modifiés par la session' },
+  task: { icon: 'bi-card-checklist', label: 'Tâche', title: 'Tâche dont la session a la charge' },
+  git: { icon: 'bi-git', label: 'Git', title: 'Suivi git : index, commit, branches, pull requests' },
+};
+
+/** Choix d'onglet mémorisé par page (session ou tâche) pendant la session de navigation, et dernier choix global. */
+const panelTabChoice = new Map<string, PanelTab>();
+const LAST_TAB_KEY = 'skipper.workbench.panelTab';
+const readLastTab = (): PanelTab | null => {
+  try {
+    const v = localStorage.getItem(LAST_TAB_KEY);
+    return v && v in PANEL_TABS ? (v as PanelTab) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Poignée de redimensionnement du panneau, fournie par le workbench (largeur mémorisée comme celle de la sidebar). */
+export interface PanelResizer {
+  dragging: boolean;
+  width: number;
+  min: number;
+  max: number;
+  handleProps: {
+    onPointerDown: (e: PointerEvent<HTMLDivElement>) => void;
+    onPointerMove: (e: PointerEvent<HTMLDivElement>) => void;
+    onPointerUp: () => void;
+    onPointerCancel: () => void;
+    onDoubleClick: () => void;
+    onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void;
+  };
+}
+
+/**
+ * Panneau de droite : onglets « Session » (détail et actions de la session ouverte), « Modifs » (fichiers modifiés
+ * par la session), « Tâche » (session en charge d'une tâche) et « Git » (index, commit, branche, pull requests, historique).
+ */
+export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
   const { target, open, setOpen } = useGitPanel();
   const vars = target ? { projectId: target.projectId, worksessionId: target.worksessionId } : null;
   const taskId = target?.taskId ?? null;
-  const [tabState, setTabState] = useState<{ taskId: string | null; tab: 'task' | 'git' } | null>(null);
-  const tab: 'task' | 'git' = taskId ? (tabState?.taskId === taskId ? tabState.tab : panelTabChoice.get(taskId) ?? 'task') : 'git';
-  const chooseTab = (t: 'task' | 'git') => {
-    if (taskId) panelTabChoice.set(taskId, t);
-    setTabState({ taskId, tab: t });
+  const sessionId = target?.sessionId ?? null;
+  const available: PanelTab[] = [...(sessionId ? (['session', 'changes'] as PanelTab[]) : []), ...(taskId ? (['task'] as PanelTab[]) : []), 'git'];
+  const pageKey = sessionId ?? taskId ?? null;
+  const [tabState, setTabState] = useState<{ pageKey: string | null; tab: PanelTab } | null>(null);
+  const wanted = pageKey ? (tabState?.pageKey === pageKey ? tabState.tab : panelTabChoice.get(pageKey) ?? readLastTab() ?? available[0]) : 'git';
+  const tab: PanelTab = available.includes(wanted) ? wanted : available[0];
+  const chooseTab = (t: PanelTab) => {
+    if (pageKey) panelTabChoice.set(pageKey, t);
+    setTabState({ pageKey, tab: t });
+    try {
+      localStorage.setItem(LAST_TAB_KEY, t);
+    } catch {
+      /* ignore */
+    }
   };
+  const changes = useSessionChanges(sessionId, target?.changesKey, open && tab === 'changes');
+  const changedCount = changes.changes?.files.length ?? 0;
   const [diffReq, setDiffReq] = useState<DiffRequest | null>(null);
   const [message, setMessage] = useState('');
   const [newBranch, setNewBranch] = useState('');
@@ -357,14 +408,12 @@ export default function GitPanel() {
   if (!open) {
     return (
       <div className="git-collapsed-rail">
-        {taskId && (
-          <button type="button" className="git-collapsed" title="Afficher la tâche" onClick={() => { chooseTab('task'); setOpen(true); }}>
-            <i className="bi bi-card-checklist" />
+        {available.map((t) => (
+          <button key={t} type="button" className="git-collapsed" title={PANEL_TABS[t].title} onClick={() => { chooseTab(t); setOpen(true); }}>
+            <i className={`bi ${PANEL_TABS[t].icon}`} />
+            {t === 'changes' && changedCount > 0 && <span className="git-count">{changedCount}</span>}
           </button>
-        )}
-        <button type="button" className="git-collapsed" title="Afficher le suivi git" onClick={() => { if (taskId) chooseTab('git'); setOpen(true); }}>
-          <i className="bi bi-git" />
-        </button>
+        ))}
       </div>
     );
   }
@@ -381,16 +430,31 @@ export default function GitPanel() {
     <>
     {/* Mobile : le panneau recouvre le contenu, toucher à côté le referme (invisible sur bureau). */}
     <div className="wb-backdrop" onClick={() => setOpen(false)} aria-hidden="true" />
+    {resizer && (
+      <div
+        className={`wb-resizer right${resizer.dragging ? ' dragging' : ''}`}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Largeur du panneau de droite"
+        aria-valuenow={resizer.width}
+        aria-valuemin={resizer.min}
+        aria-valuemax={resizer.max}
+        tabIndex={0}
+        title="Glisser pour redimensionner · double-clic pour revenir à la largeur par défaut"
+        {...resizer.handleProps}
+      />
+    )}
     <aside className="git-panel">
       <div className="git-head">
-        {taskId ? (
+        {available.length > 1 ? (
           <div className="git-tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={tab === 'task'} className={`git-tab${tab === 'task' ? ' active' : ''}`} onClick={() => chooseTab('task')}>
-              <i className="bi bi-card-checklist me-1" /> Tâche
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'git'} className={`git-tab${tab === 'git' ? ' active' : ''}`} onClick={() => chooseTab('git')}>
-              <i className="bi bi-git me-1" /> Git
-            </button>
+            {available.map((t) => (
+              <button key={t} type="button" role="tab" aria-selected={tab === t} className={`git-tab${tab === t ? ' active' : ''}`} title={PANEL_TABS[t].title} onClick={() => chooseTab(t)}>
+                <i className={`bi ${PANEL_TABS[t].icon}`} />
+                <span className="git-tab-label">{PANEL_TABS[t].label}</span>
+                {t === 'changes' && changedCount > 0 && <span className="git-count">{changedCount}</span>}
+              </button>
+            ))}
           </div>
         ) : (
           <div className="git-head-title">
@@ -402,6 +466,10 @@ export default function GitPanel() {
           <i className="bi bi-chevron-double-right" />
         </button>
       </div>
+      {tab === 'session' && sessionId && <SessionPanel sessionId={sessionId} />}
+      {tab === 'changes' && sessionId && (
+        <SessionChanges sessionId={sessionId} workspace={{ projectId: target.projectId, worksessionId: target.worksessionId }} changes={changes.changes} loading={changes.loading} error={changes.error} onRefresh={changes.refresh} />
+      )}
       {tab === 'task' && taskId && (
         <div className="git-body">
           <TaskPanel taskId={taskId} />
