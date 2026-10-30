@@ -172,12 +172,17 @@ function statusTitle(s: SidebarSession): string {
   return 'Pas encore démarrée';
 }
 
+/** Pastille de la pull request de la branche : visible tant qu'elle attend une action (brouillon, à fusionner) ou juste fusionnée. */
+const PR_PILL: Record<string, string> = { open: 'à fusionner', draft: 'brouillon', merged: 'fusionnée' };
+
+const prState = (pr: PullRequestRef) => (pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase());
+
 /** Icône du dossier d'une session, colorée par l'état de la pull request de sa branche. */
 function branchIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
   if (!ws.exists) return { cls: 'wt-missing', title: 'Dossier de travail absent du disque (recréé à la prochaine utilisation)' };
   const base = `Branche ${ws.branch}`;
   if (!pr) return { cls: '', title: base };
-  const state = pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase();
+  const state = prState(pr);
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
 }
 
@@ -421,13 +426,19 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
           {menu && <AddMenu projectId={ws.projectId} session={session ? { id: session.id, name: session.name, status: session.status, worksessionId: ws.worksessionId, branch: ws.worksessionId ? ws.branch : null } : null} onClose={() => setMenu(false)} />}
         </span>
       </div>
-      {(chips.length > 0 || ws.task || ws.primary || hasRows || children.length > 0) && (
+      {(chips.length > 0 || ws.task || (pr && PR_PILL[prState(pr)]) || ws.primary || hasRows || children.length > 0) && (
         <div className="wb-ws-items">
           {ws.task && (
             <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
               {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
               {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
             </Link>
+          )}
+          {pr && PR_PILL[prState(pr)] && (
+            <a href={pr.url} target="_blank" rel="noreferrer" className={`wb-ws-pr task-status wt-pr-${prState(pr)}`} title={`${icon.title} · ouvrir sur GitHub`}>
+              <i className="bi bi-git" /> #{pr.number}
+              <span className="task-status-tag">{PR_PILL[prState(pr)]}</span>
+            </a>
           )}
           {!ws.primary && children.length > 0 && !expanded && (
             <button type="button" className="wb-chip" title={`${subagentsSummary(children.map((c) => c.session)).label} lancé(s) par l'agent de cette session · cliquer pour détailler`} onClick={onToggle}>
