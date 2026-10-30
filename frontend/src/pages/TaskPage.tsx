@@ -1,9 +1,11 @@
 import { useQuery } from '@apollo/client';
 import { useState } from 'react';
-import { Alert, Badge, Card, Col, Row, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Col, Row, Table } from 'react-bootstrap';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import PageLoading from '../components/PageLoading';
 import { PullRequestChip } from '../components/PullRequests';
+import { RegisterPullRequestModal, TrackedPullRequestActions, TrackedPullRequestIndicators, PullRequestStageBadge } from '../components/TrackedPullRequests';
+import { PULL_REQUESTS, type TrackedPullRequest } from '../graphql/pullRequests';
 import StatusBadge from '../components/StatusBadge';
 import TaskAttachments from '../components/TaskAttachments';
 import TaskActions from '../components/TaskActions';
@@ -44,7 +46,11 @@ export default function TaskPage() {
   const { data, loading, error } = usePollingQuery<{ task: TaskWithSessions | null }>(TASK_PAGE, { variables: { id }, pollInterval: 5000 });
   const { data: targetsData } = useQuery<{ projects: LaunchTarget[] }>(TASK_LAUNCH_TARGETS);
   const [editing, setEditing] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const task = data?.task;
+  // PR suivies de la tâche, avec tout leur détail (auteur, dates) : les actions en ont besoin.
+  const { data: prData } = usePollingQuery<{ pullRequests: TrackedPullRequest[] }>(PULL_REQUESTS, { variables: { taskId: id, limit: 50 }, pollInterval: 15_000 });
+  const trackedPrs = prData?.pullRequests ?? [];
   useTabTitle(task?.title ?? null);
   const current = task?.sessions.find((s) => s.id === task.session?.id);
   useGitTarget(task && task.session?.worksession ? { projectId: task.project.id, worksessionId: task.session.worksession.id, label: `${task.project.name} · ${task.session.worksession.branch}` } : null);
@@ -54,6 +60,7 @@ export default function TaskPage() {
   if (!task) return <Alert variant="warning">Tâche introuvable (supprimée, ou dans un projet auquel vous n'avez pas accès).</Alert>;
   const target = targetsData?.projects.find((p) => p.id === task.project.id);
   const overdue = isOverdue(task);
+  const canWrite = target ? target.myRole !== 'VIEWER' : false;
 
   return (
     <>
@@ -162,9 +169,17 @@ export default function TaskPage() {
               </dl>
             </Card.Body>
           </Card>
-          {(task.branch || task.pullRequest || task.worksession || current?.worksession) && (
+          {(task.branch || task.pullRequest || task.worksession || current?.worksession || trackedPrs.length > 0 || canWrite) && (
             <Card className="mt-3">
-              <Card.Header>Code</Card.Header>
+              <Card.Header className="d-flex align-items-center justify-content-between">
+                <span>Code</span>
+                {canWrite && (
+                  <Button size="sm" variant="link" className="p-0 small" title="Suivre une pull request déjà ouverte pour cette tâche" onClick={() => setRegistering(true)}>
+                    <i className="bi bi-git me-1" />
+                    Suivre une PR
+                  </Button>
+                )}
+              </Card.Header>
               <Card.Body className="small">
                 {(() => {
                   const branch = task.worksession?.branch ?? current?.worksession?.branch ?? task.branch;
@@ -177,10 +192,49 @@ export default function TaskPage() {
                     </div>
                   ) : null;
                 })()}
-                {task.pullRequest && (
+                {trackedPrs.length > 0 ? (
+                  <div className="mt-2 d-flex flex-column gap-2">
+                    {trackedPrs.map((pr) => (
+                      <div key={pr.id} className="tracked-pr-item border rounded p-2">
+                        <div className="d-flex align-items-center gap-2 flex-wrap">
+                          <a href={pr.url} target="_blank" rel="noreferrer" className="text-reset text-decoration-none fw-semibold" title="Ouvrir sur GitHub">
+                            <span className="text-secondary">#{pr.number}</span> {pr.title}
+                          </a>
+                          <PullRequestStageBadge stage={pr.stage} />
+                          <TrackedPullRequestIndicators pr={pr} />
+                        </div>
+                        <div className="text-secondary mt-1">
+                          <span className="font-monospace">{pr.headBranch}</span>
+                          {pr.createdBySession && (
+                            <>
+                              {' · par '}
+                              <Link to={`/sessions/${pr.createdBySession.id}`}>{pr.createdBySession.name}</Link>
+                            </>
+                          )}
+                          {pr.createdBy && ` · par ${pr.createdBy.name}`}
+                          {` · ouverte ${timeAgo(pr.openedAt)}`}
+                          {pr.mergedAt && ` · fusionnée ${timeAgo(pr.mergedAt)}`}
+                          {pr.deployedAt && ` · déployée ${timeAgo(pr.deployedAt)}${pr.deployNote ? ` (${pr.deployNote})` : ''}`}
+                        </div>
+                        {pr.note && (
+                          <div className="text-secondary" title="Note de suivi">
+                            <i className="bi bi-sticky me-1" />
+                            {pr.note}
+                          </div>
+                        )}
+                        <div className="mt-2">
+                          <TrackedPullRequestActions pr={pr} canWrite={canWrite} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : task.pullRequest ? (
                   <div className="mt-1">
                     <PullRequestChip projectId={task.project.id} pr={task.pullRequest} /> {task.pullRequest.title}
+                    <span className="text-secondary"> (non suivie)</span>
                   </div>
+                ) : (
+                  <div className="text-secondary fst-italic mt-1">Aucune pull request suivie.</div>
                 )}
               </Card.Body>
             </Card>
@@ -210,6 +264,7 @@ export default function TaskPage() {
         </Col>
       </Row>
       {editing && <TaskModal task={task} projectId={task.project.id} onClose={() => setEditing(false)} />}
+      {registering && <RegisterPullRequestModal projectId={task.project.id} taskId={task.id} onClose={() => setRegistering(false)} />}
     </>
   );
 }

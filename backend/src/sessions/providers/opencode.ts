@@ -22,7 +22,8 @@ import { claudeSettings } from '../../settings/claude.js';
 import { opencodeSettings, splitModel } from '../../settings/opencode.js';
 import { usageService } from '../../settings/usage.js';
 import { createSharedPagesMcpServer, sharedPagesPrompt } from '../../sharedPages/mcp.js';
-import { createTasksMcpServer } from '../../tasks/mcp.js';
+import { createTasksMcpServer, TASKS_FREE_TOOLS } from '../../tasks/mcp.js';
+import { trackedPullRequestService } from '../../pullRequests/service.js';
 import { taskService } from '../../tasks/service.js';
 import { createVaultMcpServer, type VaultApproval } from '../../vault/mcp.js';
 import { vaultService } from '../../vault/service.js';
@@ -66,7 +67,7 @@ const BROWSER_READ_TOOLS = ['browser_snapshot', 'browser_take_screenshot', 'brow
 const BROWSER_FIELD_READERS = ['browser_evaluate', 'browser_run_code'];
 
 /** Outils des serveurs MCP de Skipper autorisés d'office (mêmes règles que pour une session Claude). */
-const SKIPPER_FREE_TOOLS = ['mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list'];
+const SKIPPER_FREE_TOOLS = ['mcp__context', ...TASKS_FREE_TOOLS, 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list'];
 
 /** Autorisations d'OpenCode lui-même : lectures et recherches libres, tout le reste demande — à cet exécuteur, qui applique le mode et les règles de la session puis interroge l'humain. */
 const BASE_PERMISSION: Record<string, string> = { '*': 'ask', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow', lsp: 'allow', todowrite: 'allow', todoread: 'allow', question: 'allow', skill: 'allow', task: 'allow' };
@@ -297,6 +298,7 @@ class OpencodeRun {
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
+      ctx.project.gitUrl ? trackedPullRequestService.promptSummary() : '',
       vaultService.promptSummary(vaultItems, ctx.project),
       sessionsPromptSummary(ctx.project),
       googleAccountService.promptSummary(googleAccounts),

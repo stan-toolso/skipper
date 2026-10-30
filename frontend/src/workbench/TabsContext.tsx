@@ -21,6 +21,7 @@ export type TabKind =
   | 'terminal'
   | 'tasks'
   | 'task'
+  | 'pull-requests'
   | 'history'
   | 'settings'
   | 'users'
@@ -85,6 +86,7 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (/^\/projects\/[^/]+\/edit$/.test(pathname)) return { title: 'Modifier le projet', kind: 'project-form' };
   if (/^\/projects\/[^/]+\/context$/.test(pathname)) return { title: 'Contexte', kind: 'context' };
   if (/^\/projects\/[^/]+\/tasks$/.test(pathname)) return { title: 'Tâches', kind: 'tasks' };
+  if (/^\/projects\/[^/]+\/pull-requests$/.test(pathname)) return { title: 'Pull requests', kind: 'pull-requests' };
   if (/^\/projects\/[^/]+\/vault$/.test(pathname)) return { title: 'Coffre', kind: 'vault' };
   if (/^\/projects\/[^/]+\/history$/.test(pathname)) return { title: 'Historique', kind: 'history' };
   if (pathname === '/tasks') return { title: 'Tâches', kind: 'tasks' };

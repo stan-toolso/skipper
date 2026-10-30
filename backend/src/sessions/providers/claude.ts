@@ -34,7 +34,8 @@ import { sessionIdentityPrompt } from '../identity.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
-import { createTasksMcpServer } from '../../tasks/mcp.js';
+import { createTasksMcpServer, TASKS_FREE_TOOLS } from '../../tasks/mcp.js';
+import { trackedPullRequestService } from '../../pullRequests/service.js';
 import { taskService } from '../../tasks/service.js';
 import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
@@ -214,6 +215,7 @@ export class ClaudeProvider implements SessionProvider {
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
+      ctx.project.gitUrl && !chat ? trackedPullRequestService.promptSummary() : '',
       vaultService.promptSummary(vaultItems, ctx.project),
       sessionsPromptSummary(ctx.project, { chat }),
       googleAccountService.promptSummary(googleAccounts),
@@ -297,7 +299,7 @@ export class ClaudeProvider implements SessionProvider {
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
       // Pages partagées : lister est libre ; publier passe par l'autorisation quand la page est exposée à d'autres.
-      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', 'mcp__tasks', 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', ...TASKS_FREE_TOOLS, 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       // Le coffre saisit des secrets dans le navigateur : les outils qui pourraient relire la valeur sont retirés à l'agent.
       ...(browserServer && vaultBrowser ? { disallowedTools: ['mcp__playwright__browser_evaluate', 'mcp__playwright__browser_run_code'] } : {}),
       // Reprise de la conversation Claude si la session a déjà tourné et que le CLI la retrouve encore.
