@@ -760,13 +760,90 @@ button.task-tag:hover { background: color-mix(in srgb, var(--cc-accent) 16%, tra
 .task-panel-fields { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 2px 10px 6px; margin: 0; }
 .task-panel-fields dt { color: var(--cc-dim); font-weight: 500; }
 .task-panel-fields dd { margin: 0; overflow-wrap: anywhere; }
-.task-comments { display: flex; flex-direction: column; gap: 8px; }
-.task-comment { border: 1px solid var(--cc-border); border-radius: 6px; padding: 6px 10px; background: var(--cc-bg-elevated); }
-.task-comment-head { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 2px; }
-.task-comment-head .bi { color: var(--cc-dim); }
-.task-comment-actions { margin-left: auto; display: none; gap: 6px; }
-.task-comment:hover .task-comment-actions { display: inline-flex; }
-.task-comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* ---- Fil de discussion d'une tâche (components/TaskThread.tsx) : messages à la Slack ---------------- */
+.tt { display: flex; flex-direction: column; font-size: 13px; }
+.tt-msg { display: flex; gap: 10px; padding: 8px 10px; border-radius: 6px; position: relative; }
+.tt-msg:hover { background: var(--cc-bg-hover); }
+.tt-msg-main { flex: 1; min-width: 0; }
+.tt-msg-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; line-height: 1.3; }
+.tt-author { font-weight: 600; color: var(--cc-fg); text-decoration: none; }
+a.tt-author:hover { color: var(--cc-accent); }
+.tt-time { color: var(--cc-dim); font-size: 11.5px; }
+.tt-badge-agent { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--cc-accent); border: 1px solid color-mix(in srgb, var(--cc-accent) 40%, transparent); border-radius: 3px; padding: 0 4px; line-height: 1.4; }
+.tt-avatar { width: 28px; height: 28px; border-radius: 6px; flex: 0 0 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; background: var(--cc-accent); color: #fff; margin-top: 1px; }
+.tt-avatar-agent { background: var(--cc-bg-elevated); color: var(--cc-accent); border: 1px solid var(--cc-border); font-size: 15px; }
+.tt-reply .tt-avatar { width: 22px; height: 22px; flex-basis: 22px; font-size: 9.5px; }
+.tt-reply .tt-avatar-agent { font-size: 12px; }
+.tt-body { margin-top: 2px; }
+.tt-body.cc-md { font-size: 13px; }
+.tt-opening-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tt-opening { border: 1px solid var(--cc-border); background: var(--cc-bg-elevated); margin-bottom: 6px; }
+.tt-opening:hover { background: var(--cc-bg-elevated); }
+.tt-empty { color: var(--cc-dim); font-style: italic; padding: 10px 10px 6px; }
+.tt-mentions-me { box-shadow: inset 3px 0 0 var(--cc-yellow); }
+.tt-flash { animation: tt-flash 2.5s ease-out; }
+@keyframes tt-flash { 0%, 40% { background: rgba(var(--cc-accent-rgb), 0.18); } 100% { background: transparent; } }
+/* Actions au survol (réagir, répondre, modifier, supprimer), à droite de l'en-tête. */
+.tt-msg-actions { margin-left: auto; display: inline-flex; gap: 2px; visibility: hidden; }
+.tt-msg:hover .tt-msg-actions, .tt-msg:focus-within .tt-msg-actions { visibility: visible; }
+.tt-icon-btn { border: 0; background: transparent; color: var(--cc-dim); padding: 0 4px; line-height: 1; border-radius: 4px; font-size: 13px; }
+.tt-icon-btn:hover { color: var(--cc-accent); background: var(--cc-bg-elevated); }
+/* Réactions : puces « emoji n », celles de la personne connectée en relief ; « + » pour en ajouter. */
+.tt-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; align-items: center; }
+.tt-reaction { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--cc-border); border-radius: 12px; background: var(--cc-bg-elevated); color: var(--cc-fg); font-size: 12px; padding: 1px 8px 1px 6px; line-height: 1.5; }
+.tt-reaction:hover:not(:disabled) { border-color: var(--cc-accent); }
+.tt-reaction:disabled { cursor: default; }
+.tt-reaction.mine { border-color: var(--cc-accent); background: rgba(var(--cc-accent-rgb), 0.12); }
+.tt-reaction-emoji { font-size: 13px; }
+.tt-react-add { color: var(--cc-dim); padding: 1px 5px; gap: 0; }
+.tt-react-add .bi-plus { font-size: 11px; margin-left: -2px; }
+.tt-react-quiet { visibility: hidden; }
+.tt-msg:hover .tt-react-quiet, .tt-react-quiet.open { visibility: visible; }
+.tt-react-wrap { position: relative; display: inline-flex; }
+.tt-emoji-picker { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; display: flex; flex-wrap: wrap; gap: 2px; width: 232px; padding: 6px; background: var(--cc-bg-popover); border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: var(--cc-shadow); }
+.tt-msg-actions .tt-emoji-picker { left: auto; right: 0; }
+.tt-emoji { border: 0; background: transparent; font-size: 18px; width: 32px; height: 32px; border-radius: 6px; line-height: 1; }
+.tt-emoji:hover { background: var(--cc-bg-hover); }
+.tt-emoji-custom { flex: 1; min-width: 60px; margin-top: 4px; border: 1px solid var(--cc-border); border-radius: 4px; background: var(--cc-bg); color: var(--cc-fg); font-size: 12px; padding: 2px 6px; }
+/* Fil des réponses sous un message racine : filet à gauche, replié au-delà de trois réponses. */
+.tt-thread { margin: 0 0 4px 32px; padding-left: 12px; border-left: 2px solid var(--cc-border); }
+.tt-reply { padding: 4px 8px; }
+.tt-thread-toggle, .tt-thread-reply-link { border: 0; background: transparent; color: var(--cc-accent); font-size: 12px; padding: 2px 8px; display: inline-flex; align-items: center; gap: 5px; border-radius: 4px; }
+.tt-thread-toggle:hover, .tt-thread-reply-link:hover { background: var(--cc-bg-hover); text-decoration: underline; }
+.tt-thread-meta { color: var(--cc-dim); font-weight: 400; }
+/* Mentions dans le texte : pastille pour une personne, lien pour une session. */
+.task-mention { display: inline-block; padding: 0 4px; border-radius: 4px; font-weight: 600; color: var(--cc-accent); background: rgba(var(--cc-accent-rgb), 0.12); text-decoration: none; }
+a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(--cc-accent); }
+/* Zone de saisie : cadre unique, suggestions de mention au-dessus du texte, pied avec fichiers, aide et bouton. */
+.tt-composer { margin-top: 8px; padding: 8px 10px 6px; border-top: 1px solid var(--cc-border); }
+.tt-thread .tt-composer, .tt-composer.compact { border-top: 0; padding: 6px 0 0; }
+.tt-composer-box { position: relative; }
+.tt-composer textarea { resize: vertical; font-size: 13px; }
+.tt-composer-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.tt-composer-foot .cc-attachments { margin-top: 0; }
+.tt-composer-hint { color: var(--cc-dimmer); font-size: 11px; margin-left: auto; }
+.tt-composer-actions { display: inline-flex; gap: 4px; align-items: center; }
+.tt-composer.compact .tt-composer-hint { display: none; }
+.tt-mention-menu { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 30; min-width: 240px; max-width: 100%; max-height: 240px; overflow-y: auto; background: var(--cc-bg-popover); border: 1px solid var(--cc-border); border-radius: 8px; box-shadow: var(--cc-shadow); padding: 4px; }
+.tt-mention-item { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent; color: var(--cc-fg); text-align: left; padding: 5px 8px; border-radius: 5px; font-size: 13px; }
+.tt-mention-item .bi { color: var(--cc-dim); }
+.tt-mention-item.active, .tt-mention-item:hover { background: var(--cc-bg-hover); color: var(--cc-accent); }
+.tt-mention-label { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-mention-detail { color: var(--cc-dim); font-size: 11.5px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+/* Panneau de droite et modale : moins d'espace, pas de fond au survol. */
+.tt-compact .tt-msg { padding: 4px 2px; gap: 8px; }
+.tt-compact .tt-msg:hover { background: transparent; }
+.tt-compact .tt-thread { margin-left: 18px; padding-left: 8px; }
+.tt-compact .tt-msg-actions { visibility: visible; }
+/* Page de la tâche : la conversation remplit la carte, la saisie reste en bas. */
+.task-conversation .card-body { padding: 6px 4px 4px; }
+.task-page-about dt { color: var(--cc-dim); font-weight: 500; }
+@media (max-width: 575.98px) {
+  .tt-msg { padding: 6px 4px; }
+  .tt-thread { margin-left: 14px; padding-left: 8px; }
+  .tt-msg-actions { visibility: visible; }
+  .tt-composer-hint { display: none; }
+}
 
 /* ---- Branche d'une session : état de la PR, dossier absent -------------------------------------- */
 .wt-pr-open { color: var(--cc-green); }

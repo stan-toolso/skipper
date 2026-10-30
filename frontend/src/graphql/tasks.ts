@@ -63,13 +63,28 @@ export const TASK_DETAIL = gql`
   }
 `;
 
-export const TASK_COMMENTS = gql`
-  query TaskComments($id: ID!) {
+/** Le fil d'une tâche : réactions à la tâche, messages (racines et réponses à plat) avec leurs mentions et réactions, et qui l'on peut mentionner. */
+export const TASK_THREAD = gql`
+  query TaskThread($id: ID!) {
     task(id: $id) {
       id
       commentCount
+      reactions {
+        emoji
+        count
+        actors
+        mine
+      }
+      mentionables {
+        kind
+        id
+        label
+        detail
+        text
+      }
       comments {
         id
+        parentId
         authorType
         authorName
         author {
@@ -81,6 +96,18 @@ export const TASK_COMMENTS = gql`
           name
         }
         body
+        mentions {
+          kind
+          id
+          label
+          text
+        }
+        reactions {
+          emoji
+          count
+          actors
+          mine
+        }
         editable
         deletable
         attachments {
@@ -97,10 +124,16 @@ export const TASK_COMMENTS = gql`
 `;
 
 export const ADD_TASK_COMMENT = gql`
-  mutation AddTaskComment($taskId: ID!, $body: String!, $attachments: [AttachmentInput!]) {
-    addTaskComment(taskId: $taskId, body: $body, attachments: $attachments) {
+  mutation AddTaskComment($taskId: ID!, $body: String!, $attachments: [AttachmentInput!], $parentId: ID) {
+    addTaskComment(taskId: $taskId, body: $body, attachments: $attachments, parentId: $parentId) {
       id
     }
+  }
+`;
+
+export const TOGGLE_TASK_REACTION = gql`
+  mutation ToggleTaskReaction($taskId: ID!, $commentId: ID, $emoji: String!) {
+    toggleTaskReaction(taskId: $taskId, commentId: $commentId, emoji: $emoji)
   }
 `;
 

@@ -10,7 +10,7 @@ import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import AttachmentChips from './AttachmentChips';
 import TagsInput from './TagsInput';
 import TaskAttachments from './TaskAttachments';
-import TaskComments from './TaskComments';
+import TaskThread from './TaskThread';
 
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 
@@ -234,8 +234,8 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
           </div>
           {task && (
             <div className="mt-3">
-              <Form.Label>Commentaires</Form.Label>
-              <TaskComments taskId={task.id} />
+              <Form.Label>Fil de discussion</Form.Label>
+              <TaskThread taskId={task.id} compact />
             </div>
           )}
           {error && (
