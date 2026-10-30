@@ -2,13 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PullRequest } from '../git/pullRequests.js';
 import type { CreateTrackedPullRequestInput, PullRequestActor, TrackedPullRequest, TrackedPullRequestFilter, UpdateTrackedPullRequestInput } from './types.js';
 
-// Dépôt en mémoire et GitHub simulé : on vérifie l'enregistrement, la mise à jour, la synchronisation et les notifications.
+// Dépôt en mémoire, GitHub et travail local des branches simulés : on vérifie l'enregistrement, la mise à jour, la
+// synchronisation (GitHub et PR en préparation), les PR d'autres dépôts et les notifications.
 const m = vi.hoisted(() => ({
   rows: [] as TrackedPullRequest[],
   github: [] as PullRequest[],
-  tasks: [] as Array<{ id: string; projectId: string; branch: string | null; status: string }>,
+  tasks: [] as Array<{ id: string; projectId: string; title?: string; branch: string | null; status: string }>,
   taskUpdates: [] as Array<[string, Record<string, unknown>]>,
-  worksessions: [] as Array<{ projectId: string; branch: string; taskId: string | null }>,
+  worksessions: [] as Array<{ id: string; projectId: string; name: string; branch: string; taskId: string | null; archivedAt: Date | null }>,
+  /** Travail local par work session (null : dossier absent) et appels reçus (since). */
+  local: {} as Record<string, { branch: string; baseBranch: string; commits: number; changes: number } | null>,
+  localCalls: [] as Array<[string, Date | null | undefined]>,
   notifications: [] as Array<Record<string, unknown>>,
   created: [] as Array<Record<string, unknown>>,
   isGithub: true,
@@ -19,15 +23,23 @@ const now = () => new Date();
 const applyUpdate = (pr: TrackedPullRequest, input: UpdateTrackedPullRequestInput): TrackedPullRequest => {
   const next = { ...pr, updatedAt: now() };
   if (input.taskId !== undefined) next.taskId = input.taskId;
+  if (input.number !== undefined) next.number = input.number;
+  if (input.url != null) next.url = input.url;
+  if (input.repo != null) next.repo = input.repo;
   if (input.title != null) next.title = input.title;
+  if (input.headBranch != null) next.headBranch = input.headBranch;
   if (input.baseBranch != null) next.baseBranch = input.baseBranch;
   if (input.isDraft != null) next.isDraft = input.isDraft;
+  if (input.worksessionId !== undefined) next.worksessionId = input.worksessionId;
+  if (input.localCommits !== undefined) next.localCommits = input.localCommits;
+  if (input.localChanges !== undefined) next.localChanges = input.localChanges;
   if (input.checksState !== undefined) next.checksState = input.checksState;
   if (input.reviewDecision !== undefined) next.reviewDecision = input.reviewDecision;
   if (input.mergeable !== undefined) next.mergeable = input.mergeable;
   if (input.syncedAt !== undefined) next.syncedAt = input.syncedAt;
   if (input.mergeSha !== undefined) next.mergeSha = input.mergeSha;
   if (input.note != null) next.note = input.note;
+  if (input.openedAt != null) next.openedAt = input.openedAt;
   if (input.mergedAt !== undefined) next.mergedAt = input.mergedAt;
   if (input.closedAt !== undefined) next.closedAt = input.closedAt;
   if (input.status != null) {
@@ -38,6 +50,7 @@ const applyUpdate = (pr: TrackedPullRequest, input: UpdateTrackedPullRequestInpu
   }
   return next;
 };
+const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 vi.mock('./repository.js', () => ({
   pullRequestRepository: {
@@ -46,13 +59,17 @@ vi.mock('./repository.js', () => ({
         id: `pr${m.rows.length + 1}`,
         projectId,
         taskId: input.taskId ?? null,
+        repo: input.repo ?? '',
         number: input.number,
         url: input.url,
         title: input.title,
         headBranch: input.headBranch,
         baseBranch: input.baseBranch ?? '',
-        status: input.status ?? 'open',
+        status: input.status ?? (input.number == null ? 'pending' : 'open'),
         isDraft: Boolean(input.isDraft),
+        worksessionId: input.worksessionId ?? null,
+        localCommits: input.localCommits ?? null,
+        localChanges: input.localChanges ?? null,
         checksState: input.checksState ?? null,
         reviewDecision: input.reviewDecision ?? null,
         mergeable: input.mergeable ?? null,
@@ -73,9 +90,24 @@ vi.mock('./repository.js', () => ({
       return pr;
     },
     findById: async (id: string) => m.rows.find((r) => r.id === id) ?? null,
-    findByNumber: async (projectId: string, number: number) => m.rows.find((r) => r.projectId === projectId && r.number === number) ?? null,
-    list: async (f: TrackedPullRequestFilter = {}) => m.rows.filter((r) => (!f.projectId || r.projectId === f.projectId) && (!f.taskId || r.taskId === f.taskId)),
-    countPending: async () => ({ open: 0 }),
+    findByNumber: async (projectId: string, number: number, repo?: string | null, projectRepo?: string | null) => {
+      const all = m.rows.filter((r) => r.projectId === projectId && r.number === number);
+      if (repo != null) return all.find((r) => sameRepo(r.repo, repo)) ?? null;
+      const own = all.find((r) => sameRepo(r.repo, projectRepo ?? ''));
+      if (own) return own;
+      return all.length === 1 ? all[0] : null;
+    },
+    findPendingByWorksession: async (id: string) => m.rows.find((r) => r.worksessionId === id && r.status === 'pending') ?? null,
+    list: async (f: TrackedPullRequestFilter = {}) =>
+      m.rows.filter(
+        (r) =>
+          (!f.projectId || r.projectId === f.projectId) &&
+          (!f.taskId || r.taskId === f.taskId) &&
+          (!f.status || f.status.includes(r.status)) &&
+          (!f.headBranch || r.headBranch === f.headBranch) &&
+          (!f.worksessionId || r.worksessionId === f.worksessionId),
+      ),
+    countPending: async () => ({ open: 0, pending: 0 }),
     update: async (id: string, input: UpdateTrackedPullRequestInput) => {
       const i = m.rows.findIndex((r) => r.id === id);
       if (i < 0) return null;
@@ -91,14 +123,21 @@ vi.mock('./repository.js', () => ({
 }));
 vi.mock('../git/pullRequests.js', () => ({
   parseGithubRepo: (url: string | null) => (url?.includes('github.com/acme/app') ? { owner: 'acme', name: 'app' } : null),
+  parseRepoFullName: (text: string) => {
+    const [owner, name] = text.split('/');
+    return owner && name ? { owner, name } : null;
+  },
+  repoFullName: (r: { owner: string; name: string }) => `${r.owner}/${r.name}`,
+  buildDraftText: (branch: string, _commits: unknown[], taskTitle?: string | null) => ({ title: taskTitle ?? `Branche ${branch}`, body: '' }),
   pullRequestService: {
     isGithubProject: async () => m.isGithub,
     list: async () => {
       if (m.listFails) throw new Error('GitHub injoignable');
-      return m.github;
+      return m.github.filter((g) => g.repo === 'acme/app');
     },
-    get: async (_p: string, _u: string, number: number) => {
-      const pr = m.github.find((g) => g.number === number);
+    get: async (_p: string, _u: string, number: number, repo?: { owner: string; name: string } | null) => {
+      const name = repo ? `${repo.owner}/${repo.name}` : 'acme/app';
+      const pr = m.github.find((g) => g.number === number && sameRepo(g.repo, name));
       if (!pr) throw new Error('introuvable');
       return pr;
     },
@@ -121,20 +160,34 @@ vi.mock('../tasks/service.js', () => ({
     },
   },
 }));
-vi.mock('../worksessions/repository.js', () => ({ worksessionRepository: { findByBranch: async (projectId: string, branch: string) => m.worksessions.find((w) => w.projectId === projectId && w.branch === branch) ?? null } }));
+vi.mock('../worksessions/repository.js', () => ({
+  worksessionRepository: {
+    findByBranch: async (projectId: string, branch: string) => m.worksessions.find((w) => w.projectId === projectId && w.branch === branch && !w.archivedAt) ?? null,
+    findById: async (id: string) => m.worksessions.find((w) => w.id === id) ?? null,
+    listByProject: async (projectId: string) => m.worksessions.filter((w) => w.projectId === projectId && !w.archivedAt),
+  },
+}));
+vi.mock('./local.js', () => ({
+  localBranchWork: async (_project: unknown, ws: { id: string }, opts: { since?: Date | null } = {}) => {
+    m.localCalls.push([ws.id, opts.since]);
+    return m.local[ws.id] ?? null;
+  },
+}));
 vi.mock('../notifications/service.js', () => ({ notificationService: { notify: async (n: Record<string, unknown>) => void m.notifications.push(n) } }));
-vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, name: 'Projet', gitUrl: m.isGithub ? 'https://github.com/acme/app.git' : null, gitBranch: 'main' }) } }));
+vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, name: 'Projet', slug: id, gitUrl: m.isGithub ? 'https://github.com/acme/app.git' : 'https://gitlab.com/acme/app.git', gitBranch: 'main' }) } }));
 
 const { describePullRequest, parsePullRequestRef, parsePullRequestUrl, trackedPullRequestService } = await import('./service.js');
 const { stageOf } = await import('./types.js');
 
 function gh(number: number, state: PullRequest['state'], over: Partial<PullRequest> = {}): PullRequest {
+  const repo = over.repo ?? 'acme/app';
   return {
     projectId: 'p',
+    repo,
     number,
     title: `PR ${number}`,
     body: '',
-    url: `https://github.com/acme/app/pull/${number}`,
+    url: `https://github.com/${repo}/pull/${number}`,
     state,
     isDraft: false,
     author: 'stan',
@@ -159,6 +212,7 @@ function gh(number: number, state: PullRequest['state'], over: Partial<PullReque
     ...over,
   };
 }
+const ws = (id: string, branch: string, over: Partial<(typeof m.worksessions)[number]> = {}) => ({ id, projectId: 'p', name: id, branch, taskId: null, archivedAt: null, ...over });
 
 const agent: PullRequestActor = { type: 'agent', sessionId: 's1' };
 const human: PullRequestActor = { type: 'human', userId: 'u1' };
@@ -169,6 +223,8 @@ beforeEach(() => {
   m.tasks = [];
   m.taskUpdates = [];
   m.worksessions = [];
+  m.local = {};
+  m.localCalls = [];
   m.notifications = [];
   m.created = [];
   m.isGithub = true;
@@ -177,7 +233,8 @@ beforeEach(() => {
 });
 
 describe('étapes et références', () => {
-  it('dérive l’étape du statut, du brouillon et du déploiement', () => {
+  it('dérive l’étape du statut et du brouillon', () => {
+    expect(stageOf({ status: 'pending', isDraft: false })).toBe('pending');
     expect(stageOf({ status: 'open', isDraft: true })).toBe('draft');
     expect(stageOf({ status: 'open', isDraft: false })).toBe('to_merge');
     expect(stageOf({ status: 'merged', isDraft: false })).toBe('merged');
@@ -201,10 +258,11 @@ describe('recordGithub', () => {
     const pr = await trackedPullRequestService.recordGithub('p', gh(5, 'OPEN'), agent, { note: 'attend la CI' });
     expect(pr.taskId).toBe('t1');
     expect(pr.status).toBe('open');
+    expect(pr.repo).toBe('acme/app');
     expect(pr.note).toBe('attend la CI');
     expect(pr.createdByType).toBe('agent');
     expect(m.notifications).toHaveLength(1);
-    expect(m.notifications[0]).toMatchObject({ type: 'pull_request.opened', projectId: 'p', sessionId: 's1' });
+    expect(m.notifications[0]).toMatchObject({ type: 'pull_request.opened', projectId: 'p', sessionId: 's1', message: '#5 PR 5 · Projet' });
     expect(m.taskUpdates).toHaveLength(0); // la tâche avait déjà sa branche
   });
 
@@ -223,11 +281,35 @@ describe('recordGithub', () => {
     expect(pr.taskId).toBe('t2');
     expect(m.taskUpdates).toEqual([['t2', { branch: 'task/t6' }]]);
   });
+
+  it('transforme la PR en préparation de la branche en PR ouverte (même objet, note et tâche conservées)', async () => {
+    m.worksessions.push(ws('w1', 'task/t7', { taskId: 't7' }));
+    m.tasks.push({ id: 't7', projectId: 'p', title: 'Sept', branch: 'task/t7', status: 'in_progress' });
+    m.local.w1 = { branch: 'task/t7', baseBranch: 'main', commits: 2, changes: 1 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    const pending = m.rows[0];
+    expect(pending).toMatchObject({ status: 'pending', number: null, taskId: 't7', worksessionId: 'w1', title: 'Sept', localCommits: 2, localChanges: 1 });
+    await trackedPullRequestService.update(pending.id, { note: 'presque prête' });
+    const opened = await trackedPullRequestService.recordGithub('p', gh(7, 'OPEN'), agent);
+    expect(m.rows).toHaveLength(1);
+    expect(opened.id).toBe(pending.id);
+    expect(opened).toMatchObject({ status: 'open', number: 7, url: 'https://github.com/acme/app/pull/7', taskId: 't7', note: 'presque prête', worksessionId: 'w1', localCommits: null });
+    expect(m.notifications.map((n) => n.type)).toEqual(['pull_request.opened']);
+    // Une PR d'un autre dépôt sur la même branche ne remplace pas la PR en préparation du projet.
+    m.rows = [];
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    await trackedPullRequestService.recordGithub('p', gh(7, 'OPEN', { repo: 'autre/depot' }), agent);
+    expect(m.rows.map((r) => r.status).sort()).toEqual(['open', 'pending']);
+  });
 });
 
 describe('register', () => {
-  it('refuse une URL d’un autre dépôt et une référence vide', async () => {
-    await expect(trackedPullRequestService.register('p', { url: 'https://github.com/autre/depot/pull/3' }, {}, human)).rejects.toThrow(/appartient à autre\/depot/);
+  it('suit une PR d’un autre dépôt GitHub par son URL, et refuse une référence vide', async () => {
+    m.github.push(gh(3, 'OPEN', { repo: 'autre/depot', headRefName: 'feat/ailleurs' }));
+    const pr = await trackedPullRequestService.register('p', { url: 'https://github.com/autre/depot/pull/3' }, { userId: 'u1', taskId: null }, agent);
+    expect(pr).toMatchObject({ repo: 'autre/depot', number: 3, url: 'https://github.com/autre/depot/pull/3', headBranch: 'feat/ailleurs', taskId: null });
+    expect(describePullRequest(pr, 'acme/app')).toContain('PR autre/depot#3');
+    expect(m.notifications[0]).toMatchObject({ message: 'autre/depot#3 PR 3 · Projet' });
     await expect(trackedPullRequestService.register('p', {}, {}, human)).rejects.toThrow(/numéro ou l’URL/);
   });
 
@@ -242,8 +324,12 @@ describe('register', () => {
     await expect(trackedPullRequestService.register('p', { number: 9 }, {}, agent)).rejects.toThrow(/titre et sa branche/);
     const pr = await trackedPullRequestService.register('p', { number: 9 }, { fallback: { title: 'À la main', headBranch: 'feat/x' } }, agent);
     expect(pr.url).toBe('https://github.com/acme/app/pull/9');
+    expect(pr.repo).toBe('acme/app');
     expect(pr.baseBranch).toBe('main');
     expect(pr.title).toBe('À la main');
+    const elsewhere = await trackedPullRequestService.register('p', { url: 'https://github.com/autre/depot/pull/9' }, { fallback: { title: 'Ailleurs', headBranch: 'feat/y' } }, agent);
+    expect(elsewhere).toMatchObject({ repo: 'autre/depot', number: 9, baseBranch: '' });
+    expect(m.rows).toHaveLength(2); // même numéro, deux dépôts
   });
 });
 
@@ -257,11 +343,23 @@ describe('update', () => {
     expect(stageOf(reopened)).toBe('to_merge');
   });
 
-  it('résout une PR par identifiant, numéro ou URL dans son projet', async () => {
+  it('refuse de changer le statut d’une PR en préparation (note et tâche seulement)', async () => {
+    m.worksessions.push(ws('w1', 'feat/a'));
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 0, changes: 3 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    const pending = m.rows[0];
+    await expect(trackedPullRequestService.update(pending.id, { status: 'merged' })).rejects.toThrow(/pas encore ouverte/);
+    await expect(trackedPullRequestService.update(pending.id, { status: 'pending' })).rejects.toThrow(/Statut invalide/);
+    expect((await trackedPullRequestService.update(pending.id, { note: 'wip' })).note).toBe('wip');
+  });
+
+  it('résout une PR par identifiant, numéro ou URL dans son projet, le dépôt du projet d’abord', async () => {
     const pr = await trackedPullRequestService.recordGithub('p', gh(12, 'OPEN'), human);
+    const other = await trackedPullRequestService.recordGithub('p', gh(12, 'OPEN', { repo: 'autre/depot' }), human);
     expect((await trackedPullRequestService.resolve('p', pr.id)).id).toBe(pr.id);
     expect((await trackedPullRequestService.resolve('p', '#12')).id).toBe(pr.id);
     expect((await trackedPullRequestService.resolve('p', 'https://github.com/acme/app/pull/12')).id).toBe(pr.id);
+    expect((await trackedPullRequestService.resolve('p', 'https://github.com/autre/depot/pull/12')).id).toBe(other.id);
     await expect(trackedPullRequestService.resolve('autre', '#12')).rejects.toThrow(/Aucune pull request/);
   });
 });
@@ -285,6 +383,14 @@ describe('sync', () => {
     expect(after.find((r) => r.number === 4)).toBeUndefined();
   });
 
+  it('rafraîchit une PR d’un autre dépôt une à une, dans son dépôt', async () => {
+    const other = await trackedPullRequestService.recordGithub('p', gh(2, 'OPEN', { repo: 'autre/depot' }), human);
+    m.github.push(gh(2, 'MERGED', { repo: 'autre/depot' }), gh(2, 'OPEN')); // #2 du dépôt du projet : une autre PR, ignorée
+    const after = await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(after.find((r) => r.id === other.id)!.status).toBe('merged');
+    expect(after).toHaveLength(1);
+  });
+
   it('laisse la liste telle quelle quand GitHub ne répond pas ou que le projet n’y est pas', async () => {
     await trackedPullRequestService.recordGithub('p', gh(1, 'OPEN'), human);
     m.listFails = true;
@@ -304,6 +410,63 @@ describe('sync', () => {
     expect((await trackedPullRequestService.sync('p2', 'u1'))[0].status).toBe('open');
     vi.setSystemTime(new Date('2026-10-30T10:00:31Z'));
     expect((await trackedPullRequestService.sync('p2', 'u1'))[0].status).toBe('merged');
+  });
+});
+
+describe('PR en préparation (refreshPending)', () => {
+  it('crée une PR en préparation par work session dont la branche porte des modifications, même sans GitHub', async () => {
+    m.isGithub = false; // projet git hors GitHub : le travail local compte quand même
+    m.worksessions.push(ws('w1', 'feat/a'), ws('w2', 'feat/b'), ws('w3', 'feat/c'), ws('w4', 'feat/d', { archivedAt: new Date() }));
+    m.tasks.push({ id: 't1', projectId: 'p', title: 'Tâche A', branch: 'feat/a', status: 'in_progress' });
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 3, changes: 0 };
+    m.local.w2 = { branch: 'feat/b', baseBranch: 'main', commits: 0, changes: 0 }; // rien à proposer
+    m.local.w3 = null; // dossier absent
+    const after = await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ status: 'pending', number: null, url: '', repo: '', headBranch: 'feat/a', baseBranch: 'main', taskId: 't1', title: 'Tâche A', worksessionId: 'w1', localCommits: 3, localChanges: 0, createdByType: 'system' });
+    expect(stageOf(after[0])).toBe('pending');
+    expect(m.localCalls.map(([id]) => id)).toEqual(['w1', 'w2', 'w3']); // la work session archivée n'est pas regardée
+    const line = describePullRequest(after[0]);
+    expect(line).toContain('branche feat/a « Tâche A » · en préparation (3 commits)');
+    expect(line).toContain('pas encore ouverte sur GitHub');
+  });
+
+  it('met à jour le travail local, puis retire la PR quand la branche n’a plus rien ou que la work session disparaît', async () => {
+    m.worksessions.push(ws('w1', 'feat/a'));
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 1, changes: 2 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    const id = m.rows[0].id;
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 2, changes: 0 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows).toHaveLength(1);
+    expect(m.rows[0]).toMatchObject({ id, localCommits: 2, localChanges: 0 });
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 0, changes: 0 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows).toHaveLength(0);
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 1, changes: 0 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows).toHaveLength(1);
+    m.worksessions[0].archivedAt = new Date();
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows).toHaveLength(0);
+  });
+
+  it('ne double pas une PR ouverte sur la branche, et ne compte que les commits postérieurs à une fusion', async () => {
+    m.worksessions.push(ws('w1', 'task/t1'));
+    m.local.w1 = { branch: 'task/t1', baseBranch: 'main', commits: 4, changes: 0 };
+    await trackedPullRequestService.recordGithub('p', gh(1, 'OPEN'), human);
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows.map((r) => r.status)).toEqual(['open']);
+    // Fusionnée (squash : les anciens commits restent « en avance ») : seuls les commits depuis la fusion comptent,
+    // et la branche est examinée après GitHub (la fusion est connue quand on la regarde).
+    m.github.push(gh(1, 'MERGED'));
+    m.local.w1 = { branch: 'task/t1', baseBranch: 'main', commits: 0, changes: 0 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows.map((r) => r.status)).toEqual(['merged']);
+    expect(m.localCalls.at(-1)).toEqual(['w1', new Date('2026-10-02T10:00:00Z')]);
+    m.local.w1 = { branch: 'task/t1', baseBranch: 'main', commits: 1, changes: 0 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows.map((r) => r.status).sort()).toEqual(['merged', 'pending']);
   });
 });
 
@@ -334,10 +497,11 @@ describe('open et markMerged', () => {
 describe('describePullRequest', () => {
   it('résume une PR sur une ligne avec son étape, ses indices GitHub et sa tâche', async () => {
     const pr = await trackedPullRequestService.recordGithub('p', gh(21, 'OPEN', { mergeable: 'CONFLICTING', reviewDecision: 'CHANGES_REQUESTED' }), human, { taskId: null, note: 'à reprendre' });
-    const line = describePullRequest(pr);
+    const line = describePullRequest(pr, 'acme/app');
     expect(line).toContain('PR #21 « PR 21 » · à fusionner (conflits avec la base, checks réussis, modifications demandées)');
     expect(line).toContain('task/t21 → main');
     expect(line).toContain('note : à reprendre');
     expect(line).toContain('https://github.com/acme/app/pull/21');
+    expect(describePullRequest(pr)).toContain('PR #21'); // sans dépôt du projet connu : le dépôt de la PR est le sien
   });
 });
