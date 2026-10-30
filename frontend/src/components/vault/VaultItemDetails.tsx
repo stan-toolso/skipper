@@ -179,6 +179,34 @@ function DetailsTab({ item, projectPage, browserDisabled, onEdited }: { item: Va
         </div>
       )}
       {item.kind === 'aws' && item.aws && <AwsSection item={item} manage={manage} onEdited={onEdited} />}
+      {item.kind === 'scaleway' && item.scaleway && (
+        <>
+          <div className="mb-1">
+            <span className="text-secondary">Clé d'accès : </span>
+            <code>{item.scaleway.accessKey}</code>
+            {' · région '}
+            <code>{item.scaleway.region}</code>
+            {' · zone '}
+            <code>{item.scaleway.zone}</code>
+          </div>
+          <div className="mb-1">
+            <span className="text-secondary">Projet par défaut : </span>
+            {item.scaleway.projectId ? <code>{item.scaleway.projectId}</code> : <span className="text-secondary">celui de la clé (complété au test)</span>}
+            {item.scaleway.organizationId && (
+              <>
+                {' · organisation '}
+                <code>{item.scaleway.organizationId}</code>
+              </>
+            )}
+          </div>
+          {item.scaleway.identity && (
+            <div className="mb-1">
+              <span className="text-secondary">Identité vérifiée : </span>
+              {item.scaleway.identity}
+            </div>
+          )}
+        </>
+      )}
       {isSkipperKind(item.kind) && (
         <div className="mb-1">
           <span className="text-secondary">Utilisé dans : </span>

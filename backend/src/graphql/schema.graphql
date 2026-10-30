@@ -450,6 +450,8 @@ enum VaultItemKind {
   secret
   "Compte AWS : connexion par code à IAM Identity Center ou clés d'accès ; les agents exécutent le CLI aws par l'outil aws_run, sans jamais voir les identifiants."
   aws
+  "Compte Scaleway : clé d'API IAM ; les agents exécutent le CLI scw (scw_run) et appellent l'API (scw_api) par le serveur, sans jamais voir la clé secrète."
+  scaleway
   "Jeton applicatif : identifiant que Skipper utilise pour la personne (Claude, fournisseur OpenCode, GitHub), référencé par ses réglages ; jamais offert aux agents."
   token
   "Proxy LiteLLM : adresse et clé d'API, identifiants des appels de modèle de Skipper (agents automatisés) ; jamais offert aux agents des sessions."
@@ -547,6 +549,20 @@ type VaultAwsInfo {
   "sso : expiration du jeton d'accès courant."
   tokenExpiresAt: DateTime
   "Identité (ARN) constatée au dernier test réussi."
+  identity: String
+}
+
+"Compte Scaleway : clé d'accès publique et portée par défaut ; la clé secrète n'est jamais renvoyée."
+type VaultScalewayInfo {
+  "Clé d'accès (SCW…)."
+  accessKey: String!
+  "Organisation et projet par défaut des commandes (UUID), complétés au test de l'élément s'ils manquent."
+  organizationId: String
+  projectId: String
+  "Région (fr-par) et zone (fr-par-1) par défaut des commandes."
+  region: String!
+  zone: String!
+  "Principal de la clé (application ou utilisateur IAM) constaté au dernier test réussi."
   identity: String
 }
 
@@ -660,11 +676,12 @@ type VaultItem {
   authName: String
   google: VaultGoogleAccount
   aws: VaultAwsInfo
-  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement ; aws : opérations de consultation seulement."
+  scaleway: VaultScalewayInfo
+  "postgres : transactions en lecture seule ; api : GET, HEAD et OPTIONS seulement ; aws, scaleway : opérations de consultation seulement."
   readOnly: Boolean!
   "Chaque usage par un agent est soumis à l'approbation d'un humain, même en mode « tout autoriser »."
   requireApproval: Boolean!
-  "ssh, aws : préfixes de commandes autorisés (vide = tout ; ssh : ni enchaînement ni transfert de fichiers avec une liste)."
+  "ssh, aws, scaleway : préfixes de commandes autorisés (vide = tout ; ssh : ni enchaînement ni transfert de fichiers avec une liste)."
   commandAllowlist: [String!]!
   "ssh : clé publique à ajouter dans authorized_keys du serveur."
   publicKey: String
@@ -747,6 +764,21 @@ input VaultItemInput {
   publicKey: String
   "aws : mode, région, portail Identity Center, compte et rôle, clés d'accès."
   aws: VaultAwsInput
+  "scaleway : clé d'API, organisation, projet, région et zone."
+  scaleway: VaultScalewayInput
+}
+
+"Compte Scaleway (les champs absents sont inchangés)."
+input VaultScalewayInput {
+  "Clé d'accès (SCW + 17 caractères) et clé secrète (UUID ; absente = inchangée)."
+  accessKey: String
+  secretKey: String
+  "Organisation et projet par défaut (UUID) ; chaîne vide pour retirer."
+  organizationId: String
+  projectId: String
+  "Région (fr-par, nl-ams, pl-waw) et zone (fr-par-1…) par défaut."
+  region: String
+  zone: String
 }
 
 "Compte AWS (les champs absents sont inchangés ; le mode est fixé à la création)."

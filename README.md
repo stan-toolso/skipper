@@ -213,7 +213,9 @@ backend/
       llm.ts                   # proxy LiteLLM et projet Langfuse : adresses, clés, vérification
       aws.ts                   # comptes AWS : réglages, découpage et politique des commandes, OIDC et portail Identity Center, CLI en conteneur jetable
       awsService.ts            # comptes AWS : connexion par code, renouvellement des jetons, identifiants temporaires (cache), test
-      mcp.ts                   # serveur MCP `vault` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema, http_request, aws_run, browser_fill)
+      scaleway.ts              # comptes Scaleway : réglages, découpage et politique des commandes scw, appels d'API, CLI en conteneur jetable
+      scalewayService.ts       # comptes Scaleway : identifiants, exécution pour un agent, test (identité IAM)
+      mcp.ts                   # serveur MCP `vault` (list, ssh_run, ssh_upload, ssh_download, sql_query, sql_schema, http_request, aws_run, scw_run, scw_api, browser_fill)
     google/
       service.ts               # comptes Google du coffre : OAuth hors ligne, jeton chiffré, appels d'API, vérification, prompt
       gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
@@ -284,8 +286,8 @@ frontend/
 
 Page « Coffre » (`/vault`, menu de la sidebar) : tout ce que l'utilisateur peut voir ; page « Coffre » d'un
 projet (`/projects/:id/vault`, bouton sur la fiche du projet) : ce que les agents de ce projet peuvent
-utiliser. Sept types offerts aux agents : **serveur SSH**, **base PostgreSQL** (éventuellement via un
-serveur SSH du même coffre, en tunnel), **API HTTP**, **compte AWS**, **site web**, **secret** et **compte Google** ;
+utiliser. Huit types offerts aux agents : **serveur SSH**, **base PostgreSQL** (éventuellement via un
+serveur SSH du même coffre, en tunnel), **API HTTP**, **compte AWS**, **compte Scaleway**, **site web**, **secret** et **compte Google** ;
 trois types **réservés à Skipper** : **jeton applicatif**, **proxy LiteLLM** et **projet Langfuse**.
 Chaque élément a un nom court (`prod`, `rds-prod`, `stripe`, `admin-site`) que les agents emploient.
 
@@ -359,8 +361,24 @@ identifiants transmis par l'environnement du client `docker` (jamais sur sa lign
 supprimé à la fin ou au délai. Rien ne transite par le conteneur du projet : l'agent n'y voit ni clé ni jeton.
 Le test de l'élément exécute `sts get-caller-identity` et mémorise l'identité (ARN) constatée.
 
+**Scaleway.** Une **clé d'API IAM** (clé d'accès `SCW…` publique, clé secrète chiffrée), de préférence celle d'une
+application IAM dédiée aux agents avec une politique aux droits limités ; organisation, projet, région (`fr-par`) et zone
+(`fr-par-1`) par défaut. Deux outils. `scw_run(item, command)` : la commande du CLI `scw` sans `scw`, découpée sans shell,
+refusée si elle use d'un profil ou d'un fichier de configuration local (`-p`, `-c`), du mode `--debug`, de `init`, `config`,
+`login`, `info`, d'une connexion interactive (`instance server ssh`, `console`) ou d'un fichier qui contiendrait la clé
+secrète (`object config`, `k8s kubeconfig`, `registry login`) ; limitée aux verbes `list`, `get` et `wait` quand l'élément
+est en « lecture seule » (défaut), hors chemins qui livrent des secrets ou des accès (`secret version`, `iam api-key`,
+`mnq … credentials`, `rdb user`) ; aux préfixes autorisés s'il en a. Elle tourne dans le même **conteneur jetable** que
+le CLI AWS (`vault/scaleway.ts`), identifiants par l'environnement (`SCW_ACCESS_KEY`, `SCW_SECRET_KEY`, organisation,
+projet, région, zone). `scw_api(item, method, path, query, body)` : un appel à `https://api.scaleway.com` par le module
+des API HTTP du coffre (chemin relatif sous l'origine, redirections non suivies, réponse tronquée à 2 Mo, clé masquée),
+authentifié par le serveur (`X-Auth-Token`) ; en lecture seule, `GET` seulement et sans les chemins sensibles
+(`…/versions/…/access`, `…/kubeconfig`, `iam/…/api-keys`, `…credentials`). Le test de l'élément interroge IAM
+(`/iam/v1alpha1/api-keys/<clé>` puis l'application ou l'utilisateur), mémorise le principal constaté et complète
+l'organisation et le projet par défaut s'ils manquent.
+
 **Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`,
-`sql_query`, `sql_schema`, `http_request`, `aws_run`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
+`sql_query`, `sql_schema`, `http_request`, `aws_run`, `scw_run`, `scw_api`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
@@ -379,7 +397,7 @@ conteneur de l'agent.
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
 - **VaultItem** : `ownerUserId` ou `ownerProjectId` (exactement l'un des deux), `name`, `kind` (ssh,
-  postgres, api, aws, website, secret, google, token, litellm, langfuse), `settings` (champs publics du type), secrets chiffrés par
+  postgres, api, aws, scaleway, website, secret, google, token, litellm, langfuse), `settings` (champs publics du type), secrets chiffrés par
   enveloppe (`secretCiphertext`, `wrappedKey`), `publicKey`, `hostKey`, `readOnly`, `requireApproval`,
   `commandAllowlist`, `expiresAt` (rappel de rotation), dernier test ; tables `vault_item_shares`,
   `vault_item_links` (portée `project` ou `personal`), `vault_audit_events`.

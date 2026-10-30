@@ -1,7 +1,7 @@
 import { gql } from '@apollo/client';
 import type { User } from './operations';
 
-export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'token' | 'litellm' | 'langfuse';
+export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'scaleway' | 'token' | 'litellm' | 'langfuse';
 /** Types réservés à Skipper (jetons applicatifs, LiteLLM, Langfuse) : jamais offerts aux agents, ni reliés à un projet. */
 export const SKIPPER_KINDS: VaultItemKind[] = ['token', 'litellm', 'langfuse'];
 
@@ -50,6 +50,25 @@ export interface VaultAwsInput {
   accessKeyId?: string | null;
   secretAccessKey?: string | null;
   roleArn?: string | null;
+}
+
+/** Compte Scaleway : clé d'accès publique et portée par défaut ; la clé secrète n'est jamais renvoyée. */
+export interface VaultScalewayInfo {
+  accessKey: string;
+  organizationId: string | null;
+  projectId: string | null;
+  region: string;
+  zone: string;
+  identity: string | null;
+}
+
+export interface VaultScalewayInput {
+  accessKey?: string | null;
+  secretKey?: string | null;
+  organizationId?: string | null;
+  projectId?: string | null;
+  region?: string | null;
+  zone?: string | null;
 }
 
 /** Connexion AWS par code en cours (mutation startAwsLogin). */
@@ -145,6 +164,7 @@ export interface VaultItem {
   token: VaultTokenInfo | null;
   google: { email: string; name: string | null; avatarUrl: string | null; gmailAccess: GoogleAccess; driveAccess: GoogleAccess; scopes: string[] } | null;
   aws: VaultAwsInfo | null;
+  scaleway: VaultScalewayInfo | null;
   readOnly: boolean;
   requireApproval: boolean;
   commandAllowlist: string[];
@@ -206,6 +226,8 @@ export interface VaultItemInput {
   publicKey?: string | null;
   /** aws : mode, région, portail, compte et rôle, clés. */
   aws?: VaultAwsInput | null;
+  /** scaleway : clé d'API, organisation, projet, région et zone. */
+  scaleway?: VaultScalewayInput | null;
 }
 
 export const VAULT_ITEM_FIELDS = gql`
@@ -276,6 +298,14 @@ export const VAULT_ITEM_FIELDS = gql`
       roleArn
       connected
       tokenExpiresAt
+      identity
+    }
+    scaleway {
+      accessKey
+      organizationId
+      projectId
+      region
+      zone
       identity
     }
     readOnly

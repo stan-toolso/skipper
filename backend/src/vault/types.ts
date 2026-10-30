@@ -1,18 +1,18 @@
 /**
- * Coffre : éléments d'identification (serveur SSH, base PostgreSQL, API HTTP, site web, secret, compte Google, compte AWS)
+ * Coffre : éléments d'identification (serveur SSH, base PostgreSQL, API HTTP, site web, secret, compte Google, compte AWS, compte Scaleway)
  * appartenant à un utilisateur (coffre personnel) ou à un projet, partagés avec des personnes, reliés à des
  * projets et utilisés par les agents à travers des outils (le serveur détient les secrets).
  */
 import type { TokenService } from './tokens.js';
 
-export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'token' | 'litellm' | 'langfuse';
-export const VAULT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws', 'token', 'litellm', 'langfuse'];
+export type VaultItemKind = 'ssh' | 'postgres' | 'website' | 'google' | 'api' | 'secret' | 'aws' | 'scaleway' | 'token' | 'litellm' | 'langfuse';
+export const VAULT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws', 'scaleway', 'token', 'litellm', 'langfuse'];
 /** Types utilisables par les agents des sessions ; les jetons applicatifs, LiteLLM et Langfuse servent Skipper seul (vault/tokens.ts, vault/llm.ts). */
-export const AGENT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws'];
+export const AGENT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws', 'scaleway'];
 /** Types réservés à Skipper lui-même : jamais reliés à un projet, sans outil MCP ni variable de navigateur. */
 export const SKIPPER_KINDS: VaultItemKind[] = ['token', 'litellm', 'langfuse'];
 /** Types dotés d'outils MCP soumis à approbation (hors navigateur et Google, qui ont leur propre politique). */
-export const TOOL_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'api', 'aws'];
+export const TOOL_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'api', 'aws', 'scaleway'];
 
 export const kindLabels: Record<VaultItemKind, string> = {
   ssh: 'Serveur SSH',
@@ -22,6 +22,7 @@ export const kindLabels: Record<VaultItemKind, string> = {
   api: 'API HTTP',
   secret: 'Secret',
   aws: 'Compte AWS',
+  scaleway: 'Compte Scaleway',
   token: 'Jeton applicatif',
   litellm: 'Proxy LiteLLM',
   langfuse: 'Langfuse',
@@ -130,6 +131,25 @@ export interface AwsSettings {
 }
 
 /**
+ * Compte Scaleway : clé d'API IAM (clé d'accès publique `SCW…` dans les réglages, clé secrète chiffrée, secret
+ * `secretKey`), de préférence celle d'une application IAM dédiée aux agents. Les agents n'exécutent le CLI `scw`
+ * qu'à travers l'outil `scw_run` (conteneur jetable, vault/scaleway.ts) et n'appellent l'API qu'à travers
+ * `scw_api` (authentification ajoutée par le serveur) : la clé secrète ne leur est jamais communiquée.
+ */
+export interface ScalewaySettings {
+  /** Clé d'accès (publique), SCW + 17 caractères. */
+  accessKey: string;
+  /** Organisation et projet par défaut des commandes (UUID) ; complétés au test de l'élément s'ils manquent. */
+  organizationId: string | null;
+  projectId: string | null;
+  /** Région (fr-par) et zone (fr-par-1) par défaut des commandes. */
+  region: string;
+  zone: string;
+  /** Principal de la clé (application ou utilisateur IAM) constaté au dernier test réussi. */
+  identity: string | null;
+}
+
+/**
  * Jeton applicatif (vault/tokens.ts) : un identifiant que Skipper utilise pour une personne (Claude,
  * fournisseur OpenCode, GitHub). Saisi à la main (`manual`, révélable avec READ) ou obtenu par un parcours
  * de connexion de Skipper (`oauth`, ne quitte jamais le serveur ; renouvelé par Skipper).
@@ -158,7 +178,7 @@ export interface LangfuseSettings {
   publicKey: string;
 }
 
-export type VaultSettings = SshSettings | PostgresSettings | ApiSettings | WebsiteSettings | SecretSettings | GoogleSettings | AwsSettings | TokenSettings | LitellmSettings | LangfuseSettings;
+export type VaultSettings = SshSettings | PostgresSettings | ApiSettings | WebsiteSettings | SecretSettings | GoogleSettings | AwsSettings | ScalewaySettings | TokenSettings | LitellmSettings | LangfuseSettings;
 
 export interface VaultItem {
   id: string;
@@ -281,6 +301,20 @@ export interface VaultItemInput {
   publicKey?: string | null;
   /** aws : mode d'authentification, région, portail Identity Center, compte et rôle, clés d'accès. */
   aws?: VaultAwsInput | null;
+  /** scaleway : clé d'API, organisation, projet, région et zone. */
+  scaleway?: VaultScalewayInput | null;
+}
+
+/** Entrée d'un compte Scaleway (les champs absents sont inchangés). */
+export interface VaultScalewayInput {
+  accessKey?: string | null;
+  /** Clé secrète (absente = inchangée). */
+  secretKey?: string | null;
+  /** Organisation et projet par défaut ; chaîne vide pour retirer. */
+  organizationId?: string | null;
+  projectId?: string | null;
+  region?: string | null;
+  zone?: string | null;
 }
 
 /** Entrée d'un compte AWS (les champs absents sont inchangés ; le mode est fixé à la création). */
@@ -340,6 +374,16 @@ export interface AwsCredentials {
   region: string;
   /** Expiration des identifiants temporaires (ms epoch) ; null pour des clés permanentes. */
   expiresAt: number | null;
+}
+
+/** Identifiants Scaleway, en mémoire le temps d'une commande ou d'un appel. */
+export interface ScalewayCredentials {
+  accessKey: string;
+  secretKey: string;
+  organizationId: string | null;
+  projectId: string | null;
+  region: string;
+  zone: string;
 }
 
 /** Champs d'un site web ou d'un secret, valeurs déchiffrées. */

@@ -135,6 +135,8 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
           sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],
           sql_schema: [`Schéma de ${conn}${db}${str(input, 'table') ? ` (${str(input, 'table')})` : ''}`, undefined, `consulter le schéma de ${conn}${db}`],
           aws_run: [`Commande AWS sur ${conn}`, cmd ? `aws ${cmd}` : undefined, `exécuter sur ${conn} : aws ${short(cmd)}`],
+          scw_run: [`Commande Scaleway sur ${conn}`, cmd ? `scw ${cmd}` : undefined, `exécuter sur ${conn} : scw ${short(cmd)}`],
+          scw_api: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} de l'API Scaleway (${conn})`, undefined, `appeler l'API Scaleway avec ${conn} : ${str(input, 'method') ?? 'GET'} ${short(str(input, 'path') ?? '')}`],
           http_request: [`Appel ${str(input, 'method') ?? 'GET'} ${str(input, 'path') ?? ''} sur ${conn}`, undefined, `appeler ${conn} : ${str(input, 'method') ?? 'GET'} ${short(str(input, 'path') ?? '')}`],
           browser_fill: [`Saisie du champ « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`, str(input, 'page'), `saisir « ${str(input, 'field') ?? ''} » de ${conn} dans le navigateur`],
         };
@@ -276,7 +278,7 @@ export const projectRoleLabels: Record<string, { label: string; hint: string }> 
  * acceptEdits (setMode), décrit par les outils qu'il libère.
  */
 /** Commandes dont le deuxième mot est une sous-commande : la règle proposée la garde (`git checkout *`). */
-const SUBCOMMAND_TOOLS = new Set(['git', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'docker', 'pm2', 'gh', 'cargo', 'go', 'kubectl', 'pip', 'pip3', 'make', 'systemctl', 'apt', 'apt-get', 'brew', 'terraform', 'aws', 'gcloud']);
+const SUBCOMMAND_TOOLS = new Set(['git', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'docker', 'pm2', 'gh', 'cargo', 'go', 'kubectl', 'pip', 'pip3', 'make', 'systemctl', 'apt', 'apt-get', 'brew', 'terraform', 'aws', 'gcloud', 'scw']);
 /** Commandes trop puissantes pour être autorisées par simple préfixe : la règle proposée reste la commande exacte. */
 const EXACT_ONLY = new Set(['rm', 'sudo', 'su', 'sh', 'bash', 'zsh', 'eval', 'exec', 'xargs', 'env', 'ssh', 'scp', 'dd', 'chmod', 'chown', 'kill', 'pkill', 'killall', 'curl', 'wget', 'python', 'python3', 'node', 'perl', 'ruby', 'find', 'awk', 'tee', 'source', '.']);
 
