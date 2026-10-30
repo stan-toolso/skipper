@@ -115,6 +115,11 @@ export default function SessionDetailPage() {
       return !v;
     });
   };
+  const technicalToggle = (
+    <label>
+      <input type="checkbox" checked={technical} onChange={toggleTechnical} /> Afficher les détails techniques
+    </label>
+  );
   // Onglet « Modifications » du panneau de droite : sa liste est rechargée après chaque résultat d'un outil qui modifie
   // des fichiers (Edit, Write, Bash...) et à chaque changement d'état de la session (fin de tour d'un agent sans outils).
   const toolResults = useMemo(() => fileToolResultCount(events), [events]);
@@ -364,6 +369,7 @@ export default function SessionDetailPage() {
       {headerOpen && (
         <div className="cc-header-detail">
           <div className="cc-actions">{actions.buttons}</div>
+          <div className="cc-toggle cc-toggle-mobile d-md-none">{technicalToggle}</div>
           <SessionParentNote session={session} />
           <SessionChildren children={session.childSessions} />
         </div>
@@ -372,12 +378,8 @@ export default function SessionDetailPage() {
       {/* Le bandeau de contexte vit dans l'onglet « Session » du panneau de droite ; un chat n'a pas de panneau, il le garde ici. */}
       {chat && <ContextBanner session={session} busy={Boolean(busy)} />}
 
-      <div className="cc-toggle">
-        <label>
-          <input type="checkbox" checked={technical} onChange={toggleTechnical} /> <span className="d-none d-md-inline">Afficher les détails techniques</span>
-          <span className="d-md-none">Détails techniques</span>
-        </label>
-      </div>
+      {/* Sur mobile, la ligne vit dans le détail repliable de l'en-tête, avec les boutons. */}
+      <div className="cc-toggle d-none d-md-flex">{technicalToggle}</div>
       <Transcript events={shownEvents} draft={draft} loading={!eventsLoaded} technical={technical} />
       {actions.modals}
 

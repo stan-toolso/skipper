@@ -335,6 +335,8 @@
   .cc-actions .cc-btn { flex: 1 1 auto; text-align: center; padding: 5px 8px; }
   .cc-transcript { padding: 10px 10px; }
   .cc-toggle { padding: 3px 10px 0; }
+  /* Dans le détail repliable de l'en-tête, avec les boutons : alignée à gauche, sans la marge de la ligne autonome. */
+  .cc-toggle-mobile { padding: 0; justify-content: flex-start; }
   /* Bas de page : état sur une ligne, saisie resserrée, pastilles bornées pour que la rangée d'outils tienne en largeur. */
   .cc-status { padding: 6px 10px 2px; flex-direction: column; gap: 0; font-size: 12px; }
   .cc-status > span:last-child { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
