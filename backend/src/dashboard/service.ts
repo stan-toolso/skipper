@@ -36,6 +36,8 @@ export interface DashboardCounts {
   unreadNotifications: number;
   /** Pull requests suivies ouvertes (à fusionner, brouillons compris). */
   openPullRequests: number;
+  /** Pull requests en préparation : branches avec des modifications, sans pull request ouverte. */
+  pendingPullRequests: number;
 }
 
 export interface DashboardUsageDay {
@@ -79,7 +81,7 @@ export interface Dashboard {
   runningSessions: Session[];
   recentSessions: Session[];
   attentionTasks: Task[];
-  /** Pull requests suivies qui attendent une action : ouvertes (à fusionner, brouillons). */
+  /** Pull requests suivies qui attendent une action : à fusionner puis à déployer. */
   pullRequests: TrackedPullRequest[];
 }
 
@@ -139,7 +141,7 @@ async function projectStats(projectIds: string[], monthStart: Date): Promise<Map
   return new Map(rows.map((r) => [r.project_id, r]));
 }
 
-async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests'>> {
+async function globalCounts(projectIds: string[]): Promise<Omit<DashboardCounts, 'unreadNotifications' | 'pendingRequests' | 'busySessions' | 'idleSessions' | 'todoTasks' | 'inProgressTasks' | 'overdueTasks' | 'openPullRequests' | 'pendingPullRequests'>> {
   if (!projectIds.length) return { failedSessions24h: 0, endedSessions24h: 0, doneTasks7d: 0 };
   const { rows } = await pool.query<{ failed: string; ended: string; done: string }>(
     `SELECT
@@ -274,6 +276,7 @@ export const dashboardService = {
         overdueTasks: sum('overdueTasks'),
         unreadNotifications: unread,
         openPullRequests: prCounts.open,
+        pendingPullRequests: prCounts.pending,
         ...extra,
       },
       usage: usageData,

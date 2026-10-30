@@ -6,13 +6,18 @@ import type { TaskStatus } from './operations';
  * rattaché à un projet et le plus souvent à une tâche. La PR GitHub en direct reste `PullRequest` (operations.ts).
  */
 
-export type TrackedPullRequestStatus = 'OPEN' | 'MERGED' | 'CLOSED';
-export type PullRequestStage = 'DRAFT' | 'TO_MERGE' | 'MERGED' | 'CANCELLED';
-export const PR_STAGES: PullRequestStage[] = ['DRAFT', 'TO_MERGE', 'MERGED', 'CANCELLED'];
+export type TrackedPullRequestStatus = 'PENDING' | 'OPEN' | 'MERGED' | 'CLOSED';
+export type PullRequestStage = 'PENDING' | 'DRAFT' | 'TO_MERGE' | 'MERGED' | 'CANCELLED';
+export const PR_STAGES: PullRequestStage[] = ['PENDING', 'DRAFT', 'TO_MERGE', 'MERGED', 'CANCELLED'];
 
 export interface TrackedPullRequest {
   id: string;
-  number: number;
+  /** Dépôt GitHub « owner/name » (vide sans GitHub). */
+  repo: string;
+  /** La PR est dans un autre dépôt que celui du projet. */
+  foreignRepo: boolean;
+  /** Null tant que la PR est en préparation (pas encore ouverte sur GitHub). */
+  number: number | null;
   url: string;
   title: string;
   headBranch: string;
@@ -20,6 +25,9 @@ export interface TrackedPullRequest {
   status: TrackedPullRequestStatus;
   isDraft: boolean;
   stage: PullRequestStage;
+  worksession: { id: string; name: string; branch: string } | null;
+  localCommits: number | null;
+  localChanges: number | null;
   checksState: string | null;
   reviewDecision: string | null;
   mergeable: string | null;
@@ -44,11 +52,27 @@ export interface TrackedPullRequest {
 export const canResolveConflicts = (pr: Pick<TrackedPullRequest, 'status' | 'mergeable' | 'session'>) => pr.status === 'OPEN' && pr.mergeable === 'CONFLICTING' && pr.session != null;
 
 /** Sous-ensemble porté par une tâche (listes, grille, carte). */
-export type TrackedPullRequestSummary = Pick<TrackedPullRequest, 'id' | 'number' | 'url' | 'title' | 'status' | 'isDraft' | 'stage' | 'checksState' | 'reviewDecision' | 'mergeable' | 'headBranch' | 'baseBranch' | 'note' | 'mergedAt'>;
+export type TrackedPullRequestSummary = Pick<TrackedPullRequest, 'id' | 'repo' | 'foreignRepo' | 'number' | 'url' | 'title' | 'status' | 'isDraft' | 'stage' | 'checksState' | 'reviewDecision' | 'mergeable' | 'headBranch' | 'baseBranch' | 'note' | 'mergedAt' | 'worksession' | 'localCommits' | 'localChanges'>;
+
+/** Référence courte : « #42 », « owner/name#42 » dans un autre dépôt, la branche pour une PR en préparation. */
+export function prRef(pr: Pick<TrackedPullRequest, 'number' | 'repo' | 'foreignRepo' | 'headBranch'>): string {
+  if (pr.number == null) return pr.headBranch;
+  return pr.foreignRepo ? `${pr.repo}#${pr.number}` : `#${pr.number}`;
+}
+
+/** Travail local d'une PR en préparation : « 3 commits, 2 fichiers non commités ». */
+export function localWorkText(pr: Pick<TrackedPullRequest, 'localCommits' | 'localChanges'>): string {
+  const parts: string[] = [];
+  if (pr.localCommits) parts.push(`${pr.localCommits} commit${pr.localCommits > 1 ? 's' : ''}`);
+  if (pr.localChanges) parts.push(`${pr.localChanges} fichier${pr.localChanges > 1 ? 's' : ''} non commité${pr.localChanges > 1 ? 's' : ''}`);
+  return parts.join(', ');
+}
 
 export const TRACKED_PULL_REQUEST_FIELDS = gql`
   fragment TrackedPullRequestFields on TrackedPullRequest {
     id
+    repo
+    foreignRepo
     number
     url
     title
@@ -57,6 +81,13 @@ export const TRACKED_PULL_REQUEST_FIELDS = gql`
     status
     isDraft
     stage
+    worksession {
+      id
+      name
+      branch
+    }
+    localCommits
+    localChanges
     checksState
     reviewDecision
     mergeable
@@ -98,12 +129,21 @@ export const TRACKED_PULL_REQUEST_FIELDS = gql`
 export const TASK_PULL_REQUEST_FIELDS = gql`
   fragment TaskPullRequestFields on TrackedPullRequest {
     id
+    repo
+    foreignRepo
     number
     url
     title
     status
     isDraft
     stage
+    worksession {
+      id
+      name
+      branch
+    }
+    localCommits
+    localChanges
     checksState
     reviewDecision
     mergeable
@@ -184,11 +224,12 @@ export const PULL_REQUESTS_PROJECT = gql`
 export const TRACKED_PR_REFETCH = ['PullRequests', 'TaskPage', 'Tasks', 'Dashboard'];
 
 /** Ordre d'affichage des étapes : ce qui attend une action d'abord. */
-export const STAGE_ORDER: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'MERGED', 'CANCELLED'];
+export const STAGE_ORDER: PullRequestStage[] = ['TO_MERGE', 'DRAFT', 'PENDING', 'MERGED', 'CANCELLED'];
 
 export const STAGE_LABELS: Record<PullRequestStage, { label: string; plural: string; icon: string; cls: string; hint: string }> = {
   TO_MERGE: { label: 'à fusionner', plural: 'À fusionner', icon: 'bi-git', cls: 'pr-stage-to_merge', hint: 'Ouverte : à relire et fusionner' },
   DRAFT: { label: 'brouillon', plural: 'Brouillons', icon: 'bi-pencil', cls: 'pr-stage-draft', hint: 'Ouverte en brouillon sur GitHub' },
+  PENDING: { label: 'en préparation', plural: 'En préparation', icon: 'bi-code-slash', cls: 'pr-stage-pending', hint: 'La branche porte des modifications, aucune pull request n’est ouverte' },
   MERGED: { label: 'fusionnée', plural: 'Fusionnées', icon: 'bi-check2-circle', cls: 'pr-stage-merged', hint: 'Fusionnée dans la base' },
   CANCELLED: { label: 'annulée', plural: 'Annulées', icon: 'bi-x-circle', cls: 'pr-stage-cancelled', hint: 'Fermée sans fusion' },
 };

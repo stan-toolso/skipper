@@ -1,8 +1,8 @@
 import type { Task, TaskPriority, TaskStatus } from '../graphql/operations';
-import type { PullRequestStage } from '../graphql/pullRequests';
+import { prRef, type PullRequestStage } from '../graphql/pullRequests';
 
 /** Étape d'une PR suivie telle qu'elle se lit et se filtre dans la grille. */
-export const PR_STAGE_TEXT: Record<PullRequestStage, string> = { DRAFT: 'brouillon', TO_MERGE: 'à fusionner', MERGED: 'fusionnée', CANCELLED: 'annulée' };
+export const PR_STAGE_TEXT: Record<PullRequestStage, string> = { PENDING: 'en préparation', DRAFT: 'brouillon', TO_MERGE: 'à fusionner', MERGED: 'fusionnée', CANCELLED: 'annulée' };
 
 /**
  * Vue liste des tâches : définition des colonnes, disposition choisie par la personne (ordre, largeurs, colonnes
@@ -228,7 +228,7 @@ export function cellText(t: Task, key: TaskColumnKey): string {
     case 'branch':
       return t.worksession?.branch ?? t.branch ?? '';
     case 'pullRequest':
-      if (t.pullRequests?.length) return t.pullRequests.map((pr) => `#${pr.number} ${pr.title} ${PR_STAGE_TEXT[pr.stage]}`).join(' · ');
+      if (t.pullRequests?.length) return t.pullRequests.map((pr) => `${prRef(pr)} ${pr.title} ${PR_STAGE_TEXT[pr.stage]}`).join(' · ');
       return t.pullRequest ? `#${t.pullRequest.number} ${t.pullRequest.title}` : '';
     case 'comments':
       return t.commentCount ? String(t.commentCount) : '';
@@ -329,7 +329,7 @@ export function sortValue(t: Task, key: TaskColumnKey): string | number | null {
     case 'branch':
       return t.worksession ? fold(t.worksession.branch) : t.branch ? fold(t.branch) : null;
     case 'pullRequest':
-      return t.pullRequests?.[0]?.number ?? t.pullRequest?.number ?? null;
+      return t.pullRequests?.find((pr) => pr.number != null)?.number ?? t.pullRequest?.number ?? (t.pullRequests?.length ? 0 : null);
     case 'comments':
       return t.commentCount;
     case 'attachments':

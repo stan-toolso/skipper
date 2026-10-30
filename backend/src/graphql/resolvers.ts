@@ -20,8 +20,8 @@ import { variableName } from '../vault/website.js';
 import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
-import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
-import { trackedPullRequestService } from '../pullRequests/service.js';
+import { parseRepoFullName, pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
+import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pullRequests/service.js';
 import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { gitService } from '../git/service.js';
@@ -123,6 +123,13 @@ const warnTokensOf = (ctx: Ctx): Promise<number | null> => {
 };
 const guardRequest = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, await projectOfRequest(id), min);
 const guardTask = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await taskService.get(id)).projectId, min);
+/** Dépôt « owner/name » passé par le client pour une PR d'un autre dépôt que celui du projet ; null = dépôt du projet. */
+const repoArg = (repo: string | null | undefined) => {
+  if (!repo?.trim()) return null;
+  const parsed = parseRepoFullName(repo);
+  if (!parsed) throw new AppError(`Dépôt GitHub invalide : ${repo}`);
+  return parsed;
+};
 const guardTerminal = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await terminalService.get(id)).projectId, min);
 const guardWorksession = async (ctx: Ctx, id: string, min: ProjectRole) => requireProject(ctx, (await worksessionService.get(id)).projectId, min);
 const guardComment = async (ctx: Ctx, id: string) => {
@@ -345,10 +352,16 @@ export const resolvers = {
     task: (pr: TrackedPullRequest) => (pr.taskId ? taskService.get(pr.taskId).catch(() => null) : null),
     status: (pr: TrackedPullRequest) => pr.status.toUpperCase(),
     stage: (pr: TrackedPullRequest) => stageOf(pr).toUpperCase(),
+    foreignRepo: async (pr: TrackedPullRequest) => Boolean(foreignRepoOf(pr, projectRepoName(await projectService.get(pr.projectId)))),
+    worksession: (pr: TrackedPullRequest) => (pr.worksessionId ? worksessionRepository.findById(pr.worksessionId) : null),
     createdBy: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, pr.createdByUserId),
     createdBySession: (pr: TrackedPullRequest) => (pr.createdBySessionId ? sessionService.get(pr.createdBySessionId) : null),
-    // En direct depuis GitHub (cache de 20 s côté service) : null si le projet n'y est pas ou si GitHub ne répond pas.
-    github: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => pullRequestService.get(pr.projectId, ctx.user?.id, pr.number).catch(() => null),
+    // En direct depuis GitHub (cache de 20 s côté service) : null si la PR n'est pas encore ouverte, si le projet n'y est pas ou si GitHub ne répond pas.
+    github: async (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => {
+      if (pr.number == null) return null;
+      const foreign = foreignRepoOf(pr, projectRepoName(await projectService.get(pr.projectId)));
+      return pullRequestService.get(pr.projectId, ctx.user?.id, pr.number, foreign).catch(() => null);
+    },
     session: (pr: TrackedPullRequest) => pullRequestSession(pr),
   },
 
@@ -624,9 +637,9 @@ export const resolvers = {
       await requireProject(ctx, args.projectId);
       return pullRequestService.list(args.projectId, requireUser(ctx).id, args.state ?? 'OPEN', args.limit ?? 50);
     },
-    githubPullRequest: async (_: unknown, args: { projectId: string; number: number }, ctx: Ctx) => {
+    githubPullRequest: async (_: unknown, args: { projectId: string; number: number; repo?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
-      return pullRequestService.get(args.projectId, requireUser(ctx).id, args.number);
+      return pullRequestService.get(args.projectId, requireUser(ctx).id, args.number, repoArg(args.repo));
     },
     githubPullRequestDraft: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
@@ -930,10 +943,10 @@ export const resolvers = {
       await trackedPullRequestService.recordGithub(args.projectId, pr, { type: 'human', userId: user.id }).catch((err) => console.error('[pull-requests] suivi de la PR créée', err));
       return pr;
     },
-    mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null }, ctx: Ctx) => {
+    mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null; repo?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
       const user = requireUser(ctx);
-      const result = await pullRequestService.merge(args.projectId, user.id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true });
+      const result = await pullRequestService.merge(args.projectId, user.id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true }, repoArg(args.repo));
       await trackedPullRequestService.markMerged(args.projectId, result.pullRequest, result.sha, { type: 'human', userId: user.id }).catch((err) => console.error('[pull-requests] suivi de la PR fusionnée', err));
       return result;
     },
