@@ -256,9 +256,42 @@ type TaskAttachment {
   createdAt: DateTime!
 }
 
-"Commentaire d'une tâche, par une personne ou un agent (Markdown)."
+"Personne (membre du projet) ou session d'agent mentionnée dans un message ; `text` est le fragment du corps qui la porte (« @Alice Martin », « @session:d8ae4082 »)."
+type TaskMention {
+  "'user' ou 'session'."
+  kind: String!
+  id: ID!
+  label: String!
+  text: String!
+}
+
+"Réactions d'un même emoji sur un message ou sur la tâche : qui a réagi, et si l'utilisateur connecté en fait partie."
+type TaskReaction {
+  emoji: String!
+  count: Int!
+  "Noms de celles et ceux (personnes, sessions) qui ont réagi, dans l'ordre."
+  actors: [String!]!
+  "L'utilisateur connecté a posé cette réaction."
+  mine: Boolean!
+}
+
+"Quelqu'un que l'on peut mentionner dans le fil d'une tâche : membre du projet ou session d'agent non archivée."
+type TaskMentionable {
+  "'user' ou 'session'."
+  kind: String!
+  id: ID!
+  label: String!
+  "E-mail d'un membre, état d'une session."
+  detail: String
+  "Texte à insérer dans le message pour mentionner cette cible."
+  text: String!
+}
+
+"Message du fil d'une tâche (commentaire), par une personne ou un agent (Markdown) : racine, ou réponse à une racine (parentId)."
 type TaskComment {
   id: ID!
+  "Message racine auquel celui-ci répond ; null pour un message de premier niveau."
+  parentId: ID
   "'human' ou 'agent'."
   authorType: String!
   "Nom au moment de l'écriture."
@@ -266,6 +299,10 @@ type TaskComment {
   author: User
   authorSession: Session
   body: String!
+  "Personnes et sessions mentionnées, dans l'ordre du texte."
+  mentions: [TaskMention!]!
+  "Réactions au message, par emoji."
+  reactions: [TaskReaction!]!
   "Modifiable par l'utilisateur connecté (ses propres commentaires)."
   editable: Boolean!
   "Supprimable : ses propres commentaires, ou administrateur du projet."
@@ -305,8 +342,12 @@ type Task {
   attachmentCount: Int!
   "Fichiers joints à la tâche elle-même (pas à ses commentaires), les plus anciens d'abord."
   attachments: [TaskAttachment!]!
-  "Commentaires, du plus ancien au plus récent."
+  "Messages du fil (racines et réponses à plat, parentId les relie), du plus ancien au plus récent."
   comments: [TaskComment!]!
+  "Réactions à la tâche elle-même (son message d'ouverture), par emoji."
+  reactions: [TaskReaction!]!
+  "Qui l'on peut mentionner dans son fil : membres du projet, puis sessions d'agent non archivées (en cours d'abord)."
+  mentionables: [TaskMentionable!]!
   "Branche git de la tâche (work session dédiée task/<slug>), conservée après suppression de la work session."
   branch: String
   "Work session consacrée à la tâche (active de préférence, sinon la dernière archivée) : ses sessions y travaillent toutes."
@@ -2338,8 +2379,10 @@ type Mutation {
   deleteTask(id: ID!): Boolean!
   "Déplace une tâche dans un autre projet (membre des deux) : sa session et sa branche en sont détachées, ses commentaires et son historique la suivent."
   moveTask(id: ID!, projectId: ID!): Task!
-  "Ajoute un commentaire, avec des fichiers le cas échéant (le texte peut alors être vide)."
-  addTaskComment(taskId: ID!, body: String!, attachments: [AttachmentInput!]): TaskComment!
+  "Poste un message dans le fil de la tâche, avec des fichiers le cas échéant (le texte peut alors être vide) ; parentId : réponse dans le fil d'un message. Les mentions (@Nom, @e-mail, @session:<id>) sont résolues et notifiées."
+  addTaskComment(taskId: ID!, body: String!, attachments: [AttachmentInput!], parentId: ID): TaskComment!
+  "Pose une réaction (emoji) sur un message (commentId) ou sur la tâche (sans commentId), ou la retire si l'utilisateur l'avait déjà posée. Renvoie true si elle est posée."
+  toggleTaskReaction(taskId: ID!, commentId: ID, emoji: String!): Boolean!
   "Ses propres commentaires seulement."
   updateTaskComment(id: ID!, body: String!, attachments: [AttachmentInput!], removeAttachmentIds: [ID!]): TaskComment!
   "Ses propres commentaires, ou administrateur du projet."

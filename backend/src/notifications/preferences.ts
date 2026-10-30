@@ -24,6 +24,7 @@ export const PUSH_CATEGORIES: readonly PushCategory[] = [
   { key: 'sessions', label: 'Sessions terminées ou en erreur', description: 'Fin de tour d’une session, ou arrêt sur une erreur.', types: ['session.completed', 'session.failed'], adminsOnly: false },
   { key: 'subagents', label: 'Sessions lancées par un agent', description: 'Un agent a délégué du travail à une autre session.', types: ['session.created'], adminsOnly: false },
   { key: 'tasks', label: 'Tâches', description: 'Tâche créée ou terminée par un agent.', types: ['task.created', 'task.completed'], adminsOnly: false },
+  { key: 'mentions', label: 'Mentions et réponses', description: 'Quelqu’un vous mentionne dans le fil d’une tâche, ou répond à l’un de vos messages.', types: ['task.mentioned', 'task.replied'], adminsOnly: false },
   { key: 'pull_requests', label: 'Pull requests', description: 'Pull request ouverte, fusionnée ou fermée.', types: ['pull_request.opened', 'pull_request.merged', 'pull_request.closed'], adminsOnly: false },
   { key: 'schedules', label: 'Planifications', description: 'Compte rendu d’une exécution planifiée, échéance ignorée ou en erreur.', types: ['schedule.run', 'schedule.skipped', 'schedule.failed'], adminsOnly: false },
   { key: 'workflows', label: 'Workflows', description: 'Fin d’une exécution de workflow, réussie ou en erreur.', types: ['workflow.run', 'workflow.failed'], adminsOnly: false },

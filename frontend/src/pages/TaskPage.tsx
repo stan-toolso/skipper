@@ -7,10 +7,9 @@ import { PullRequestChip } from '../components/PullRequests';
 import { RegisterPullRequestModal, TrackedPullRequestActions, TrackedPullRequestIndicators, PullRequestStageBadge } from '../components/TrackedPullRequests';
 import { PULL_REQUESTS, type TrackedPullRequest } from '../graphql/pullRequests';
 import StatusBadge from '../components/StatusBadge';
-import TaskAttachments from '../components/TaskAttachments';
 import TaskActions from '../components/TaskActions';
-import { formatPerson, isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
-import TaskComments from '../components/TaskComments';
+import { isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
+import TaskThread from '../components/TaskThread';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 import TaskModal from '../components/TaskModal';
 import { TASK_LAUNCH_TARGETS, type SessionActivity, type SessionStatus, type Task } from '../graphql/operations';
@@ -39,7 +38,29 @@ type TaskWithSessions = Task & { sessions: TaskSession[] };
 
 const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 
-/** Page d'une tâche dans son propre onglet : description, commentaires, sessions passées par la tâche, personnes, code, champs. */
+/** Une personne d'une tâche : nom (ou e-mail) et lien mailto. */
+function Person({ p }: { p: Task['assignee'] }) {
+  if (!p) return <span className="text-secondary">—</span>;
+  return (
+    <>
+      {p.name ?? p.email}
+      {p.email && (
+        <>
+          {' '}
+          <a href={`mailto:${p.email}`} className="text-secondary" title={p.email}>
+            <i className="bi bi-envelope" />
+          </a>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Page d'une tâche dans son propre onglet, à la manière d'un canal de discussion : à gauche la conversation (la
+ * description ouvre le fil, puis les messages avec leurs réponses, réactions et mentions, et la saisie en bas), puis
+ * les sessions passées par la tâche ; à droite ce qui la décrit (personnes, dates, étiquettes, champs) et son code.
+ */
 export default function TaskPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -61,6 +82,9 @@ export default function TaskPage() {
   const target = targetsData?.projects.find((p) => p.id === task.project.id);
   const overdue = isOverdue(task);
   const canWrite = target ? target.myRole !== 'VIEWER' : false;
+  // Le fil s'écrit sauf pour un lecteur ; tant que le rôle n'est pas connu, la saisie est montrée (le serveur tranche).
+  const canPost = !target || target.myRole !== 'VIEWER';
+  const openedBy = task.createdBySession?.name ?? task.reporter?.name ?? task.reporter?.email ?? (task.createdByType === 'agent' ? 'Un agent' : 'Quelqu’un');
 
   return (
     <>
@@ -80,15 +104,8 @@ export default function TaskPage() {
                 <TaskTags tags={task.tags} />
               </>
             )}
-            {' · créée le '}
-            {fmt(task.createdAt)}
-            {task.createdByType === 'agent' ? ' par un agent' : " depuis l'interface"}
-            {task.createdBySession && (
-              <>
-                {' ('}
-                <Link to={`/sessions/${task.createdBySession.id}`}>{task.createdBySession.name}</Link>)
-              </>
-            )}
+            {' · '}
+            {task.commentCount} message{task.commentCount > 1 ? 's' : ''}
             {task.dueDate && <span className={overdue ? ' text-danger' : ''}>{overdue ? ' · en retard depuis le ' : ' · pour le '}{new Date(task.dueDate).toLocaleDateString()}</span>}
             {task.completedAt && ` · terminée le ${fmt(task.completedAt)}`}
           </div>
@@ -98,17 +115,27 @@ export default function TaskPage() {
 
       <Row className="g-3 mt-1">
         <Col lg={8}>
-          <Card>
-            <Card.Header>Description</Card.Header>
-            <Card.Body className="small" style={{ whiteSpace: 'pre-wrap' }}>
-              {task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}
-              <TaskAttachments taskId={task.id} attachments={task.attachments} />
-            </Card.Body>
-          </Card>
-          <Card className="mt-3">
-            <Card.Header>Commentaires ({task.commentCount})</Card.Header>
-            <Card.Body className="small">
-              <TaskComments taskId={task.id} />
+          <Card className="task-conversation">
+            <Card.Header className="d-flex align-items-center justify-content-between">
+              <span>
+                <i className="bi bi-chat-left-text me-2 text-secondary" />
+                Conversation
+              </span>
+              <span className="small text-secondary">Les sessions reliées à la tâche reçoivent chaque message</span>
+            </Card.Header>
+            <Card.Body>
+              <TaskThread
+                taskId={task.id}
+                canWrite={canPost}
+                opening={{
+                  authorName: openedBy,
+                  byAgent: task.createdByType === 'agent',
+                  sessionId: task.createdBySession?.id ?? null,
+                  createdAt: task.createdAt,
+                  body: task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>,
+                  attachments: task.attachments,
+                }}
+              />
             </Card.Body>
           </Card>
           <Card className="mt-3">
@@ -158,15 +185,69 @@ export default function TaskPage() {
           </Card>
         </Col>
         <Col lg={4}>
-          <Card>
-            <Card.Header>Personnes</Card.Header>
+          <Card className="task-page-about">
+            <Card.Header>À propos</Card.Header>
             <Card.Body className="small">
               <dl className="row mb-0">
                 <dt className="col-4">Responsable</dt>
-                <dd className="col-8">{task.assignee ? <>{task.assignee.name ?? task.assignee.email}{task.assignee.email && <> <a href={`mailto:${task.assignee.email}`} className="text-secondary"><i className="bi bi-envelope" /></a></>}</> : <span className="text-secondary">—</span>}</dd>
+                <dd className="col-8">
+                  <Person p={task.assignee} />
+                </dd>
                 <dt className="col-4">Rapporteur</dt>
-                <dd className="col-8 mb-0">{task.reporter ? <>{task.reporter.name ?? task.reporter.email}{task.reporter.email && <> <a href={`mailto:${task.reporter.email}`} className="text-secondary"><i className="bi bi-envelope" /></a></>}</> : <span className="text-secondary">—</span>}</dd>
+                <dd className="col-8">
+                  <Person p={task.reporter} />
+                </dd>
+                <dt className="col-4">Créée</dt>
+                <dd className="col-8">
+                  {fmt(task.createdAt)}
+                  {task.createdBySession ? (
+                    <>
+                      {' par '}
+                      <Link to={`/sessions/${task.createdBySession.id}`}>{task.createdBySession.name}</Link>
+                    </>
+                  ) : task.createdByType === 'agent' ? (
+                    ' par un agent'
+                  ) : (
+                    " depuis l'interface"
+                  )}
+                </dd>
+                {task.dueDate && (
+                  <>
+                    <dt className="col-4">Échéance</dt>
+                    <dd className={`col-8${overdue ? ' text-danger' : ''}`}>{new Date(task.dueDate).toLocaleDateString()}{overdue && ' (en retard)'}</dd>
+                  </>
+                )}
+                {task.completedAt && (
+                  <>
+                    <dt className="col-4">Terminée</dt>
+                    <dd className="col-8">{fmt(task.completedAt)}</dd>
+                  </>
+                )}
+                {task.tags.length > 0 && (
+                  <>
+                    <dt className="col-4">Étiquettes</dt>
+                    <dd className="col-8">
+                      <TaskTags tags={task.tags} />
+                    </dd>
+                  </>
+                )}
+                {task.customFields.map((f) => (
+                  <div key={f.key} className="row mx-0 px-0">
+                    <dt className="col-4 text-truncate" title={f.key}>
+                      {f.key}
+                    </dt>
+                    <dd className="col-8 mb-1" style={{ overflowWrap: 'anywhere' }}>
+                      {f.value ? <Linkified text={f.value} /> : '—'}
+                    </dd>
+                  </div>
+                ))}
               </dl>
+              {canWrite && (
+                <Button size="sm" variant="link" className="p-0 mt-2 small" onClick={() => setEditing(true)}>
+                  <i className="bi bi-pencil me-1" />
+                  Modifier la tâche
+                </Button>
+              )}
             </Card.Body>
           </Card>
           {(task.branch || task.pullRequest || task.worksession || current?.worksession || trackedPrs.length > 0 || canWrite) && (
@@ -239,28 +320,6 @@ export default function TaskPage() {
               </Card.Body>
             </Card>
           )}
-          <Card className="mt-3">
-            <Card.Header>Champs personnalisés</Card.Header>
-            <Card.Body className="small">
-              {task.customFields.length === 0 ? (
-                <span className="text-secondary fst-italic">Aucun. Ajoutez-en avec le bouton de modification.</span>
-              ) : (
-                <dl className="row mb-0">
-                  {task.customFields.map((f) => (
-                    <div key={f.key} className="row mx-0 px-0">
-                      <dt className="col-5 text-truncate" title={f.key}>
-                        {f.key}
-                      </dt>
-                      <dd className="col-7 mb-1" style={{ overflowWrap: 'anywhere' }}>
-                        {f.value ? <Linkified text={f.value} /> : '—'}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-            </Card.Body>
-          </Card>
-          <div className="small text-secondary mt-2">{formatPerson(task.assignee) && ''}</div>
         </Col>
       </Row>
       {editing && <TaskModal task={task} projectId={task.project.id} onClose={() => setEditing(false)} />}
