@@ -2,7 +2,6 @@
 
 .dash-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 991px) { .dash-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 480px) { .dash-tiles { grid-template-columns: minmax(0, 1fr); } }
 
 .dash-tile {
   display: block;
@@ -77,10 +76,12 @@ a.dash-tile:hover { border-color: var(--cc-dim); color: inherit; }
 
 /* ---- Mobile ---------------------------------------------------------------------------------- */
 @media (max-width: 767.98px) {
+  /* Deux tuiles par ligne même sur un petit écran : quatre tuiles empilées prenaient tout l'écran. */
   .dash-tiles { gap: 8px; }
   .dash-list .meta.wrap > * { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dash-tile { padding: 10px 12px; min-height: 0; }
-  .dash-tile-value { font-size: 22px; }
+  .dash-tile { padding: 8px 10px; min-height: 0; }
+  .dash-tile-label { font-size: 11.5px; }
+  .dash-tile-value { font-size: 20px; }
   .dash-tile-sub { display: none; }
   .dash-tile.alert .dash-tile-sub { display: block; }
   /* Les projets : une carte par projet au lieu d'un tableau à huit colonnes. */

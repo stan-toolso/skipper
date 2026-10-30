@@ -116,14 +116,16 @@ export default function ChatComposer({ withGreeting = false, autoFocus = false }
 
   return (
     <section className={`chat-composer${withGreeting ? ' with-greeting' : ''}`} aria-label="Nouveau chat">
-      <Link to="/chats" className="chat-composer-all" title="Vos chats précédents">
-        <i className="bi bi-chat-left-text" /> Tous les chats
-      </Link>
-      {withGreeting && (
-        <h2 className="chat-composer-greeting">
-          <Logo size={26} /> {greeting(user?.name)}
-        </h2>
-      )}
+      <div className="chat-composer-head">
+        {withGreeting && (
+          <h2 className="chat-composer-greeting">
+            <Logo size={26} /> {greeting(user?.name)}
+          </h2>
+        )}
+        <Link to="/chats" className="chat-composer-all" title="Vos chats précédents">
+          <i className="bi bi-chat-left-text" /> Tous les chats
+        </Link>
+      </div>
       <div
         className="cc-input chat-composer-box"
         onClick={(e) => {
@@ -166,7 +168,7 @@ export default function ChatComposer({ withGreeting = false, autoFocus = false }
             />
           </label>
           <span className="chat-composer-spacer" />
-          <span className={`cc-pill${mode === 'bypassPermissions' ? ' warn' : ''}`} title={`Autorisations du chat : ${permissionModeLabels[mode] ?? mode}. Lancer une session ou lui parler consomme du budget : en mode « demander », le chat vous le soumet d'abord.`}>
+          <span className={`cc-pill cc-pill-mode${mode === 'bypassPermissions' ? ' warn' : ''}`} title={`Autorisations du chat : ${permissionModeLabels[mode] ?? mode}. Lancer une session ou lui parler consomme du budget : en mode « demander », le chat vous le soumet d'abord.`}>
             <i className={`bi ${mode === 'bypassPermissions' ? 'bi-exclamation-triangle' : 'bi-shield-check'}`} />
             <span className="cc-pill-label">{permissionModeShortLabels[mode] ?? mode}</span>
             <i className="bi bi-chevron-down" />
@@ -187,7 +189,7 @@ export default function ChatComposer({ withGreeting = false, autoFocus = false }
             </select>
           </span>
           {modelOptions.length > 0 && (
-            <span className="cc-pill" title="Modèle du chat (Paramètres → Claude pour les modèles proposés)">
+            <span className="cc-pill cc-pill-model" title="Modèle du chat (Paramètres → Claude pour les modèles proposés)">
               <span className="cc-pill-label">{modelOptions.find((o) => o.value === model)?.label ?? modelOptions[0]?.label ?? 'Modèle'}</span>
               <i className="bi bi-chevron-down" />
               <select

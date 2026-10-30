@@ -1,11 +1,16 @@
 import { gql } from '@apollo/client';
 import { TASK_FIELDS } from './operations';
+import { TASK_PULL_REQUEST_FIELDS } from './pullRequests';
 
 export const TASK_PAGE = gql`
   ${TASK_FIELDS}
+  ${TASK_PULL_REQUEST_FIELDS}
   query TaskPage($id: ID!) {
     task(id: $id) {
       ...TaskFields
+      pullRequests {
+        ...TaskPullRequestFields
+      }
       pullRequest {
         number
         title

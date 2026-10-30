@@ -22,6 +22,7 @@ import {
   type TaskTableLayout,
 } from '../lib/taskTable';
 import { PullRequestChip } from './PullRequests';
+import { TrackedPullRequestChip } from './TrackedPullRequests';
 import TaskActions from './TaskActions';
 import { formatPerson, isOverdue, TaskPriorityBadge, TaskStatusBadge, TaskTags } from './TaskBadges';
 import type { LaunchTarget } from './TaskLaunchModal';
@@ -338,6 +339,16 @@ function Cell({ task: t, col, onEdit, onTag, target }: { task: Task; col: TaskCo
     case 'branch':
       return t.worksession?.branch || t.branch ? <span className="font-monospace small">{t.worksession?.branch ?? t.branch}</span> : null;
     case 'pullRequest':
+      if (t.pullRequests?.length) {
+        return (
+          <span className="d-inline-flex align-items-center gap-2">
+            {t.pullRequests.slice(0, 2).map((pr) => (
+              <TrackedPullRequestChip key={pr.id} projectId={t.project.id} pr={pr} />
+            ))}
+            {t.pullRequests.length > 2 && <span className="text-secondary small">+{t.pullRequests.length - 2}</span>}
+          </span>
+        );
+      }
       return t.pullRequest ? <PullRequestChip projectId={t.project.id} pr={t.pullRequest} /> : null;
     case 'comments':
       return t.commentCount ? (
