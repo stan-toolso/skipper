@@ -68,7 +68,7 @@ export default function VaultPage() {
       if (scope === 'projects' && !(i.ownerProject || i.ownerProjectName)) return false;
       if (kind && i.kind !== kind) return false;
       if (!q) return true;
-      return [i.name, i.description, i.host, i.url, i.database, i.username, i.google?.email, i.token?.serviceLabel, i.token?.account, i.langfusePublicKey, i.aws?.accountId, i.aws?.accountName, i.aws?.roleName, i.aws?.accessKeyId].some((v) => v?.toLowerCase().includes(q));
+      return [i.name, i.description, i.host, i.url, i.database, i.username, i.google?.email, i.token?.serviceLabel, i.token?.account, i.langfusePublicKey, i.aws?.accountId, i.aws?.accountName, i.aws?.roleName, i.aws?.accessKeyId, i.scaleway?.accessKey, i.scaleway?.identity, i.scaleway?.projectId].some((v) => v?.toLowerCase().includes(q));
     });
   }, [items, scope, kind, search, user?.id]);
 

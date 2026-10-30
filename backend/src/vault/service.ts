@@ -12,6 +12,7 @@ import * as aws from './aws.js';
 import { currentKeyId, openSecrets, rewrapKey, sealSecrets, VaultDecryptError } from './crypto.js';
 import * as postgres from './postgres.js';
 import { vaultRepository, type VaultItemPatch, type VaultItemRecord } from './repository.js';
+import * as scaleway from './scaleway.js';
 import * as ssh from './ssh.js';
 import * as llm from './llm.js';
 import { isTokenService, TOKEN_SERVICES, tokenMismatch, type TokenService } from './tokens.js';
@@ -34,6 +35,7 @@ import {
   type PostgresCredentials,
   type PostgresSettings,
   type ProjectVaultRow,
+  type ScalewaySettings,
   type SecretSettings,
   type SshCredentials,
   type SshSettings,
@@ -353,6 +355,24 @@ export const vaultService = {
         }
         return { settings, secrets };
       }
+      case 'scaleway': {
+        const base = (current?.settings ?? {}) as Partial<ScalewaySettings>;
+        const a = input.scaleway ?? {};
+        const pick = (next: string | null | undefined, prev: string | null | undefined, validate: (v: string) => string): string | null => (next !== undefined && next !== null ? (next.trim() ? validate(next) : null) : (prev ?? null));
+        const region = scaleway.validateRegion(a.region ?? base.region ?? scaleway.DEFAULT_REGION);
+        const settings: ScalewaySettings = {
+          accessKey: scaleway.validateAccessKey(a.accessKey ?? base.accessKey),
+          organizationId: pick(a.organizationId, base.organizationId, (v) => scaleway.validateUuid(v, "L'identifiant de l'organisation")),
+          projectId: pick(a.projectId, base.projectId, (v) => scaleway.validateUuid(v, "L'identifiant du projet")),
+          region,
+          zone: scaleway.validateZone(a.zone ?? (base.region === region ? base.zone : null) ?? `${region}-1`, region),
+          identity: base.identity ?? null,
+        };
+        if (a.secretKey?.trim()) secrets.secretKey = scaleway.validateSecretKey(a.secretKey);
+        if (!secrets.secretKey) throw new AppError('La clé secrète est obligatoire');
+        if (settings.accessKey !== (base.accessKey ?? null) || a.secretKey?.trim()) settings.identity = null;
+        return { settings, secrets };
+      }
       case 'token': {
         const prev = (current?.settings ?? {}) as Partial<TokenSettings>;
         const service = current ? (prev.service as TokenService) : (input.service ?? '').trim().toLowerCase();
@@ -477,7 +497,7 @@ export const vaultService = {
     }
     const touchesSettings =
       (current.kind !== 'google' &&
-        [input.host, input.port, input.username, input.database, input.ssl, input.sslCa, input.url, input.authScheme, input.fields, input.privateKey, input.password, input.token, input.publicKey, input.aws].some((v) => v != null)) ||
+        [input.host, input.port, input.username, input.database, input.ssl, input.sslCa, input.url, input.authScheme, input.fields, input.privateKey, input.password, input.token, input.publicKey, input.aws, input.scaleway].some((v) => v != null)) ||
       input.viaItemId !== undefined ||
       input.authName !== undefined;
     let secretChanged = false;
@@ -893,7 +913,7 @@ export const vaultService = {
         return (await website.probe((item.settings as WebsiteSettings).url)).detail;
       case 'secret':
         return 'Rien à tester pour un secret : il est utilisé tel quel.';
-      // aws : testeur branché par vault/awsService.ts (probers).
+      // aws, scaleway : testeurs branchés par vault/awsService.ts et vault/scalewayService.ts (probers).
       case 'litellm': {
         const token = this.secretsOf(item).token;
         if (!token) throw new AppError(`« ${item.name} » n'a pas de clé`);
@@ -1116,6 +1136,11 @@ export const vaultService = {
           const who = s.auth === 'sso' ? `compte ${s.accountName ?? s.accountId ?? '?'}, rôle ${s.roleName ?? '?'}` : `clé ${s.accessKeyId ?? '?'}${s.roleArn ? `, rôle ${s.roleArn}` : ''}`;
           const policy = i.commandAllowlist.length ? ` ; commandes limitées aux préfixes ${i.commandAllowlist.map((p) => `\`${p}\``).join(', ')}` : '';
           return `- \`${i.name}\` : compte AWS (${who}, région ${s.region})${desc}. Outil \`aws_run\` : la commande du CLI sans \`aws\` (ex. \`s3 ls\`), exécutée par le serveur avec les fichiers du dossier de travail${i.readOnly ? ' ; lecture seule (describe, get, list…)' : ''}${policy}.`;
+        }
+        case 'scaleway': {
+          const s = i.settings as ScalewaySettings;
+          const policy = i.commandAllowlist.length ? ` ; commandes limitées aux préfixes ${i.commandAllowlist.map((p) => `\`${p}\``).join(', ')}` : '';
+          return `- \`${i.name}\` : compte Scaleway (${s.identity ?? `clé ${s.accessKey}`}${s.projectId ? `, projet ${s.projectId}` : ''}, région ${s.region}, zone ${s.zone})${desc}. Outils \`scw_run\` (la commande du CLI sans \`scw\`, ex. \`instance server list\`, exécutée par le serveur avec les fichiers du dossier de travail ; ajoute \`-o json\` pour une sortie structurée) et \`scw_api\` (appel de l'API https://api.scaleway.com, chemin relatif, authentification ajoutée par le serveur)${i.readOnly ? ' ; lecture seule (list, get ; GET)' : ''}${policy}.`;
         }
         default:
           return '';

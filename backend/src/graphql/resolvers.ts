@@ -13,7 +13,7 @@ import { readRawFile } from '../files/service.js';
 import { fingerprint } from '../vault/ssh.js';
 import { isOauthToken, vaultService, type VaultItemWithPermission } from '../vault/service.js';
 import { awsService } from '../vault/awsService.js';
-import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
+import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, ScalewaySettings, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
 import { variableName } from '../vault/website.js';
 import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
@@ -321,6 +321,7 @@ export const resolvers = {
       const s = i.settings as AwsSettings;
       return { ...s, connected: awsService.connected(i) };
     },
+    scaleway: (i: VaultItem) => (i.kind === 'scaleway' ? (i.settings as ScalewaySettings) : null),
     google: (i: VaultItem) => {
       if (i.kind !== 'google') return null;
       const a = accountOf(i);

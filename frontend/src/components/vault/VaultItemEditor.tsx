@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Col, Form, Modal, Row } from 'react-bootstrap';
 import { googleConnectUrl } from '../../apollo';
-import { CREATE_VAULT_ITEM, SKIPPER_KINDS, UPDATE_VAULT_ITEM, VAULT_TOKEN_SERVICES, type AwsAuth, type GoogleAccess, type VaultApiAuth, type VaultAwsInput, type VaultFieldInput, type VaultItem, type VaultItemInput, type VaultItemKind, type VaultTokenService } from '../../graphql/vault';
+import { CREATE_VAULT_ITEM, SKIPPER_KINDS, UPDATE_VAULT_ITEM, VAULT_TOKEN_SERVICES, type AwsAuth, type GoogleAccess, type VaultApiAuth, type VaultAwsInput, type VaultFieldInput, type VaultItem, type VaultItemInput, type VaultItemKind, type VaultScalewayInput, type VaultTokenService } from '../../graphql/vault';
 import { AGENT_KINDS, DEFAULT_PORTS, FIELD_KEY_PATTERN, isOauthToken, isSkipperKind, KINDS, NAME_PATTERN, variableOf } from './kinds';
 
 /** Coffre destinataire d'un nouvel élément : personnel (projectId null) ou projet administré. */
@@ -91,6 +91,12 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
   const [accessKeyId, setAccessKeyId] = useState(item?.aws?.accessKeyId ?? '');
   const [secretAccessKey, setSecretAccessKey] = useState('');
   const [roleArn, setRoleArn] = useState(item?.aws?.roleArn ?? '');
+  const [scwAccessKey, setScwAccessKey] = useState(item?.scaleway?.accessKey ?? '');
+  const [scwSecretKey, setScwSecretKey] = useState('');
+  const [scwOrganizationId, setScwOrganizationId] = useState(item?.scaleway?.organizationId ?? '');
+  const [scwProjectId, setScwProjectId] = useState(item?.scaleway?.projectId ?? '');
+  const [scwRegion, setScwRegion] = useState(item?.scaleway?.region ?? 'fr-par');
+  const [scwZone, setScwZone] = useState(item?.scaleway?.zone ?? 'fr-par-1');
   const { data: servicesData } = useQuery<{ vaultTokenServices: VaultTokenService[] }>(VAULT_TOKEN_SERVICES, { skip: kind !== 'token' });
   const services = servicesData?.vaultTokenServices ?? [];
   const serviceInfo = services.find((t) => t.id === service);
@@ -146,7 +152,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
     const input: VaultItemInput = { name: cleanName, description: description.trim(), expiresAt: expiresAt || null };
     if (!editing) input.kind = kind;
     if (kind !== 'google') {
-      if (kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws') input.requireApproval = requireApproval;
+      if (kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws' || kind === 'scaleway') input.requireApproval = requireApproval;
     } else {
       input.requireApproval = requireApproval;
     }
@@ -213,6 +219,17 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
         else if (!editing) return setError("La clé d'accès secrète est obligatoire");
       }
       input.aws = a;
+      input.readOnly = readOnly;
+      input.commandAllowlist = allowlist
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    if (kind === 'scaleway') {
+      const s: VaultScalewayInput = { accessKey: scwAccessKey.trim(), organizationId: scwOrganizationId.trim(), projectId: scwProjectId.trim(), region: scwRegion.trim(), zone: scwZone.trim() };
+      if (scwSecretKey) s.secretKey = scwSecretKey;
+      else if (!editing) return setError('La clé secrète est obligatoire');
+      input.scaleway = s;
       input.readOnly = readOnly;
       input.commandAllowlist = allowlist
         .split('\n')
@@ -630,6 +647,73 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
                 </>
               )}
 
+              {kind === 'scaleway' && (
+                <>
+                  <Row className="g-3 mt-0">
+                    <Col md={5}>
+                      <Form.Group>
+                        <Form.Label>Clé d'accès</Form.Label>
+                        <Form.Control value={scwAccessKey} onChange={(e) => setScwAccessKey(e.target.value)} required placeholder="SCW…" pattern="SCW[A-Z0-9]{17}" className="font-monospace" />
+                        <Form.Text className="text-secondary">Console Scaleway → IAM → Applications : créez une application dédiée aux agents, une politique aux droits limités, puis une clé d'API.</Form.Text>
+                      </Form.Group>
+                    </Col>
+                    <Col md={7}>
+                      <Form.Group>
+                        <Form.Label>Clé secrète</Form.Label>
+                        <Form.Control type="password" autoComplete="new-password" value={scwSecretKey} onChange={(e) => setScwSecretKey(e.target.value)} placeholder={item?.hasSecret ? '(inchangée)' : 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'} required={!editing} className="font-monospace" />
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                  <Row className="g-3 mt-0">
+                    <Col md={6}>
+                      <Form.Group>
+                        <Form.Label>Projet par défaut (optionnel)</Form.Label>
+                        <Form.Control value={scwProjectId} onChange={(e) => setScwProjectId(e.target.value)} placeholder="UUID du projet" className="font-monospace" />
+                        <Form.Text className="text-secondary">Complété au test de l'élément avec le projet par défaut de la clé.</Form.Text>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group>
+                        <Form.Label>Organisation (optionnel)</Form.Label>
+                        <Form.Control value={scwOrganizationId} onChange={(e) => setScwOrganizationId(e.target.value)} placeholder="UUID de l'organisation" className="font-monospace" />
+                        <Form.Text className="text-secondary">Complétée au test de l'élément.</Form.Text>
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                  <Row className="g-3 mt-0">
+                    <Col md={6}>
+                      <Form.Group>
+                        <Form.Label>Région par défaut</Form.Label>
+                        <Form.Select
+                          value={scwRegion}
+                          onChange={(e) => {
+                            setScwRegion(e.target.value);
+                            if (!scwZone.startsWith(`${e.target.value}-`)) setScwZone(`${e.target.value}-1`);
+                          }}
+                        >
+                          <option value="fr-par">fr-par (Paris)</option>
+                          <option value="nl-ams">nl-ams (Amsterdam)</option>
+                          <option value="pl-waw">pl-waw (Varsovie)</option>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                    <Col md={6}>
+                      <Form.Group>
+                        <Form.Label>Zone par défaut</Form.Label>
+                        <Form.Control value={scwZone} onChange={(e) => setScwZone(e.target.value)} required placeholder="fr-par-1" pattern="[a-z]{2}-[a-z]{3}-[0-9]" />
+                        <Form.Text className="text-secondary">Les commandes peuvent en indiquer une autre (zone=…, region=…).</Form.Text>
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                  <Form.Check className="mt-3" type="checkbox" id="vault-scw-ro" label="Lecture seule (verbes list, get, wait et appels GET seulement, hors secrets et clés)" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} />
+                  <Form.Group className="mt-3">
+                    <Form.Label>Commandes autorisées par l'outil scw_run (optionnel)</Form.Label>
+                    <Form.Control as="textarea" rows={2} className="font-monospace small" value={allowlist} onChange={(e) => setAllowlist(e.target.value)} placeholder={'instance server list\nrdb instance'} />
+                    <Form.Text className="text-secondary">Un préfixe par ligne, sans « scw » ; vide = tout (dans la limite de la lecture seule). Ne concerne pas scw_api.</Form.Text>
+                  </Form.Group>
+                </>
+              )}
+
               {kind === 'website' && (
                 <Form.Group className="mt-3">
                   <Form.Label>Adresse du site</Form.Label>
@@ -671,7 +755,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
               )}
 
               <hr />
-              {(kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws') && (
+              {(kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws' || kind === 'scaleway') && (
                 <Form.Check type="checkbox" id="vault-approval" label="Demander votre accord avant chaque usage par un agent — sinon les outils s'exécutent sans confirmation." checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
               )}
               {(kind === 'website' || kind === 'secret') && <div className="text-secondary small">Les actions dans le navigateur passent par les demandes d'autorisation de la session ; un secret sans site est toujours soumis à votre accord.</div>}

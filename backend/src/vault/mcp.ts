@@ -7,9 +7,10 @@ import type { Project } from '../projects/types.js';
 import * as api from './api.js';
 import { awsService } from './awsService.js';
 import * as postgres from './postgres.js';
+import { scalewayService } from './scalewayService.js';
 import { vaultService } from './service.js';
 import * as ssh from './ssh.js';
-import { kindLabels, type ApiSettings, type AwsSettings, type PostgresSettings, type SecretSettings, type SshSettings, type VaultItem, type WebsiteSettings } from './types.js';
+import { kindLabels, type ApiSettings, type AwsSettings, type PostgresSettings, type ScalewaySettings, type SecretSettings, type SshSettings, type VaultItem, type WebsiteSettings } from './types.js';
 import { describeField, siteAllows } from './website.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
@@ -76,6 +77,10 @@ function describe(i: VaultItem, byId: Map<string, VaultItem>): string {
       const s = i.settings as AwsSettings;
       const who = s.auth === 'sso' ? `compte ${s.accountName ?? s.accountId ?? '?'} · rôle ${s.roleName ?? '?'}` : `clé ${s.accessKeyId ?? '?'}${s.roleArn ? ` · rôle ${s.roleArn}` : ''}`;
       return `- ${i.name} · ${kindLabels.aws} · ${who} · région ${s.region}${desc} [${approval}, ${i.readOnly ? 'lecture seule (describe, get, list…)' : 'écriture autorisée'}${i.commandAllowlist.length ? `, commandes : ${i.commandAllowlist.join(' | ')}` : ''}]`;
+    }
+    case 'scaleway': {
+      const s = i.settings as ScalewaySettings;
+      return `- ${i.name} · ${kindLabels.scaleway} · ${s.identity ?? `clé ${s.accessKey}`}${s.projectId ? ` · projet ${s.projectId}` : ''} · ${s.region} / ${s.zone}${desc} [${approval}, ${i.readOnly ? 'lecture seule (list, get ; GET)' : 'écriture autorisée'}${i.commandAllowlist.length ? `, commandes : ${i.commandAllowlist.join(' | ')}` : ''}]`;
     }
     default:
       return `- ${i.name} · ${kindLabels[i.kind]}${desc}`;
@@ -151,7 +156,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
   return createSdkMcpServer({
     name: 'vault',
     version: '1.0.0',
-    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
+    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
     tools: [
       tool('list', "Liste les éléments du coffre disponibles pour cette session, leur type, leur cible et leur politique d'accès.", {}, async () =>
         run(async () => {
@@ -307,6 +312,53 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
               return { result: r, note: `code ${r.exitCode ?? r.signal}` };
             });
             return renderExec(result);
+          }),
+      ),
+
+      tool(
+        'scw_run',
+        "Exécute une commande du CLI Scaleway (scw) avec un compte Scaleway du coffre et renvoie sa sortie (stdout, stderr, code de sortie). Donne la commande sans « scw » (ex. « instance server list zone=fr-par-1 -o json », « rdb instance list », « account project list »). Ajoute « -o json » pour une sortie structurée. Le serveur l'exécute hors de ton environnement, avec les fichiers de ton dossier de travail (chemins relatifs) ; la clé secrète ne t'est jamais communiquée. Sur un compte en lecture seule, seuls les verbes de consultation (list, get, wait) sont acceptés, hors secrets et clés.",
+        {
+          item: z.string().describe("Nom de l'élément Scaleway"),
+          command: z.string().describe('Commande du CLI sans « scw » : espace de noms, ressource, verbe, arguments clé=valeur et options (guillemets acceptés ; aucun shell : pas de tubes ni de substitutions)'),
+          timeout_seconds: z.number().int().min(1).max(600).optional().describe('Délai maximal (défaut 120 s)'),
+        },
+        async ({ item, command, timeout_seconds }) =>
+          run(async () => {
+            const i = await ofKind(item, 'scaleway');
+            const inv = scalewayService.check(i, command);
+            const line = inv.tokens.join(' ');
+            await gate(i, 'scw_run', `scw ${line}`, { command: line });
+            const result = await audited(i, 'scw_run', line, async () => {
+              const r = await scalewayService.run(i, ctx.project, ctx.cwd, command, (timeout_seconds ?? 120) * 1000);
+              return { result: r, note: `code ${r.exitCode ?? r.signal}` };
+            });
+            return renderExec(result);
+          }),
+      ),
+
+      tool(
+        'scw_api',
+        "Appelle l'API Scaleway (https://api.scaleway.com) avec un compte Scaleway du coffre : chemin relatif (ex. « instance/v1/zones/fr-par-1/servers », « account/v3/projects?organization_id=… »), authentification ajoutée par le serveur, redirections non suivies, réponse tronquée au-delà de 2 Mo. Sur un compte en lecture seule, GET seulement, hors chemins qui révèlent un secret ou un accès.",
+        {
+          item: z.string().describe("Nom de l'élément Scaleway"),
+          method: z.enum(api.API_METHODS).optional().describe('Défaut : GET'),
+          path: z.string().describe("Chemin relatif à https://api.scaleway.com (ex. instance/v1/zones/fr-par-1/servers)"),
+          // Pas de z.record : le convertisseur du SDK le refuse et tout le serveur disparaît (voir mcp.test.ts).
+          query: z.object({}).catchall(z.string()).optional().describe('Paramètres de requête supplémentaires (page, page_size, project_id…)'),
+          body: z.string().optional().describe('Corps JSON (POST, PATCH, PUT), 1 Mo au plus'),
+        },
+        async ({ item, method, path: p, query, body }) =>
+          run(async () => {
+            const i = await ofKind(item, 'scaleway');
+            const call = { method, path: p, query, body };
+            scalewayService.checkApi(i, call);
+            await gate(i, 'scw_api', `${method ?? 'GET'} ${p}`, { method: method ?? 'GET', path: p, query: query ?? null });
+            const result = await audited(i, 'scw_api', `${method ?? 'GET'} ${p}`, async () => {
+              const r = await scalewayService.api(i, call);
+              return { result: r, note: `HTTP ${r.status}` };
+            });
+            return result.text;
           }),
       ),
 
