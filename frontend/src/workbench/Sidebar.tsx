@@ -6,7 +6,7 @@ import { Spinner } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
 import { CLOSE_TERMINAL, REQUESTS, SIDEBAR, SIDEBAR_PULL_REQUESTS, STOP_SESSION, type HumanRequest } from '../graphql/operations';
 import { usePollingQuery } from '../lib/usePollingQuery';
-import { sessionStateHint } from '../lib/humanize';
+import { sessionStateHint, taskChipOf } from '../lib/humanize';
 import Logo from '../components/Logo';
 import { useInstallApp } from '../components/InstallButton';
 import { useDialogs } from '../components/Dialogs';
@@ -327,6 +327,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
   const childActive = children.some((c) => current.startsWith(`/sessions/${c.session.id}`));
   const subsExpanded = subsOpen ?? (childActive || children.some((c) => c.session.pendingRequestCount > 0));
   const state = workspaceState([...ws.sessions, ...children.map((c) => c.session)]);
+  const taskChip = ws.task ? taskChipOf(ws.task, session ?? null) : null;
   const pending = [...ws.sessions, ...children.map((c) => c.session)].reduce((n, s) => n + s.pendingRequestCount, 0);
   const icon = branchIcon(ws, pr);
   const hint = session ? sessionStateHint(session.status, session.activity, session.pendingRequestCount) : null;
@@ -423,10 +424,10 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
       </div>
       {(chips.length > 0 || ws.task || ws.primary || hasRows || children.length > 0) && (
         <div className="wb-ws-items">
-          {ws.task && (
-            <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${ws.task.status.toLowerCase()}`} title={`Tâche : ${ws.task.title}`}>
-              {ws.task.status === 'IN_PROGRESS' ? 'en cours' : ws.task.status === 'DONE' ? 'terminée' : ws.task.status === 'CANCELLED' ? 'annulée' : 'à faire'}
-              {ws.task.statusTag && <span className="task-status-tag">{ws.task.statusTag}</span>}
+          {ws.task && taskChip && (
+            <Link to={`/tasks/${ws.task.id}`} className={`wb-ws-task task-status task-status-${taskChip.cls}`} title={`Tâche : ${ws.task.title}${taskChip.note ? ` · ${taskChip.note}` : ''}`}>
+              {taskChip.text}
+              {taskChip.tag && <span className="task-status-tag">{taskChip.tag}</span>}
             </Link>
           )}
           {!ws.primary && children.length > 0 && !expanded && (

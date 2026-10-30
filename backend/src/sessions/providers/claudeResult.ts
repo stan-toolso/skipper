@@ -36,3 +36,16 @@ export function resultError(payload: ResultLike, { interruptedIsError = true } =
   const subtype = typeof payload.subtype === 'string' ? payload.subtype : 'erreur';
   return errors.length ? `${subtype} : ${errors.join(' ; ')}` : subtype;
 }
+
+/**
+ * Vrai pour un tour vide que le CLI ouvre de lui-même sur une notification de tâche de fond, sans appeler le
+ * modèle (`origin.kind: 'task-notification'`, `num_turns: 0`). Cas observé le 30/10/2026 (CLI 2.1.314) : à la
+ * reprise d'une session après un redémarrage, le CLI signale d'abord la commande de fond tuée avec l'ancien
+ * processus (« Background shell command didn't finish before the previous session ended ») et clôt ce tour par
+ * un `result` vide, puis seulement traite l'instruction envoyée. Ce résultat ne clôt donc pas le tour de
+ * l'instruction : la session doit rester « au travail ».
+ */
+export function isEmptyNotificationResult(payload: ResultLike & { origin?: unknown; num_turns?: unknown }): boolean {
+  const origin = payload.origin as { kind?: unknown } | null | undefined;
+  return origin?.kind === 'task-notification' && payload.num_turns === 0;
+}
