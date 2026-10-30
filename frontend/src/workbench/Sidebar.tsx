@@ -13,6 +13,7 @@ import { useDialogs } from '../components/Dialogs';
 import { useSearchPalette } from '../components/SearchPalette';
 import { useShortcutsHelp } from '../components/ShortcutsHelp';
 import { displayComboText } from '../lib/shortcuts';
+import { PullRequestModal } from '../components/PullRequests';
 import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
@@ -304,6 +305,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
   const { activeKey, workspaces } = useTabs();
   const [menu, setMenu] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [prOpen, setPrOpen] = useState(false);
   const [subsOpen, setSubsOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
   const userId = user?.id ?? null;
   const current = location.pathname;
@@ -436,11 +438,12 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
             </Link>
           )}
           {pr && PR_PILL[prState(pr)] && (
-            <a href={pr.url} target="_blank" rel="noreferrer" className={`wb-ws-pr task-status wt-pr-${prState(pr)}`} title={`${icon.title} · ouvrir sur GitHub`}>
+            <button type="button" className={`wb-ws-pr task-status wt-pr-${prState(pr)}`} title={`${icon.title} · voir la pull request`} onClick={() => setPrOpen(true)}>
               <i className="bi bi-git" /> #{pr.number}
               <span className="task-status-tag">{PR_PILL[prState(pr)]}</span>
-            </a>
+            </button>
           )}
+          {pr && prOpen && <PullRequestModal projectId={ws.projectId} number={pr.number} onClose={() => setPrOpen(false)} />}
           {!ws.primary && children.length > 0 && !expanded && (
             <button type="button" className="wb-chip" title={`${subagentsSummary(children.map((c) => c.session)).label} lancé(s) par l'agent de cette session · cliquer pour détailler`} onClick={onToggle}>
               <SubagentsCount children={children.map((c) => c.session)} />

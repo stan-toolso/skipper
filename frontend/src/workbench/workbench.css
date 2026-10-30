@@ -873,7 +873,7 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .wt-pr-draft { color: var(--cc-dim); }
 .wt-pr-merged { color: var(--cc-purple); }
 .wt-pr-closed { color: var(--cc-red); }
-.wb-ws-pr { text-decoration: none; border-color: currentColor; }
+.wb-ws-pr { text-decoration: none; border-color: currentColor; background: none; font-family: inherit; line-height: inherit; cursor: pointer; }
 .wb-ws-pr:hover { text-decoration: none; filter: brightness(1.1); }
 .wt-missing { color: var(--cc-yellow); }
 
