@@ -16,7 +16,7 @@ import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
 import { config } from './config.js';
 import { captureProcessWarnings, log } from './log.js';
-import { appErrorLogPlugin, maskGraphQLError, yogaLogger } from './graphql/logging.js';
+import { appErrorLogPlugin, maskGraphQLError, operationTimingPlugin, yogaLogger } from './graphql/logging.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
@@ -82,7 +82,7 @@ async function main() {
     graphqlEndpoint: '/graphql',
     landingPage: false,
     logging: yogaLogger,
-    plugins: [appErrorLogPlugin()],
+    plugins: [appErrorLogPlugin(), operationTimingPlugin()],
     cors: (request) => {
       const origin = request.headers.get('origin');
       return isAllowedOrigin(origin) ? { origin: origin!, credentials: true } : { origin: appOrigin, credentials: true };

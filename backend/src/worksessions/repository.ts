@@ -29,6 +29,12 @@ export const worksessionRepository = {
     const { rows } = await pool.query<Row>('SELECT * FROM worksessions WHERE id = $1', [id]);
     return rows[0] ? toWorksession(rows[0]) : null;
   },
+  /** Work sessions de ces identifiants (chargement groupé par requête GraphQL), sans ordre garanti. */
+  async findByIds(ids: string[]): Promise<Worksession[]> {
+    if (!ids.length) return [];
+    const { rows } = await pool.query<Row>('SELECT * FROM worksessions WHERE id = ANY($1::uuid[])', [ids]);
+    return rows.map(toWorksession);
+  },
   /** Worksession actif d'un projet sur une branche. */
   async findByBranch(projectId: string, branch: string): Promise<Worksession | null> {
     const { rows } = await pool.query<Row>('SELECT * FROM worksessions WHERE project_id = $1 AND branch = $2 AND archived_at IS NULL LIMIT 1', [projectId, branch]);

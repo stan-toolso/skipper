@@ -520,359 +520,361 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
     }
     return { results, subCalls, cwd };
   }, [events]);
-  const rel = (path: string) => (cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path);
-
   // Le transcript suit les nouveaux événements tant qu'on est en bas ; remonter pour relire suspend le suivi.
   useEffect(() => {
     const el = containerRef.current;
     if (autoScroll && el && stick.current) el.scrollTop = el.scrollHeight;
   }, [events.length, draft?.text.length, draft?.thinking, autoScroll]);
 
-  const nodes: React.ReactNode[] = [];
-  // Sans le détail technique, le travail de l'agent entre deux événements affichés (un tour, le plus souvent)
-  // est replié : son dernier message et ses questions restent en vue, les étapes entre deux sont rassemblées
-  // en une ligne chacune (`WorkGroup`), dépliée au clic.
-  let work: WorkItem[] = [];
-  const flushWork = (live: boolean): React.ReactNode[] => {
-    const items = work;
-    work = [];
-    let lastText = -1;
-    items.forEach((item, i) => {
-      if (item.text) lastText = i;
-    });
-    const out: React.ReactNode[] = [];
-    let run: WorkItem[] = [];
-    const closeRun = (end: boolean) => {
-      if (!run.length) return;
-      const tail = live && end;
-      // Un groupe est identifié par sa première étape qui n'est pas un message : quand un nouveau message arrive,
-      // le précédent rejoint le groupe, qui reste le même élément (replié ou non) au lieu d'être remplacé.
-      const key = `work-${(run.find((i) => !i.text) ?? run[0]).key}`;
-      // Rien à replier dans un message seul — sauf en fin de tour en cours, où l'étape suivante le replierait
-      // un instant plus tard.
-      if (!tail && run.every((i) => i.text || !i.tool) && run.filter((i) => i.text).length <= 1) out.push(...run.map((i) => i.node));
-      else out.push(<WorkGroup key={key} items={run} live={tail} />);
-      run = [];
+  // Les nœuds des événements journalisés ne sont reconstruits qu'à l'arrivée d'événements (ou au changement de
+  // mode) : pendant qu'un agent écrit, le brouillon est relevé toutes les 400 ms et seul le bloc « en direct »
+  // change. React retrouve les mêmes éléments (même référence) et ne re-rend pas les milliers de nœuds d'une
+  // longue session ; l'état local des appels (dépliés) et des groupes est conservé.
+  const nodes = useMemo(() => {
+    const rel = (path: string) => (cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path);
+    const nodes: React.ReactNode[] = [];
+    // Sans le détail technique, le travail de l'agent entre deux événements affichés (un tour, le plus souvent)
+    // est replié : son dernier message et ses questions restent en vue, les étapes entre deux sont rassemblées
+    // en une ligne chacune (`WorkGroup`), dépliée au clic.
+    let work: WorkItem[] = [];
+    const flushWork = (live: boolean): React.ReactNode[] => {
+      const items = work;
+      work = [];
+      let lastText = -1;
+      items.forEach((item, i) => {
+        if (item.text) lastText = i;
+      });
+      const out: React.ReactNode[] = [];
+      let run: WorkItem[] = [];
+      const closeRun = (end: boolean) => {
+        if (!run.length) return;
+        const tail = live && end;
+        // Un groupe est identifié par sa première étape qui n'est pas un message : quand un nouveau message arrive,
+        // le précédent rejoint le groupe, qui reste le même élément (replié ou non) au lieu d'être remplacé.
+        const key = `work-${(run.find((i) => !i.text) ?? run[0]).key}`;
+        // Rien à replier dans un message seul — sauf en fin de tour en cours, où l'étape suivante le replierait
+        // un instant plus tard.
+        if (!tail && run.every((i) => i.text || !i.tool) && run.filter((i) => i.text).length <= 1) out.push(...run.map((i) => i.node));
+        else out.push(<WorkGroup key={key} items={run} live={tail} />);
+        run = [];
+      };
+      items.forEach((item, i) => {
+        if (item.pinned || i === lastText) {
+          closeRun(false);
+          out.push(item.node);
+        } else run.push(item);
+      });
+      closeRun(true);
+      return out;
     };
-    items.forEach((item, i) => {
-      if (item.pinned || i === lastText) {
-        closeRun(false);
-        out.push(item.node);
-      } else run.push(item);
-    });
-    closeRun(true);
-    return out;
-  };
-  // Repères de temps, discrets : un séparateur à chaque changement de jour, l'heure sur les instructions,
-  // les fins de tour et les changements d'état, et sur les réponses quand la minute a changé.
-  let lastDay = '';
-  let lastClock = '';
-  for (const e of events) {
-    const p = e.payload as Record<string, unknown>;
-    // Messages internes d'un sous-agent : Claude Code n'en montre que le décompte, sur l'appel qui l'a lancé.
-    if (p.parent_tool_use_id && (e.type === 'claude.assistant' || e.type === 'claude.user')) continue;
-    const day = new Date(e.createdAt).toDateString();
-    if (day !== lastDay) lastClock = '';
-    const stamp = (always = false) => {
-      const clock = clockTime(e.createdAt);
-      if (!always && clock === lastClock) return null;
-      lastClock = clock;
-      return (
-        <time className="cc-time" dateTime={e.createdAt} title={new Date(e.createdAt).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' })}>
-          {clock}
-        </time>
-      );
-    };
-    const before = nodes.length;
-    switch (e.type) {
-      case 'instruction': {
-        const attachments = Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [];
-        // Instruction envoyée depuis la page et pas encore journalisée : affichée aussitôt, fichiers lus en local.
-        const local = Array.isArray(p.localAttachments) ? (p.localAttachments as LocalAttachment[]) : [];
-        nodes.push(
-          <div key={e.id} className={`cc-user${p.pending ? ' pending' : ''}`} title={p.pending ? 'Envoi en cours…' : undefined}>
-            {stamp(true)}
-            <span className="cc-user-text">{String(p.text ?? '')}</span>
-            {p.preamble === true && <span className="cc-note"> (précédée, pour le modèle, du résumé de la conversation précédente)</span>}
-            {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
-            {local.length > 0 && <LocalAttachments attachments={local} />}
-          </div>,
+    // Repères de temps, discrets : un séparateur à chaque changement de jour, l'heure sur les instructions,
+    // les fins de tour et les changements d'état, et sur les réponses quand la minute a changé.
+    let lastDay = '';
+    let lastClock = '';
+    for (const e of events) {
+      const p = e.payload as Record<string, unknown>;
+      // Messages internes d'un sous-agent : Claude Code n'en montre que le décompte, sur l'appel qui l'a lancé.
+      if (p.parent_tool_use_id && (e.type === 'claude.assistant' || e.type === 'claude.user')) continue;
+      const day = new Date(e.createdAt).toDateString();
+      if (day !== lastDay) lastClock = '';
+      const stamp = (always = false) => {
+        const clock = clockTime(e.createdAt);
+        if (!always && clock === lastClock) return null;
+        lastClock = clock;
+        return (
+          <time className="cc-time" dateTime={e.createdAt} title={new Date(e.createdAt).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' })}>
+            {clock}
+          </time>
         );
-        break;
-      }
-      case 'claude.assistant': {
-        const content = ((p.message as { content?: ContentBlock[] } | undefined)?.content ?? []) as ContentBlock[];
-        content.forEach((block, i) => {
-          const key = `${e.id}-${i}`;
-          let item: WorkItem | null = null;
-          if (block.type === 'text' && block.text?.trim()) {
-            const node = (
-              <div key={key} className="cc-assistant">
-                <span className="cc-dot">⏺</span>
-                <Markdown className="cc-body" text={block.text} />
-                {stamp()}
-              </div>
+      };
+      const before = nodes.length;
+      switch (e.type) {
+        case 'instruction': {
+          const attachments = Array.isArray(p.attachments) ? (p.attachments as AttachmentRef[]) : [];
+          // Instruction envoyée depuis la page et pas encore journalisée : affichée aussitôt, fichiers lus en local.
+          const local = Array.isArray(p.localAttachments) ? (p.localAttachments as LocalAttachment[]) : [];
+          nodes.push(
+            <div key={e.id} className={`cc-user${p.pending ? ' pending' : ''}`} title={p.pending ? 'Envoi en cours…' : undefined}>
+              {stamp(true)}
+              <span className="cc-user-text">{String(p.text ?? '')}</span>
+              {p.preamble === true && <span className="cc-note"> (précédée, pour le modèle, du résumé de la conversation précédente)</span>}
+              {attachments.length > 0 && <InstructionAttachments sessionId={e.sessionId} attachments={attachments} />}
+              {local.length > 0 && <LocalAttachments attachments={local} />}
+            </div>,
+          );
+          break;
+        }
+        case 'claude.assistant': {
+          const content = ((p.message as { content?: ContentBlock[] } | undefined)?.content ?? []) as ContentBlock[];
+          content.forEach((block, i) => {
+            const key = `${e.id}-${i}`;
+            let item: WorkItem | null = null;
+            if (block.type === 'text' && block.text?.trim()) {
+              const node = (
+                <div key={key} className="cc-assistant">
+                  <span className="cc-dot">⏺</span>
+                  <Markdown className="cc-body" text={block.text} />
+                  {stamp()}
+                </div>
+              );
+              item = { key, node, pinned: false, text: true };
+            } else if (block.type === 'tool_use') {
+              const name = block.name ?? 'outil';
+              const input = block.input ?? {};
+              const result = block.id ? results.get(block.id) : undefined;
+              const node = <ToolCall key={key} name={name} input={input} result={result} subCalls={block.id ? (subCalls.get(block.id) ?? 0) : 0} rel={rel} />;
+              item = { key, node, pinned: name === 'AskUserQuestion', tool: { ...toolHeader(name, input, rel), severity: toolSeverity(name, result) } };
+            } else if (block.type === 'thinking' && block.thinking?.trim()) {
+              item = { key, node: <Thinking key={key} text={block.thinking} />, pinned: false };
+            }
+            if (!item) return;
+            if (technical) nodes.push(item.node);
+            else work.push(item);
+          });
+          break;
+        }
+        case 'claude.user': {
+          // Seule l'interruption laisse une trace ; les résultats d'outils sont rattachés à leur appel.
+          const content = (p.message as { content?: unknown } | undefined)?.content;
+          const text = typeof content === 'string' ? content : Array.isArray(content) ? (content as ContentBlock[]).map((b) => (b.type === 'text' ? b.text ?? '' : '')).join('') : '';
+          if (text.startsWith('[Request interrupted by user')) {
+            nodes.push(
+              <div key={e.id} className="cc-result error">
+                <span className="cc-elbow">⎿</span>
+                <div className="cc-result-body">Interrompu · que doit faire l'agent à la place ?</div>
+              </div>,
             );
-            item = { key, node, pinned: false, text: true };
-          } else if (block.type === 'tool_use') {
-            const name = block.name ?? 'outil';
-            const input = block.input ?? {};
-            const result = block.id ? results.get(block.id) : undefined;
-            const node = <ToolCall key={key} name={name} input={input} result={result} subCalls={block.id ? (subCalls.get(block.id) ?? 0) : 0} rel={rel} />;
-            item = { key, node, pinned: name === 'AskUserQuestion', tool: { ...toolHeader(name, input, rel), severity: toolSeverity(name, result) } };
-          } else if (block.type === 'thinking' && block.thinking?.trim()) {
-            item = { key, node: <Thinking key={key} text={block.thinking} />, pinned: false };
           }
-          if (!item) return;
-          if (technical) nodes.push(item.node);
-          else work.push(item);
-        });
-        break;
-      }
-      case 'claude.user': {
-        // Seule l'interruption laisse une trace ; les résultats d'outils sont rattachés à leur appel.
-        const content = (p.message as { content?: unknown } | undefined)?.content;
-        const text = typeof content === 'string' ? content : Array.isArray(content) ? (content as ContentBlock[]).map((b) => (b.type === 'text' ? b.text ?? '' : '')).join('') : '';
-        if (text.startsWith('[Request interrupted by user')) {
-          nodes.push(
-            <div key={e.id} className="cc-result error">
-              <span className="cc-elbow">⎿</span>
-              <div className="cc-result-body">Interrompu · que doit faire l'agent à la place ?</div>
-            </div>,
-          );
+          break;
         }
-        break;
-      }
-      case 'claude.result': {
-        // Tour interrompu par l'humain (bouton « Interrompre », Échap) : depuis le CLI 2.1.300, le résultat est marqué
-        // en erreur avec un diagnostic interne (`[ede_diagnostic] …`). Ce n'est pas une panne : l'agent attend la suite.
-        const interrupted = p.terminal_reason === 'aborted_streaming' || p.terminal_reason === 'aborted_tools';
-        const failed = Boolean(p.is_error) && !interrupted;
-        nodes.push(
-          <div key={e.id} className={`cc-note${failed ? ' error' : ''}`}>
-            {stamp(true)}
-            {interrupted
-              ? `⏹ Interrompu${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`
-              : failed
-                ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
-                : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
-          </div>,
-        );
-        break;
-      }
-      case 'cleanup': {
-        const action = String(p.action ?? '');
-        const k = (v: unknown) => (typeof v === 'number' ? `${Math.round(v / 1000)} k tokens` : '?');
-        const text =
-          action === 'purged'
-            ? `Transcript purgé : ${String(p.deleted)} événement(s) de plus de ${String(p.retentionDays)} jours supprimé(s)`
-            : action === 'compacting'
-              ? `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)}) : compaction de la conversation`
-              : action === 'compacted'
-                ? `Conversation compactée : ${k(p.before)} → ${k(p.after)}`
-                : action === 'reset'
-                  ? `${p.reason === 'fresh' ? 'Exécution planifiée' : p.manual ? 'À la demande' : `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)})`} : la conversation repart de zéro${p.manual ? '' : ' au prochain lancement'}${p.summary ? ', avec un résumé des derniers échanges' : ''}${p.reason === 'fresh' && typeof p.before === 'number' ? ` (${k(p.before)} oubliés)` : ''}`
-                  : action === 'skipped'
-                    ? `Nettoyage de la conversation reporté : ${String(p.reason ?? '')}`
-                    : action === 'failed'
-                      ? `Nettoyage en erreur : ${String(p.error ?? '')}`
-                      : action === 'nothing'
-                        ? 'Nettoyage : rien à faire'
-                        : 'Réglages de nettoyage enregistrés';
-        if (action === 'set' && !technical) break;
-        nodes.push(
-          <div key={e.id} className={`cc-note${action === 'failed' ? ' error' : ''}`}>
-            🧹 {text}
-          </div>,
-        );
-        break;
-      }
-      case 'claude.system':
-        if (p.subtype === 'compact_boundary') {
-          const meta = (p.compact_metadata ?? {}) as { trigger?: string; pre_tokens?: number; post_tokens?: number };
+        case 'claude.result': {
+          // Tour interrompu par l'humain (bouton « Interrompre », Échap) : depuis le CLI 2.1.300, le résultat est marqué
+          // en erreur avec un diagnostic interne (`[ede_diagnostic] …`). Ce n'est pas une panne : l'agent attend la suite.
+          const interrupted = p.terminal_reason === 'aborted_streaming' || p.terminal_reason === 'aborted_tools';
+          const failed = Boolean(p.is_error) && !interrupted;
           nodes.push(
-            <div key={e.id} className="cc-note">
-              🧹 Conversation compactée${meta.trigger === 'auto' ? ' automatiquement' : ''}
-              {typeof meta.pre_tokens === 'number' ? ` · ${Math.round(meta.pre_tokens / 1000)} k tokens${typeof meta.post_tokens === 'number' ? ` → ${Math.round(meta.post_tokens / 1000)} k` : ''}` : ''}
+            <div key={e.id} className={`cc-note${failed ? ' error' : ''}`}>
+              {stamp(true)}
+              {interrupted
+                ? `⏹ Interrompu${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`
+                : failed
+                  ? `✗ L'agent s'est arrêté sur une erreur${Array.isArray(p.errors) && p.errors.length ? ` : ${p.errors.join(' ; ')}` : technical ? ` (${String(p.subtype)})` : ''}`
+                  : `✻ Terminé${describeResult(p, technical) ? ` · ${describeResult(p, technical)}` : ''}`}
             </div>,
           );
-        } else if (technical && p.subtype === 'init') {
-          nodes.push(
-            <div key={e.id} className="cc-note">
-              ✻ Claude Code {String(p.claude_code_version ?? '')} · {String(p.model ?? '')} · {String(p.cwd ?? '')}
-            </div>,
-          );
-        } else if (p.subtype === 'task_notification' && p.summary) {
-          // Fin d'une commande ou d'un agent lancé en arrière-plan.
-          nodes.push(
-            <div key={e.id} className="cc-note">
-              ⏺ {String(p.summary)}
-            </div>,
-          );
+          break;
         }
-        break;
-      case 'config': {
-        // Réglage modifié par un humain en cours de session (modèle, autorisations...).
-        const changes = (p.changes ?? {}) as Record<string, unknown>;
-        const applied = new Set(Array.isArray(p.applied) ? (p.applied as string[]) : []);
-        const parts = Object.entries(changes).map(([key, value]) => {
-          const label =
-            key === 'permissionMode'
-              ? `autorisations : ${permissionModeLabels[String(value ?? 'default')] ?? String(value)}`
-              : key === 'model'
-                ? `modèle : ${value ? String(value) : 'réglage général'}`
-                : `${key} : ${value === null ? '(retiré)' : JSON.stringify(value)}`;
-          return applied.has(key) ? label : `${label} (au prochain lancement)`;
-        });
-        nodes.push(
-          <div key={e.id} className="cc-note">
-            ⚙ Réglages modifiés · {parts.join(' · ')}
-          </div>,
-        );
-        break;
-      }
-      case 'schedule': {
-        const action = String(p.action ?? '');
-        const text =
-          action === 'run'
-            ? `Exécution planifiée${p.manual ? ' (lancée à la main)' : ''}`
-            : action === 'done'
-              ? `Exécution planifiée : ${String(p.outcome ?? 'terminée')}`
-              : action === 'skipped'
-                ? `Exécution planifiée ignorée : ${String(p.reason ?? '')}`
-                : action === 'set'
-                  ? `Planification enregistrée (${String(p.cron ?? '')}, ${String(p.timezone ?? '')})`
-                  : action === 'disabled'
-                    ? 'Planification désactivée'
-                    : 'Planification retirée';
-        nodes.push(
-          <div key={e.id} className={`cc-note${action === 'skipped' ? ' warn' : ''}`}>
-            {stamp(true)}⏰ {text}
-          </div>,
-        );
-        break;
-      }
-      case 'system':
-        // Les avis (`notice`, ex. interruption par un redémarrage du serveur) sont toujours affichés ; le reste en mode technique.
-        if (p.notice) {
+        case 'cleanup': {
+          const action = String(p.action ?? '');
+          const k = (v: unknown) => (typeof v === 'number' ? `${Math.round(v / 1000)} k tokens` : '?');
+          const text =
+            action === 'purged'
+              ? `Transcript purgé : ${String(p.deleted)} événement(s) de plus de ${String(p.retentionDays)} jours supprimé(s)`
+              : action === 'compacting'
+                ? `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)}) : compaction de la conversation`
+                : action === 'compacted'
+                  ? `Conversation compactée : ${k(p.before)} → ${k(p.after)}`
+                  : action === 'reset'
+                    ? `${p.reason === 'fresh' ? 'Exécution planifiée' : p.manual ? 'À la demande' : `Contexte de ${k(p.before)} au-dessus du seuil (${k(p.threshold)})`} : la conversation repart de zéro${p.manual ? '' : ' au prochain lancement'}${p.summary ? ', avec un résumé des derniers échanges' : ''}${p.reason === 'fresh' && typeof p.before === 'number' ? ` (${k(p.before)} oubliés)` : ''}`
+                    : action === 'skipped'
+                      ? `Nettoyage de la conversation reporté : ${String(p.reason ?? '')}`
+                      : action === 'failed'
+                        ? `Nettoyage en erreur : ${String(p.error ?? '')}`
+                        : action === 'nothing'
+                          ? 'Nettoyage : rien à faire'
+                          : 'Réglages de nettoyage enregistrés';
+          if (action === 'set' && !technical) break;
           nodes.push(
-            <div key={e.id} className="cc-note warn">
-              {stamp(true)}⚠ {String(p.message ?? '')}
+            <div key={e.id} className={`cc-note${action === 'failed' ? ' error' : ''}`}>
+              🧹 {text}
             </div>,
           );
-        } else if (technical) {
+          break;
+        }
+        case 'claude.system':
+          if (p.subtype === 'compact_boundary') {
+            const meta = (p.compact_metadata ?? {}) as { trigger?: string; pre_tokens?: number; post_tokens?: number };
+            nodes.push(
+              <div key={e.id} className="cc-note">
+                🧹 Conversation compactée${meta.trigger === 'auto' ? ' automatiquement' : ''}
+                {typeof meta.pre_tokens === 'number' ? ` · ${Math.round(meta.pre_tokens / 1000)} k tokens${typeof meta.post_tokens === 'number' ? ` → ${Math.round(meta.post_tokens / 1000)} k` : ''}` : ''}
+              </div>,
+            );
+          } else if (technical && p.subtype === 'init') {
+            nodes.push(
+              <div key={e.id} className="cc-note">
+                ✻ Claude Code {String(p.claude_code_version ?? '')} · {String(p.model ?? '')} · {String(p.cwd ?? '')}
+              </div>,
+            );
+          } else if (p.subtype === 'task_notification' && p.summary) {
+            // Fin d'une commande ou d'un agent lancé en arrière-plan.
+            nodes.push(
+              <div key={e.id} className="cc-note">
+                ⏺ {String(p.summary)}
+              </div>,
+            );
+          }
+          break;
+        case 'config': {
+          // Réglage modifié par un humain en cours de session (modèle, autorisations...).
+          const changes = (p.changes ?? {}) as Record<string, unknown>;
+          const applied = new Set(Array.isArray(p.applied) ? (p.applied as string[]) : []);
+          const parts = Object.entries(changes).map(([key, value]) => {
+            const label =
+              key === 'permissionMode'
+                ? `autorisations : ${permissionModeLabels[String(value ?? 'default')] ?? String(value)}`
+                : key === 'model'
+                  ? `modèle : ${value ? String(value) : 'réglage général'}`
+                  : `${key} : ${value === null ? '(retiré)' : JSON.stringify(value)}`;
+            return applied.has(key) ? label : `${label} (au prochain lancement)`;
+          });
           nodes.push(
             <div key={e.id} className="cc-note">
-              · {String(p.message ?? JSON.stringify(p))}
+              ⚙ Réglages modifiés · {parts.join(' · ')}
             </div>,
           );
+          break;
         }
-        break;
-      case 'stderr':
-        if (technical) {
+        case 'schedule': {
+          const action = String(p.action ?? '');
+          const text =
+            action === 'run'
+              ? `Exécution planifiée${p.manual ? ' (lancée à la main)' : ''}`
+              : action === 'done'
+                ? `Exécution planifiée : ${String(p.outcome ?? 'terminée')}`
+                : action === 'skipped'
+                  ? `Exécution planifiée ignorée : ${String(p.reason ?? '')}`
+                  : action === 'set'
+                    ? `Planification enregistrée (${String(p.cron ?? '')}, ${String(p.timezone ?? '')})`
+                    : action === 'disabled'
+                      ? 'Planification désactivée'
+                      : 'Planification retirée';
           nodes.push(
-            <div key={e.id} className="cc-note error">
+            <div key={e.id} className={`cc-note${action === 'skipped' ? ' warn' : ''}`}>
+              {stamp(true)}⏰ {text}
+            </div>,
+          );
+          break;
+        }
+        case 'system':
+          // Les avis (`notice`, ex. interruption par un redémarrage du serveur) sont toujours affichés ; le reste en mode technique.
+          if (p.notice) {
+            nodes.push(
+              <div key={e.id} className="cc-note warn">
+                {stamp(true)}⚠ {String(p.message ?? '')}
+              </div>,
+            );
+          } else if (technical) {
+            nodes.push(
+              <div key={e.id} className="cc-note">
+                · {String(p.message ?? JSON.stringify(p))}
+              </div>,
+            );
+          }
+          break;
+        case 'stderr':
+          if (technical) {
+            nodes.push(
+              <div key={e.id} className="cc-note error">
+                {String(p.text ?? '')}
+              </div>,
+            );
+          }
+          break;
+        case 'connection': {
+          // Audit d'un accès à un système externe (outils MCP `connections` et `google`) : l'appel d'outil est
+          // déjà affiché, la ligne d'audit relève du détail technique.
+          if (!technical) break;
+          const summary = String(p.summary ?? '');
+          nodes.push(
+            <div key={e.id} className={`cc-note${p.ok ? '' : ' error'}`} title={summary}>
+              <i className={`bi ${p.kind === 'ssh' ? 'bi-hdd-network' : p.kind === 'gmail' ? 'bi-envelope' : p.kind === 'drive' ? 'bi-google' : 'bi-database'} me-1`} />
+              {String(p.action)} · {String(p.connection)} · {summary.length > 100 ? `${summary.slice(0, 97)}…` : summary}
+              {p.ok ? ` — ${p.note ? `${String(p.note)}, ` : ''}${String(p.durationMs)} ms` : ` — échec : ${String(p.error ?? '')}`}
+            </div>,
+          );
+          break;
+        }
+        case 'stdout':
+          nodes.push(
+            <div key={e.id} className="cc-line">
               {String(p.text ?? '')}
             </div>,
           );
+          break;
+        case 'request': {
+          // Autorisations et questions : l'appel d'outil concerné porte déjà l'information (résultat, refus, réponses).
+          const known = p.type === 'permission' || p.type === 'question';
+          if (known && !technical) break;
+          const payload = (p.payload ?? {}) as { toolName?: string; input?: Record<string, unknown> };
+          const text =
+            p.type === 'permission' && payload.toolName
+              ? `L'agent a demandé l'autorisation de ${describeTool(payload.toolName, payload.input ?? {}).action}`
+              : p.type === 'question'
+                ? `L'agent vous a posé une question : ${String(p.title)}`
+                : `L'agent vous a demandé : ${String(p.title)}`;
+          nodes.push(
+            <div key={e.id} className={`cc-note${known ? '' : ' warn'}`}>
+              ⏸ {text}
+            </div>,
+          );
+          break;
         }
-        break;
-      case 'connection': {
-        // Audit d'un accès à un système externe (outils MCP `connections` et `google`) : l'appel d'outil est
-        // déjà affiché, la ligne d'audit relève du détail technique.
-        if (!technical) break;
-        const summary = String(p.summary ?? '');
-        nodes.push(
-          <div key={e.id} className={`cc-note${p.ok ? '' : ' error'}`} title={summary}>
-            <i className={`bi ${p.kind === 'ssh' ? 'bi-hdd-network' : p.kind === 'gmail' ? 'bi-envelope' : p.kind === 'drive' ? 'bi-google' : 'bi-database'} me-1`} />
-            {String(p.action)} · {String(p.connection)} · {summary.length > 100 ? `${summary.slice(0, 97)}…` : summary}
-            {p.ok ? ` — ${p.note ? `${String(p.note)}, ` : ''}${String(p.durationMs)} ms` : ` — échec : ${String(p.error ?? '')}`}
-          </div>,
-        );
-        break;
+        case 'request.answered': {
+          const known = p.type === 'permission' || p.type === 'question';
+          if (known && !technical) break;
+          const r = (p.response ?? {}) as Record<string, unknown>;
+          const text =
+            r.decision === 'allow' ? (r.always ? 'Autorisé pour toute la session' : 'Autorisé') : r.decision === 'deny' ? `Refusé${r.message ? ` : ${String(r.message)}` : ''}` : r.answers ? Object.values(r.answers as Record<string, string>).join(' ; ') : JSON.stringify(r);
+          nodes.push(
+            <div key={e.id} className="cc-note">
+              ▶ Votre réponse : {text}
+            </div>,
+          );
+          break;
+        }
+        case 'status': {
+          const labels: Record<string, string> = { completed: 'Session terminée', failed: 'Session terminée avec une erreur', stopped: 'Session arrêtée', interrupted: 'Session interrompue' };
+          nodes.push(
+            <div key={e.id} className={`cc-note${p.status === 'failed' ? ' error' : ''}`}>
+              {stamp(true)}■ {labels[String(p.status)] ?? `Session ${String(p.status)}`}
+              {p.error ? ` — ${String(p.error)}` : ''}
+            </div>,
+          );
+          break;
+        }
+        default:
+          // Événements techniques (rate limit, progression, consommation...) : non affichés.
+          break;
       }
-      case 'stdout':
-        nodes.push(
-          <div key={e.id} className="cc-line">
-            {String(p.text ?? '')}
+      // Le travail de l'agent accumulé jusque-là précède le premier événement affiché après lui.
+      if (nodes.length > before && work.length) nodes.splice(before, 0, ...flushWork(false));
+      // Séparateur de jour, seulement devant un événement qui s'affiche.
+      if (nodes.length > before && day !== lastDay) {
+        lastDay = day;
+        nodes.splice(
+          before,
+          0,
+          <div key={`day-${e.id}`} className="cc-day">
+            <span>{dayLabel(e.createdAt)}</span>
           </div>,
         );
-        break;
-      case 'request': {
-        // Autorisations et questions : l'appel d'outil concerné porte déjà l'information (résultat, refus, réponses).
-        const known = p.type === 'permission' || p.type === 'question';
-        if (known && !technical) break;
-        const payload = (p.payload ?? {}) as { toolName?: string; input?: Record<string, unknown> };
-        const text =
-          p.type === 'permission' && payload.toolName
-            ? `L'agent a demandé l'autorisation de ${describeTool(payload.toolName, payload.input ?? {}).action}`
-            : p.type === 'question'
-              ? `L'agent vous a posé une question : ${String(p.title)}`
-              : `L'agent vous a demandé : ${String(p.title)}`;
-        nodes.push(
-          <div key={e.id} className={`cc-note${known ? '' : ' warn'}`}>
-            ⏸ {text}
-          </div>,
-        );
-        break;
       }
-      case 'request.answered': {
-        const known = p.type === 'permission' || p.type === 'question';
-        if (known && !technical) break;
-        const r = (p.response ?? {}) as Record<string, unknown>;
-        const text =
-          r.decision === 'allow' ? (r.always ? 'Autorisé pour toute la session' : 'Autorisé') : r.decision === 'deny' ? `Refusé${r.message ? ` : ${String(r.message)}` : ''}` : r.answers ? Object.values(r.answers as Record<string, string>).join(' ; ') : JSON.stringify(r);
-        nodes.push(
-          <div key={e.id} className="cc-note">
-            ▶ Votre réponse : {text}
-          </div>,
-        );
-        break;
-      }
-      case 'status': {
-        const labels: Record<string, string> = { completed: 'Session terminée', failed: 'Session terminée avec une erreur', stopped: 'Session arrêtée', interrupted: 'Session interrompue' };
-        nodes.push(
-          <div key={e.id} className={`cc-note${p.status === 'failed' ? ' error' : ''}`}>
-            {stamp(true)}■ {labels[String(p.status)] ?? `Session ${String(p.status)}`}
-            {p.error ? ` — ${String(p.error)}` : ''}
-          </div>,
-        );
-        break;
-      }
-      default:
-        // Événements techniques (rate limit, progression, consommation...) : non affichés.
-        break;
     }
-    // Le travail de l'agent accumulé jusque-là précède le premier événement affiché après lui.
-    if (nodes.length > before && work.length) nodes.splice(before, 0, ...flushWork(false));
-    // Séparateur de jour, seulement devant un événement qui s'affiche.
-    if (nodes.length > before && day !== lastDay) {
-      lastDay = day;
-      nodes.splice(
-        before,
-        0,
-        <div key={`day-${e.id}`} className="cc-day">
-          <span>{dayLabel(e.createdAt)}</span>
-        </div>,
-      );
-    }
-  }
-  nodes.push(...flushWork(true));
+    nodes.push(...flushWork(true));
+    return nodes;
+  }, [events, technical, results, subCalls, cwd]);
   // Ce que l'agent écrit en ce moment : le texte grandit à chaque relevé, puis le message journalisé le remplace.
-  if (draft?.text.trim()) {
-    nodes.push(
-      <div key="live" className="cc-assistant cc-live">
-        <span className="cc-dot">⏺</span>
-        <Markdown className="cc-body" text={draft.text} />
-      </div>,
-    );
-  } else if (draft?.thinking) {
-    nodes.push(
-      <div key="live" className="cc-thinking cc-live">
-        <div>∴ Réflexion…</div>
-      </div>,
-    );
-  }
+  const live = draft?.text.trim() ? (
+    <div className="cc-assistant cc-live">
+      <span className="cc-dot">⏺</span>
+      <Markdown className="cc-body" text={draft.text} />
+    </div>
+  ) : draft?.thinking ? (
+    <div className="cc-thinking cc-live">
+      <div>∴ Réflexion…</div>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -883,8 +885,9 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_MARGIN;
       }}
     >
-      {nodes.length === 0 && <div className="cc-dimmer">{loading ? 'Chargement du fil…' : 'Aucun échange pour le moment.'}</div>}
+      {nodes.length === 0 && !live && <div className="cc-dimmer">{loading ? 'Chargement du fil…' : 'Aucun échange pour le moment.'}</div>}
       {nodes}
+      {live}
     </div>
   );
 }
