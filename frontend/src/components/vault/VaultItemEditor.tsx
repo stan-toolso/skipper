@@ -669,14 +669,14 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
                       <Form.Group>
                         <Form.Label>Projet par défaut (optionnel)</Form.Label>
                         <Form.Control value={scwProjectId} onChange={(e) => setScwProjectId(e.target.value)} placeholder="UUID du projet" className="font-monospace" />
-                        <Form.Text className="text-secondary">Complété au test de l'élément avec le projet par défaut de la clé.</Form.Text>
+                        <Form.Text className="text-secondary">Complété au test de l'élément si la clé peut lire IAM ; sinon à saisir (Console → Paramètres du projet).</Form.Text>
                       </Form.Group>
                     </Col>
                     <Col md={6}>
                       <Form.Group>
                         <Form.Label>Organisation (optionnel)</Form.Label>
                         <Form.Control value={scwOrganizationId} onChange={(e) => setScwOrganizationId(e.target.value)} placeholder="UUID de l'organisation" className="font-monospace" />
-                        <Form.Text className="text-secondary">Complétée au test de l'élément.</Form.Text>
+                        <Form.Text className="text-secondary">Complétée au test de l'élément si la clé peut lire IAM ; sinon à saisir (Console → Paramètres de l'organisation). Le CLI scw l'exige.</Form.Text>
                       </Form.Group>
                     </Col>
                   </Row>

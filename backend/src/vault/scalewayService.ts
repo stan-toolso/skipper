@@ -71,6 +71,13 @@ export const scalewayService = {
     if (who.description) parts.push(`clé « ${who.description} »`);
     if (settings.projectId) parts.push(`projet ${settings.projectId}`);
     if (who.expiresAt) parts.push(`expire le ${new Date(who.expiresAt).toLocaleDateString('fr-FR', { dateStyle: 'medium', timeZone: 'Europe/Paris' })}`);
+    if (!settings.organizationId || !settings.projectId) {
+      parts.push(
+        who.partial
+          ? "renseignez l'identifiant de l'organisation et du projet (console Scaleway → Paramètres de l'organisation et du projet), ou accordez IAMReadOnly à l'application pour que le test les trouve : le CLI scw les exige"
+          : "renseignez l'identifiant de l'organisation et du projet : le CLI scw les exige",
+      );
+    }
     return parts.join(' · ');
   },
 

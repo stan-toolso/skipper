@@ -230,31 +230,61 @@ export interface ScalewayIdentity {
   defaultProjectId: string | null;
   description: string | null;
   expiresAt: string | null;
+  /** La clé est acceptée mais ses droits ne permettent pas de lire IAM : principal, organisation et projet inconnus. */
+  partial: boolean;
+}
+
+/** Erreur de l'API Scaleway avec son code HTTP (401 : clé refusée ; 403 : clé acceptée, droits insuffisants). */
+export class ScalewayApiError extends AppError {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message, 'SCALEWAY_API');
+    this.name = 'ScalewayApiError';
+  }
 }
 
 async function apiGet<T>(secretKey: string, path: string): Promise<T> {
   const res = await fetch(`${SCALEWAY_API_URL}${path}`, { headers: { 'x-auth-token': secretKey, accept: 'application/json', 'user-agent': 'Skipper (coffre)' }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
   const data = (await res.json().catch(() => ({}))) as T & { message?: string; type?: string };
-  if (res.status === 401 || res.status === 403) throw new AppError(`Scaleway refuse la clé (HTTP ${res.status})${data.message ? ` : ${data.message}` : ''}`);
-  if (!res.ok) throw new AppError(`Scaleway : HTTP ${res.status}${data.message ? ` ${data.message}` : ''}`);
+  if (res.status === 401) throw new ScalewayApiError(401, `Scaleway refuse la clé (HTTP 401)${data.message ? ` : ${data.message}` : ''} : vérifiez la clé d'accès et la clé secrète`);
+  if (res.status === 403) throw new ScalewayApiError(403, `Scaleway accepte la clé mais ses droits ne couvrent pas ${path.split('/').slice(1, 3).join('/')} (HTTP 403)${data.message ? ` : ${data.message}` : ''}`);
+  if (!res.ok) throw new ScalewayApiError(res.status, `Scaleway : HTTP ${res.status}${data.message ? ` ${data.message}` : ''}`);
   return data;
 }
 
-/** Vérifie la clé auprès d'IAM : principal (application ou utilisateur), organisation, projet par défaut. */
+/**
+ * Vérifie la clé auprès d'IAM : principal (application ou utilisateur), organisation, projet par défaut. Une clé
+ * sans droit de lecture sur IAM (403) est acceptée mais `partial` : l'organisation et le projet restent à saisir.
+ */
 export async function identity(creds: Pick<ScalewayCredentials, 'accessKey' | 'secretKey'>): Promise<ScalewayIdentity> {
-  const key = await apiGet<{ application_id?: string | null; user_id?: string | null; default_project_id?: string | null; description?: string; expires_at?: string | null }>(creds.secretKey, `/iam/v1alpha1/api-keys/${encodeURIComponent(creds.accessKey)}`);
+  let key: { application_id?: string | null; user_id?: string | null; default_project_id?: string | null; description?: string; expires_at?: string | null };
+  try {
+    key = await apiGet(creds.secretKey, `/iam/v1alpha1/api-keys/${encodeURIComponent(creds.accessKey)}`);
+  } catch (err) {
+    if (err instanceof ScalewayApiError && err.status === 403) {
+      return { principal: 'clé acceptée (droits IAM insuffisants pour lire le principal)', organizationId: null, defaultProjectId: null, description: null, expiresAt: null, partial: true };
+    }
+    throw err;
+  }
   let principal = 'clé sans principal';
   let organizationId: string | null = null;
-  if (key.application_id) {
-    const app = await apiGet<{ name?: string; organization_id?: string }>(creds.secretKey, `/iam/v1alpha1/applications/${key.application_id}`);
-    principal = `application ${app.name ?? key.application_id}`;
-    organizationId = app.organization_id ?? null;
-  } else if (key.user_id) {
-    const user = await apiGet<{ email?: string; organization_id?: string }>(creds.secretKey, `/iam/v1alpha1/users/${key.user_id}`);
-    principal = `utilisateur ${user.email ?? key.user_id}`;
-    organizationId = user.organization_id ?? null;
+  try {
+    if (key.application_id) {
+      const app = await apiGet<{ name?: string; organization_id?: string }>(creds.secretKey, `/iam/v1alpha1/applications/${key.application_id}`);
+      principal = `application ${app.name ?? key.application_id}`;
+      organizationId = app.organization_id ?? null;
+    } else if (key.user_id) {
+      const user = await apiGet<{ email?: string; organization_id?: string }>(creds.secretKey, `/iam/v1alpha1/users/${key.user_id}`);
+      principal = `utilisateur ${user.email ?? key.user_id}`;
+      organizationId = user.organization_id ?? null;
+    }
+  } catch (err) {
+    if (!(err instanceof ScalewayApiError && err.status === 403)) throw err;
+    principal = key.application_id ? `application ${key.application_id}` : `utilisateur ${key.user_id}`;
   }
-  return { principal, organizationId, defaultProjectId: key.default_project_id ?? null, description: key.description || null, expiresAt: key.expires_at ?? null };
+  return { principal, organizationId, defaultProjectId: key.default_project_id ?? null, description: key.description || null, expiresAt: key.expires_at ?? null, partial: false };
 }
 
 /** Réglages par défaut d'un compte Scaleway. */
