@@ -1,7 +1,7 @@
 import { pool, type Queryable } from '../db/pool.js';
 import { toJson } from '../db/json.js';
 import type { Actor } from '../context/types.js';
-import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskPerson, TaskPriority, TaskStatus, UpdateTaskInput } from './types.js';
+import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskMention, TaskPerson, TaskPriority, TaskReaction, TaskStatus, UpdateTaskInput } from './types.js';
 
 interface Row {
   id: string;
@@ -13,6 +13,7 @@ interface Row {
   tags: string[] | null;
   priority: TaskPriority;
   session_id: string | null;
+  session_ids: string[] | null;
   branch: string | null;
   created_by_type: 'human' | 'agent';
   created_by_session_id: string | null;
@@ -32,14 +33,30 @@ interface Row {
 interface CommentRow {
   id: string;
   task_id: string;
+  parent_id: string | null;
   author_type: 'human' | 'agent';
   author_user_id: string | null;
   author_session_id: string | null;
   author_name: string;
   body: string;
+  mentions: TaskMention[] | null;
   created_at: Date;
   updated_at: Date;
 }
+
+interface ReactionRow {
+  id: string;
+  task_id: string;
+  comment_id: string | null;
+  emoji: string;
+  actor_type: 'human' | 'agent';
+  user_id: string | null;
+  session_id: string | null;
+  actor_name: string;
+  created_at: Date;
+}
+
+const toReaction = (r: ReactionRow): TaskReaction => ({ id: r.id, taskId: r.task_id, commentId: r.comment_id, emoji: r.emoji, actorType: r.actor_type, userId: r.user_id, sessionId: r.session_id, actorName: r.actor_name, createdAt: r.created_at });
 
 interface AttachmentRow {
   id: string;
@@ -72,6 +89,7 @@ const toTask = (r: Row): Task => ({
   tags: Array.isArray(r.tags) ? r.tags : [],
   priority: r.priority,
   sessionId: r.session_id,
+  sessionIds: r.session_ids ?? [],
   branch: r.branch,
   createdByType: r.created_by_type,
   createdBySessionId: r.created_by_session_id,
@@ -89,17 +107,20 @@ const toTask = (r: Row): Task => ({
 const toComment = (r: CommentRow): TaskComment => ({
   id: r.id,
   taskId: r.task_id,
+  parentId: r.parent_id ?? null,
   authorType: r.author_type,
   authorUserId: r.author_user_id,
   authorSessionId: r.author_session_id,
   authorName: r.author_name,
   body: r.body,
+  mentions: Array.isArray(r.mentions) ? r.mentions : [],
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
 
 /** Colonnes d'une tâche avec le nombre de commentaires. */
-const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count, (SELECT count(*) FROM task_attachments a WHERE a.task_id = t.id AND a.comment_id IS NULL) AS attachment_count FROM tasks t`;
+const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count,
+  (SELECT array_agg(ts.session_id ORDER BY ts.in_charge_since DESC) FROM task_sessions ts WHERE ts.task_id = t.id AND ts.in_charge_since IS NOT NULL) AS session_ids, (SELECT count(*) FROM task_attachments a WHERE a.task_id = t.id AND a.comment_id IS NULL) AS attachment_count FROM tasks t`;
 /** Tri : urgent d'abord, puis par date de création. */
 const ORDER = `ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.created_at ASC`;
 
@@ -111,9 +132,30 @@ function personColumns(p: TaskPerson | null | undefined): [string | null, string
   return [p?.name ?? null, p?.email ?? null];
 }
 
+/** Note le passage d'une session par la tâche (historique), sans lui en donner la charge. */
 async function linkSession(db: Queryable, taskId: string, sessionId: string | null | undefined): Promise<void> {
   if (!sessionId) return;
   await db.query('INSERT INTO task_sessions (task_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, sessionId]);
+}
+
+/** La session prend la charge de la tâche (en plus des sessions déjà en charge). */
+async function takeCharge(db: Queryable, taskId: string, sessionId: string): Promise<void> {
+  await db.query(
+    `INSERT INTO task_sessions (task_id, session_id, in_charge_since) VALUES ($1, $2, now())
+     ON CONFLICT (task_id, session_id) DO UPDATE SET in_charge_since = COALESCE(task_sessions.in_charge_since, now())`,
+    [taskId, sessionId],
+  );
+}
+
+/** Des sessions cessent d'être en charge (toutes si `sessionIds` est null) ; leur passage reste dans l'historique. */
+async function releaseCharge(db: Queryable, taskId: string, sessionIds: string[] | null): Promise<void> {
+  if (sessionIds && sessionIds.length === 0) return;
+  await db.query(`UPDATE task_sessions SET in_charge_since = NULL WHERE task_id = $1${sessionIds ? ' AND session_id = ANY($2::uuid[])' : ''}`, sessionIds ? [taskId, sessionIds] : [taskId]);
+}
+
+/** tasks.session_id = la plus récente des sessions en charge. */
+async function syncPrimarySession(db: Queryable, taskId: string): Promise<void> {
+  await db.query('UPDATE tasks SET session_id = (SELECT session_id FROM task_sessions WHERE task_id = $1 AND in_charge_since IS NOT NULL ORDER BY in_charge_since DESC LIMIT 1) WHERE id = $1', [taskId]);
 }
 
 export const taskRepository = {
@@ -143,7 +185,7 @@ export const taskRepository = {
           input.tags ?? [],
         ],
       );
-      await linkSession(client, rows[0].id, input.sessionId);
+      if (input.sessionId) await takeCharge(client, rows[0].id, input.sessionId);
       await linkSession(client, rows[0].id, actor.sessionId);
       await client.query('COMMIT');
       return (await this.findById(rows[0].id))!;
@@ -194,7 +236,7 @@ export const taskRepository = {
     if (filter.projectIds) where.push(`t.project_id = ANY($${params.push(filter.projectIds)}::uuid[])`);
     if (filter.status?.length) where.push(`t.status = ANY($${params.push(filter.status)}::task_status[])`);
     if (filter.priority) where.push(`t.priority = $${params.push(filter.priority)}`);
-    if (filter.sessionId) where.push(`t.session_id = $${params.push(filter.sessionId)}`);
+    if (filter.sessionId) where.push(`EXISTS (SELECT 1 FROM task_sessions ts WHERE ts.task_id = t.id AND ts.session_id = $${params.push(filter.sessionId)} AND ts.in_charge_since IS NOT NULL)`);
     if (filter.branch) where.push(`t.branch = $${params.push(filter.branch)}`);
     if (filter.tag) where.push(`EXISTS (SELECT 1 FROM unnest(t.tags) tag WHERE lower(tag) = lower($${params.push(filter.tag)}))`);
     if (filter.assignee) {
@@ -229,7 +271,6 @@ export const taskRepository = {
     if (input.title != null) sets.push(`title = $${params.push(input.title)}`);
     if (input.description != null) sets.push(`description = $${params.push(input.description)}`);
     if (input.priority != null) sets.push(`priority = $${params.push(input.priority)}`);
-    if (input.sessionId !== undefined) sets.push(`session_id = $${params.push(input.sessionId)}`);
     if (input.branch !== undefined) sets.push(`branch = $${params.push(input.branch)}`);
     if (input.dueDate !== undefined) sets.push(`due_date = $${params.push(input.dueDate)}`);
     if (input.customFields != null) sets.push(`custom_fields = $${params.push(toJson(input.customFields))}::jsonb`);
@@ -251,7 +292,12 @@ export const taskRepository = {
     try {
       await client.query('BEGIN');
       const { rowCount } = await client.query(`UPDATE tasks SET ${sets.join(', ')} WHERE id = $1`, params);
-      if (rowCount) await linkSession(client, id, input.sessionId);
+      if (rowCount) {
+        if (input.sessionId === null) await releaseCharge(client, id, null);
+        else if (input.sessionId) await takeCharge(client, id, input.sessionId);
+        if (input.releaseSessionIds?.length) await releaseCharge(client, id, input.releaseSessionIds.filter((s) => s !== input.sessionId));
+        if (input.sessionId !== undefined || input.releaseSessionIds?.length) await syncPrimarySession(client, id);
+      }
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -262,9 +308,10 @@ export const taskRepository = {
     return this.findById(id);
   },
 
-  /** Déplace une tâche dans un autre projet : sa session et sa branche restent à l'ancien projet, elles sont retirées. */
+  /** Déplace une tâche dans un autre projet : ses sessions en charge et sa branche restent à l'ancien projet, elles sont retirées. */
   async move(id: string, projectId: string): Promise<Task | null> {
     const { rowCount } = await pool.query('UPDATE tasks SET project_id = $2, session_id = NULL, branch = NULL, updated_at = now() WHERE id = $1', [id, projectId]);
+    if (rowCount) await releaseCharge(pool, id, null);
     return rowCount ? this.findById(id) : null;
   },
 
@@ -339,13 +386,18 @@ export const taskRepository = {
     return rows[0] ? toComment(rows[0]) : null;
   },
 
-  async addComment(taskId: string, body: string, author: { type: Actor['type']; userId?: string | null; sessionId?: string | null; name: string }): Promise<TaskComment> {
+  async addComment(
+    taskId: string,
+    body: string,
+    author: { type: Actor['type']; userId?: string | null; sessionId?: string | null; name: string },
+    opts: { parentId?: string | null; mentions?: TaskMention[] } = {},
+  ): Promise<TaskComment> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows } = await client.query<CommentRow>(
-        `INSERT INTO task_comments (task_id, author_type, author_user_id, author_session_id, author_name, body) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [taskId, author.type, author.userId ?? null, author.sessionId ?? null, author.name, body],
+        `INSERT INTO task_comments (task_id, parent_id, author_type, author_user_id, author_session_id, author_name, body, mentions) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
+        [taskId, opts.parentId ?? null, author.type, author.userId ?? null, author.sessionId ?? null, author.name, body, toJson(opts.mentions ?? [])],
       );
       await client.query('UPDATE tasks SET updated_at = now() WHERE id = $1', [taskId]);
       await client.query('COMMIT');
@@ -358,13 +410,61 @@ export const taskRepository = {
     }
   },
 
-  async updateComment(id: string, body: string): Promise<TaskComment | null> {
-    const { rows } = await pool.query<CommentRow>('UPDATE task_comments SET body = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, body]);
+  async updateComment(id: string, body: string, mentions?: TaskMention[]): Promise<TaskComment | null> {
+    const { rows } = mentions
+      ? await pool.query<CommentRow>('UPDATE task_comments SET body = $2, mentions = $3::jsonb, updated_at = now() WHERE id = $1 RETURNING *', [id, body, toJson(mentions)])
+      : await pool.query<CommentRow>('UPDATE task_comments SET body = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, body]);
     return rows[0] ? toComment(rows[0]) : null;
   },
 
   async deleteComment(id: string): Promise<boolean> {
     const { rowCount } = await pool.query('DELETE FROM task_comments WHERE id = $1', [id]);
     return (rowCount ?? 0) > 0;
+  },
+
+  /** Relie une session à la tâche (historique task_sessions ; sans effet si elle l'est déjà). */
+  linkSession: (taskId: string, sessionId: string) => linkSession(pool, taskId, sessionId),
+
+  // ---- Réactions -------------------------------------------------------------------------------
+
+  /** Toutes les réactions d'une tâche (sur ses messages et sur elle-même), les plus anciennes d'abord. */
+  async listReactions(taskId: string): Promise<TaskReaction[]> {
+    const { rows } = await pool.query<ReactionRow>('SELECT * FROM task_reactions WHERE task_id = $1 ORDER BY created_at ASC, id ASC', [taskId]);
+    return rows.map(toReaction);
+  },
+
+  /**
+   * Pose la réaction si l'acteur ne l'a pas encore, la retire sinon. Renvoie la réaction (posée ou retirée) et
+   * ce qui s'est passé.
+   */
+  async toggleReaction(taskId: string, commentId: string | null, emoji: string, actor: { type: Actor['type']; userId?: string | null; sessionId?: string | null; name: string }): Promise<{ reaction: TaskReaction; added: boolean }> {
+    const key = actor.userId ?? actor.sessionId ?? null;
+    const { rows: existing } = await pool.query<ReactionRow>(
+      `SELECT * FROM task_reactions WHERE task_id = $1 AND comment_id IS NOT DISTINCT FROM $2 AND emoji = $3 AND COALESCE(user_id, session_id) = $4`,
+      [taskId, commentId, emoji, key],
+    );
+    if (existing[0]) {
+      await pool.query('DELETE FROM task_reactions WHERE id = $1', [existing[0].id]);
+      return { reaction: toReaction(existing[0]), added: false };
+    }
+    const { rows } = await pool.query<ReactionRow>(
+      `INSERT INTO task_reactions (task_id, comment_id, emoji, actor_type, user_id, session_id, actor_name) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [taskId, commentId, emoji, actor.type, actor.userId ?? null, actor.sessionId ?? null, actor.name],
+    );
+    return { reaction: toReaction(rows[0]), added: true };
+  },
+
+  // ---- Mentions --------------------------------------------------------------------------------
+
+  /** Membres du projet (nom, e-mail) et sessions d'agent non archivées du projet : ce que l'on peut mentionner. */
+  async mentionCandidates(projectId: string): Promise<{ users: { id: string; name: string; email: string }[]; sessions: { id: string; name: string; status: string }[] }> {
+    const [users, sessions] = await Promise.all([
+      pool.query<{ id: string; name: string; email: string }>('SELECT u.id, u.name, u.email FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = $1 ORDER BY u.name ASC', [projectId]),
+      pool.query<{ id: string; name: string; status: string }>(
+        `SELECT id, name, status FROM sessions WHERE project_id = $1 AND archived_at IS NULL AND kind = 'session' ORDER BY (status = 'running') DESC, created_at DESC LIMIT 200`,
+        [projectId],
+      ),
+    ]);
+    return { users: users.rows, sessions: sessions.rows };
   },
 };

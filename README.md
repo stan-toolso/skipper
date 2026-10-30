@@ -200,9 +200,10 @@ backend/
       conditions.ts / expressions.ts / taskFilter.ts  # conditions visuelles, formules, filtres de tâches
       service.ts / triggers.ts / scheduler.ts         # file d'exécutions, déclencheur « tâche créée », planification
     tasks/
-      service.ts               # tâches : création, mise à jour, personnes, champs, commentaires, résumé pour le prompt
-      sessionFeed.ts           # changements et commentaires transmis à la session en charge
-      mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim, comment, pr_list, pr_open, pr_register, pr_update)
+      service.ts               # tâches : création, mise à jour, personnes, champs, fil de discussion (messages, réponses, mentions, réactions), sessions en charge, résumé pour le prompt
+      mentions.ts              # mentions @Nom / @e-mail / @session:<id> : candidats et résolution dans un texte
+      sessionFeed.ts           # changements, messages et réactions transmis aux sessions reliées à la tâche (en charge, passées par la tâche, mentionnées)
+      mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim, release, comment, react, people, pr_list, pr_open, pr_register, pr_update)
       launch.ts                # confier une tâche à un nouvel agent
       api.ts                   # API REST /api/v1/tasks (clés d'API du projet)
     pullRequests/
@@ -498,7 +499,7 @@ conteneur de l'agent.
   `priority` (`low`, `medium`, `high`, `urgent`), `sessionId` (session qui s'en occupe), auteur
   (`human` ou `agent` avec sa session), `dueDate`. Les sessions Claude reçoivent la liste des tâches
   ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,
-  `claim`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
+  `claim`, `comment`, `react`, `people`). `startTaskSession` crée une session dont la consigne est la tâche, l'assigne et la passe en
   cours ; l'agent la passe en `done` quand il a fini. Le serveur MCP `sessions` (voir « Lancer des
   sessions ») lui permet de déléguer du travail à d'autres sessions, chacune dans son dossier.
 
@@ -825,7 +826,7 @@ et tenu à jour par la session en charge), des **étiquettes** libres (filtre de
 des **champs personnalisés** (clé → valeur), des **fichiers joints** (captures collées ou fichiers déposés
 dans la description ou un commentaire ; `WORKSPACES_ROOT/.task-attachments/`, route
 `/api/task-attachments/<tâche>/<id>` ; la session à qui l'on confie la tâche les reçoit avec sa consigne,
-`tasks.get` montre les images) et des **commentaires** (humains ou agents, via l'outil `tasks.comment`).
+`tasks.get` montre les images) et un **fil de discussion** (voir ci-dessous).
 Les **consignes des sessions de tâches** du projet (fiche du projet) sont ajoutées après le texte de la tâche
 dans l'instruction de toute session qui la réalise. Une tâche se **déplace** dans un autre projet (sa session
 et sa branche restent dans l'ancien).
@@ -835,12 +836,52 @@ seule ligne, colonnes que l'on réordonne (glisser l'en-tête), redimensionne (p
 défaut), trie et choisit (bouton « Colonnes », avec flèches pour l'ordre), filtres par colonne sous les en-têtes
 (texte sans accents ni casse, listes pour statut, priorité, échéance, origine, projet) ; la disposition est mémorisée
 dans `localStorage` (`skipper.tasks.table.v1`). Le kanban reste disponible (filtres de la barre d'outils : priorité,
-responsable, rapporteur, étiquette), ainsi que « mes tâches ouvertes » et « voir les annulées » dans les deux vues. La session en charge d'une tâche reçoit les changements faits par d'autres
-(`[Mise à jour de la tâche]`) et les nouveaux commentaires (`[Commentaire sur la tâche]`, qui relancent
-une session terminée) ; son historique de sessions est conservé (`task_sessions`). « Confier à un agent »
+responsable, rapporteur, étiquette), ainsi que « mes tâches ouvertes » et « voir les annulées » dans les deux vues.
+
+**Sessions en charge.** Une tâche peut avoir **plusieurs sessions en charge** à la fois, et une session mener
+**plusieurs tâches** (`task_sessions.in_charge_since`, null pour un simple passage ; `tasks.session_id` reste la
+plus récente des sessions en charge). Prend la charge : « Confier à un agent » (la nouvelle session remplace les
+précédentes, archivées avec le dossier), `tasks.claim`, une tâche **créée par un agent directement en cours ou
+terminée** (son propre travail : rattachée d'office, paramètre `assign_to_me` pour en décider), ou une tâche libre
+qu'un agent passe en cours ou terminée (prise implicite) ; `tasks.release` rend une tâche. Chaque session en charge
+reçoit les changements faits par d'autres (`[Mise à jour de la tâche]`) et les nouveaux commentaires
+(`[Commentaire sur la tâche]`, qui relancent une session terminée) ; l'historique des passages est conservé
+(`task_sessions`). La page d'une session montre toutes ses tâches en charge, et son panneau de droite a **un onglet
+« Tâche » par tâche** (le début du titre sert de libellé quand il y en a plusieurs). API : `Task.session`,
+`Task.sessionsInCharge`, `Session.task`, `Session.tasks`, `UpdateTaskInput.sessionId` (prend la charge, null : plus
+personne) et `releaseSessionIds`. « Confier à un agent »
 montre la consigne envoyée à l'agent et permet de la modifier avant le lancement. Une **API REST**
 (`/api/v1/tasks`, clés `skp_…` créées sur la fiche du projet, haché en base) permet à un outil externe de
 lister et créer des tâches.
+
+### Le fil d'une tâche : une conversation
+
+La fiche d'une tâche (`pages/TaskPage.tsx`) se lit comme un canal de discussion : la description **ouvre le fil**, puis
+viennent les **messages** (table `task_comments`), de personnes ou de sessions d'agent, dans l'ordre ; à droite, ce qui
+décrit la tâche (personnes, dates, étiquettes, champs) et son code. Le composant `components/TaskThread.tsx` (aussi dans
+l'onglet « Tâche » du panneau de droite et dans la modale d'édition, en mode compact) offre, comme un fil Slack :
+
+- des **réponses en fil** sous un message racine (`parent_id`, un seul niveau : une réponse à une réponse rejoint la
+  racine ; le fil se replie au-delà de trois réponses) ;
+- des **réactions** emoji sur un message ou sur la tâche elle-même (table `task_reactions`, une par acteur, emoji et
+  message ; puces « emoji n » en relief quand on en est, sélecteur rapide et emoji libre ; mutation `toggleTaskReaction`) ;
+- des **mentions** : taper « @ » propose les membres du projet et les sessions d'agent non archivées
+  (`Task.mentionables`). Dans le texte, une personne se mentionne par son nom ou son e-mail (`@Alice Martin`,
+  `@alice@example.com`), une session par `@session:<id>` (identifiant complet ou ses 8 premiers caractères) ou par son
+  nom ; la résolution (`tasks/mentions.ts`, sans casse ni accents, alias le plus long) se fait à l'écriture et les
+  mentions sont stockées avec le message (`mentions` jsonb), rendues en pastilles (lien vers la session). Une
+  personne mentionnée reçoit une notification `task.mentioned`, l'auteur d'un message auquel on répond une
+  `task.replied` (lien `/tasks/<id>#comment-<id>`, qui amène au message et le met en relief) ; une **session
+  mentionnée** reçoit le message, est relancée si elle était terminée, et est **reliée à la tâche**.
+
+**Les sessions d'un projet contribuent au fil** avec les outils `tasks.comment` (paramètre `reply_to`), `tasks.react`
+(sur un message ou sur la tâche) et `tasks.people` (qui l'on peut mentionner) ; `tasks.get` montre le fil avec les
+identifiants des messages, les réponses indentées et les réactions. **Toute session reliée à une tâche** (en charge,
+créatrice, passée par la tâche ou mentionnée dans son fil : `task_sessions`) reçoit ses changements
+(`[Mise à jour de la tâche]`), ses messages (`[Commentaire sur la tâche]`) et, pour l'autrice d'un message, les
+réactions qu'il reçoit (`[Réaction sur la tâche]`) ; un message relance la session en charge et les sessions
+mentionnées, les autres sessions reliées ne le reçoivent que si elles tournent (`tasks/sessionFeed.ts`, `feedsFor`).
+Le prompt système d'une session cite la tâche dont elle a la charge et celles auxquelles elle est reliée.
 
 ## Lancer des sessions
 
@@ -1076,7 +1117,8 @@ met à jour le badge de l'icône et ouvre la page concernée au clic. « Tester 
 **Ce que chacun reçoit** se règle dans Paramètres › Notifications (lien « Choisir ce que vous recevez »
 dans la cloche) : les notifications sont regroupées en familles (`backend/src/notifications/preferences.ts`,
 `PUSH_CATEGORIES` : demandes d'un agent, sessions terminées ou en erreur, sessions lancées par un agent,
-tâches, pull requests, planifications, workflows, contexte, pages partagées, ressources des projets et,
+tâches, mentions et réponses dans le fil d'une tâche, pull requests, planifications, workflows, contexte, pages
+partagées, ressources des projets et,
 pour les administrateurs, alertes du serveur et de l'abonnement), chacune activable ou non. Le choix suit
 la personne sur tous ses appareils (`user_settings`, clé `notifications.push`, qui ne garde que les
 familles coupées : une famille ajoutée plus tard est reçue par défaut). Il filtre l'envoi push

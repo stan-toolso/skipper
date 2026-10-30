@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskAttachments from '../components/TaskAttachments';
 import { isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
-import TaskComments from '../components/TaskComments';
+import TaskThread from '../components/TaskThread';
 import TaskModal from '../components/TaskModal';
 import type { Task } from '../graphql/operations';
 import { TASK_DETAIL } from '../graphql/tasks';
@@ -78,9 +78,9 @@ export default function TaskPanel({ taskId }: { taskId: string }) {
           </div>
         </>
       )}
-      <div className="git-subhead">Commentaires ({task.commentCount})</div>
+      <div className="git-subhead">Fil de discussion ({task.commentCount})</div>
       <div className="task-panel-text">
-        <TaskComments taskId={task.id} />
+        <TaskThread taskId={task.id} compact />
       </div>
       <div className="git-subhead">Infos</div>
       <div className="task-panel-text text-secondary">

@@ -13,7 +13,7 @@ const repo = vi.hoisted(() => ({
   }),
 }));
 const tasks = vi.hoisted(() => ({
-  get: vi.fn(async () => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', status: 'todo' })),
+  get: vi.fn(async () => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', status: 'todo', sessionIds: ['s-prev'] })),
   update: vi.fn(async (_id: string, patch: Record<string, unknown>) => ({ id: 't1', projectId: 'p', title: 'Tâche', description: '', ...patch })),
   describeForPrompt: vi.fn(() => 'Réalise la tâche'),
   comments: vi.fn(async () => []),
@@ -82,7 +82,7 @@ describe("mode d'autorisation par défaut du projet", () => {
 
 describe('work session de la tâche', () => {
   it('crée la work session de la tâche à sa première session, nommée d’après son titre', async () => {
-    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title: 'Export CSV des factures', description: '', status: 'todo' });
+    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title: 'Export CSV des factures', description: '', status: 'todo', sessionIds: [] });
     await startTaskSession('t1');
     expect(state.created[0].worksessionId).toBe('w-new');
   });
@@ -94,7 +94,7 @@ describe('work session de la tâche', () => {
     expect(names.label.length).toBeLessThanOrEqual(100);
     expect(names.label.startsWith('Corriger un bug')).toBe(true);
     expect(names.branch).toMatch(/^task\/corriger-un-bug/);
-    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title, description: '', status: 'todo' });
+    tasks.get.mockResolvedValueOnce({ id: 't1', projectId: 'p', title, description: '', status: 'todo', sessionIds: [] });
     await startTaskSession('t1');
     const { worksessionService } = await import('../worksessions/service.js');
     const input = (worksessionService.create as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as { label: string };
