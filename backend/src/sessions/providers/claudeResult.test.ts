@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INTERRUPTED_LABEL, isInterruptedResult, resultError } from './claudeResult.js';
+import { INTERRUPTED_LABEL, isEmptyNotificationResult, isInterruptedResult, resultError } from './claudeResult.js';
 
 // Résultat réel émis par le CLI 2.1.300 après un clic sur « Interrompre » pendant un appel d'outil (24/10/2026).
 const interrupted = {
@@ -41,5 +41,21 @@ describe('resultError', () => {
 
   it('un tour réussi n’a pas d’erreur', () => {
     expect(resultError({ subtype: 'success', is_error: false, result: 'Terminé', terminal_reason: 'completed' })).toBeNull();
+  });
+});
+
+describe('isEmptyNotificationResult', () => {
+  // Résultat réel émis par le CLI 2.1.314 à la reprise d'une session après un redémarrage (30/10/2026).
+  const resumed = { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, duration_ms: 309, origin: { kind: 'task-notification' } };
+
+  it('reconnaît le tour vide ouvert sur une notification de tâche de fond', () => {
+    expect(isEmptyNotificationResult(resumed)).toBe(true);
+  });
+
+  it('ne concerne ni un tour normal ni un tour où le modèle a travaillé sur la notification', () => {
+    expect(isEmptyNotificationResult({ subtype: 'success', num_turns: 0 })).toBe(false);
+    expect(isEmptyNotificationResult({ subtype: 'success', num_turns: 5 })).toBe(false);
+    expect(isEmptyNotificationResult({ ...resumed, num_turns: 2 })).toBe(false);
+    expect(isEmptyNotificationResult({ ...resumed, origin: null })).toBe(false);
   });
 });

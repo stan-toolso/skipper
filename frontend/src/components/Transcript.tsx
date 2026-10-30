@@ -648,6 +648,9 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
           break;
         }
         case 'claude.result': {
+          // Tour vide ouvert par le CLI sur une notification de tâche de fond (à la reprise après un redémarrage) :
+          // il ne répond à aucune instruction, l'afficher « Terminé » ferait croire que le tour est fini.
+          if (!technical && (p.origin as { kind?: unknown } | undefined)?.kind === 'task-notification' && p.num_turns === 0) break;
           // Tour interrompu par l'humain (bouton « Interrompre », Échap) : depuis le CLI 2.1.300, le résultat est marqué
           // en erreur avec un diagnostic interne (`[ede_diagnostic] …`). Ce n'est pas une panne : l'agent attend la suite.
           const interrupted = p.terminal_reason === 'aborted_streaming' || p.terminal_reason === 'aborted_tools';
