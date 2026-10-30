@@ -265,6 +265,18 @@ export function sessionStateHint(status: string, activity: string | null, pendin
   return null;
 }
 
+/**
+ * Puce de la tâche d'une session (sidebar). Une tâche marquée terminée alors que sa session y travaille encore (nouvelle
+ * instruction, finitions après coup) ne s'affiche pas « terminée » mais « reprise » : son étiquette d'état (souvent
+ * « PR #n à fusionner ») ne vaut plus tant que le tour n'est pas fini ; elle reste lisible dans l'infobulle (`note`).
+ */
+export function taskChipOf(task: { status: string; statusTag?: string | null }, session: { status: string; activity: string | null } | null): { text: string; cls: string; tag: string | null; note: string | null } {
+  const working = session != null && (session.status === 'QUEUED' || (session.status === 'RUNNING' && session.activity === 'BUSY'));
+  if (task.status === 'DONE' && working) return { text: 'reprise', cls: 'in_progress', tag: null, note: `marquée terminée${task.statusTag ? ` (« ${task.statusTag} »)` : ''}, mais l'agent y travaille encore` };
+  const text = task.status === 'IN_PROGRESS' ? 'en cours' : task.status === 'DONE' ? 'terminée' : task.status === 'CANCELLED' ? 'annulée' : 'à faire';
+  return { text, cls: task.status.toLowerCase(), tag: task.statusTag ?? null, note: null };
+}
+
 export const taskStatusLabels: Record<string, string> = { TODO: 'À faire', IN_PROGRESS: 'En cours', DONE: 'Terminée', CANCELLED: 'Annulée' };
 export const taskPriorityLabels: Record<string, { label: string; bg: string }> = {
   URGENT: { label: 'Urgente', bg: 'danger' },
