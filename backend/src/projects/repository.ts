@@ -61,6 +61,13 @@ export const projectRepository = {
     return rows[0] ? toProject(rows[0]) : null;
   },
 
+  /** Projets de ces identifiants (chargement groupé par requête GraphQL), sans ordre garanti. */
+  async findByIds(ids: string[]): Promise<Project[]> {
+    if (!ids.length) return [];
+    const { rows } = await pool.query<ProjectRow>('SELECT * FROM projects WHERE id = ANY($1::uuid[])', [ids]);
+    return rows.map(toProject);
+  },
+
   async slugExists(slug: string): Promise<boolean> {
     const { rowCount } = await pool.query('SELECT 1 FROM projects WHERE slug = $1', [slug]);
     return (rowCount ?? 0) > 0;

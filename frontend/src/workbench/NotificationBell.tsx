@@ -1,7 +1,7 @@
-import { useApolloClient, useMutation } from '@apollo/client';
+import { useApolloClient, useMutation, useQuery } from '@apollo/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PUSH_PUBLIC_KEY, SEND_TEST_PUSH, SUBSCRIBE_PUSH, UNSUBSCRIBE_PUSH } from '../graphql/misc';
+import { PUSH_PREFERENCES, PUSH_PUBLIC_KEY, SEND_TEST_PUSH, SUBSCRIBE_PUSH, UNSUBSCRIBE_PUSH, type PushCategory } from '../graphql/misc';
 import { MARK_ALL_NOTIFICATIONS_READ, MARK_NOTIFICATION_READ, NOTIFICATIONS, type AppNotification } from '../graphql/operations';
 import { timeAgo } from '../lib/humanize';
 import { OS_HINTS, osPlatform, pushSupported, subscribePush, unsubscribePush } from '../lib/push';
@@ -13,6 +13,8 @@ const icons: Record<string, string> = {
   'request.created': 'bi-hand-index-thumb',
   'task.created': 'bi-plus-square',
   'task.completed': 'bi-check2-square',
+  'task.mentioned': 'bi-at',
+  'task.replied': 'bi-reply',
   'pull_request.opened': 'bi-git',
   'pull_request.merged': 'bi-check2-circle',
   'pull_request.closed': 'bi-x-circle',
@@ -71,6 +73,9 @@ export default function NotificationBell() {
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [showHint, setShowHint] = useState(false);
   const browserEnabled = pref && permission === 'granted';
+  // Familles coupées dans Paramètres › Notifications : la cloche affiche tout, le navigateur ne montre que le reste.
+  const { data: prefData } = useQuery<{ pushPreferences: PushCategory[] }>(PUSH_PREFERENCES, { skip: !browserEnabled, fetchPolicy: 'cache-and-network' });
+  const mutedTypes = new Set(prefData?.pushPreferences.filter((c) => !c.enabled).flatMap((c) => c.types) ?? []);
   useShortcut({ id: 'notifications.close', keys: ['Escape'], label: 'Fermer les notifications', scope: 'context', area: 'Notifications', preventDefault: false }, () => setOpen(false), open);
 
   // Permission tenue à jour avec les réglages du site et du système.
@@ -133,7 +138,7 @@ export default function NotificationBell() {
         setRing(true);
         setTimeout(() => setRing(false), 1200);
         if (browserEnabled && !document.hasFocus()) {
-          for (const n of fresh.slice(0, 3)) void showLocal(n.title, n.message ?? undefined, `skipper-${n.id}`, n.link);
+          for (const n of fresh.filter((n) => !mutedTypes.has(n.type)).slice(0, 3)) void showLocal(n.title, n.message ?? undefined, `skipper-${n.id}`, n.link);
         }
       }
     }
@@ -270,6 +275,19 @@ export default function NotificationBell() {
               </span>
             )}
             {(showHint || permission === 'denied') && <span className="text-secondary">{hint}</span>}
+            {browserEnabled && (
+              <button
+                type="button"
+                className="align-self-start"
+                onClick={() => {
+                  setOpen(false);
+                  navigate('/settings?section=notifications');
+                }}
+              >
+                <i className="bi bi-sliders me-1" />
+                Choisir ce que vous recevez
+              </button>
+            )}
           </div>
         </div>
       )}
