@@ -28,6 +28,8 @@ import SharedPagePage from './pages/SharedPagePage';
 import WorkflowsPage from './pages/WorkflowsPage';
 import WorkflowPage from './pages/WorkflowPage';
 import WorkflowRunPage from './pages/WorkflowRunPage';
+import ChatsPage from './pages/ChatsPage';
+import PersonalSpaceRedirect from './pages/PersonalSpaceRedirect';
 
 /** Routes des pages ; `location` est celle de l'onglet rendu (figée pour un onglet caché). */
 function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolean }) {
@@ -54,6 +56,9 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/shared/:id" element={<SharedPagePage />} />
       <Route path="/sessions" element={<SessionsPage />} />
       <Route path="/sessions/:id" element={<SessionDetailPage />} />
+      <Route path="/chats" element={<ChatsPage />} />
+      <Route path="/chats/:id" element={<SessionDetailPage />} />
+      <Route path="/me" element={<PersonalSpaceRedirect />} />
       <Route path="/sessions/:id/browser" element={<BrowserPage />} />
       <Route path="/requests" element={<RequestsPage />} />
       <Route path="/terminals/:id" element={<TerminalPage />} />

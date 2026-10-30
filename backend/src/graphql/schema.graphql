@@ -101,6 +101,8 @@ type Project {
   approvalConnections: [String!]!
   "Faux quand l'utilisateur atteint le projet en tant que super administrateur sans en être membre."
   isMember: Boolean!
+  "Espace personnel : projet qui n'appartient qu'à une personne (jamais partagé), où elle ouvre ses sessions, ses chats et ses tâches."
+  isPersonal: Boolean!
   runnerStatus: RunnerStatus!
   "Mémoire, CPU et processus Claude du conteneur (mesurés à la demande) ; null s'il n'est pas en marche."
   containerStats: ContainerStats
@@ -1085,8 +1087,15 @@ type FormerWorksession {
   label: String!
 }
 
+"Session d'agent ordinaire, ou chat : conversation légère d'un espace personnel, sans work session ni conteneur."
+enum SessionKind {
+  SESSION
+  CHAT
+}
+
 type Session {
   id: ID!
+  kind: SessionKind!
   project: Project!
   "Work session où la session s'exécute (null : session d'avant les work sessions, dans le checkout principal, ou work session supprimée)."
   worksession: Worksession
@@ -1939,14 +1948,19 @@ type Query {
   workflowRun(id: ID!): WorkflowRun
   "Problèmes d'un graphe en cours d'édition (avant enregistrement)."
   validateWorkflow(projectId: ID!, definition: JSON!): [WorkflowIssue!]!
-  sessions(projectId: ID, status: SessionStatus, provider: String, ownerId: ID, limit: Int, offset: Int): [Session!]!
+  "Sessions (par défaut : les sessions ordinaires, sans les chats)."
+  sessions(projectId: ID, status: SessionStatus, provider: String, ownerId: ID, kind: SessionKind, limit: Int, offset: Int): [Session!]!
   session(id: ID!): Session
+  "Espace personnel de la personne connectée, créé à la première demande."
+  personalSpace: Project!
+  "Chats de la personne connectée (sessions légères de son espace personnel), les plus récents d'abord."
+  chats(limit: Int): [Session!]!
   "Fichiers modifiés dans le dossier de travail de la session depuis son démarrage."
   sessionChanges(sessionId: ID!): SessionChanges!
   "Diff d'un fichier depuis le démarrage de la session ; origPath pour un renommage."
   sessionFileDiff(sessionId: ID!, path: String!, origPath: String): GitDiff!
-  "Projets dont l'utilisateur est membre ; all : tous les projets, pour un super administrateur (ignoré sinon)."
-  projects(all: Boolean = false): [Project!]!
+  "Projets dont l'utilisateur est membre ; all : tous les projets, pour un super administrateur (ignoré sinon) ; includePersonal : avec son espace personnel."
+  projects(all: Boolean = false, includePersonal: Boolean = false): [Project!]!
   project(id: ID!): Project
   "Demandes, toutes sessions confondues. `status` à null renvoie tout l'historique (par défaut : celles en attente)."
   requests(status: RequestStatus = PENDING, sessionId: ID, limit: Int, newestFirst: Boolean = false): [Request!]!
@@ -2141,6 +2155,8 @@ type Mutation {
   "Supprime le projet et tout ce qui en dépend : sessions, terminaux, work sessions, conteneur, dossier de travail. Irréversible."
   deleteProject(id: ID!): Boolean!
   createSession(input: CreateSessionInput!): Session!
+  "Ouvre un chat dans l'espace personnel avec un premier message (config : permissionMode, model) et le lance aussitôt."
+  createChat(text: String!, attachments: [AttachmentInput!], config: JSON): Session!
   startSession(id: ID!): Session!
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!

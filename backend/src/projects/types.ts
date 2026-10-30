@@ -16,6 +16,8 @@ export interface Project {
   defaultPermissionMode: ProjectPermissionMode;
   /** Consignes ajoutées à l'instruction de toute session qui réalise une tâche du projet, après le texte de la tâche (vide : aucune). */
   taskInstructions: string;
+  /** Espace personnel : la personne à qui il appartient (jamais partagé) ; null pour un projet ordinaire. */
+  personalOwnerId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,7 +32,12 @@ export interface CreateProjectInput {
   runnerConfig?: Record<string, unknown> | null;
   defaultPermissionMode?: string | null;
   taskInstructions?: string | null;
+  /** Espace personnel de cette personne (voir personal/service.ts). */
+  personalOwnerId?: string | null;
 }
+
+/** Un projet est-il l'espace personnel d'une personne ? */
+export const isPersonalProject = (project: Pick<Project, 'personalOwnerId'>): boolean => Boolean(project.personalOwnerId);
 
 export interface UpdateProjectInput {
   name?: string | null;

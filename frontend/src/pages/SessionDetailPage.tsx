@@ -20,6 +20,7 @@ import Transcript from '../components/Transcript';
 import { fileToolResultCount } from '../lib/sessionChanges';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
+import '../components/chat.css';
 import {
   INTERRUPT_SESSION,
   PROVIDERS,
@@ -122,13 +123,15 @@ export default function SessionDetailPage() {
   const session = data?.session;
   const cachedName = useCachedName(SESSION_NAME, 'Session', id);
   useTabTitle(session?.name ?? cachedName);
+  // Chat : conversation légère de l'espace personnel, sans dossier de travail (ni panneau de droite, ni planification).
+  const chat = session?.kind === 'CHAT';
   const archived = Boolean(session?.archivedAt);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
   const changesKey = `${toolResults}:${session?.status}:${session?.activity}`;
   useGitTarget(
-    session
+    session && !chat
       ? {
           projectId: session.project.id,
           worksessionId: session.worksession?.id ?? null,
@@ -201,6 +204,8 @@ export default function SessionDetailPage() {
   const providerFields = providersData?.providers.find((p) => p.type === session.provider)?.configFields ?? [];
   const modelField = providerFields.find((f) => f.key === 'model' && f.type === 'select');
   const permissionField = providerFields.find((f) => f.key === 'permissionMode' && f.type === 'select');
+  // Un chat n'a ni fichiers ni commandes : seuls « demander » et « tout autoriser » ont un sens.
+  const permissionOptions = (permissionField?.options ?? []).filter((o) => !chat || o.value === 'default' || o.value === 'bypassPermissions');
   const bypassWarning = (force = false) => (force || permissionMode === 'bypassPermissions' ? bypassConnectionsWarning(session.project.approvalConnections ?? []) : null);
   const changeSetting = async (field: ConfigField, value: string) => {
     if (field.key === 'permissionMode' && value === 'bypassPermissions') {
@@ -233,10 +238,17 @@ export default function SessionDetailPage() {
     <div className="cc">
       <div className={`cc-header${headerOpen ? ' open' : ''}`}>
         <div className="cc-header-main">
-          <span className="cc-title" title={session.name}>✻ {session.name}</span>
+          <span className="cc-title" title={session.name}>{chat ? <i className="bi bi-chat-left-text-fill cc-chat-icon" /> : '✻ '}{session.name}</span>
           <span className="cc-meta">
             {' '}
-            · <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            ·{' '}
+            {chat ? (
+              <Link to="/chats" className="cc-meta" title="Chat de votre espace personnel : tous vos chats">
+                chat
+              </Link>
+            ) : (
+              <Link to={`/projects/${session.project.id}`} className="cc-meta">{session.project.name}</Link>
+            )}
             {session.worksession && (
               <>
                 {' '}
@@ -449,7 +461,7 @@ export default function SessionDetailPage() {
               <span className="cc-pill-label">{permissionModeShortLabels[permissionMode] ?? (permissionField.options ?? []).find((o) => o.value === permissionMode)?.label ?? permissionMode}</span>
               <i className="bi bi-chevron-down" />
               <select className="cc-select" aria-label="Autorisations" value={permissionMode} disabled={updatingConfig} onChange={(e) => changeSetting(permissionField, e.target.value)}>
-                {(permissionField.options ?? []).map((o) => (
+                {permissionOptions.map((o) => (
                   <option key={o.value} value={o.value} title={o.description ?? undefined}>
                     {permissionModeShortLabels[o.value] ?? o.label}
                   </option>
@@ -468,7 +480,7 @@ export default function SessionDetailPage() {
         </div>
       </div>
       )}
-      {technical && (
+      {technical && !chat && (
         <div className="cc-hint justify-content-end">
           <span title="Dossier de travail de la session">{session.worksession?.path ?? session.project.workspacePath}</span>
         </div>

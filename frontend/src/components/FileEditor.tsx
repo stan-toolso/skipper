@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Spinner } from 'react-bootstrap';
 import CodeMirror from '@uiw/react-codemirror';
-import { EditorView, keymap } from '@codemirror/view';
+import { keymap } from '@codemirror/view';
 import { Prec, type Extension } from '@codemirror/state';
 import { LanguageDescription } from '@codemirror/language';
 import { languages } from '@codemirror/language-data';
@@ -11,34 +11,9 @@ import { fileViewUrl } from '../apollo';
 import { WORKSPACE_FILE, WRITE_WORKSPACE_FILE, type FileContent } from '../graphql/operations';
 import { fileIcon, formatSize, type WorkspaceRef } from '../lib/files';
 import { useTheme } from '../lib/theme';
+import { darkAppTheme, lightAppTheme } from '../lib/codemirrorTheme';
 import PageLoading from './PageLoading';
 import PublishPageModal from './pages/PublishPageModal';
-
-/** Accorde CodeMirror au thème de l'application. */
-const darkAppTheme = EditorView.theme(
-  {
-    '&': { backgroundColor: '#141414', fontSize: '13px', height: '100%' },
-    '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', lineHeight: '1.5' },
-    '.cm-gutters': { backgroundColor: '#141414', borderRight: '1px solid #262626' },
-    '.cm-activeLineGutter': { backgroundColor: '#1a1a1a' },
-    '.cm-activeLine': { backgroundColor: '#1a1a1a' },
-    '&.cm-focused .cm-cursor': { borderLeftColor: '#d97757' },
-    '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(217, 119, 87, 0.3)' },
-  },
-  { dark: true },
-);
-const lightAppTheme = EditorView.theme(
-  {
-    '&': { backgroundColor: '#ffffff', fontSize: '13px', height: '100%' },
-    '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', lineHeight: '1.5' },
-    '.cm-gutters': { backgroundColor: '#f6f7f8', borderRight: '1px solid #d5d9dd', color: '#8a9097' },
-    '.cm-activeLineGutter': { backgroundColor: '#eceef0' },
-    '.cm-activeLine': { backgroundColor: '#f6f7f8' },
-    '&.cm-focused .cm-cursor': { borderLeftColor: '#b85c3a' },
-    '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(184, 92, 58, 0.25)' },
-  },
-  { dark: false },
-);
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 const isHtml = (name: string) => /\.html?$/i.test(name);

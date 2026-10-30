@@ -16,6 +16,8 @@ const icons: Record<TabKind, string> = {
   context: 'bi-journal-text',
   vault: 'bi-shield-lock',
   session: 'bi-chat-dots-fill',
+  chat: 'bi-chat-left-text-fill',
+  chats: 'bi-chat-left-text',
   browser: 'bi-globe2',
   terminal: 'bi-terminal',
   tasks: 'bi-check2-square',

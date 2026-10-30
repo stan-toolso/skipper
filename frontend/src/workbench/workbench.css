@@ -559,6 +559,8 @@
 
 /* ---- Dossiers de travail (projet principal, worksessions) --------------------------------------- */
 .wb-project { margin-bottom: 2px; }
+/* L'espace personnel, en tête de l'explorateur, séparé des projets. */
+.wb-project.wb-personal { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--cc-border); }
 .wb-ws { margin: 2px 8px 4px 10px; border: 1px solid transparent; border-radius: 6px; }
 .wb-ws.active { border-color: var(--cc-border); background: var(--cc-bg-elevated); }
 .wb-ws-head { display: flex; align-items: center; gap: 4px; padding: 3px 6px 3px 8px; }

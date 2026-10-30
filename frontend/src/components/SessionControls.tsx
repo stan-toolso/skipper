@@ -41,14 +41,18 @@ export function useSessionActions(session: ControlledSession | null | undefined)
   const running = session.status === 'RUNNING';
   const busy = running && session.activity === 'BUSY';
   const schedule = session.schedule;
+  // Chat (espace personnel) : pas de planification, et pas d'archive — on le supprime directement.
+  const chat = session.kind === 'CHAT';
   const buttons = (
     <>
       <button type="button" className="cc-btn" title="Nom de la session et nettoyage automatique de l'historique" onClick={openSettings}>
         <i className="bi bi-gear" /> Réglages
       </button>
-      <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={openSchedule}>
-        <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
-      </button>
+      {!chat && (
+        <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={openSchedule}>
+          <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
+        </button>
+      )}
       {schedule && !busy && (
         <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
           Exécuter maintenant
@@ -88,11 +92,13 @@ export function useSessionActions(session: ControlledSession | null | undefined)
       <button type="button" className="cc-btn" title="Repart d'une nouvelle session avec un résumé de celle-ci" onClick={() => setRelaunching(true)}>
         <i className="bi bi-arrow-repeat" /> Relancer
       </button>
-      {archived ? (
+      {archived || chat ? (
         <>
-          <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
-            Restaurer
-          </button>
+          {archived && (
+            <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
+              Restaurer
+            </button>
+          )}
           <button type="button" className="cc-btn danger" onClick={() => void deleteSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null })}>
             Supprimer
           </button>

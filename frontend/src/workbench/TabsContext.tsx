@@ -15,6 +15,8 @@ export type TabKind =
   | 'context'
   | 'vault'
   | 'session'
+  | 'chat'
+  | 'chats'
   | 'browser'
   | 'terminal'
   | 'tasks'
@@ -94,6 +96,9 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/users') return { title: 'Utilisateurs', kind: 'users' };
   if (/^\/projects\/[^/]+$/.test(pathname)) return { title: 'Projet', kind: 'project' };
   if (pathname === '/sessions') return { title: 'Sessions', kind: 'sessions' };
+  if (pathname === '/chats') return { title: 'Chats', kind: 'chats' };
+  if (/^\/chats\/[^/]+$/.test(pathname)) return { title: 'Chat', kind: 'chat' };
+  if (pathname === '/me') return { title: 'Mon espace', kind: 'project' };
   if (/^\/sessions\/[^/]+$/.test(pathname)) return { title: 'Session', kind: 'session' };
   if (/^\/sessions\/[^/]+\/browser$/.test(pathname)) return { title: 'Navigateur', kind: 'browser' };
   if (pathname === '/requests') return { title: 'Demandes', kind: 'requests' };

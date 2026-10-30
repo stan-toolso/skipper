@@ -1,0 +1,30 @@
+/* Zone de départ d'un chat (tableau de bord, liste des chats) et liste des chats. Couleurs par variables --cc-*. */
+
+.chat-composer { position: relative; margin: 0 0 20px; padding: 18px 16px 14px; border: 1px solid var(--cc-border); border-radius: 10px; background: var(--cc-bg-elevated); }
+.chat-composer.with-greeting { padding-top: 28px; }
+.chat-composer-all { position: absolute; top: 12px; right: 14px; font-size: 13px; color: var(--cc-dim); text-decoration: none; }
+.chat-composer-all:hover { color: var(--cc-accent); }
+.chat-composer-greeting { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 18px; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.chat-composer-box { margin: 0 auto; max-width: 860px; border-radius: 16px; background: var(--cc-bg); }
+.chat-composer-box textarea { min-height: 28px; }
+.chat-composer-spacer { flex: 1; }
+.chat-composer-error { max-width: 860px; margin: 8px auto 0; font-size: 13px; color: var(--cc-red); }
+.chat-composer-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+.chat-composer-chip {
+  border: 1px solid var(--cc-border); border-radius: 999px; background: var(--cc-bg); color: var(--cc-fg);
+  padding: 6px 14px; font-size: 13px; cursor: pointer; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-composer-chip:hover { border-color: var(--cc-dim); background: var(--cc-bg-hover); }
+
+/* Page de chat : l'en-tête ne montre pas de dossier de travail. */
+.cc-chat-icon { color: var(--cc-accent); margin-right: 4px; }
+
+@media (max-width: 767.98px) {
+  .chat-composer { padding: 14px 10px 12px; }
+  .chat-composer.with-greeting { padding-top: 36px; }
+  .chat-composer-greeting { font-size: 20px; }
+  .chat-composer-all { top: 10px; right: 10px; }
+  .chat-composer-suggestions { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: -10px; margin-right: -10px; padding: 0 10px; }
+  .chat-composer-suggestions::-webkit-scrollbar { display: none; }
+  .chat-composer-chip { flex: 0 0 auto; }
+}

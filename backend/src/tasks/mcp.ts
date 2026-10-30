@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { inScope, targetProject, withProjectParam, type ProjectScope } from '../personal/scope.js';
 import type { Project } from '../projects/types.js';
 import { describeAttachments, imageBlocks, type McpContent } from './attachments.js';
 import { describeComment, formatPerson, statusTagText, taskService } from './service.js';
@@ -32,8 +33,12 @@ const fieldSchema = z.object({ key: z.string(), value: z.string() });
 const tagsSchema = z.array(z.string()).optional();
 const personSchema = z.object({ name: z.string().optional(), email: z.string().optional() }).nullable();
 
-/** Serveur MCP in-process : gestion des tâches du projet par une session d'agent. */
-export function createTasksMcpServer(project: Project, sessionId: string, sessionName?: string): McpSdkServerConfigWithInstance {
+/**
+ * Serveur MCP in-process : gestion des tâches du projet par une session d'agent. Avec une portée (session d'un
+ * espace personnel), `list` et `create` acceptent un paramètre `project`, et les autres outils atteignent les
+ * tâches de tous les projets de la personne.
+ */
+export function createTasksMcpServer(project: Project, sessionId: string, sessionName?: string, scope?: ProjectScope): McpSdkServerConfigWithInstance {
   const actor: TaskActor = { type: 'agent', sessionId, name: sessionName ?? null };
   const run = async (fn: () => Promise<string>) => {
     try {
@@ -42,36 +47,42 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       return failure(`Erreur : ${(err as Error).message}`);
     }
   };
-  const own = async (id: string) => {
-    const t = await taskService.get(id);
-    if (t.projectId !== project.id) throw new Error('Tâche introuvable dans ce projet');
+  /** Tâche atteignable : dans le projet de la session, ou dans l'un des projets de la portée (écriture : rôle membre). */
+  const own = async (id: string, opts: { write?: boolean } = { write: true }) => {
+    const t = await taskService.get(id).catch(() => null);
+    if (!t || !(await inScope(project, scope, t.projectId, opts))) throw new Error(scope ? 'Tâche introuvable dans tes projets' : 'Tâche introuvable dans ce projet');
     return t;
   };
+  const where = scope ? ' (par défaut ton espace personnel ; project : un de tes projets)' : '';
 
   return createSdkMcpServer({
     name: 'tasks',
     version: '1.0.0',
-    instructions: `Tableau de tâches du projet "${project.name}". Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard.`,
+    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard.`,
     tools: [
       tool(
         'list',
-        'Liste les tâches du projet (par défaut : ouvertes, triées par priorité).',
-        {
-          status: z.array(statusSchema).optional().describe('Filtre par statuts ; défaut : todo et in_progress'),
-          priority: prioritySchema.optional(),
-          assignee: z.string().optional().describe("Texte contenu dans le nom ou l'e-mail du responsable"),
-          tag: z.string().optional().describe('Tâches portant cette étiquette'),
-        },
-        async ({ status, priority, assignee, tag }) =>
+        `Liste les tâches du projet${where} (par défaut : ouvertes, triées par priorité).`,
+        withProjectParam(
+          {
+            status: z.array(statusSchema).optional().describe('Filtre par statuts ; défaut : todo et in_progress'),
+            priority: prioritySchema.optional(),
+            assignee: z.string().optional().describe("Texte contenu dans le nom ou l'e-mail du responsable"),
+            tag: z.string().optional().describe('Tâches portant cette étiquette'),
+          },
+          scope,
+        ),
+        async ({ status, priority, assignee, tag, project: ref }) =>
           run(async () => {
-            const tasks = await taskService.list({ projectId: project.id, status: (status as Task['status'][] | undefined) ?? ['todo', 'in_progress'], priority: priority as Task['priority'] | undefined, assignee, tag: tag?.trim() || undefined });
+            const p = await targetProject(project, scope, ref);
+            const tasks = await taskService.list({ projectId: p.id, status: (status as Task['status'][] | undefined) ?? ['todo', 'in_progress'], priority: priority as Task['priority'] | undefined, assignee, tag: tag?.trim() || undefined });
             return tasks.length ? tasks.map((t) => line(t, sessionId)).join('\n') : 'Aucune tâche.';
           }),
       ),
       tool("get", "Détail d'une tâche : description, personnes, champs personnalisés, commentaires et fichiers joints (les images sont montrées).", { id: z.string() }, async ({ id }) => {
         // Les images jointes à la tâche ou à ses commentaires suivent le texte, en blocs image, dans l'ordre où elles sont nommées.
         try {
-          const t = await own(id);
+          const t = await own(id, { write: false });
           const [comments, attachments] = await Promise.all([taskService.comments(id), taskService.attachments(id)]);
           const content: McpContent[] = [{ type: 'text', text: `${line(t, sessionId)}\n\n${detail(t, comments, attachments)}` }, ...(await imageBlocks([...attachments.filter((a) => !a.commentId), ...attachments.filter((a) => a.commentId)]))];
           return { content };
@@ -81,8 +92,8 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       }),
       tool(
         'create',
-        'Crée une tâche dans le projet.',
-        {
+        `Crée une tâche dans le projet${where}.`,
+        withProjectParam({
           title: z.string().describe('Titre court et actionnable'),
           description: z.string().optional().describe('Contexte, critères de réussite, pistes'),
           priority: prioritySchema.optional().describe('Défaut : medium'),
@@ -93,11 +104,12 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
           status_tag: z.string().optional().describe('Court libellé de l\'avancement dans le statut (« bloquée », « en revue »…)'),
           assignee: personSchema.optional().describe('Responsable : nom et/ou e-mail'),
           reporter: personSchema.optional().describe('Rapporteur : nom et/ou e-mail'),
-        },
-        async ({ title, description, priority, status, due_date, custom_fields, tags, status_tag, assignee, reporter }) =>
+        }, scope),
+        async ({ title, description, priority, status, due_date, custom_fields, tags, status_tag, assignee, reporter, project: ref }) =>
           run(async () => {
+            const p = await targetProject(project, scope, ref, { write: true });
             const t = await taskService.create(
-              project.id,
+              p.id,
               { title, description, priority: priority as Task['priority'] | undefined, status: status as Task['status'] | undefined, dueDate: due_date, customFields: custom_fields, tags, statusTag: status_tag, assignee, reporter },
               actor,
             );
