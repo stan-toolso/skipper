@@ -48,7 +48,7 @@ les copie de l'ancien `.env` vers le nouveau, de machine à machine.
 | Backend | service systemd `skipper` (`journalctl -u skipper`), port 4100 |
 | Base | PostgreSQL 17 local, `DATABASE_URL` dans `/etc/skipper/db.env` ; réglages `/etc/postgresql/17/main/conf.d/skipper.conf` |
 | Sauvegardes | pgBackRest (`/etc/pgbackrest/pgbackrest.conf`, complète le dimanche, différentielle les autres jours, WAL en continu) et restic (`/etc/skipper/restic.env`, 3 h 30) vers `s3://<bucket>/<hôte>/` ; phrases secrètes dans `/etc/skipper/` **à copier hors de la machine** |
-| nginx | `/etc/nginx/sites-available/skipper` (modèle `templates/nginx-site.conf`), TLS Let's Encrypt |
+| nginx | `/etc/nginx/sites-available/skipper` (modèle `templates/nginx-site.conf` : compression gzip des bundles et du JSON), TLS Let's Encrypt, HTTP/2 ajouté par bootstrap.sh aux écoutes TLS de certbot |
 | Docker | `/etc/docker/daemon.json` : `icc=false` (les conteneurs de projets ne se voient pas), `no-new-privileges`, `live-restore` (les conteneurs survivent au redémarrage du démon), journaux bornés |
 
 ## Mettre à jour

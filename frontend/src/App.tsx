@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Spinner } from 'react-bootstrap';
 import { Navigate, Route, Routes, type Location } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
@@ -5,36 +6,42 @@ import Layout from './components/Layout';
 import { DialogProvider } from './components/Dialogs';
 import TabPages from './workbench/TabPages';
 import ProjectsPage from './pages/ProjectsPage';
-import ProjectFormPage from './pages/ProjectFormPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
-import ContextPage from './pages/ContextPage';
 import LoginPage from './pages/LoginPage';
 import SessionsPage from './pages/SessionsPage';
 import SessionDetailPage from './pages/SessionDetailPage';
-import SessionHistoryPage from './pages/SessionHistoryPage';
-import BrowserPage from './pages/BrowserPage';
 import RequestsPage from './pages/RequestsPage';
-import TerminalPage from './pages/TerminalPage';
 import DashboardPage from './pages/DashboardPage';
 import TasksPage from './pages/TasksPage';
 import TaskPage from './pages/TaskPage';
-import SettingsPage from './pages/SettingsPage';
-import UsersPage from './pages/UsersPage';
-import FilesPage from './pages/FilesPage';
-import VaultPage from './pages/VaultPage';
-import ProjectVaultPage from './pages/ProjectVaultPage';
-import SharedPagesPage from './pages/SharedPagesPage';
-import SharedPagePage from './pages/SharedPagePage';
-import WorkflowsPage from './pages/WorkflowsPage';
-import WorkflowPage from './pages/WorkflowPage';
-import WorkflowRunPage from './pages/WorkflowRunPage';
-import ChatsPage from './pages/ChatsPage';
 import PersonalSpaceRedirect from './pages/PersonalSpaceRedirect';
+import PageLoading from './components/PageLoading';
+
+// Pages chargées à la demande (découpage du bundle) : éditeurs CodeMirror (fichiers, contexte), terminal xterm,
+// graphe des workflows (xyflow, dagre) et pages rarement ouvertes restent hors du bundle principal, que
+// l'application analyse et compile à chaque démarrage. Le service worker les précache après coup.
+const ProjectFormPage = lazy(() => import('./pages/ProjectFormPage'));
+const ContextPage = lazy(() => import('./pages/ContextPage'));
+const SessionHistoryPage = lazy(() => import('./pages/SessionHistoryPage'));
+const BrowserPage = lazy(() => import('./pages/BrowserPage'));
+const TerminalPage = lazy(() => import('./pages/TerminalPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const FilesPage = lazy(() => import('./pages/FilesPage'));
+const VaultPage = lazy(() => import('./pages/VaultPage'));
+const ProjectVaultPage = lazy(() => import('./pages/ProjectVaultPage'));
+const SharedPagesPage = lazy(() => import('./pages/SharedPagesPage'));
+const SharedPagePage = lazy(() => import('./pages/SharedPagePage'));
+const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'));
+const WorkflowPage = lazy(() => import('./pages/WorkflowPage'));
+const WorkflowRunPage = lazy(() => import('./pages/WorkflowRunPage'));
+const ChatsPage = lazy(() => import('./pages/ChatsPage'));
 
 /** Routes des pages ; `location` est celle de l'onglet rendu (figée pour un onglet caché). */
 function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolean }) {
   return (
-    <Routes location={location}>
+    <Suspense fallback={<PageLoading className="p-3" />}>
+      <Routes location={location}>
       <Route path="/" element={<DashboardPage />} />
       <Route path="/projects" element={<ProjectsPage />} />
       <Route path="/projects/new" element={<ProjectFormPage />} />
@@ -71,7 +78,8 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/worktrees/*" element={<Navigate to="/" replace />} />
       <Route path="/worksessions/*" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }
 
