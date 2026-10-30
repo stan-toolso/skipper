@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestNote, requestTitle, sessionStateHint, suggestedRules, timeAgo } from './humanize';
+import { clockTime, dayLabel, describeTool, editableRules, formatCost, formatDuration, generalizeBashRule, parseRuleLines, requestNote, requestTitle, sessionStateHint, suggestedRules, taskChipOf, timeAgo } from './humanize';
 
 describe('describeTool', () => {
   it('décrit une commande Bash et tronque une longue commande dans la demande', () => {
@@ -141,5 +141,20 @@ describe('requestNote', () => {
     expect(requestNote('Un motif à part', 'select 1', 'contenu')).toBe('Un motif à part');
     expect(requestNote(null, cmd)).toBeUndefined();
     expect(requestNote('', undefined)).toBeUndefined();
+  });
+});
+
+describe('taskChipOf', () => {
+  it("n'affiche pas « terminée » quand la session travaille encore sur la tâche", () => {
+    const task = { status: 'DONE', statusTag: 'PR #80 à fusionner' };
+    expect(taskChipOf(task, { status: 'RUNNING', activity: 'BUSY' })).toEqual({ text: 'reprise', cls: 'in_progress', tag: null, note: "marquée terminée (« PR #80 à fusionner »), mais l'agent y travaille encore" });
+    expect(taskChipOf(task, { status: 'QUEUED', activity: null }).text).toBe('reprise');
+  });
+
+  it('garde le statut et l’étiquette sinon', () => {
+    const task = { status: 'DONE', statusTag: 'PR #80 à fusionner' };
+    expect(taskChipOf(task, { status: 'RUNNING', activity: 'IDLE' })).toEqual({ text: 'terminée', cls: 'done', tag: 'PR #80 à fusionner', note: null });
+    expect(taskChipOf(task, null).text).toBe('terminée');
+    expect(taskChipOf({ status: 'IN_PROGRESS', statusTag: null }, { status: 'RUNNING', activity: 'BUSY' })).toMatchObject({ text: 'en cours', cls: 'in_progress' });
   });
 });
