@@ -9,35 +9,24 @@ import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
-import { useDeletions } from '../workbench/useDeletions';
-import RelaunchModal from '../components/RelaunchModal';
-import { UNARCHIVE_SESSION } from '../graphql/sessions';
 import { useAuth } from '../auth/AuthContext';
 
-import { bypassConnectionsWarning, permissionModeLabels, permissionModeShortLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
-import { sessionDotClass } from '../workbench/WorkspaceTabs';
+import { bypassConnectionsWarning, permissionModeLabels, permissionModeShortLabels, sessionStatusLabels } from '../lib/humanize';
 import AttachmentChips from '../components/AttachmentChips';
 import RequestPrompt from '../components/RequestPrompt';
-import ScheduleModal from '../components/ScheduleModal';
-import SessionSettingsModal from '../components/SessionSettingsModal';
+import { SessionChildren, SessionParentNote, parentStateHint, useSessionActions } from '../components/SessionControls';
 import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript from '../components/Transcript';
-import SessionChanges from '../components/SessionChanges';
 import { fileToolResultCount } from '../lib/sessionChanges';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import '../components/terminal.css';
 import '../components/chat.css';
 import {
-  END_SESSION,
   INTERRUPT_SESSION,
-  RESUME_SESSION,
   PROVIDERS,
-  RUN_SESSION_SCHEDULE_NOW,
   SEND_SESSION_MESSAGE,
   SESSION,
-  SESSION_CHANGES,
   SESSION_NAME,
-  STOP_SESSION,
   UPDATE_SESSION_CONFIG,
   type ChildSession,
   type ConfigField,
@@ -66,31 +55,19 @@ const writeDraft = (id: string, value: string) => {
     /* ignore */
   }
 };
-const TAB_KEY = 'skipper.session.tab';
-type PageTab = 'conversation' | 'changes';
-
 /** Page de session : transcript et saisie d'instructions, à la manière de Claude Code. */
 export default function SessionDetailPage() {
   const { id = '' } = useParams();
   const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
   const { events, loaded: eventsLoaded, draft } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
-  const [interruptSession, { error: interruptError }] = useMutation(INTERRUPT_SESSION);
-  const [resumeSession, { loading: resuming, error: resumeError }] = useMutation(RESUME_SESSION);
-  const [endSession, { error: endError }] = useMutation(END_SESSION);
-  const [stopSession, { error: stopError }] = useMutation(STOP_SESSION);
-  const { confirm } = useDialogs();
-  const { archiveSession, deleteSession } = useDeletions();
+  const [interruptSession] = useMutation(INTERRUPT_SESSION, { onError: (err) => void showError(err) });
+  const { confirm, showError } = useDialogs();
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
-  const [runScheduleNow, { error: runScheduleError }] = useMutation(RUN_SESSION_SCHEDULE_NOW);
-  const [scheduling, setScheduling] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [relaunching, setRelaunching] = useState(false);
-  // Mobile : l'en-tête ne montre que le nom et la jauge ; un bouton déplie le détail et les actions.
+  // L'en-tête tient sur une ligne (nom, détail tronqué, jauge) ; un chevron déplie le détail complet, les actions et les sous-agents.
   const [headerOpen, setHeaderOpen] = useState(false);
   const { user } = useAuth();
-  const [unarchiveSession, { error: unarchiveError }] = useMutation(UNARCHIVE_SESSION, { refetchQueries: ['Sidebar'] });
 
   // Brouillon conservé par session dans ce navigateur : fermer l'onglet ne perd pas une instruction en cours de rédaction.
   const [text, setTextState] = useState(() => readDraft(id));
@@ -117,24 +94,8 @@ export default function SessionDetailPage() {
       return !v;
     });
   };
-  const [tab, setTab] = useState<PageTab>(() => {
-    try {
-      return localStorage.getItem(TAB_KEY) === 'changes' ? 'changes' : 'conversation';
-    } catch {
-      return 'conversation';
-    }
-  });
-  const selectTab = (next: PageTab) => {
-    setTab(next);
-    try {
-      localStorage.setItem(TAB_KEY, next);
-    } catch {
-      /* ignore */
-    }
-  };
-  // Onglet « Modifications » : la liste est rechargée après chaque résultat d'un outil qui modifie des fichiers
-  // (Edit, Write, Bash...) et à chaque changement d'état de la session (fin de tour d'un agent sans outils).
-  const changesQ = useQuery<{ sessionChanges: SessionChangesData }>(SESSION_CHANGES, { variables: { sessionId: id }, fetchPolicy: 'cache-and-network' });
+  // Onglet « Modifications » du panneau de droite : sa liste est rechargée après chaque résultat d'un outil qui modifie
+  // des fichiers (Edit, Write, Bash...) et à chaque changement d'état de la session (fin de tour d'un agent sans outils).
   const toolResults = useMemo(() => fileToolResultCount(events), [events]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Instructions déjà envoyées, dans l'ordre, sans doublons consécutifs : parcourues avec flèche haut / bas, comme dans Claude Code.
@@ -162,28 +123,26 @@ export default function SessionDetailPage() {
   const session = data?.session;
   const cachedName = useCachedName(SESSION_NAME, 'Session', id);
   useTabTitle(session?.name ?? cachedName);
-  // Chat : conversation légère de l'espace personnel, sans dossier de travail (ni panneau git, ni onglet Modifications, ni planification).
+  // Chat : conversation légère de l'espace personnel, sans dossier de travail (ni panneau de droite, ni planification).
   const chat = session?.kind === 'CHAT';
-  useGitTarget(session && !chat ? { projectId: session.project.id, worksessionId: session.worksession?.id ?? null, label: session.worksession ? `${session.project.name} · ${session.worksession.label}` : session.project.name, taskId: session.task?.id ?? null } : null);
   const archived = Boolean(session?.archivedAt);
   const running = session?.status === 'RUNNING';
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
   const changesKey = `${toolResults}:${session?.status}:${session?.activity}`;
-  const [refreshCount, setRefreshCount] = useState(0);
-  const refetchChanges = changesQ.refetch;
-  const firstKey = useRef(changesKey);
-  useEffect(() => {
-    if (changesKey === firstKey.current) return;
-    firstKey.current = changesKey;
-    void refetchChanges().catch(() => undefined);
-    setRefreshCount((n) => n + 1);
-  }, [changesKey, refetchChanges]);
-  const refreshChanges = () => {
-    void refetchChanges().catch(() => undefined);
-    setRefreshCount((n) => n + 1);
-  };
-  const changedFiles = changesQ.data?.sessionChanges.files.length ?? 0;
+  useGitTarget(
+    session && !chat
+      ? {
+          projectId: session.project.id,
+          worksessionId: session.worksession?.id ?? null,
+          label: session.worksession ? `${session.project.name} · ${session.worksession.label}` : session.project.name,
+          taskId: session.task?.id ?? null,
+          sessionId: session.id,
+          changesKey,
+        }
+      : null,
+  );
+  const actions = useSessionActions(session);
 
   // Focus dans la zone de saisie à l'ouverture, sauf sur mobile (le clavier virtuel masquerait la page).
   useEffect(() => {
@@ -236,9 +195,9 @@ export default function SessionDetailPage() {
   if (error) return <Alert variant="danger">Erreur : {error.message}</Alert>;
   if (!session) return <Alert variant="warning">Session introuvable.</Alert>;
 
-  const actionError = sendError ?? resumeError ?? interruptError ?? endError ?? stopError ?? configError ?? runScheduleError ?? unarchiveError;
+  const actionError = sendError ?? configError;
   const schedule = session.schedule;
-  const parentHint = session.parentSession ? (sessionStateHint(session.parentSession.status, session.parentSession.activity, 0) ?? sessionStatusLabels[session.parentSession.status]?.toLowerCase() ?? null) : null;
+  const parentHint = session.parentSession ? parentStateHint(session.parentSession) : null;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';
   // Réglages modifiables en cours de route : les champs à choix du provider (modèle, autorisations pour Claude).
@@ -279,7 +238,7 @@ export default function SessionDetailPage() {
     <div className="cc">
       <div className={`cc-header${headerOpen ? ' open' : ''}`}>
         <div className="cc-header-main">
-          <span className="cc-title">{chat ? <i className="bi bi-chat-left-text-fill cc-chat-icon" /> : '✻ '}{session.name}</span>
+          <span className="cc-title" title={session.name}>{chat ? <i className="bi bi-chat-left-text-fill cc-chat-icon" /> : '✻ '}{session.name}</span>
           <span className="cc-meta">
             {' '}
             ·{' '}
@@ -314,15 +273,27 @@ export default function SessionDetailPage() {
                 · <Link to={`/tasks/${session.task.id}`} className="cc-meta" title="Tâche liée"><i className="bi bi-check2-square" /> {session.task.title}</Link>
               </>
             )}
+            {session.parentSession && (
+              <>
+                {' '}
+                · <Link to={`/sessions/${session.parentSession.id}`} className="cc-meta" title={`Sous-agent : lancée par l'agent de la session « ${session.parentSession.name} »${parentHint ? ` (${parentHint})` : ''}`}><i className="bi bi-robot" /> sous-agent de « {session.parentSession.name} »</Link>
+              </>
+            )}
+            {session.childSessions.length > 0 && (
+              <>
+                {' '}
+                · <button type="button" className="cc-link" title="Sous-agents : sessions lancées par l'agent de cette session (déplier pour les voir)" onClick={() => setHeaderOpen(true)}><i className="bi bi-robot" /> {session.childSessions.length > 1 ? `${session.childSessions.length} sous-agents` : '1 sous-agent'}</button>
+              </>
+            )}
             {archived && <> · <span className="cc-yellow">archivée</span></>}
           </span>
           {session.context.tokens !== null && (
             <span className="cc-header-gauge">
               <span className="cc-sep"> · </span>
-              <ContextGauge context={session.context} onClick={() => setSettingsOpen(true)} />
+              <ContextGauge context={session.context} onClick={actions.openSettings} />
             </span>
           )}
-          <span className="cc-meta">
+          <span className="cc-meta cc-meta-more">
             {session.workflowRun && (
               <>
                 {' '}
@@ -336,7 +307,7 @@ export default function SessionDetailPage() {
               <>
                 {' '}
                 ·{' '}
-                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={() => setScheduling(true)}>
+                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={actions.openSchedule}>
                   <i className="bi bi-alarm" />{' '}
                   {schedule.enabled ? (schedule.nextRunAt ? `prochaine exécution le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'planification désactivée'}
                 </button>
@@ -351,169 +322,28 @@ export default function SessionDetailPage() {
             )}
           </span>
         </div>
-        <button type="button" className="cc-header-toggle" aria-expanded={headerOpen} title={headerOpen ? 'Replier le détail de la session' : 'Détail et actions de la session'} onClick={() => setHeaderOpen((v) => !v)}>
+        <button type="button" className="cc-header-toggle" aria-expanded={headerOpen} title={headerOpen ? 'Replier le détail de la session' : 'Détail et actions de la session (aussi dans le panneau de droite)'} onClick={() => setHeaderOpen((v) => !v)}>
           <i className={`bi bi-chevron-${headerOpen ? 'up' : 'down'}`} />
         </button>
-        <div className="cc-actions">
-          <button type="button" className="cc-btn" title="Nom de la session et nettoyage automatique de l'historique" onClick={() => setSettingsOpen(true)}>
-            <i className="bi bi-gear" /> Réglages
-          </button>
-          {!chat && (
-            <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={() => setScheduling(true)}>
-              <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
-            </button>
-          )}
-          {schedule && !busy && (
-            <button type="button" className="cc-btn" title="Exécute la planification maintenant, sans attendre l'échéance" onClick={() => runScheduleNow({ variables: { id } })}>
-              Exécuter maintenant
-            </button>
-          )}
-          {session?.status === 'INTERRUPTED' && (
-            <button
-              type="button"
-              className="cc-btn accent"
-              disabled={resuming}
-              title={session.activity === 'BUSY' ? "L'agent reprend le travail coupé par le redémarrage du serveur" : "Rouvre la conversation ; l'agent attend votre prochaine instruction"}
-              onClick={() => void resumeSession({ variables: { id } }).catch(() => undefined)}
-            >
-              <i className="bi bi-play-fill" /> Reprendre
-            </button>
-          )}
-          {session.status === 'QUEUED' && (
-            <button type="button" className="cc-btn danger" title="La session ne démarrera pas ; un message la remettra en file si la limite est encore atteinte" onClick={() => stopSession({ variables: { id } })}>
-              Retirer de la file
-            </button>
-          )}
-          {busy && (
-            <button type="button" className="cc-btn" title="Arrête ce que l'agent est en train de faire ; la session reste ouverte" onClick={() => interruptSession({ variables: { id } })}>
-              Interrompre
-            </button>
-          )}
-          {running && (
-            <button type="button" className="cc-btn accent" title="L'agent finit ce qu'il fait, puis la session se termine" onClick={() => endSession({ variables: { id } })}>
-              Terminer la session
-            </button>
-          )}
-          {running && (
-            <button type="button" className="cc-btn danger" title="Arrêt immédiat, sans attendre" onClick={() => stopSession({ variables: { id } })}>
-              Arrêter
-            </button>
-          )}
-          <button type="button" className="cc-btn" title="Repart d'une nouvelle session avec un résumé de celle-ci" onClick={() => setRelaunching(true)}>
-            <i className="bi bi-arrow-repeat" /> Relancer
-          </button>
-          {archived || chat ? (
-            <>
-              {archived && (
-                <button type="button" className="cc-btn accent" title="Remet la session parmi les sessions actives" onClick={() => unarchiveSession({ variables: { id } })}>
-                  Restaurer
-                </button>
-              )}
-              <button
-                type="button"
-                className="cc-btn danger"
-                onClick={async () => {
-                  await deleteSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null });
-                }}
-              >
-                Supprimer
-              </button>
-            </>
-          ) : (
-            <button type="button" className="cc-btn" title="La session quitte la barre latérale ; elle reste consultable et relançable depuis l'historique du projet" onClick={() => void archiveSession({ id, name: session.name, worksessionId: session.worksession?.id ?? null })}>
-              <i className="bi bi-archive" /> Archiver
-            </button>
-          )}
-        </div>
       </div>
-
-      {session.parentSession && (
-        <div className="cc-subagent">
-          <i className="bi bi-robot cc-subagent-icon" />
-          <span className="cc-subagent-text">
-            <strong>Sous-agent</strong> · cette session a été lancée par l'agent de la session{' '}
-            <Link to={`/sessions/${session.parentSession.id}`}>« {session.parentSession.name} »</Link>
-            {parentHint && <span className="cc-dim"> ({parentHint})</span>}, pas par une personne.
-          </span>
-          <Link to={`/sessions/${session.parentSession.id}`} className="cc-btn" title="Ouvrir la session parente">
-            <i className="bi bi-box-arrow-up-left" /> Session parente
-          </Link>
-        </div>
-      )}
-      {session.childSessions.length > 0 && (
-        <div className="cc-children" title="Sous-agents : sessions lancées par l'agent de cette session (outil sessions.create)">
-          <span className="cc-children-title">
-            <i className="bi bi-robot" /> {session.childSessions.length > 1 ? `${session.childSessions.length} sous-agents` : '1 sous-agent'}
-          </span>
-          {session.childSessions.map((c) => {
-            const hint = sessionStateHint(c.status, c.activity, c.pendingRequestCount) ?? (c.archivedAt ? 'archivée' : sessionStatusLabels[c.status]?.toLowerCase());
-            return (
-              <span key={c.id} className="cc-child">
-                <span className={`wb-dot ${sessionDotClass(c)}`} />
-                <Link to={`/sessions/${c.id}`} className="cc-child-name" title={`Ouvrir « ${c.name} »`}>
-                  {c.name}
-                </Link>
-                {hint && <span className="cc-dimmer">{hint}</span>}
-                {c.status === 'RUNNING' && (
-                  <button type="button" className="cc-link" title="L'agent de cette session finit ce qu'il fait, puis elle se termine" onClick={() => void endSession({ variables: { id: c.id } }).catch(() => undefined)}>
-                    terminer
-                  </button>
-                )}
-                {c.status === 'QUEUED' && (
-                  <button type="button" className="cc-link" title="La session ne démarrera pas" onClick={() => void stopSession({ variables: { id: c.id } }).catch(() => undefined)}>
-                    retirer de la file
-                  </button>
-                )}
-              </span>
-            );
-          })}
+      {headerOpen && (
+        <div className="cc-header-detail">
+          <div className="cc-actions">{actions.buttons}</div>
+          <SessionParentNote session={session} />
+          <SessionChildren children={session.childSessions} />
         </div>
       )}
 
       <ContextBanner session={session} busy={Boolean(busy)} />
 
       <div className="cc-toggle">
-        <div className="cc-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === 'conversation'} className={`cc-tab${tab === 'conversation' ? ' active' : ''}`} onClick={() => selectTab('conversation')}>
-            Conversation
-          </button>
-          {!chat && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === 'changes'}
-              className={`cc-tab${tab === 'changes' ? ' active' : ''}`}
-              title="Fichiers modifiés dans le dossier de travail depuis le début de la session"
-              onClick={() => selectTab('changes')}
-            >
-              Modifications
-              {changedFiles > 0 && <span className="cc-tab-count">{changedFiles}</span>}
-            </button>
-          )}
-        </div>
-        {(tab === 'conversation' || chat) && (
-          <label>
-            <input type="checkbox" checked={technical} onChange={toggleTechnical} /> <span className="d-none d-md-inline">Afficher les détails techniques</span>
-            <span className="d-md-none">Détails techniques</span>
-          </label>
-        )}
+        <label>
+          <input type="checkbox" checked={technical} onChange={toggleTechnical} /> <span className="d-none d-md-inline">Afficher les détails techniques</span>
+          <span className="d-md-none">Détails techniques</span>
+        </label>
       </div>
-      {tab === 'conversation' || chat ? (
-        <Transcript events={events} draft={draft} loading={!eventsLoaded} technical={technical} />
-      ) : (
-        <SessionChanges
-          sessionId={id}
-          workspace={{ projectId: session.project.id, worksessionId: session.worksession?.id ?? null }}
-          changes={changesQ.data?.sessionChanges}
-          loading={changesQ.loading}
-          error={changesQ.error}
-          refreshKey={refreshCount}
-          onRefresh={refreshChanges}
-        />
-      )}
-      {scheduling && <ScheduleModal session={session} onClose={() => setScheduling(false)} />}
-      {settingsOpen && <SessionSettingsModal session={session} onClose={() => setSettingsOpen(false)} />}
-      {relaunching && <RelaunchModal session={session} projectName={session.project.name} worksessions={session.worksession ? [{ id: session.worksession.id, label: session.worksession.label }] : []} onClose={() => setRelaunching(false)} />}
+      <Transcript events={events} draft={draft} loading={!eventsLoaded} technical={technical} />
+      {actions.modals}
 
       {pending.length > 0 && (
         <div className="cc-prompts">
