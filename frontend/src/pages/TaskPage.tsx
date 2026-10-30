@@ -295,7 +295,6 @@ export default function TaskPage() {
                           {pr.createdBy && ` · par ${pr.createdBy.name}`}
                           {` · ouverte ${timeAgo(pr.openedAt)}`}
                           {pr.mergedAt && ` · fusionnée ${timeAgo(pr.mergedAt)}`}
-                          {pr.deployedAt && ` · déployée ${timeAgo(pr.deployedAt)}${pr.deployNote ? ` (${pr.deployNote})` : ''}`}
                         </div>
                         {pr.note && (
                           <div className="text-secondary" title="Note de suivi">

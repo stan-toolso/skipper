@@ -144,12 +144,11 @@ export default function DashboardPage() {
               <span>
                 Pull requests à traiter
                 {counts.openPullRequests > 0 && <Badge bg="success" className="ms-2 fw-normal" title="À fusionner">{counts.openPullRequests} à fusionner</Badge>}
-                {counts.toDeployPullRequests > 0 && <Badge bg="warning" text="dark" className="ms-2 fw-normal" title="Fusionnées, pas encore déployées">{counts.toDeployPullRequests} à déployer</Badge>}
               </span>
             </h2>
             <ul className="dash-list">
               {d.pullRequests.map((pr) => <PullRequestRow key={pr.id} pr={pr} />)}
-              {d.pullRequests.length === 0 && <li className="empty">Aucune pull request à fusionner ni à déployer.</li>}
+              {d.pullRequests.length === 0 && <li className="empty">Aucune pull request à fusionner.</li>}
             </ul>
           </section>
         </Col>
@@ -452,12 +451,11 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
-/** Une pull request suivie qui attend une action : fusion ou mise en production. */
+/** Une pull request suivie qui attend une action : relecture et fusion. */
 function PullRequestRow({ pr }: { pr: TrackedPullRequest }) {
-  const toDeploy = pr.stage === 'TO_DEPLOY';
   return (
     <li>
-      <i className={`bi ${toDeploy ? 'bi-box-arrow-up warn' : 'bi-git'} icon`} />
+      <i className="bi bi-git icon" />
       <div className="main">
         <a href={pr.url} target="_blank" rel="noreferrer" className="title" title="Ouvrir sur GitHub">
           <span className="text-secondary">#{pr.number}</span> {pr.title}
