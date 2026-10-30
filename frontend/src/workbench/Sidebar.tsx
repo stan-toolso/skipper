@@ -44,6 +44,80 @@ function ElsewhereNote({ subs, poolById, row }: { subs: PoolSession[]; poolById:
   );
 }
 
+/** Nombre de chats montrés sous « Chats » dans la sidebar ; au-delà, un lien vers la liste. */
+const MAX_CHATS = 6;
+
+/** Ligne d'un chat (conversation légère de l'espace personnel) : état, nom, menu (arrêter, supprimer). */
+function ChatRow({ chat, indent }: { chat: SidebarSession; indent: number }) {
+  const location = useLocation();
+  const { showError } = useDialogs();
+  const { deleteSession } = useDeletions();
+  const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar', 'Chats'] });
+  const hint = sessionStateHint(chat.status, chat.activity, chat.pendingRequestCount);
+  const items: MenuItem[] = [
+    { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/chats/${chat.id}` },
+    ...(chat.status === 'RUNNING' ? [{ label: 'Arrêter', icon: 'bi-stop-circle', onClick: () => void stopSession({ variables: { id: chat.id } }).catch(showError) }] : []),
+    { label: 'Supprimer', icon: 'bi-trash', danger: true, separatorBefore: true, onClick: () => void deleteSession({ id: chat.id, name: chat.name, worksessionId: null }) },
+  ];
+  return (
+    <RowWithMenu to={`/chats/${chat.id}`} active={location.pathname === `/chats/${chat.id}`} indent={indent} title={`${chat.name} · ${statusTitle(chat)}`} items={items}>
+      <span className={`wb-dot ${sessionDotClass(chat)}`} />
+      <span className="wb-row-label">{chat.name}</span>
+      {chat.pendingRequestCount > 0 ? <span className="wb-badge">{chat.pendingRequestCount}</span> : hint && <span className="wb-state">{hint}</span>}
+    </RowWithMenu>
+  );
+}
+
+/**
+ * Bloc « Chats » de l'espace personnel : une ligne d'en-tête qui ouvre la liste des chats (et se replie), puis les
+ * derniers chats avec leur état ; au-delà de MAX_CHATS, un lien vers la liste complète.
+ */
+function ChatsBlock({ chats, expanded, onToggle }: { chats: SidebarSession[]; expanded: boolean; onToggle: () => void }) {
+  const location = useLocation();
+  const current = location.pathname.match(/^\/chats\/([^/]+)$/)?.[1] ?? null;
+  const pending = chats.reduce((n, c) => n + c.pendingRequestCount, 0);
+  // Le chat affiché reste listé même s'il n'est pas parmi les plus récents.
+  const shown = chats.slice(0, MAX_CHATS);
+  if (current && !shown.some((c) => c.id === current)) {
+    const extra = chats.find((c) => c.id === current);
+    if (extra) shown.push(extra);
+  }
+  const hidden = chats.length - shown.length;
+  return (
+    <div className="wb-chats">
+      <div className={`wb-row wb-session-row wb-chats-head${location.pathname === '/chats' ? ' active' : ''}`} style={{ paddingLeft: 18 }}>
+        <button type="button" className="wb-chevron" onClick={onToggle} title={expanded ? 'Replier les chats' : 'Déplier les chats'}>
+          <i className={`bi bi-chevron-${expanded ? 'down' : 'right'}`} style={{ fontSize: 10 }} />
+        </button>
+        <Link to="/chats" className="wb-row-label" title="Chats : conversations légères, sans dossier de travail, avec accès à tous vos projets">
+          <i className="bi bi-chat-left-text wb-icon" /> Chats
+        </Link>
+        {!expanded && pending > 0 && <span className="wb-badge">{pending}</span>}
+        <Link to="/chats" className="wb-plus wb-chats-new" title="Nouveau chat" aria-label="Nouveau chat">
+          <i className="bi bi-plus-lg" />
+        </Link>
+      </div>
+      {expanded && (
+        <div className="wb-chats-rows">
+          {shown.map((c) => (
+            <ChatRow key={c.id} chat={c} indent={30} />
+          ))}
+          {hidden > 0 && (
+            <Link to="/chats" className="wb-row wb-empty wb-empty-link" style={{ paddingLeft: 30 }}>
+              + {hidden} autre{hidden > 1 ? 's' : ''} chat{hidden > 1 ? 's' : ''}
+            </Link>
+          )}
+          {chats.length === 0 && (
+            <Link to="/chats" className="wb-row wb-empty wb-empty-link" style={{ paddingLeft: 30 }}>
+              aucun chat : en ouvrir un
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Menus principaux, affichés en une ligne d'icônes (le libellé sert d'infobulle). */
 const MAIN_MENU: { to: string; label: string; icon: string; title?: string }[] = [
   { to: '/', label: 'Tableau de bord', icon: 'bi-speedometer2' },
@@ -421,7 +495,8 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const { openSearch } = useSearchPalette();
   const { openHelp } = useShortcutsHelp();
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
-  const { data } = usePollingQuery<{ projects: SidebarProject[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
+  const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 3000, fetchPolicy: 'cache-and-network' });
+  const chats = data?.chats ?? [];
   const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_WORKSESSION_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
@@ -480,6 +555,8 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
 
   const projectDefaultOpen = (p: SidebarProject) => {
     if (p.id === activeProjectId) return true;
+    // L'espace personnel s'ouvre quand un chat est en cours ou attend une réponse, ou qu'un chat est affiché.
+    if (p.isPersonal && (location.pathname.startsWith('/chats') || chats.some((c) => c.status === 'RUNNING' || c.pendingRequestCount > 0))) return true;
     return p.sessions.some((s) => participates(s, userId) && (s.status === 'RUNNING' || s.status === 'QUEUED' || s.pendingRequestCount > 0));
   };
 
@@ -580,6 +657,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                   )}
                 </span>
               </div>
+              {open && p.isPersonal && <ChatsBlock chats={chats} expanded={expanded[`chats:${p.id}`] ?? true} onToggle={() => toggle(`chats:${p.id}`, true)} />}
               {open &&
                 // Le dossier principal n'accueille plus rien : sa carte ne reste que pour les sessions et terminaux d'avant les work sessions.
                 list.filter((ws) => !ws.primary || ws.sessions.length > 0 || ws.terminals.length > 0).map((ws) => (

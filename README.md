@@ -868,7 +868,9 @@ du tableau de bord et de la recherche ; ils se listent par `chats(limit)` (page 
 par `createChat(text, attachments, config)` (zone de chat du tableau de bord et de la page des chats :
 mode d'autorisation « demander » ou « tout autoriser », modèle, fichiers joints, suggestions de départ).
 La page d'un chat est celle d'une session (`/chats/:id`, `SessionDetailPage` en mode chat : pas de
-panneau git, d'onglet Modifications ni de planification). Un chat relancé reste un chat ; l'arrêt des
+panneau git, d'onglet Modifications ni de planification). Dans la sidebar, sous « Mon espace », une ligne
+**Chats** ouvre la liste (et se replie) et montre les derniers chats avec leur état, un menu pour les arrêter
+ou les supprimer, et un lien vers les autres (requête `Sidebar`, champ `chats`). Un chat relancé reste un chat ; l'arrêt des
 sessions inactives le termine comme une session, un message le reprend.
 
 ## Sessions planifiées

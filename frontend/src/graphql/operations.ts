@@ -1134,6 +1134,9 @@ export const RESTORE_CONTEXT_INSTRUCTION_VERSION = gql`
 /** Explorateur de la sidebar : projets, dossiers de travail (checkout principal et worksessions) et leur contenu. */
 export const SIDEBAR = gql`
   query Sidebar($open: OpenItemsInput) {
+    chats(limit: 12) {
+      ...SidebarSession
+    }
     projects: sidebarProjects(open: $open) {
       id
       name
