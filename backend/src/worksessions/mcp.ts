@@ -53,13 +53,13 @@ export function createWorksessionsMcpServer(project: Project, sessionId: string,
       ),
       tool(
         'create',
-        `Crée une work session${where}.${project.gitUrl || scope ? ' Pour un projet git : extrait la branche si elle existe (localement ou sur origin), sinon la crée depuis base_ref (défaut : HEAD du dossier principal).' : ''} Renvoie son nom et son chemin.`,
+        `Crée une work session${where}.${project.gitUrl || scope ? ' Pour un projet git : extrait la branche si elle existe (localement ou sur origin), sinon la crée depuis base_ref (défaut : la branche principale à jour sur origin).' : ''} Renvoie son nom et son chemin.`,
         withProjectParam(
           {
             name: z.string().optional().describe('Nom du dossier (défaut : dérivé de la branche, sinon du libellé)'),
             branch: z.string().optional().describe('Branche, pour un projet git, ex. feature/contact ou task/export-csv (défaut : le nom du dossier)'),
             label: z.string().optional().describe('Ce dont parle la work session (affiché dans l\'interface)'),
-            base_ref: z.string().optional().describe("Point de départ d'une nouvelle branche : branche, tag ou commit (défaut : HEAD du dossier principal)"),
+            base_ref: z.string().optional().describe("Point de départ d'une nouvelle branche : branche, tag ou commit (défaut : la branche principale à jour sur origin)"),
           },
           scope,
         ),

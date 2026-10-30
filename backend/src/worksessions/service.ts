@@ -45,6 +45,37 @@ function validateBaseRef(ref: string): string {
   return ref;
 }
 
+/**
+ * Point de départ par défaut d'une nouvelle branche : le dernier commit de la branche principale **sur
+ * origin** (`origin/<branche du projet>`, sinon `origin/<branche du checkout principal>`, sinon
+ * `origin/HEAD`), à appeler après un fetch. Le HEAD du checkout principal n'avance qu'aux fusions faites
+ * depuis Skipper : il peut avoir des semaines de retard sur origin, alors que ce que l'on veut est de
+ * partir du main à jour. Sans origin joignable ni branche connue, on retombe sur ce HEAD.
+ */
+export async function defaultStartPoint(main: string, preferred: string | null | undefined): Promise<string> {
+  const candidates: string[] = [];
+  if (preferred) candidates.push(`origin/${preferred}`);
+  const current = await git(['rev-parse', '--abbrev-ref', 'HEAD'], main).catch(() => '');
+  if (current && current !== 'HEAD') candidates.push(`origin/${current}`);
+  const originHead = await git(['symbolic-ref', '-q', '--short', 'refs/remotes/origin/HEAD'], main).catch(() => '');
+  if (originHead) candidates.push(originHead);
+  for (const c of candidates) {
+    if (await git(['rev-parse', '--verify', '-q', `${c}^{commit}`], main).then(() => true, () => false)) return c;
+  }
+  return 'HEAD';
+}
+
+/**
+ * Avance le checkout principal sur sa branche distante quand c'est une avance rapide (il n'y a pas de
+ * commits locaux à préserver : rien ne tourne dans ce dossier). Échecs ignorés : HEAD détaché, pas de
+ * branche distante, divergence, modifications locales qui seraient écrasées.
+ */
+async function fastForwardMain(main: string): Promise<void> {
+  const current = await git(['rev-parse', '--abbrev-ref', 'HEAD'], main).catch(() => '');
+  if (!current || current === 'HEAD') return;
+  await git(['merge', '--ff-only', '--quiet', `origin/${current}`], main).catch(() => undefined);
+}
+
 /** Libellé normalisé : espaces réduits, vide → null, 100 caractères au plus. */
 export function normalizeLabel(raw: string | null | undefined): string | null {
   const label = raw?.replace(/\s+/g, ' ').trim() ?? '';
@@ -115,8 +146,8 @@ export const worksessionService = {
 
   /**
    * Crée une work session. Projet git : `git worktree add` — la branche est extraite si elle existe
-   * (localement ou sur origin), sinon créée depuis `baseRef` (défaut : HEAD du checkout principal).
-   * Projet sans dépôt : un simple dossier.
+   * (localement ou sur origin), sinon créée depuis `baseRef` (défaut : la branche principale sur origin,
+   * voir `defaultStartPoint`). Projet sans dépôt : un simple dossier.
    */
   async create(projectId: string, input: CreateWorksessionInput, actorId?: string | null): Promise<Worksession> {
     const project = await projectService.get(projectId);
@@ -132,8 +163,8 @@ export const worksessionService = {
           `Le dossier principal du projet (${main}) n'est pas un dépôt git. S'il est vide, « Créer le dossier » depuis la page du projet le clonera ; sinon videz-le ou clonez-y le dépôt à la main.`,
         );
       }
-      const base = input.baseRef?.trim() ? validateBaseRef(input.baseRef.trim()) : 'HEAD';
-      await this.checkout(main, dir, branch, base, await gitAuthFor(project, actorId));
+      const base = input.baseRef?.trim() ? validateBaseRef(input.baseRef.trim()) : null;
+      await this.checkout(main, dir, branch, { base, defaultBranch: project.gitBranch, auth: await gitAuthFor(project, actorId) });
     } else {
       await mkdir(dir, { recursive: true });
     }
@@ -147,21 +178,32 @@ export const worksessionService = {
     }
   },
 
-  /** `git worktree add` : branche locale, distante, ou nouvelle depuis `base`. */
-  async checkout(main: string, dir: string, branch: string, base: string, auth: string[] = []): Promise<'local' | 'remote' | 'new'> {
-    await git(['fetch', '--prune', 'origin'], main, auth).catch(() => undefined);
+  /**
+   * `git worktree add` après un fetch : branche locale, distante, ou nouvelle depuis `base` (sans `base` :
+   * la branche principale sur origin, `defaultStartPoint`). Le checkout principal est au passage avancé
+   * sur origin quand c'est une avance rapide. Renvoie comment la branche a été obtenue et d'où.
+   */
+  async checkout(
+    main: string,
+    dir: string,
+    branch: string,
+    opts: { base?: string | null; defaultBranch?: string | null; auth?: string[] } = {},
+  ): Promise<{ how: 'local' | 'remote' | 'new'; from: string }> {
+    await git(['fetch', '--prune', 'origin'], main, opts.auth ?? []).catch(() => undefined);
+    await fastForwardMain(main);
     const localBranches = (await git(['branch', '--list', branch], main)).trim();
     const remoteBranches = (await git(['branch', '-r', '--list', `origin/${branch}`], main)).trim();
     if (localBranches) {
       await git(['worktree', 'add', dir, branch], main);
-      return 'local';
+      return { how: 'local', from: branch };
     }
     if (remoteBranches) {
       await git(['worktree', 'add', '--track', '-b', branch, dir, `origin/${branch}`], main);
-      return 'remote';
+      return { how: 'remote', from: `origin/${branch}` };
     }
-    await git(['worktree', 'add', '-b', branch, '--', dir, base], main);
-    return 'new';
+    const from = opts.base || (await defaultStartPoint(main, opts.defaultBranch));
+    await git(['worktree', 'add', '-b', branch, '--', dir, from], main);
+    return { how: 'new', from };
   },
 
   /**
@@ -263,7 +305,7 @@ export const worksessionService = {
 
   /**
    * Dossier de la work session, recréé s'il manque. Projet git : branche locale, distante, ou — si elle a
-   * disparu — nouvelle depuis le HEAD du checkout principal (jamais un dossier orphelin sans git). Projet
+   * disparu — nouvelle depuis la branche principale sur origin (jamais un dossier orphelin sans git). Projet
    * sans dépôt : un dossier vide. Sérialisé par work session.
    */
   async ensureDir(project: Project, wt: Worksession): Promise<string> {
@@ -281,8 +323,8 @@ export const worksessionService = {
       if (await exists(dir)) await rm(dir, { recursive: true, force: true }); // dossier sans son lien git : repris de zéro
       await git(['worktree', 'prune'], main).catch(() => undefined);
       await mkdir(worksessionsRoot(project), { recursive: true });
-      const how = await this.checkout(main, dir, wt.branch, 'HEAD');
-      if (how === 'new') console.warn(`[worksessions] ${wt.name} : branche ${wt.branch} disparue, work session recréée depuis le checkout principal`);
+      const { how, from } = await this.checkout(main, dir, wt.branch, { defaultBranch: project.gitBranch });
+      if (how === 'new') console.warn(`[worksessions] ${wt.name} : branche ${wt.branch} disparue, work session recréée depuis ${from}`);
       else console.log(`[worksessions] dossier de ${wt.name} recréé (${how})`);
       return dir;
     })().finally(() => restoring.delete(wt.id));

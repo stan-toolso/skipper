@@ -112,7 +112,7 @@ export function createSessionsMcpServer(project: Project, sessionId: string, sco
             name: z.string().optional().describe('Nom court de la session (défaut : première ligne de la consigne)'),
             worksession: z.string().optional().describe("Nom (dossier) ou branche d'une work session existante et libre (sans session active) où travailler ; pas la tienne : une work session n'héberge qu'une session"),
             new_branch: z.string().optional().describe('Crée une work session sur cette branche (créée si absente) et y lance la session'),
-            base_ref: z.string().optional().describe('Avec new_branch : point de départ de la nouvelle branche (défaut : HEAD du dossier principal)'),
+            base_ref: z.string().optional().describe('Avec new_branch : point de départ de la nouvelle branche (défaut : la branche principale à jour sur origin)'),
             permission_mode: z.enum(['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions']).optional().describe('Autorisations de la session (défaut : celles de ta session)'),
             model: z.string().optional().describe('Modèle (défaut : celui de ta session)'),
           },

@@ -2257,7 +2257,7 @@ type Mutation {
 
   "Ouvre un shell dans une work session du projet, avec l'historique des commandes de l'utilisateur sur le projet."
   createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!
-  "Crée une work session. Projet git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : HEAD du checkout principal). Il faut un nom, une branche ou un libellé."
+  "Crée une work session. Projet git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : la branche principale à jour sur origin). Il faut un nom, une branche ou un libellé."
   createWorksession(projectId: ID!, branch: String, name: String, baseRef: String, label: String): Worksession!
   "Renomme le libellé (null ou vide : la branche) et/ou le dossier (git worktree move, seulement si rien n'y tourne)."
   renameWorksession(id: ID!, label: String, name: String): Worksession!
