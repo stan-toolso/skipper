@@ -17,10 +17,10 @@ const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }],
  * n'y est pas : il pousse la branche et ouvre une pull request sur GitHub avec le compte de la personne, donc
  * passe par la demande d'autorisation.
  */
-export const TASKS_FREE_TOOLS = ['list', 'get', 'create', 'update', 'claim', 'comment', 'react', 'people', 'pr_list', 'pr_register', 'pr_update'].map((t) => `mcp__tasks__${t}`);
+export const TASKS_FREE_TOOLS = ['list', 'get', 'create', 'update', 'claim', 'release', 'comment', 'react', 'people', 'pr_list', 'pr_register', 'pr_update'].map((t) => `mcp__tasks__${t}`);
 
 const line = (t: Task, sessionId: string) =>
-  `- ${t.id} · [${t.status}${statusTagText(t)}] [${t.priority}] ${t.title}${t.tags.length ? ` · étiquettes ${t.tags.join(', ')}` : ''}${t.sessionId ? (t.sessionId === sessionId ? ' (assignée à cette session)' : ' (prise par une autre session)') : ''}${t.dueDate ? ` · échéance ${t.dueDate}` : ''}${t.assignee ? ` · responsable ${formatPerson(t.assignee)}` : ''}${t.commentCount ? ` · ${t.commentCount} commentaire${t.commentCount > 1 ? 's' : ''}` : ''}`;
+  `- ${t.id} · [${t.status}${statusTagText(t)}] [${t.priority}] ${t.title}${t.tags.length ? ` · étiquettes ${t.tags.join(', ')}` : ''}${t.sessionIds.includes(sessionId) ? (t.sessionIds.length > 1 ? ' (assignée à cette session et à d’autres)' : ' (assignée à cette session)') : t.sessionIds.length ? ' (prise par une autre session)' : ''}${t.dueDate ? ` · échéance ${t.dueDate}` : ''}${t.assignee ? ` · responsable ${formatPerson(t.assignee)}` : ''}${t.commentCount ? ` · ${t.commentCount} commentaire${t.commentCount > 1 ? 's' : ''}` : ''}`;
 
 
 function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[], pullRequests: TrackedPullRequest[] = [], reactions: TaskReaction[] = []): string {
@@ -79,7 +79,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
   return createSdkMcpServer({
     name: 'tasks',
     version: '1.0.0',
-    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper, passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Le fil d'une tâche est une conversation : comment poste un message (reply_to pour répondre dans le fil d'un message), react pose ou retire un emoji, une mention (« @Nom » ou « @e-mail » d'un membre, « @session:<id> » d'une session d'agent ; people liste qui l'on peut mentionner) prévient la personne ou transmet le message à la session, qui est alors reliée à la tâche. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : draft, to_merge, to_deploy, deployed, cancelled).`,
+    instructions: `Tableau de tâches ${scope ? `de tes projets (par défaut : l'espace personnel "${project.name}" ; paramètre project pour un autre projet)` : `du projet "${project.name}"`}. Statuts : todo, in_progress, done, cancelled ; une étiquette d'état (court libellé libre, ex. « en revue », « bloquée ») dit où en est le travail dans le statut. Les tâches peuvent porter des étiquettes libres. Priorités : low, medium, high, urgent. Prends une tâche avec claim avant de t'en occuper (plusieurs sessions peuvent se partager une tâche, et une session en mener plusieurs ; release la rend), passe-la en done quand elle est terminée, commente-la pour rendre compte, et crée des tâches pour le travail à faire plus tard. Une tâche créée directement en in_progress ou done t'est rattachée (assign_to_me) ; passer en in_progress ou done une tâche que personne n'a prise te la rattache aussi. Le fil d'une tâche est une conversation : comment poste un message (reply_to pour répondre dans le fil d'un message), react pose ou retire un emoji, une mention (« @Nom » ou « @e-mail » d'un membre, « @session:<id> » d'une session d'agent ; people liste qui l'on peut mentionner) prévient la personne ou transmet le message à la session, qui est alors reliée à la tâche. Les pull requests d'une tâche se suivent avec pr_open (ouvre la PR sur GitHub depuis la branche courante), pr_register (déclare une PR déjà ouverte), pr_update (statut open/merged/closed, note, déploiement) et pr_list (par étape : draft, to_merge, to_deploy, deployed, cancelled).`,
     tools: [
       tool(
         'list',
@@ -125,13 +125,15 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
           status_tag: z.string().optional().describe('Court libellé de l\'avancement dans le statut (« bloquée », « en revue »…)'),
           assignee: personSchema.optional().describe('Responsable : nom et/ou e-mail'),
           reporter: personSchema.optional().describe('Rapporteur : nom et/ou e-mail'),
+          assign_to_me: z.boolean().optional().describe("Cette session prend la charge de la tâche ; défaut : oui si le statut est in_progress ou done (c'est ton travail), non pour une tâche todo (travail pour plus tard)"),
         }, scope),
-        async ({ title, description, priority, status, due_date, custom_fields, tags, status_tag, assignee, reporter, project: ref }) =>
+        async ({ title, description, priority, status, due_date, custom_fields, tags, status_tag, assignee, reporter, assign_to_me, project: ref }) =>
           run(async () => {
             const p = await targetProject(project, scope, ref, { write: true });
+            const mine = assign_to_me ?? (status === 'in_progress' || status === 'done');
             const t = await taskService.create(
               p.id,
-              { title, description, priority: priority as Task['priority'] | undefined, status: status as Task['status'] | undefined, dueDate: due_date, customFields: custom_fields, tags, statusTag: status_tag, assignee, reporter },
+              { title, description, priority: priority as Task['priority'] | undefined, status: status as Task['status'] | undefined, dueDate: due_date, customFields: custom_fields, tags, statusTag: status_tag, assignee, reporter, sessionId: mine ? sessionId : null },
               actor,
             );
             return `Tâche créée : ${line(t, sessionId)}`;
@@ -158,20 +160,30 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
         },
         async ({ id, status, status_tag, priority, title, description, due_date, tags, custom_fields, assignee, reporter }) =>
           run(async () => {
-            await own(id);
+            const current = await own(id);
+            // Claim implicite : avancer une tâche que personne n'a prise, c'est la prendre.
+            const takes = (status === 'in_progress' || status === 'done') && current.sessionIds.length === 0 && current.projectId === project.id;
             const t = await taskService.update(
               id,
-              { status: status as Task['status'] | undefined, statusTag: status_tag, priority: priority as Task['priority'] | undefined, title, description, dueDate: due_date, tags, customFields: custom_fields, assignee, reporter },
+              { status: status as Task['status'] | undefined, statusTag: status_tag, priority: priority as Task['priority'] | undefined, title, description, dueDate: due_date, tags, customFields: custom_fields, assignee, reporter, ...(takes ? { sessionId } : {}) },
               actor,
             );
             return `Tâche mise à jour : ${line(t, sessionId)}`;
           }),
       ),
-      tool('claim', "Prend une tâche en charge : l'assigne à cette session et la passe en in_progress.", { id: z.string() }, async ({ id }) =>
+      tool('claim', "Prend une tâche en charge : l'assigne à cette session (en plus des sessions déjà en charge, s'il y en a) et la passe en in_progress.", { id: z.string() }, async ({ id }) =>
         run(async () => {
           await own(id);
           const t = await taskService.update(id, { status: 'in_progress', sessionId }, actor);
           return `Tâche prise en charge : ${line(t, sessionId)}`;
+        }),
+      ),
+      tool('release', "Cette session cesse d'être en charge d'une tâche (elle reste dans son historique) : passation, ou travail que tu ne poursuis pas. Le statut ne change pas.", { id: z.string() }, async ({ id }) =>
+        run(async () => {
+          const current = await own(id);
+          if (!current.sessionIds.includes(sessionId)) return `Cette session n'est pas en charge de la tâche : ${line(current, sessionId)}`;
+          const t = await taskService.update(id, { releaseSessionIds: [sessionId] }, actor);
+          return `Tâche rendue : ${line(t, sessionId)}`;
         }),
       ),
       tool(

@@ -147,6 +147,7 @@ interface GqlTaskInput {
   priority?: GqlTaskPriority | null;
   status?: GqlTaskStatus | null;
   sessionId?: string | null;
+  releaseSessionIds?: string[] | null;
   dueDate?: string | null;
   customFields?: TaskField[] | null;
   statusTag?: string | null;
@@ -162,6 +163,7 @@ const toTaskInput = (i: GqlTaskInput) => ({
   priority: fromGqlTaskPriority(i.priority),
   status: fromGqlTaskStatus(i.status),
   sessionId: i.sessionId,
+  releaseSessionIds: i.releaseSessionIds ?? undefined,
   dueDate: i.dueDate,
   customFields: i.customFields ?? undefined,
   statusTag: i.statusTag,
@@ -293,6 +295,10 @@ export const resolvers = {
     priority: (t: Task) => t.priority.toUpperCase(),
     project: (t: Task) => projectService.get(t.projectId),
     session: (t: Task) => (t.sessionId ? sessionService.get(t.sessionId) : null),
+    sessionsInCharge: async (t: Task) => {
+      const sessions = t.sessionIds.length ? await sessionService.list({ ids: t.sessionIds, archived: 'all', limit: 100 }) : [];
+      return t.sessionIds.map((id) => sessions.find((s) => s.id === id)).filter((s): s is Session => Boolean(s));
+    },
     sessions: async (t: Task) => {
       const ids = await taskService.sessionIds(t.id);
       const sessions = ids.length ? await sessionService.list({ ids, archived: 'all', limit: 500 }) : [];
@@ -560,6 +566,7 @@ export const resolvers = {
     worksession: (session: Session, _: unknown, ctx: Ctx) => worksessionOrNull(ctx, session.worksessionId),
     owner: (session: Session, _: unknown, ctx: Ctx) => userOrNull(ctx, session.ownerId),
     task: (session: Session) => taskService.forSession(session.id),
+    tasks: (session: Session) => taskService.tasksInCharge(session.id),
     parentSession: async (session: Session, _: unknown, ctx: Ctx) => (session.parentSessionId ? ((await loadersOf(ctx).session(session.parentSessionId)) ?? null) : null),
     childSessions: (session: Session) => sessionService.list({ parentSessionId: session.id, archived: 'all', limit: 50 }),
     workflowRun: (session: Session) => (session.workflowRunId ? workflowService.findRun(session.workflowRunId) : null),
