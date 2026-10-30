@@ -718,7 +718,7 @@ annulé sans dépendre de GitHub à chaque affichage. Il porte le numéro, l'URL
 les branches, le **statut** (ouverte, fusionnée, fermée), le brouillon, un instantané GitHub (checks, revue,
 conflits) rafraîchi à la synchronisation, et une **note** libre. L'**étape** en
 découle : *brouillon*, *à fusionner*, *fusionnée*, *annulée*. Il n'y a pas d'étape « déployée » : le
-déploiement n'était qu'une déclaration à la main, rarement tenue à jour (colonnes retirées par la migration 044). Il naît de trois façons : une session d'agent (outils `tasks.pr_open`, qui pousse la
+déploiement n'était qu'une déclaration à la main, rarement tenue à jour (colonnes retirées par la migration 045). Il naît de trois façons : une session d'agent (outils `tasks.pr_open`, qui pousse la
 branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session, soumis à son
 autorisation ; `tasks.pr_register`, qui déclare une PR ouverte par un autre moyen ; `tasks.pr_update` tient à jour
 statut, note et tâche ; `tasks.pr_list` liste par étape ; `tasks.get` montre les PR d'une tâche), l'interface
