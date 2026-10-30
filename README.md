@@ -814,7 +814,8 @@ session — dossier `task-<slug du titre>`, et branche `task/<slug>` à partir d
 projet git (`backend/src/tasks/launch.ts`, suffixe numérique si le nom existe déjà) —, puis repris
 par toutes ses sessions suivantes (colonne `worksessions.task_id`, restauré s'il était archivé) ; la
 session précédente de la tâche, si elle est encore active, est arrêtée et archivée (une seule session par
-dossier), ce que la modale annonce. La tâche affiche sa branche (colonne `tasks.branch`, conservée après
+dossier), ce que la modale annonce. Une fois la session lancée, on reste sur la page d'où on l'a confiée
+(liste, kanban, tâche) : la session apparaît sur la tâche et dans la sidebar. La tâche affiche sa branche (colonne `tasks.branch`, conservée après
 suppression du dossier) et sa pull request GitHub avec ses checks et revues ; un clic ouvre la fenêtre de
 fusion. Cycle complet sans quitter Skipper : tâche → session sur sa branche → PR (panneau git) → fusion →
 nettoyage du dossier et de la branche.
