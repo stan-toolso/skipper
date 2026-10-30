@@ -32,8 +32,10 @@ export interface Task {
   /** Étiquettes libres (uniques sans tenir compte de la casse, dans l'ordre d'affichage). */
   tags: string[];
   priority: TaskPriority;
-  /** Session en charge actuellement (l'historique complet est dans task_sessions). */
+  /** La plus récente des sessions en charge (null : aucune) ; l'historique complet est dans task_sessions. */
   sessionId: string | null;
+  /** Toutes les sessions en charge actuellement, la plus récente d'abord (plusieurs agents peuvent se partager une tâche). */
+  sessionIds: string[];
   /** Branche git de la tâche (work session dédiée), conservée après suppression de la work session. */
   branch: string | null;
   createdByType: Actor['type'];
@@ -94,7 +96,10 @@ export interface UpdateTaskInput {
   description?: string | null;
   priority?: TaskPriority | null;
   status?: TaskStatus | null;
+  /** Session qui prend la charge (s'ajoute aux sessions déjà en charge) ; null : plus aucune session en charge. */
   sessionId?: string | null;
+  /** Sessions qui cessent d'être en charge (passation, fin de travail). */
+  releaseSessionIds?: string[] | null;
   branch?: string | null;
   dueDate?: string | null;
   /** Remplace la liste complète. */
@@ -116,6 +121,7 @@ export interface TaskFilter {
   projectIds?: string[];
   status?: TaskStatus[];
   priority?: TaskPriority;
+  /** Tâches dont cette session est en charge. */
   sessionId?: string;
   /** Texte cherché dans le nom ou l'e-mail du responsable / du rapporteur. */
   assignee?: string;

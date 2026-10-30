@@ -201,8 +201,8 @@ backend/
       service.ts / triggers.ts / scheduler.ts         # file d'exécutions, déclencheur « tâche créée », planification
     tasks/
       service.ts               # tâches : création, mise à jour, personnes, champs, commentaires, résumé pour le prompt
-      sessionFeed.ts           # changements et commentaires transmis à la session en charge
-      mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim, comment, pr_list, pr_open, pr_register, pr_update)
+      sessionFeed.ts           # changements et commentaires transmis aux sessions en charge
+      mcp.ts                   # serveur MCP `tasks` (list, get, create, update, claim, release, comment, pr_list, pr_open, pr_register, pr_update)
       launch.ts                # confier une tâche à un nouvel agent
       api.ts                   # API REST /api/v1/tasks (clés d'API du projet)
     pullRequests/
@@ -823,9 +823,20 @@ seule ligne, colonnes que l'on réordonne (glisser l'en-tête), redimensionne (p
 défaut), trie et choisit (bouton « Colonnes », avec flèches pour l'ordre), filtres par colonne sous les en-têtes
 (texte sans accents ni casse, listes pour statut, priorité, échéance, origine, projet) ; la disposition est mémorisée
 dans `localStorage` (`skipper.tasks.table.v1`). Le kanban reste disponible (filtres de la barre d'outils : priorité,
-responsable, rapporteur, étiquette), ainsi que « mes tâches ouvertes » et « voir les annulées » dans les deux vues. La session en charge d'une tâche reçoit les changements faits par d'autres
-(`[Mise à jour de la tâche]`) et les nouveaux commentaires (`[Commentaire sur la tâche]`, qui relancent
-une session terminée) ; son historique de sessions est conservé (`task_sessions`). « Confier à un agent »
+responsable, rapporteur, étiquette), ainsi que « mes tâches ouvertes » et « voir les annulées » dans les deux vues.
+
+**Sessions en charge.** Une tâche peut avoir **plusieurs sessions en charge** à la fois, et une session mener
+**plusieurs tâches** (`task_sessions.in_charge_since`, null pour un simple passage ; `tasks.session_id` reste la
+plus récente des sessions en charge). Prend la charge : « Confier à un agent » (la nouvelle session remplace les
+précédentes, archivées avec le dossier), `tasks.claim`, une tâche **créée par un agent directement en cours ou
+terminée** (son propre travail : rattachée d'office, paramètre `assign_to_me` pour en décider), ou une tâche libre
+qu'un agent passe en cours ou terminée (prise implicite) ; `tasks.release` rend une tâche. Chaque session en charge
+reçoit les changements faits par d'autres (`[Mise à jour de la tâche]`) et les nouveaux commentaires
+(`[Commentaire sur la tâche]`, qui relancent une session terminée) ; l'historique des passages est conservé
+(`task_sessions`). La page d'une session montre toutes ses tâches en charge, et son panneau de droite a **un onglet
+« Tâche » par tâche** (le début du titre sert de libellé quand il y en a plusieurs). API : `Task.session`,
+`Task.sessionsInCharge`, `Session.task`, `Session.tasks`, `UpdateTaskInput.sessionId` (prend la charge, null : plus
+personne) et `releaseSessionIds`. « Confier à un agent »
 montre la consigne envoyée à l'agent et permet de la modifier avant le lancement. Une **API REST**
 (`/api/v1/tasks`, clés `skp_…` créées sur la fiche du projet, haché en base) permet à un outil externe de
 lister et créer des tâches.

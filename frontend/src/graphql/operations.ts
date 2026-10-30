@@ -183,6 +183,8 @@ export interface Session {
   formerWorksession: { name: string; branch: string; label: string } | null;
   /** Tâche dont la session est en charge. */
   task: { id: string; title: string; status: TaskStatus } | null;
+  /** Tâches dont la session est en charge, la plus récemment prise d'abord. */
+  tasks: { id: string; title: string; status: TaskStatus }[];
   /** Planification (null si la session n'est pas planifiée). */
   schedule: SessionSchedule | null;
 }
@@ -317,6 +319,8 @@ export interface Task {
   pullRequest?: PullRequestSummary | null;
   /** Pull requests suivies de la tâche (objets Skipper) ; présentes dans TASKS et TASK_PAGE. */
   pullRequests?: TrackedPullRequestSummary[];
+  /** Sessions en charge (TASK_PAGE). */
+  sessionsInCharge?: { id: string }[];
 }
 
 export interface AppNotification {
@@ -618,6 +622,11 @@ export const SESSION_FIELDS = gql`
       label
     }
     task {
+      id
+      title
+      status
+    }
+    tasks {
       id
       title
       status

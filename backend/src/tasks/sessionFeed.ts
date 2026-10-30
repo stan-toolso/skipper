@@ -5,15 +5,26 @@ import { asInstructionAttachments, fitInInstruction } from './attachments.js';
 import { describeComment, describeTaskChanges, taskService } from './service.js';
 import type { TaskAttachment, TaskChange } from './types.js';
 
+export interface TaskFeed {
+  sessionId: string;
+  text: string;
+  restart: boolean;
+  attachments: TaskAttachment[];
+}
+
 /**
- * Message à transmettre à la session en charge d'une tâche pour un changement fait par quelqu'un d'autre,
- * ou null s'il n'y a rien à lui dire. `restart` : un commentaire relance une session terminée (il lui est
- * adressé) ; une simple modification n'est transmise qu'à une session en cours (une session terminée relira
+ * Messages à transmettre aux sessions en charge d'une tâche pour un changement fait par quelqu'un d'autre
+ * (un par session, vide s'il n'y a rien à dire). `restart` : un commentaire relance une session terminée (il lui
+ * est adressé) ; une simple modification n'est transmise qu'à une session en cours (une session terminée relira
  * la tâche à son prochain démarrage grâce à son prompt système).
  */
-export function feedFor(change: TaskChange): { sessionId: string; text: string; restart: boolean; attachments: TaskAttachment[] } | null {
-  const sessionId = change.task.sessionId;
-  if (!sessionId) return null;
+export function feedsFor(change: TaskChange): TaskFeed[] {
+  return change.task.sessionIds.map((sessionId) => feedFor(change, sessionId)).filter((f): f is TaskFeed => f !== null);
+}
+
+/** Message pour une session en charge donnée, ou null. */
+export function feedFor(change: TaskChange, sessionId: string | null = change.task.sessionId): TaskFeed | null {
+  if (!sessionId || !change.task.sessionIds.includes(sessionId)) return null;
   if (change.kind === 'commented') {
     const c = change.comment;
     if (c.authorSessionId === sessionId) return null;
@@ -29,8 +40,8 @@ export function feedFor(change: TaskChange): { sessionId: string; text: string; 
       ].join('\n'),
     };
   }
-  // Passation à une autre session : la nouvelle a reçu la tâche entière ; sans acteur (Skipper lui-même), rien à dire.
-  if (change.before.sessionId !== sessionId || !change.actor || change.actor.sessionId === sessionId) return null;
+  // Session qui vient de prendre la charge : elle a reçu la tâche entière ; sans acteur (Skipper lui-même), rien à dire.
+  if (!change.before.sessionIds.includes(sessionId) || !change.actor || change.actor.sessionId === sessionId) return null;
   const lines = describeTaskChanges(change.before, change.task, change.addedAttachments);
   if (!lines.length) return null;
   const by = change.actor.type === 'agent' ? `la session d'agent « ${change.actor.name ?? 'inconnue'} » (${change.actor.sessionId ?? '?'})` : change.actor.name || 'une personne';
@@ -42,10 +53,12 @@ export function feedFor(change: TaskChange): { sessionId: string; text: string; 
   };
 }
 
-/** Transmet le message à la session concernée si elle peut le recevoir. */
+/** Transmet le message à chaque session en charge qui peut le recevoir. */
 export async function deliverTaskChange(change: TaskChange): Promise<void> {
-  const feed = feedFor(change);
-  if (!feed) return;
+  for (const feed of feedsFor(change)) await deliverFeed(feed);
+}
+
+async function deliverFeed(feed: TaskFeed): Promise<void> {
   const session = await sessionService.get(feed.sessionId);
   if (!session || session.archivedAt || session.status === 'queued' || session.status === 'pending') return;
   // Un provider non interactif (commande shell) exécuterait le texte comme une commande.

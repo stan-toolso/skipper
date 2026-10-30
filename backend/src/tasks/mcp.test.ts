@@ -12,6 +12,8 @@ const m = vi.hoisted(() => ({
   prs: {} as Record<string, unknown>,
   session: { id: 's1', worksessionId: 'w1' as string | null, ownerId: 'u1' },
   calls: [] as Array<[string, unknown[]]>,
+  taskStatus: 'in_progress' as string,
+  taskSessionIds: [] as string[],
 }));
 vi.mock('./service.js', () => ({ taskService: m.tasks, describeComment: () => [], formatPerson: () => '', statusTagText: () => '' }));
 vi.mock('./attachments.js', () => ({ describeAttachments: () => [], imageBlocks: async () => [] }));
@@ -73,10 +75,20 @@ const record = (name: string) => (...args: unknown[]) => void m.calls.push([name
 beforeEach(() => {
   m.calls = [];
   m.session = { id: 's1', worksessionId: 'w1', ownerId: 'u1' };
+  m.taskStatus = 'in_progress';
+  m.taskSessionIds = [];
   Object.assign(m.tasks, {
     get: async (id: string) => {
       if (id !== 't1') throw new Error('Tâche introuvable');
-      return { id, projectId: 'p', title: 'Tâche', description: '', status: 'in_progress', priority: 'medium', tags: [], customFields: [], branch: 'task/x', commentCount: 0 };
+      return { id, projectId: 'p', title: 'Tâche', description: '', status: m.taskStatus, priority: 'medium', tags: [], customFields: [], branch: 'task/x', commentCount: 0, sessionIds: m.taskSessionIds };
+    },
+    create: async (_p: string, input: Record<string, unknown>) => {
+      record('create')(input);
+      return { id: 't2', projectId: 'p', title: input.title, description: '', status: input.status ?? 'todo', priority: 'medium', tags: [], customFields: [], branch: null, commentCount: 0, sessionIds: input.sessionId ? [input.sessionId] : [] };
+    },
+    update: async (id: string, input: Record<string, unknown>) => {
+      record('taskUpdate')(id, input);
+      return { id, projectId: 'p', title: 'Tâche', description: '', status: input.status ?? m.taskStatus, priority: 'medium', tags: [], customFields: [], branch: null, commentCount: 0, sessionIds: input.sessionId ? [input.sessionId] : m.taskSessionIds };
     },
     comments: async () => [],
     attachments: async () => [],
@@ -110,10 +122,45 @@ describe('serveur MCP tasks', () => {
   it('déclare tous ses outils (schémas acceptés par le SDK), dont ceux des pull requests', async () => {
     const client = await connect();
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(['claim', 'comment', 'create', 'get', 'list', 'pr_list', 'pr_open', 'pr_register', 'pr_update', 'update']);
+    expect(names).toEqual(['claim', 'comment', 'create', 'get', 'list', 'pr_list', 'pr_open', 'pr_register', 'pr_update', 'release', 'update']);
     // Tout outil libre existe ; pr_open (pousse et ouvre sur GitHub) n'est pas libre.
     for (const free of TASKS_FREE_TOOLS) expect(names).toContain(free.replace('mcp__tasks__', ''));
     expect(TASKS_FREE_TOOLS).not.toContain('mcp__tasks__pr_open');
+  });
+
+  it('create rattache la session aux tâches créées en cours ou terminées, pas aux tâches à faire, sauf demande', async () => {
+    const client = await connect();
+    await client.callTool({ name: 'create', arguments: { title: 'Faite', status: 'done' } });
+    await client.callTool({ name: 'create', arguments: { title: 'Plus tard' } });
+    await client.callTool({ name: 'create', arguments: { title: 'Plus tard mais à moi', assign_to_me: true } });
+    await client.callTool({ name: 'create', arguments: { title: 'Faite par un autre', status: 'in_progress', assign_to_me: false } });
+    expect(m.calls.filter(([n]) => n === 'create').map(([, [input]]) => (input as { sessionId: string | null }).sessionId)).toEqual(['s1', null, 's1', null]);
+    const text = textOf(await client.callTool({ name: 'create', arguments: { title: 'Encore', status: 'in_progress' } }));
+    expect(text).toContain('(assignée à cette session)');
+  });
+
+  it('update prend la charge d’une tâche libre qu’on avance, pas d’une tâche déjà prise', async () => {
+    const client = await connect();
+    await client.callTool({ name: 'update', arguments: { id: 't1', status: 'done' } });
+    expect(m.calls[0][1][1]).toMatchObject({ status: 'done', sessionId: 's1' });
+    m.calls = [];
+    await client.callTool({ name: 'update', arguments: { id: 't1', priority: 'high' } });
+    expect((m.calls[0][1][1] as Record<string, unknown>).sessionId).toBeUndefined();
+    m.calls = [];
+    m.taskSessionIds = ['s9'];
+    await client.callTool({ name: 'update', arguments: { id: 't1', status: 'in_progress' } });
+    expect((m.calls[0][1][1] as Record<string, unknown>).sessionId).toBeUndefined();
+  });
+
+  it('release rend une tâche dont la session est en charge', async () => {
+    const client = await connect();
+    const res = await client.callTool({ name: 'release', arguments: { id: 't1' } });
+    expect(textOf(res)).toContain("n'est pas en charge");
+    expect(m.calls).toEqual([]);
+    m.taskSessionIds = ['s1', 's2'];
+    const text = textOf(await client.callTool({ name: 'release', arguments: { id: 't1' } }));
+    expect(m.calls[0]).toEqual(['taskUpdate', ['t1', { releaseSessionIds: ['s1'] }]]);
+    expect(text).toContain('Tâche rendue');
   });
 
   it('get montre les pull requests suivies de la tâche', async () => {

@@ -184,10 +184,13 @@ export const taskService = {
     return task;
   },
 
-  /** Tâche de la session en charge (la première), null sinon. */
+  /** Première des tâches dont la session est en charge, null sinon (les lectures qui n'en veulent qu'une). */
   async forSession(sessionId: string): Promise<Task | null> {
     return (await taskRepository.list({ sessionId, limit: 1 }))[0] ?? null;
   },
+
+  /** Toutes les tâches dont la session est en charge (une session peut en mener plusieurs). */
+  tasksInCharge: (sessionId: string) => taskRepository.list({ sessionId, limit: 100 }),
 
   /** Tâche traitée sur une branche : une tâche non annulée de préférence. */
   async forBranch(projectId: string, branch: string): Promise<Task | null> {
@@ -342,22 +345,25 @@ export const taskService = {
   async promptSummary(projectId: string, sessionId?: string): Promise<string> {
     const open = await taskRepository.list({ projectId, status: OPEN_STATUSES });
     const intro =
-      "Le projet dispose d'un tableau de tâches géré avec les outils du serveur MCP `tasks` (list, get, create, update, claim, comment). Quand tu réalises une tâche, passe-la en `in_progress` avec `claim` puis en `done` une fois terminée. Si tu découvres du travail à faire plus tard, crée une tâche plutôt que de le laisser tomber.";
+      "Le projet dispose d'un tableau de tâches géré avec les outils du serveur MCP `tasks` (list, get, create, update, claim, release, comment). Quand tu réalises une tâche, passe-la en `in_progress` avec `claim` puis en `done` une fois terminée ; une tâche que tu crées déjà en cours ou terminée (ton propre travail) t'est rattachée d'office, et une session peut être en charge de plusieurs tâches. Si tu découvres du travail à faire plus tard, crée une tâche `todo` plutôt que de le laisser tomber.";
     if (open.length === 0) return `${intro}\nAucune tâche ouverte pour le moment.`;
     const lines = open.map(
       (t) =>
-        `- [${statusLabels[t.status]}${statusTagText(t)}, priorité ${priorityLabels[t.priority]}${t.sessionId && t.sessionId === sessionId ? ', assignée à cette session' : t.sessionId ? ', prise par une autre session' : ''}${t.assignee ? `, responsable ${formatPerson(t.assignee)}` : ''}${tagsText(t)}] ${t.title} (id ${t.id})`,
+        `- [${statusLabels[t.status]}${statusTagText(t)}, priorité ${priorityLabels[t.priority]}${sessionId && t.sessionIds.includes(sessionId) ? ', assignée à cette session' : t.sessionIds.length ? ', prise par une autre session' : ''}${t.assignee ? `, responsable ${formatPerson(t.assignee)}` : ''}${tagsText(t)}] ${t.title} (id ${t.id})`,
     );
     return [intro, 'Tâches ouvertes :', ...lines].join('\n');
   },
 
-  /** Paragraphe du prompt système d'une session en charge d'une tâche : son identifiant et les messages qu'elle recevra. */
+  /** Paragraphe du prompt système d'une session en charge de tâches : leurs identifiants et les messages qu'elle recevra. */
   async linkedTaskPrompt(sessionId: string): Promise<string> {
-    const task = await this.forSession(sessionId);
-    if (!task) return '';
+    const tasks = await this.tasksInCharge(sessionId);
+    if (!tasks.length) return '';
+    const describe = (task: Task) => `${task.id} (« ${task.title} », ${statusLabels[task.status]}${statusTagText(task)}, priorité ${priorityLabels[task.priority]}${tagsText(task)})`;
     return [
-      `Cette session est en charge de la tâche ${task.id} (« ${task.title} », ${statusLabels[task.status]}${statusTagText(task)}, priorité ${priorityLabels[task.priority]}${tagsText(task)}) : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec ses commentaires, \`update\`, \`comment\`).`,
-      "Quand quelqu'un d'autre la modifie ou la commente, tu reçois un message commençant par « [Mise à jour de la tâche] » ou « [Commentaire sur la tâche] » qui décrit le changement : tiens-en compte, et réponds à un commentaire avec `tasks.comment` quand il appelle une réponse.",
+      tasks.length === 1
+        ? `Cette session est en charge de la tâche ${describe(tasks[0])} : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec ses commentaires, \`update\`, \`comment\`).`
+        : [`Cette session est en charge de ${tasks.length} tâches : utilise leurs identifiants avec les outils \`tasks\` (\`get\`, \`update\`, \`comment\`) ; \`release\` rend une tâche que tu ne traites plus.`, ...tasks.map((t) => `- ${describe(t)}`)].join('\n'),
+      "Quand quelqu'un d'autre modifie ou commente l'une de ces tâches, tu reçois un message commençant par « [Mise à jour de la tâche] » ou « [Commentaire sur la tâche] » qui décrit le changement : tiens-en compte, et réponds à un commentaire avec `tasks.comment` quand il appelle une réponse.",
       STATUS_TAG_HINT,
     ].join('\n');
   },

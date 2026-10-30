@@ -11,6 +11,7 @@ const task = (over: Partial<Task> = {}): Task =>
     status: 'todo',
     priority: 'high',
     sessionId: null,
+    sessionIds: [],
     branch: null,
     createdByType: 'human',
     createdBySessionId: null,

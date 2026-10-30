@@ -248,8 +248,8 @@ export default function TabBar({ onToggleSidebar, sidebarOpen = false, sidebarCo
         )}
         <NotificationBell />
         {gitPanel.target && !gitPanel.open && (
-          <button type="button" className="wb-bell-btn wb-git-btn" title={gitPanel.target.taskId ? 'Tâche et suivi git' : 'Suivi git'} aria-label="Ouvrir le panneau git" onClick={() => gitPanel.setOpen(true)}>
-            <i className={`bi ${gitPanel.target.taskId ? 'bi-card-checklist' : 'bi-git'}`} />
+          <button type="button" className="wb-bell-btn wb-git-btn" title={gitPanel.target.tasks?.length ? 'Tâches et suivi git' : 'Suivi git'} aria-label="Ouvrir le panneau git" onClick={() => gitPanel.setOpen(true)}>
+            <i className={`bi ${gitPanel.target.tasks?.length ? 'bi-card-checklist' : 'bi-git'}`} />
           </button>
         )}
       </div>

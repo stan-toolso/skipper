@@ -162,7 +162,7 @@ export default function SessionDetailPage() {
           projectId: session.project.id,
           worksessionId: session.worksession?.id ?? null,
           label: session.worksession ? `${session.project.name} · ${session.worksession.branch}` : session.project.name,
-          taskId: session.task?.id ?? null,
+          tasks: session.tasks,
           sessionId: session.id,
           changesKey,
         }
@@ -307,12 +307,12 @@ export default function SessionDetailPage() {
                 · <i className="bi bi-person" /> {session.owner.id === user?.id ? 'moi' : session.owner.name}
               </>
             )}
-            {session.task && (
-              <>
+            {session.tasks.map((t) => (
+              <span key={t.id}>
                 {' '}
-                · <Link to={`/tasks/${session.task.id}`} className="cc-meta" title="Tâche liée"><i className="bi bi-check2-square" /> {session.task.title}</Link>
-              </>
-            )}
+                · <Link to={`/tasks/${t.id}`} className="cc-meta" title={session.tasks.length > 1 ? `Tâche en charge (${session.tasks.length} au total)` : 'Tâche en charge'}><i className="bi bi-check2-square" /> {t.title}</Link>
+              </span>
+            ))}
             {session.parentSession && (
               <>
                 {' '}

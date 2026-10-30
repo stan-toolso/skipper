@@ -11,6 +11,9 @@ export const TASK_PAGE = gql`
       pullRequests {
         ...TaskPullRequestFields
       }
+      sessionsInCharge {
+        id
+      }
       pullRequest {
         number
         title

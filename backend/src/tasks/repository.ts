@@ -13,6 +13,7 @@ interface Row {
   tags: string[] | null;
   priority: TaskPriority;
   session_id: string | null;
+  session_ids: string[] | null;
   branch: string | null;
   created_by_type: 'human' | 'agent';
   created_by_session_id: string | null;
@@ -72,6 +73,7 @@ const toTask = (r: Row): Task => ({
   tags: Array.isArray(r.tags) ? r.tags : [],
   priority: r.priority,
   sessionId: r.session_id,
+  sessionIds: r.session_ids ?? [],
   branch: r.branch,
   createdByType: r.created_by_type,
   createdBySessionId: r.created_by_session_id,
@@ -99,7 +101,8 @@ const toComment = (r: CommentRow): TaskComment => ({
 });
 
 /** Colonnes d'une tâche avec le nombre de commentaires. */
-const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count, (SELECT count(*) FROM task_attachments a WHERE a.task_id = t.id AND a.comment_id IS NULL) AS attachment_count FROM tasks t`;
+const SELECT = `SELECT t.*, (SELECT count(*) FROM task_comments c WHERE c.task_id = t.id) AS comment_count,
+  (SELECT array_agg(ts.session_id ORDER BY ts.in_charge_since DESC) FROM task_sessions ts WHERE ts.task_id = t.id AND ts.in_charge_since IS NOT NULL) AS session_ids, (SELECT count(*) FROM task_attachments a WHERE a.task_id = t.id AND a.comment_id IS NULL) AS attachment_count FROM tasks t`;
 /** Tri : urgent d'abord, puis par date de création. */
 const ORDER = `ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.created_at ASC`;
 
@@ -111,9 +114,30 @@ function personColumns(p: TaskPerson | null | undefined): [string | null, string
   return [p?.name ?? null, p?.email ?? null];
 }
 
+/** Note le passage d'une session par la tâche (historique), sans lui en donner la charge. */
 async function linkSession(db: Queryable, taskId: string, sessionId: string | null | undefined): Promise<void> {
   if (!sessionId) return;
   await db.query('INSERT INTO task_sessions (task_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, sessionId]);
+}
+
+/** La session prend la charge de la tâche (en plus des sessions déjà en charge). */
+async function takeCharge(db: Queryable, taskId: string, sessionId: string): Promise<void> {
+  await db.query(
+    `INSERT INTO task_sessions (task_id, session_id, in_charge_since) VALUES ($1, $2, now())
+     ON CONFLICT (task_id, session_id) DO UPDATE SET in_charge_since = COALESCE(task_sessions.in_charge_since, now())`,
+    [taskId, sessionId],
+  );
+}
+
+/** Des sessions cessent d'être en charge (toutes si `sessionIds` est null) ; leur passage reste dans l'historique. */
+async function releaseCharge(db: Queryable, taskId: string, sessionIds: string[] | null): Promise<void> {
+  if (sessionIds && sessionIds.length === 0) return;
+  await db.query(`UPDATE task_sessions SET in_charge_since = NULL WHERE task_id = $1${sessionIds ? ' AND session_id = ANY($2::uuid[])' : ''}`, sessionIds ? [taskId, sessionIds] : [taskId]);
+}
+
+/** tasks.session_id = la plus récente des sessions en charge. */
+async function syncPrimarySession(db: Queryable, taskId: string): Promise<void> {
+  await db.query('UPDATE tasks SET session_id = (SELECT session_id FROM task_sessions WHERE task_id = $1 AND in_charge_since IS NOT NULL ORDER BY in_charge_since DESC LIMIT 1) WHERE id = $1', [taskId]);
 }
 
 export const taskRepository = {
@@ -143,7 +167,7 @@ export const taskRepository = {
           input.tags ?? [],
         ],
       );
-      await linkSession(client, rows[0].id, input.sessionId);
+      if (input.sessionId) await takeCharge(client, rows[0].id, input.sessionId);
       await linkSession(client, rows[0].id, actor.sessionId);
       await client.query('COMMIT');
       return (await this.findById(rows[0].id))!;
@@ -167,7 +191,7 @@ export const taskRepository = {
     if (filter.projectIds) where.push(`t.project_id = ANY($${params.push(filter.projectIds)}::uuid[])`);
     if (filter.status?.length) where.push(`t.status = ANY($${params.push(filter.status)}::task_status[])`);
     if (filter.priority) where.push(`t.priority = $${params.push(filter.priority)}`);
-    if (filter.sessionId) where.push(`t.session_id = $${params.push(filter.sessionId)}`);
+    if (filter.sessionId) where.push(`EXISTS (SELECT 1 FROM task_sessions ts WHERE ts.task_id = t.id AND ts.session_id = $${params.push(filter.sessionId)} AND ts.in_charge_since IS NOT NULL)`);
     if (filter.branch) where.push(`t.branch = $${params.push(filter.branch)}`);
     if (filter.tag) where.push(`EXISTS (SELECT 1 FROM unnest(t.tags) tag WHERE lower(tag) = lower($${params.push(filter.tag)}))`);
     if (filter.assignee) {
@@ -202,7 +226,6 @@ export const taskRepository = {
     if (input.title != null) sets.push(`title = $${params.push(input.title)}`);
     if (input.description != null) sets.push(`description = $${params.push(input.description)}`);
     if (input.priority != null) sets.push(`priority = $${params.push(input.priority)}`);
-    if (input.sessionId !== undefined) sets.push(`session_id = $${params.push(input.sessionId)}`);
     if (input.branch !== undefined) sets.push(`branch = $${params.push(input.branch)}`);
     if (input.dueDate !== undefined) sets.push(`due_date = $${params.push(input.dueDate)}`);
     if (input.customFields != null) sets.push(`custom_fields = $${params.push(toJson(input.customFields))}::jsonb`);
@@ -224,7 +247,12 @@ export const taskRepository = {
     try {
       await client.query('BEGIN');
       const { rowCount } = await client.query(`UPDATE tasks SET ${sets.join(', ')} WHERE id = $1`, params);
-      if (rowCount) await linkSession(client, id, input.sessionId);
+      if (rowCount) {
+        if (input.sessionId === null) await releaseCharge(client, id, null);
+        else if (input.sessionId) await takeCharge(client, id, input.sessionId);
+        if (input.releaseSessionIds?.length) await releaseCharge(client, id, input.releaseSessionIds.filter((s) => s !== input.sessionId));
+        if (input.sessionId !== undefined || input.releaseSessionIds?.length) await syncPrimarySession(client, id);
+      }
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -235,9 +263,10 @@ export const taskRepository = {
     return this.findById(id);
   },
 
-  /** Déplace une tâche dans un autre projet : sa session et sa branche restent à l'ancien projet, elles sont retirées. */
+  /** Déplace une tâche dans un autre projet : ses sessions en charge et sa branche restent à l'ancien projet, elles sont retirées. */
   async move(id: string, projectId: string): Promise<Task | null> {
     const { rowCount } = await pool.query('UPDATE tasks SET project_id = $2, session_id = NULL, branch = NULL, updated_at = now() WHERE id = $1', [id, projectId]);
+    if (rowCount) await releaseCharge(pool, id, null);
     return rowCount ? this.findById(id) : null;
   },
 
