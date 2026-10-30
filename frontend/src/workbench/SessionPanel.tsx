@@ -83,14 +83,18 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
           <dt>Personne</dt>
           <dd>{session.owner ? (session.owner.id === user?.id ? 'moi' : session.owner.name ?? session.owner.email) : <span className="cc-dimmer">—</span>}</dd>
         </div>
-        {session.task && (
+        {session.tasks.length > 0 && (
           <div>
-            <dt>Tâche</dt>
+            <dt>{session.tasks.length > 1 ? `Tâches (${session.tasks.length})` : 'Tâche'}</dt>
             <dd>
-              <Link to={`/tasks/${session.task.id}`}>
-                <i className="bi bi-check2-square me-1" />
-                {session.task.title}
-              </Link>
+              {session.tasks.map((t) => (
+                <div key={t.id}>
+                  <Link to={`/tasks/${t.id}`}>
+                    <i className="bi bi-check2-square me-1" />
+                    {t.title}
+                  </Link>
+                </div>
+              ))}
             </dd>
           </div>
         )}

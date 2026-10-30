@@ -325,8 +325,10 @@ type Task {
   "Étiquettes libres de la tâche, dans l'ordre d'affichage."
   tags: [String!]!
   priority: TaskPriority!
-  "Session d'agent qui s'en occupe actuellement, le cas échéant."
+  "La plus récente des sessions en charge, le cas échéant."
   session: Session
+  "Toutes les sessions en charge actuellement (plusieurs agents peuvent se partager une tâche), la plus récente d'abord."
+  sessionsInCharge: [Session!]!
   "Toutes les sessions passées par la tâche (archivées comprises), la plus récemment reliée d'abord."
   sessions: [Session!]!
   "'human' ou 'agent'."
@@ -382,8 +384,10 @@ input UpdateTaskInput {
   description: String
   priority: TaskPriority
   status: TaskStatus
-  "Session assignée (null pour retirer)."
+  "Session qui prend la charge, en plus de celles déjà en charge (null : plus aucune session en charge)."
   sessionId: ID
+  "Sessions qui cessent d'être en charge."
+  releaseSessionIds: [ID!]
   "Chaîne vide ou null pour retirer l'échéance."
   dueDate: String
   "Remplace la liste complète."
@@ -1255,8 +1259,10 @@ type Session {
   archivedAt: DateTime
   "Work session supprimée où la session a travaillé (elle a été archivée avec elle) ; null sinon."
   formerWorksession: FormerWorksession
-  "Tâche dont la session est en charge."
+  "Première des tâches dont la session est en charge (voir tasks)."
   task: Task
+  "Tâches dont la session est en charge, la plus récemment prise d'abord."
+  tasks: [Task!]!
   "Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain."
   parentSession: Session
   "Sessions lancées par l'agent de cette session."

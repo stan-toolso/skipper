@@ -14,6 +14,7 @@ const task: Task = {
   status: 'in_progress',
   priority: 'medium',
   sessionId: 's1',
+  sessionIds: ['s1'],
   branch: null,
   createdByType: 'user',
   createdBySessionId: null,
@@ -42,9 +43,30 @@ const comment = (over: Partial<TaskComment> = {}): TaskComment => ({
 
 const alice = { type: 'user', userId: 'u1', name: 'Alice', sessionId: null } as never;
 
+describe('feedsFor (plusieurs sessions en charge)', () => {
+  const shared: Task = { ...task, sessionId: 's2', sessionIds: ['s2', 's1'] };
+  it('un message est transmis à chaque session en charge, sauf à son auteur, et les relance', () => {
+    const feeds = feedsFor({ kind: 'commented', attachments: [], parent: null, task: shared, comment: comment() });
+    expect(feeds.map((f) => [f.sessionId, f.restart])).toEqual([
+      ['s2', true],
+      ['s1', true],
+    ]);
+    expect(feeds[0].text).toContain('dont cette session est en charge');
+    expect(feedsFor({ kind: 'commented', attachments: [], parent: null, task: shared, comment: comment({ authorType: 'agent', authorSessionId: 's2' }) }).map((f) => f.sessionId)).toEqual(['s1']);
+  });
+  it('une modification est décrite aux sessions déjà en charge, pas à celle qui vient de prendre la charge ni à son auteur', () => {
+    const before: Task = { ...task, sessionId: 's1', sessionIds: ['s1'], status: 'todo' };
+    const feeds = feedsFor({ kind: 'updated', addedAttachments: [], before, task: shared, actor: { type: 'agent', userId: null, name: 'Session 2', sessionId: 's2' } as never });
+    expect(feeds.map((f) => f.sessionId)).toEqual(['s1']);
+    expect(feeds[0].text).toContain("la session d'agent « Session 2 »");
+    expect(feedsFor({ kind: 'updated', addedAttachments: [], before, task: shared, actor: alice }).map((f) => f.sessionId)).toEqual(['s1']);
+  });
+});
+
 describe('feedFor', () => {
   it('rien sans session en charge', () => {
-    expect(feedFor({ kind: 'commented', attachments: [], parent: null, task: { ...task, sessionId: null }, comment: comment() })).toBeNull();
+    expect(feedFor({ kind: 'commented', attachments: [], parent: null, task: { ...task, sessionId: null, sessionIds: [] }, comment: comment() })).toBeNull();
+    expect(feedsFor({ kind: 'commented', attachments: [], parent: null, task: { ...task, sessionId: null, sessionIds: [] }, comment: comment() })).toEqual([]);
   });
   it('un commentaire d’une personne est transmis à la session en charge, et la relance au besoin', () => {
     const feed = feedFor({ kind: 'commented', attachments: [], parent: null, task, comment: comment() });
@@ -69,7 +91,7 @@ describe('feedFor', () => {
     expect(feed!.text).toContain('- Statut : à faire → en cours');
   });
   it('rien pour une passation, une modification par la session elle-même, ou sans changement visible', () => {
-    expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, sessionId: 's0' }, task, actor: alice })).toBeNull();
+    expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, sessionId: 's0', sessionIds: ['s0'] }, task, actor: alice })).toBeNull();
     expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, status: 'todo' }, task, actor: { type: 'agent', userId: null, name: 'Session', sessionId: 's1' } as never })).toBeNull();
     expect(feedFor({ kind: 'updated', addedAttachments: [], before: task, task: { ...task }, actor: alice })).toBeNull();
     expect(feedFor({ kind: 'updated', addedAttachments: [], before: { ...task, status: 'todo' }, task, actor: null })).toBeNull();
