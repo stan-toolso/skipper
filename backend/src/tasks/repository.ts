@@ -1,7 +1,7 @@
 import { pool, type Queryable } from '../db/pool.js';
 import { toJson } from '../db/json.js';
 import type { Actor } from '../context/types.js';
-import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskPerson, TaskPriority, TaskStatus, UpdateTaskInput } from './types.js';
+import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskMention, TaskPerson, TaskPriority, TaskReaction, TaskStatus, UpdateTaskInput } from './types.js';
 
 interface Row {
   id: string;
@@ -33,14 +33,30 @@ interface Row {
 interface CommentRow {
   id: string;
   task_id: string;
+  parent_id: string | null;
   author_type: 'human' | 'agent';
   author_user_id: string | null;
   author_session_id: string | null;
   author_name: string;
   body: string;
+  mentions: TaskMention[] | null;
   created_at: Date;
   updated_at: Date;
 }
+
+interface ReactionRow {
+  id: string;
+  task_id: string;
+  comment_id: string | null;
+  emoji: string;
+  actor_type: 'human' | 'agent';
+  user_id: string | null;
+  session_id: string | null;
+  actor_name: string;
+  created_at: Date;
+}
+
+const toReaction = (r: ReactionRow): TaskReaction => ({ id: r.id, taskId: r.task_id, commentId: r.comment_id, emoji: r.emoji, actorType: r.actor_type, userId: r.user_id, sessionId: r.session_id, actorName: r.actor_name, createdAt: r.created_at });
 
 interface AttachmentRow {
   id: string;
@@ -91,11 +107,13 @@ const toTask = (r: Row): Task => ({
 const toComment = (r: CommentRow): TaskComment => ({
   id: r.id,
   taskId: r.task_id,
+  parentId: r.parent_id ?? null,
   authorType: r.author_type,
   authorUserId: r.author_user_id,
   authorSessionId: r.author_session_id,
   authorName: r.author_name,
   body: r.body,
+  mentions: Array.isArray(r.mentions) ? r.mentions : [],
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -368,13 +386,18 @@ export const taskRepository = {
     return rows[0] ? toComment(rows[0]) : null;
   },
 
-  async addComment(taskId: string, body: string, author: { type: Actor['type']; userId?: string | null; sessionId?: string | null; name: string }): Promise<TaskComment> {
+  async addComment(
+    taskId: string,
+    body: string,
+    author: { type: Actor['type']; userId?: string | null; sessionId?: string | null; name: string },
+    opts: { parentId?: string | null; mentions?: TaskMention[] } = {},
+  ): Promise<TaskComment> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows } = await client.query<CommentRow>(
-        `INSERT INTO task_comments (task_id, author_type, author_user_id, author_session_id, author_name, body) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [taskId, author.type, author.userId ?? null, author.sessionId ?? null, author.name, body],
+        `INSERT INTO task_comments (task_id, parent_id, author_type, author_user_id, author_session_id, author_name, body, mentions) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *`,
+        [taskId, opts.parentId ?? null, author.type, author.userId ?? null, author.sessionId ?? null, author.name, body, toJson(opts.mentions ?? [])],
       );
       await client.query('UPDATE tasks SET updated_at = now() WHERE id = $1', [taskId]);
       await client.query('COMMIT');
@@ -387,13 +410,61 @@ export const taskRepository = {
     }
   },
 
-  async updateComment(id: string, body: string): Promise<TaskComment | null> {
-    const { rows } = await pool.query<CommentRow>('UPDATE task_comments SET body = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, body]);
+  async updateComment(id: string, body: string, mentions?: TaskMention[]): Promise<TaskComment | null> {
+    const { rows } = mentions
+      ? await pool.query<CommentRow>('UPDATE task_comments SET body = $2, mentions = $3::jsonb, updated_at = now() WHERE id = $1 RETURNING *', [id, body, toJson(mentions)])
+      : await pool.query<CommentRow>('UPDATE task_comments SET body = $2, updated_at = now() WHERE id = $1 RETURNING *', [id, body]);
     return rows[0] ? toComment(rows[0]) : null;
   },
 
   async deleteComment(id: string): Promise<boolean> {
     const { rowCount } = await pool.query('DELETE FROM task_comments WHERE id = $1', [id]);
     return (rowCount ?? 0) > 0;
+  },
+
+  /** Relie une session à la tâche (historique task_sessions ; sans effet si elle l'est déjà). */
+  linkSession: (taskId: string, sessionId: string) => linkSession(pool, taskId, sessionId),
+
+  // ---- Réactions -------------------------------------------------------------------------------
+
+  /** Toutes les réactions d'une tâche (sur ses messages et sur elle-même), les plus anciennes d'abord. */
+  async listReactions(taskId: string): Promise<TaskReaction[]> {
+    const { rows } = await pool.query<ReactionRow>('SELECT * FROM task_reactions WHERE task_id = $1 ORDER BY created_at ASC, id ASC', [taskId]);
+    return rows.map(toReaction);
+  },
+
+  /**
+   * Pose la réaction si l'acteur ne l'a pas encore, la retire sinon. Renvoie la réaction (posée ou retirée) et
+   * ce qui s'est passé.
+   */
+  async toggleReaction(taskId: string, commentId: string | null, emoji: string, actor: { type: Actor['type']; userId?: string | null; sessionId?: string | null; name: string }): Promise<{ reaction: TaskReaction; added: boolean }> {
+    const key = actor.userId ?? actor.sessionId ?? null;
+    const { rows: existing } = await pool.query<ReactionRow>(
+      `SELECT * FROM task_reactions WHERE task_id = $1 AND comment_id IS NOT DISTINCT FROM $2 AND emoji = $3 AND COALESCE(user_id, session_id) = $4`,
+      [taskId, commentId, emoji, key],
+    );
+    if (existing[0]) {
+      await pool.query('DELETE FROM task_reactions WHERE id = $1', [existing[0].id]);
+      return { reaction: toReaction(existing[0]), added: false };
+    }
+    const { rows } = await pool.query<ReactionRow>(
+      `INSERT INTO task_reactions (task_id, comment_id, emoji, actor_type, user_id, session_id, actor_name) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [taskId, commentId, emoji, actor.type, actor.userId ?? null, actor.sessionId ?? null, actor.name],
+    );
+    return { reaction: toReaction(rows[0]), added: true };
+  },
+
+  // ---- Mentions --------------------------------------------------------------------------------
+
+  /** Membres du projet (nom, e-mail) et sessions d'agent non archivées du projet : ce que l'on peut mentionner. */
+  async mentionCandidates(projectId: string): Promise<{ users: { id: string; name: string; email: string }[]; sessions: { id: string; name: string; status: string }[] }> {
+    const [users, sessions] = await Promise.all([
+      pool.query<{ id: string; name: string; email: string }>('SELECT u.id, u.name, u.email FROM project_members m JOIN users u ON u.id = m.user_id WHERE m.project_id = $1 ORDER BY u.name ASC', [projectId]),
+      pool.query<{ id: string; name: string; status: string }>(
+        `SELECT id, name, status FROM sessions WHERE project_id = $1 AND archived_at IS NULL AND kind = 'session' ORDER BY (status = 'running') DESC, created_at DESC LIMIT 200`,
+        [projectId],
+      ),
+    ]);
+    return { users: users.rows, sessions: sessions.rows };
   },
 };

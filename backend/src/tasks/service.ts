@@ -4,6 +4,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService } from '../projects/service.js';
 import { describeAttachment, describeAttachments, fitInInstruction, removeAllTaskAttachments, removeAttachmentFiles, removeTaskAttachments, storeTaskAttachments, validateTaskAttachments, type AttachmentDelivery } from './attachments.js';
+import { findMentions, sessionMentionable, userMentionable, type Mentionable } from './mentions.js';
 import { taskRepository } from './repository.js';
 import {
   OPEN_STATUSES,
@@ -18,8 +19,10 @@ import {
   type TaskComment,
   type TaskField,
   type TaskFilter,
+  type TaskMention,
   type TaskPerson,
   type TaskPersonInput,
+  type TaskReaction,
   type UpdateTaskInput,
 } from './types.js';
 
@@ -31,6 +34,19 @@ const MAX_FIELDS = 100;
 const MAX_FIELD_KEY = 100;
 const MAX_FIELD_VALUE = 10_000;
 const MAX_COMMENT = 20_000;
+const MAX_EMOJI_CODEPOINTS = 8;
+
+/** Emoji d'une réaction nettoyé : court, sans espace. */
+export function normalizeEmoji(emoji: string): string {
+  const e = emoji.trim();
+  if (!e) throw new AppError('Emoji manquant');
+  if (/\s/.test(e) || Array.from(e).length > MAX_EMOJI_CODEPOINTS) throw new AppError('Réaction invalide : un seul emoji attendu');
+  return e;
+}
+
+/** Mode d'emploi du fil d'une tâche pour un agent : réponses, mentions, réactions. */
+export const THREAD_HINT =
+  "Le fil d'une tâche se lit comme une conversation : `tasks.comment` y poste un message (`reply_to` pour répondre dans le fil d'un message), `tasks.react` pose ou retire un emoji sur un message ou sur la tâche, et une mention (« @Nom », « @e-mail » pour un membre du projet ; « @session:<id> » pour une session d'agent ; `tasks.people` liste qui l'on peut mentionner) prévient la personne ou transmet le message à la session.";
 
 /** Nom lisible d'une personne : « Nom <e-mail> », ou ce qui est renseigné. */
 export function formatPerson(p: TaskPerson | null | undefined): string {
@@ -101,6 +117,9 @@ export function normalizeTags(tags: string[] | null | undefined): string[] | und
 export const statusTagText = (t: Pick<Task, 'statusTag'>) => (t.statusTag ? ` · ${t.statusTag}` : '');
 /** « , étiquettes a, b » quand la tâche en a. */
 export const tagsText = (t: Pick<Task, 'tags'>) => (t.tags.length ? `, étiquettes ${t.tags.join(', ')}` : '');
+
+/** Remplace dans le texte d'un message les mentions par leur libellé, pour un lecteur (agent) qui ne connaît pas l'alias. */
+const readableMentions = (c: TaskComment): string => (c.mentions.length ? ` (mentionne ${c.mentions.map((m) => (m.kind === 'session' ? `la session « ${m.label} » (${m.id})` : m.label)).join(', ')})` : '');
 
 /** Demande à la session en charge de tenir l'étiquette d'état de sa tâche à jour. */
 const STATUS_TAG_HINT =
@@ -290,9 +309,40 @@ export const taskService = {
   attachments: (taskId: string, commentId?: string | null) => taskRepository.listAttachments(taskId, commentId),
   findAttachment: (id: string) => taskRepository.findAttachment(id),
 
-  // ---- Commentaires ----------------------------------------------------------------------------
+  // ---- Fil de discussion (commentaires, mentions, réactions) -------------------------------------
 
   comments: (taskId: string) => taskRepository.listComments(taskId),
+  reactions: (taskId: string) => taskRepository.listReactions(taskId),
+  linkSession: (taskId: string, sessionId: string) => taskRepository.linkSession(taskId, sessionId),
+
+  /** Qui l'on peut mentionner dans le fil des tâches d'un projet : ses membres, puis ses sessions d'agent non archivées (en cours d'abord). */
+  async mentionables(projectId: string): Promise<Mentionable[]> {
+    const { users, sessions } = await taskRepository.mentionCandidates(projectId);
+    return [...users.map(userMentionable), ...sessions.map(sessionMentionable)];
+  },
+
+  /** Mentions d'un texte, résolues parmi les membres et sessions du projet. */
+  async resolveMentions(projectId: string, body: string): Promise<TaskMention[]> {
+    return body.includes('@') ? findMentions(body, await this.mentionables(projectId)) : [];
+  },
+
+  /**
+   * Pose ou retire une réaction sur un message du fil (`commentId`) ou sur la tâche elle-même (null). L'auteur du
+   * message, s'il s'agit d'une session, en est informé (écouteurs).
+   */
+  async toggleReaction(taskId: string, commentId: string | null, emoji: string, actor: TaskActor): Promise<{ reaction: TaskReaction; added: boolean }> {
+    const task = await this.get(taskId);
+    const comment = commentId ? await this.getComment(commentId) : null;
+    if (comment && comment.taskId !== taskId) throw new AppError("Ce message n'appartient pas à cette tâche");
+    const result = await taskRepository.toggleReaction(taskId, commentId, normalizeEmoji(emoji), {
+      type: actor.type,
+      userId: actor.userId,
+      sessionId: actor.sessionId,
+      name: actor.name?.trim() || (actor.type === 'agent' ? 'Agent' : "Quelqu'un"),
+    });
+    notifyChanged({ kind: 'reacted', task, reaction: result.reaction, comment, added: result.added });
+    return result;
+  },
 
   async getComment(id: string): Promise<TaskComment> {
     const c = await taskRepository.findComment(id);
@@ -300,30 +350,67 @@ export const taskService = {
     return c;
   },
 
-  /** Ajoute un commentaire, avec des fichiers le cas échéant (le texte peut alors être vide). */
-  async addComment(taskId: string, body: string, author: TaskActor, files: AttachmentInput[] | null = null): Promise<TaskComment> {
+  /**
+   * Poste un message dans le fil de la tâche, avec des fichiers le cas échéant (le texte peut alors être vide).
+   * `parentId` : réponse dans le fil d'un message (une réponse à une réponse rejoint le fil de la racine). Les
+   * mentions sont résolues parmi les membres et sessions du projet : les personnes mentionnées et l'auteur du
+   * message auquel on répond sont notifiés, les sessions mentionnées sont reliées à la tâche (elles recevront le
+   * message, puis tous les changements de la tâche).
+   */
+  async addComment(taskId: string, body: string, author: TaskActor, files: AttachmentInput[] | null = null, opts: { parentId?: string | null } = {}): Promise<TaskComment> {
     const task = await this.get(taskId);
-    const text = body.trim();
+    const text = body.replace(/\u0000/g, '').trim();
     if (!text && !files?.length) throw new AppError('Le commentaire est vide');
     await validateTaskAttachments('', null, files);
     if (text.length > MAX_COMMENT) throw new AppError(`Le commentaire dépasse ${MAX_COMMENT} caractères`);
-    const comment = await taskRepository.addComment(taskId, text, { type: author.type, userId: author.userId, sessionId: author.sessionId, name: author.name?.trim() || (author.type === 'agent' ? 'Agent' : 'Quelqu\'un') });
+    let parent: TaskComment | null = null;
+    if (opts.parentId) {
+      parent = await this.getComment(opts.parentId);
+      if (parent.taskId !== taskId) throw new AppError("Le message auquel vous répondez n'appartient pas à cette tâche");
+      if (parent.parentId) parent = await this.getComment(parent.parentId);
+    }
+    const mentions = await this.resolveMentions(task.projectId, text);
+    const comment = await taskRepository.addComment(
+      taskId,
+      text,
+      { type: author.type, userId: author.userId, sessionId: author.sessionId, name: author.name?.trim() || (author.type === 'agent' ? 'Agent' : 'Quelqu\'un') },
+      { parentId: parent?.id ?? null, mentions },
+    );
     const attachments = await storeTaskAttachments(taskId, comment.id, files).catch(async (err) => {
       await taskRepository.deleteComment(comment.id).catch(() => undefined);
       throw err;
     });
-    notifyChanged({ kind: 'commented', task, comment, attachments });
+    for (const m of mentions) if (m.kind === 'session') await taskRepository.linkSession(taskId, m.id).catch((err) => console.warn('[tasks] session mentionnée non reliée', err));
+    void this.notifyThread(task, comment, parent, author);
+    notifyChanged({ kind: 'commented', task, comment, attachments, parent });
     return comment;
+  },
+
+  /** Notifications d'un nouveau message : aux personnes mentionnées, et à l'auteur (humain) du message auquel il répond. */
+  async notifyThread(task: Task, comment: TaskComment, parent: TaskComment | null, author: TaskActor): Promise<void> {
+    const excerpt = comment.body.length > 140 ? `${comment.body.slice(0, 140)}…` : comment.body || '(fichiers joints)';
+    const notified = new Set<string>();
+    if (author.userId) notified.add(author.userId);
+    const base = { link: `/tasks/${task.id}#comment-${comment.id}`, projectId: task.projectId, sessionId: author.sessionId ?? null, payload: { taskId: task.id, commentId: comment.id } };
+    for (const m of comment.mentions) {
+      if (m.kind !== 'user' || notified.has(m.id)) continue;
+      notified.add(m.id);
+      await notificationService.notify({ ...base, type: 'task.mentioned', userId: m.id, title: `${comment.authorName} vous mentionne · ${task.title}`, message: excerpt });
+    }
+    if (parent?.authorUserId && !notified.has(parent.authorUserId)) {
+      await notificationService.notify({ ...base, type: 'task.replied', userId: parent.authorUserId, title: `${comment.authorName} répond à votre message · ${task.title}`, message: excerpt });
+    }
   },
 
   async updateComment(id: string, body: string, files: CommentFiles = {}): Promise<TaskComment> {
     const current = await this.getComment(id);
     const kept = (await taskRepository.listAttachments(current.taskId, id)).filter((a) => !files.removeAttachmentIds?.includes(a.id));
-    const text = body.trim();
+    const text = body.replace(/\u0000/g, '').trim();
     if (!text && kept.length + (files.attachments?.length ?? 0) === 0) throw new AppError('Le commentaire est vide');
     if (text.length > MAX_COMMENT) throw new AppError(`Le commentaire dépasse ${MAX_COMMENT} caractères`);
     await validateTaskAttachments(current.taskId, id, files.attachments, files.removeAttachmentIds);
-    const c = await taskRepository.updateComment(id, text);
+    const task = await this.get(current.taskId);
+    const c = await taskRepository.updateComment(id, text, await this.resolveMentions(task.projectId, text));
     if (!c) throw new NotFoundError('Commentaire introuvable');
     await removeTaskAttachments(current.taskId, id, files.removeAttachmentIds);
     await storeTaskAttachments(current.taskId, id, files.attachments);
@@ -344,8 +431,10 @@ export const taskService = {
   /** Résumé des tâches ouvertes, injecté dans le prompt système des agents. */
   async promptSummary(projectId: string, sessionId?: string): Promise<string> {
     const open = await taskRepository.list({ projectId, status: OPEN_STATUSES });
-    const intro =
-      "Le projet dispose d'un tableau de tâches géré avec les outils du serveur MCP `tasks` (list, get, create, update, claim, release, comment). Quand tu réalises une tâche, passe-la en `in_progress` avec `claim` puis en `done` une fois terminée ; une tâche que tu crées déjà en cours ou terminée (ton propre travail) t'est rattachée d'office, et une session peut être en charge de plusieurs tâches. Si tu découvres du travail à faire plus tard, crée une tâche `todo` plutôt que de le laisser tomber.";
+    const intro = [
+      "Le projet dispose d'un tableau de tâches géré avec les outils du serveur MCP `tasks` (list, get, create, update, claim, release, comment, react, people). Quand tu réalises une tâche, passe-la en `in_progress` avec `claim` puis en `done` une fois terminée ; une tâche que tu crées déjà en cours ou terminée (ton propre travail) t'est rattachée d'office, et une session peut être en charge de plusieurs tâches. Si tu découvres du travail à faire plus tard, crée une tâche `todo` plutôt que de le laisser tomber.",
+      THREAD_HINT,
+    ].join(' ');
     if (open.length === 0) return `${intro}\nAucune tâche ouverte pour le moment.`;
     const lines = open.map(
       (t) =>
@@ -354,22 +443,33 @@ export const taskService = {
     return [intro, 'Tâches ouvertes :', ...lines].join('\n');
   },
 
-  /** Paragraphe du prompt système d'une session en charge de tâches : leurs identifiants et les messages qu'elle recevra. */
+  /**
+   * Paragraphe du prompt système d'une session reliée à des tâches : celles dont elle a la charge (identifiants, mode
+   * d'emploi du fil, étiquette d'état) et celles auxquelles elle est simplement reliée (créées, mentionnée), dont
+   * elle reçoit aussi les changements.
+   */
   async linkedTaskPrompt(sessionId: string): Promise<string> {
     const tasks = await this.tasksInCharge(sessionId);
-    if (!tasks.length) return '';
+    const charged = new Set(tasks.map((t) => t.id));
+    const others = (await taskRepository.listForSession(sessionId)).filter((t) => !charged.has(t.id) && t.status !== 'cancelled' && t.status !== 'done');
+    if (!tasks.length && !others.length) return '';
     const describe = (task: Task) => `${task.id} (« ${task.title} », ${statusLabels[task.status]}${statusTagText(task)}, priorité ${priorityLabels[task.priority]}${tagsText(task)})`;
-    return [
-      tasks.length === 1
-        ? `Cette session est en charge de la tâche ${describe(tasks[0])} : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec ses commentaires, \`update\`, \`comment\`).`
-        : [`Cette session est en charge de ${tasks.length} tâches : utilise leurs identifiants avec les outils \`tasks\` (\`get\`, \`update\`, \`comment\`) ; \`release\` rend une tâche que tu ne traites plus.`, ...tasks.map((t) => `- ${describe(t)}`)].join('\n'),
-      "Quand quelqu'un d'autre modifie ou commente l'une de ces tâches, tu reçois un message commençant par « [Mise à jour de la tâche] » ou « [Commentaire sur la tâche] » qui décrit le changement : tiens-en compte, et réponds à un commentaire avec `tasks.comment` quand il appelle une réponse.",
-      STATUS_TAG_HINT,
-    ].join('\n');
+    const lines: string[] = [];
+    if (tasks.length === 1) {
+      lines.push(`Cette session est en charge de la tâche ${describe(tasks[0])} : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec son fil de discussion, \`update\`, \`comment\`, \`react\`).`);
+    } else if (tasks.length > 1) {
+      lines.push(`Cette session est en charge de ${tasks.length} tâches : utilise leurs identifiants avec les outils \`tasks\` (\`get\`, \`update\`, \`comment\`, \`react\`) ; \`release\` rend une tâche que tu ne traites plus.`, ...tasks.map((t) => `- ${describe(t)}`));
+    }
+    if (others.length) lines.push(`Cette session est aussi reliée aux tâches : ${others.map((t) => `${t.id} (« ${t.title} », ${statusLabels[t.status]})`).join(' ; ')}.`);
+    lines.push(
+      "Quand quelqu'un d'autre modifie l'une de ces tâches ou écrit dans son fil, tu reçois un message commençant par « [Mise à jour de la tâche] », « [Commentaire sur la tâche] » ou « [Réaction sur la tâche] » qui décrit le changement : tiens-en compte, et réponds à un message avec `tasks.comment` (`reply_to` pour rester dans son fil) quand il appelle une réponse ; un simple accusé se fait avec `tasks.react`.",
+    );
+    if (tasks.length) lines.push(STATUS_TAG_HINT);
+    return lines.join('\n');
   },
 
-  /** Texte d'une tâche tel que transmis à un agent chargé de la réaliser (avec ses personnes, champs et commentaires). */
-  describeForPrompt(task: Task, comments: TaskComment[] = [], attachments: TaskAttachment[] = [], attached: AttachmentDelivery = 'none'): string {
+  /** Texte d'une tâche tel que transmis à un agent chargé de la réaliser (avec ses personnes, champs et son fil de discussion). */
+  describeForPrompt(task: Task, comments: TaskComment[] = [], attachments: TaskAttachment[] = [], attached: AttachmentDelivery = 'none', reactions: TaskReaction[] = []): string {
     const own = attachments.filter((a) => !a.commentId);
     const parts = [
       `Réalise la tâche suivante du projet (id ${task.id}, priorité ${priorityLabels[task.priority]}${task.dueDate ? `, échéance ${task.dueDate}` : ''}) :`,
@@ -383,13 +483,13 @@ export const taskService = {
     if (task.reporter) parts.push(task.assignee ? '' : '', `Rapporteur : ${formatPerson(task.reporter)}`);
     if (task.tags.length) parts.push('', `Étiquettes : ${task.tags.join(', ')}`);
     if (task.customFields.length) parts.push('', 'Champs personnalisés :', ...task.customFields.map((f) => `- ${f.key} : ${f.value}`));
-    if (comments.length) {
-      parts.push('', 'Commentaires (du plus ancien au plus récent) :');
-      for (const c of comments) parts.push(...describeComment(c, attachments.filter((a) => a.commentId === c.id), attached));
-    }
+    const own_reactions = reactions.filter((r) => !r.commentId);
+    if (own_reactions.length) parts.push('', `Réactions sur la tâche : ${summarizeReactions(own_reactions)}`);
+    if (comments.length) parts.push('', ...describeThread(comments, attachments, reactions, attached));
     parts.push(
       '',
-      "Elle t'est assignée et est déjà « en cours ». Quand c'est terminé et vérifié, passe-la en `done` avec l'outil `tasks.update`. Si tu es bloqué, laisse-la en cours et explique pourquoi (l'outil `tasks.comment` ajoute un commentaire à la tâche).",
+      "Elle t'est assignée et est déjà « en cours ». Quand c'est terminé et vérifié, passe-la en `done` avec l'outil `tasks.update`. Si tu es bloqué, laisse-la en cours et explique pourquoi dans son fil (`tasks.comment`).",
+      THREAD_HINT,
       STATUS_TAG_HINT,
     );
     return parts.join('\n');
@@ -401,7 +501,7 @@ export const taskService = {
     const project = await projectService.get(task.projectId);
     const { kept, leftOut } = fitInInstruction(await taskRepository.listAttachments(id));
     // Même composition que tasks/launch.ts (composeTaskPrompt) : fichiers joints, puis consignes de tâches du projet.
-    const text = this.describeForPrompt({ ...task, status: 'in_progress' }, await taskRepository.listComments(id), kept, 'instruction');
+    const text = this.describeForPrompt({ ...task, status: 'in_progress' }, await taskRepository.listComments(id), kept, 'instruction', await taskRepository.listReactions(id));
     const parts = [text];
     if (leftOut.length) parts.push('', `Non joints (au-delà des limites d'une instruction, lisibles dans l'interface) : ${leftOut.map(describeAttachment).join(', ')}.`);
     if (project.taskInstructions.trim()) parts.push('', '---', '', 'Consignes supplémentaires :', '', project.taskInstructions.trim());
@@ -409,7 +509,34 @@ export const taskService = {
   },
 };
 
-/** Un commentaire tel que montré à un agent, ses fichiers nommés sous son texte. */
-export function describeComment(c: TaskComment, attachments: TaskAttachment[] = [], attached: AttachmentDelivery = 'none'): string[] {
-  return [`- ${c.authorName}${c.authorType === 'agent' ? ' (agent)' : ''}, ${fmtDate(c.createdAt)} UTC :`, ...[c.body || '(pas de texte)', ...describeAttachments(attachments, attached)].join('\n').split('\n').map((l) => `  ${l}`)];
+/** « 👍 2 (Alice, Bob) · 🎉 1 (Session x) » */
+export function summarizeReactions(reactions: TaskReaction[]): string {
+  const byEmoji = new Map<string, string[]>();
+  for (const r of reactions) byEmoji.set(r.emoji, [...(byEmoji.get(r.emoji) ?? []), r.actorName]);
+  return [...byEmoji].map(([emoji, names]) => `${emoji} ${names.length} (${names.join(', ')})`).join(' · ');
+}
+
+/**
+ * Un message du fil tel que montré à un agent : auteur, date, identifiant (pour y répondre ou y réagir), mentions
+ * explicitées, texte, fichiers, réactions. `indent` : réponse dans un fil.
+ */
+export function describeComment(c: TaskComment, attachments: TaskAttachment[] = [], attached: AttachmentDelivery = 'none', opts: { reactions?: TaskReaction[]; indent?: string; replyTo?: TaskComment | null } = {}): string[] {
+  const pad = opts.indent ?? '';
+  const head = `${pad}- ${c.authorName}${c.authorType === 'agent' ? ' (agent)' : ''}, ${fmtDate(c.createdAt)} UTC (message ${c.id}${opts.replyTo ? `, en réponse à ${opts.replyTo.authorName}` : ''})${readableMentions(c)} :`;
+  const body = [c.body || '(pas de texte)', ...describeAttachments(attachments, attached)];
+  if (opts.reactions?.length) body.push(`Réactions : ${summarizeReactions(opts.reactions)}`);
+  return [head, ...body.join('\n').split('\n').map((l) => `${pad}  ${l}`)];
+}
+
+/** Le fil complet d'une tâche pour un agent : messages racines dans l'ordre, leurs réponses indentées sous chacun. */
+export function describeThread(comments: TaskComment[], attachments: TaskAttachment[] = [], reactions: TaskReaction[] = [], attached: AttachmentDelivery = 'none'): string[] {
+  const roots = comments.filter((c) => !c.parentId || !comments.some((p) => p.id === c.parentId));
+  const lines = ['Fil de discussion (du plus ancien au plus récent ; les réponses sont indentées sous leur message) :'];
+  for (const root of roots) {
+    lines.push(...describeComment(root, attachments.filter((a) => a.commentId === root.id), attached, { reactions: reactions.filter((r) => r.commentId === root.id) }));
+    for (const reply of comments.filter((c) => c.parentId === root.id)) {
+      lines.push(...describeComment(reply, attachments.filter((a) => a.commentId === reply.id), attached, { reactions: reactions.filter((r) => r.commentId === reply.id), indent: '    ', replyTo: root }));
+    }
+  }
+  return lines;
 }

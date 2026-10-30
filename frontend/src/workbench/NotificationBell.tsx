@@ -13,6 +13,8 @@ const icons: Record<string, string> = {
   'request.created': 'bi-hand-index-thumb',
   'task.created': 'bi-plus-square',
   'task.completed': 'bi-check2-square',
+  'task.mentioned': 'bi-at',
+  'task.replied': 'bi-reply',
   'pull_request.opened': 'bi-git',
   'pull_request.merged': 'bi-check2-circle',
   'pull_request.closed': 'bi-x-circle',

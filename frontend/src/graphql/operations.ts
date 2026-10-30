@@ -273,13 +273,42 @@ export interface TaskPerson {
   email: string | null;
 }
 
+/** Personne ou session mentionnée dans un message ; `text` est le fragment du corps qui la porte. */
+export interface TaskMention {
+  kind: 'user' | 'session';
+  id: string;
+  label: string;
+  text: string;
+}
+
+/** Réactions d'un même emoji sur un message ou sur la tâche. */
+export interface TaskReaction {
+  emoji: string;
+  count: number;
+  actors: string[];
+  mine: boolean;
+}
+
+/** Qui l'on peut mentionner dans le fil d'une tâche. */
+export interface TaskMentionable {
+  kind: 'user' | 'session';
+  id: string;
+  label: string;
+  detail: string | null;
+  text: string;
+}
+
+/** Message du fil d'une tâche : racine (`parentId` null) ou réponse dans le fil d'une racine. */
 export interface TaskComment {
   id: string;
+  parentId: string | null;
   authorType: 'human' | 'agent';
   authorName: string;
   author: { id: string; name: string } | null;
   authorSession: { id: string; name: string } | null;
   body: string;
+  mentions: TaskMention[];
+  reactions: TaskReaction[];
   editable: boolean;
   deletable: boolean;
   attachments: { id: string; name: string; mediaType: string; size: number }[];

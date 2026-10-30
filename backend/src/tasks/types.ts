@@ -135,17 +135,42 @@ export interface TaskFilter {
   limit?: number;
 }
 
+/** Personne ou session mentionnée dans un message (`@Nom`, `@session:<id>`), résolue à l'écriture ; `text` : le fragment du corps qui la porte. */
+export interface TaskMention {
+  kind: 'user' | 'session';
+  id: string;
+  label: string;
+  text: string;
+}
+
+/** Message du fil d'une tâche (commentaire) : racine, ou réponse à une racine (`parentId`), comme un fil Slack. */
 export interface TaskComment {
   id: string;
   taskId: string;
+  /** Commentaire racine auquel celui-ci répond, null pour un message de premier niveau. */
+  parentId: string | null;
   authorType: Actor['type'];
   authorUserId: string | null;
   authorSessionId: string | null;
   /** Nom au moment de l'écriture (utilisateur ou session), conservé ensuite. */
   authorName: string;
   body: string;
+  mentions: TaskMention[];
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Réaction (emoji) d'une personne ou d'une session sur un message (`commentId`) ou sur la tâche elle-même (`commentId` null). */
+export interface TaskReaction {
+  id: string;
+  taskId: string;
+  commentId: string | null;
+  emoji: string;
+  actorType: Actor['type'];
+  userId: string | null;
+  sessionId: string | null;
+  actorName: string;
+  createdAt: Date;
 }
 
 /** Qui modifie ou commente une tâche, pour prévenir la session en charge et attribuer les commentaires. */
@@ -160,7 +185,8 @@ export interface TaskActor extends Actor {
 /** Changement de tâche diffusé aux écouteurs (session en charge, notamment). */
 export type TaskChange =
   | { kind: 'updated'; before: Task; task: Task; actor: TaskActor | null; addedAttachments: TaskAttachment[] }
-  | { kind: 'commented'; task: Task; comment: TaskComment; attachments: TaskAttachment[] };
+  | { kind: 'commented'; task: Task; comment: TaskComment; attachments: TaskAttachment[]; parent: TaskComment | null }
+  | { kind: 'reacted'; task: Task; reaction: TaskReaction; comment: TaskComment | null; added: boolean };
 
 export interface ProjectApiKey {
   id: string;
