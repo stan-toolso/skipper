@@ -23,6 +23,7 @@ import { gitService } from '../git/service.js';
 import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
 import { runner, type RunnerConfig } from '../runners/index.js';
 import { containerMonitor } from '../runners/monitor.js';
+import { runnerLifecycle } from '../runners/lifecycle.js';
 import type { ContextChange, ContextInstruction, ContextInstructionVersion } from '../context/types.js';
 import { projectService } from '../projects/service.js';
 import { isPersonalProject } from '../projects/types.js';
@@ -1051,13 +1052,13 @@ export const resolvers = {
     stopProjectRunner: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
       const project = await projectService.get(args.id);
-      await runner.stop(project);
+      await runnerLifecycle.stop(project);
       return project;
     },
     resetProjectRunner: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
       const project = await projectService.get(args.id);
-      await runner.remove(project);
+      await runnerLifecycle.reset(project);
       return project;
     },
     deleteProject: async (_: unknown, args: { id: string }, ctx: Ctx) => {

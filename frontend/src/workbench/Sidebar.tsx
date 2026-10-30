@@ -168,7 +168,7 @@ function statusTitle(s: SidebarSession): string {
   if (s.status === 'FAILED') return 'Terminée avec une erreur';
   if (s.status === 'COMPLETED') return 'Terminée';
   if (s.status === 'STOPPED') return 'Arrêtée';
-  if (s.status === 'INTERRUPTED') return 'Interrompue par un redémarrage';
+  if (s.status === 'INTERRUPTED') return 'Interrompue (redémarrage du serveur ou de l’environnement du projet) : à reprendre';
   return 'Pas encore démarrée';
 }
 

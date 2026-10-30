@@ -1,3 +1,4 @@
+import { useMutation } from '@apollo/client';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useElementWidth } from '../lib/useElementWidth';
 import { useEffect, useRef, useState } from 'react';
@@ -5,10 +6,11 @@ import { Alert, Badge, Button, Card, Col, Row, Spinner, Table } from 'react-boot
 import { Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import RateLimitGauges, { busiestWindow } from '../components/RateLimitGauges';
-import { DASHBOARD, type Dashboard, type DashboardProject, type DashboardUsage, type HumanRequest, type Session, type Task } from '../graphql/operations';
+import { DASHBOARD, RESUME_SESSION, type Dashboard, type DashboardProject, type DashboardUsage, type HumanRequest, type Session, type Task } from '../graphql/operations';
 import { formatCost, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
+import { useDialogs } from '../components/Dialogs';
 import ChatComposer from '../components/ChatComposer';
 import './dashboard.css';
 
@@ -108,7 +110,7 @@ export default function DashboardPage() {
               {d.pendingRequests.map((r) => <RequestRow key={r.id} request={r} />)}
               {d.runningSessions.filter((s) => s.activity !== 'BUSY' && s.pendingRequestCount === 0).map((s) => <SessionRow key={s.id} session={s} hint="attend vos instructions" icon="bi-chat-left-dots warn" />)}
               {d.recentSessions.filter((s) => s.status === 'FAILED' && isRecent(s.endedAt ?? s.updatedAt, 24)).map((s) => <SessionRow key={s.id} session={s} hint={s.error ? shorten(s.error, 80) : 'en erreur'} icon="bi-x-octagon bad" />)}
-              {interruptedMidTurn.map((s) => <SessionRow key={s.id} session={s} hint="interrompue en plein travail par un redémarrage : bouton « Reprendre » sur sa page" icon="bi-pause-circle warn" />)}
+              {interruptedMidTurn.map((s) => <SessionRow key={s.id} session={s} hint="interrompue en plein travail par un redémarrage" icon="bi-pause-circle warn" />)}
               {waiting === 0 && counts.failedSessions24h === 0 && interruptedMidTurn.length === 0 && <li className="empty">Rien à traiter : les agents n’ont besoin de rien pour l’instant.</li>}
             </ul>
           </section>
@@ -386,6 +388,8 @@ function RequestRow({ request }: { request: HumanRequest }) {
 
 function SessionRow({ session, hint, icon, showStatus }: { session: Session; hint?: string; icon: string; showStatus?: boolean }) {
   const state = hint ?? sessionStateHint(session.status, session.activity, session.pendingRequestCount);
+  const { showError } = useDialogs();
+  const [resumeSession, { loading: resuming }] = useMutation(RESUME_SESSION, { refetchQueries: ['Dashboard'], onError: (err) => void showError(err) });
   return (
     <li>
       <i className={`bi ${icon} icon`} />
@@ -398,6 +402,11 @@ function SessionRow({ session, hint, icon, showStatus }: { session: Session; hin
         </div>
       </div>
       <div className="side">
+        {session.status === 'INTERRUPTED' && (
+          <Button size="sm" variant="outline-primary" disabled={resuming} title="L'agent reprend le travail coupé par l'interruption" onClick={() => void resumeSession({ variables: { id: session.id } })}>
+            <i className="bi bi-play-fill" /> {resuming ? 'Reprise…' : 'Reprendre'}
+          </Button>
+        )}
         {showStatus ? <StatusBadge status={session.status} /> : null}
         {showStatus && session.costUsd > 0 && <div>{formatCost(session.costUsd)}</div>}
         {showStatus ? <div>{hint}</div> : session.startedAt ? `depuis ${timeAgo(session.startedAt).replace('il y a ', '')}` : null}

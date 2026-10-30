@@ -25,6 +25,7 @@ import '../components/chat.css';
 import {
   INTERRUPT_SESSION,
   PROVIDERS,
+  RESUME_SESSION,
   SEND_SESSION_MESSAGE,
   SESSION,
   SESSION_NAME,
@@ -63,6 +64,7 @@ export default function SessionDetailPage() {
   const { events, loaded: eventsLoaded, draft, refresh: refreshEvents } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
   const [interruptSession] = useMutation(INTERRUPT_SESSION, { onError: (err) => void showError(err) });
+  const [resumeSession, { loading: resuming }] = useMutation(RESUME_SESSION, { onError: (err) => void showError(err) });
   const { confirm, showError } = useDialogs();
   const [updateConfig, { loading: updatingConfig, error: configError }] = useMutation(UPDATE_SESSION_CONFIG);
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
@@ -263,6 +265,8 @@ export default function SessionDetailPage() {
           ? `⧗ En file d'attente${session.queuePosition ? ` (rang ${session.queuePosition})` : ''} — la limite de sessions simultanées est atteinte, l'agent démarrera dès qu'une place se libère`
           : session.status === 'PENDING'
           ? "■ Pas encore démarrée — écrivez la première instruction pour lancer l'agent"
+          : session.status === 'INTERRUPTED'
+          ? `■ Interrompue${session.activity === 'BUSY' ? ' en plein travail' : ''} — reprenez-la, ou écrivez un message`
           : `■ ${sessionStatusLabels[session.status]} — écrivez un message pour reprendre la conversation`;
 
   return (
@@ -389,6 +393,17 @@ export default function SessionDetailPage() {
         <span>
           {busy && pending.length === 0 && <span className="cc-spinner">✻ </span>}
           {statusLine}
+          {session.status === 'INTERRUPTED' && !archived && (
+            <button
+              type="button"
+              className="cc-btn accent ms-2"
+              disabled={resuming}
+              title={session.activity === 'BUSY' ? "L'agent reprend le travail coupé par l'interruption" : "Rouvre la conversation ; l'agent attend votre prochaine instruction"}
+              onClick={() => void resumeSession({ variables: { id } })}
+            >
+              <i className="bi bi-play-fill" /> {resuming ? 'Reprise…' : 'Reprendre'}
+            </button>
+          )}
         </span>
         <span>
           {session.error && <span className="cc-red">{session.error} · </span>}

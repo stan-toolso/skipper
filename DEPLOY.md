@@ -173,7 +173,8 @@ Exemples : 2 sessions sans build → 768m ; 4 sessions dont une qui builde → 2
 navigateur et 3 sessions → 1500m à 2g. Terminer les sessions inutiles libère plus vite qu'un
 relèvement de limite (la somme des limites peut dépasser la RAM du serveur).
 Reconstruire l'image met à jour le CLI Claude Code des conteneurs ; « Recréer » sur la page du
-projet applique la nouvelle image.
+projet applique la nouvelle image : les sessions en cours du projet sont interrompues (pas en erreur) puis
+reprises d'elles-mêmes dès que le nouveau conteneur tourne, les terminaux ouverts sont fermés.
 
 **CPU** : par défaut un conteneur n'a **pas de plafond CPU** : les cœurs du serveur sont partagés
 équitablement (ordonnanceur CFS) entre les conteneurs et le backend, et un projet seul actif dispose
