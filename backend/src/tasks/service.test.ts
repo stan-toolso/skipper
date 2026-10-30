@@ -10,6 +10,7 @@ const base: Task = {
   status: 'todo',
   priority: 'medium',
   sessionId: null,
+  sessionIds: [],
   branch: null,
   createdByType: 'user',
   createdBySessionId: null,

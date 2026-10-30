@@ -3,7 +3,7 @@ import { getProvider } from '../sessions/providers/registry.js';
 import type { AttachmentInput } from '../sessions/types.js';
 import { asInstructionAttachments, fitInInstruction } from './attachments.js';
 import { describeComment, describeTaskChanges, taskService } from './service.js';
-import type { TaskAttachment, TaskChange } from './types.js';
+import type { Task, TaskAttachment, TaskChange } from './types.js';
 
 /** Message à transmettre à une session reliée à une tâche pour un changement fait par quelqu'un d'autre. */
 export interface TaskFeed {
@@ -14,19 +14,22 @@ export interface TaskFeed {
   attachments: TaskAttachment[];
 }
 
+/** La session est-elle en charge de la tâche (plusieurs peuvent l'être) ? */
+const inCharge = (task: Task, sessionId: string) => task.sessionIds.includes(sessionId);
 /** Lien d'une session avec la tâche, pour le lui rappeler : en charge, ou simplement reliée. */
-const bond = (change: TaskChange, sessionId: string) => (change.task.sessionId === sessionId ? 'dont cette session est en charge' : 'à laquelle cette session est reliée');
+const bond = (change: TaskChange, sessionId: string) => (inCharge(change.task, sessionId) ? 'dont cette session est en charge' : 'à laquelle cette session est reliée');
 
 /**
- * Messages à transmettre aux sessions reliées à la tâche (celle en charge, celles passées par la tâche ou mentionnées
- * dans son fil : `linked`) pour un changement fait par quelqu'un d'autre. Un message du fil relance la session en
- * charge et les sessions qu'il mentionne (il leur est adressé) ; les autres sessions reliées ne le reçoivent que si
- * elles tournent. Une modification n'est transmise qu'aux sessions en cours (une session terminée relira la tâche à
- * son prochain démarrage grâce à son prompt système). Une réaction n'est signalée qu'à la session autrice du message.
+ * Messages à transmettre aux sessions reliées à la tâche (toutes celles en charge, celles passées par la tâche ou
+ * mentionnées dans son fil : `linked`) pour un changement fait par quelqu'un d'autre. Un message du fil relance les
+ * sessions en charge et les sessions qu'il mentionne (il leur est adressé) ; les autres sessions reliées ne le
+ * reçoivent que si elles tournent. Une modification n'est transmise qu'aux sessions en cours (une session terminée
+ * relira la tâche à son prochain démarrage grâce à son prompt système), et pas à celle qui vient de prendre la charge
+ * (elle a reçu la tâche entière). Une réaction n'est signalée qu'à la session autrice du message.
  */
 export function feedsFor(change: TaskChange, linked: string[] = []): TaskFeed[] {
   const recipients = new Set<string>(linked);
-  if (change.task.sessionId) recipients.add(change.task.sessionId);
+  for (const id of change.task.sessionIds) recipients.add(id);
   if (change.kind === 'commented') {
     const c = change.comment;
     const mentioned = new Set(c.mentions.filter((m) => m.kind === 'session').map((m) => m.id));
@@ -35,7 +38,7 @@ export function feedsFor(change: TaskChange, linked: string[] = []): TaskFeed[] 
       .filter((sessionId) => sessionId !== c.authorSessionId)
       .map((sessionId) => ({
         sessionId,
-        restart: sessionId === change.task.sessionId || mentioned.has(sessionId),
+        restart: inCharge(change.task, sessionId) || mentioned.has(sessionId),
         attachments: change.attachments,
         text: [
           `[Commentaire sur la tâche] Nouveau message dans le fil de la tâche ${change.task.id} (« ${change.task.title} ») ${bond(change, sessionId)}${mentioned.has(sessionId) ? ', qui mentionne cette session' : ''} :`,
@@ -64,8 +67,8 @@ export function feedsFor(change: TaskChange, linked: string[] = []): TaskFeed[] 
   if (!lines.length) return [];
   const by = change.actor.type === 'agent' ? `la session d'agent « ${change.actor.name ?? 'inconnue'} » (${change.actor.sessionId ?? '?'})` : change.actor.name || 'une personne';
   return [...recipients]
-    // Passation : la nouvelle session en charge a reçu la tâche entière ; l'auteur du changement n'a rien à apprendre.
-    .filter((sessionId) => sessionId !== change.actor?.sessionId && !(sessionId === change.task.sessionId && change.before.sessionId !== sessionId))
+    // Passation : la session qui vient de prendre la charge a reçu la tâche entière ; l'auteur du changement n'a rien à apprendre.
+    .filter((sessionId) => sessionId !== change.actor?.sessionId && !(inCharge(change.task, sessionId) && !inCharge(change.before, sessionId)))
     .map((sessionId) => ({
       sessionId,
       restart: false,
@@ -74,9 +77,10 @@ export function feedsFor(change: TaskChange, linked: string[] = []): TaskFeed[] 
     }));
 }
 
-/** Compatibilité : le message destiné à la session en charge seule (null s'il n'y en a pas). */
-export function feedFor(change: TaskChange): TaskFeed | null {
-  return feedsFor(change).find((f) => f.sessionId === change.task.sessionId) ?? null;
+/** Compatibilité : le message destiné à une session en charge (par défaut la plus récente), null s'il n'y en a pas. */
+export function feedFor(change: TaskChange, sessionId: string | null = change.task.sessionId): TaskFeed | null {
+  if (!sessionId) return null;
+  return feedsFor(change).find((f) => f.sessionId === sessionId) ?? null;
 }
 
 /** Transmet un message à la session concernée si elle peut le recevoir. */

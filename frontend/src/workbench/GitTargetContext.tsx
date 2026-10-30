@@ -6,8 +6,8 @@ export interface GitTarget {
   projectId: string;
   worksessionId: string | null;
   label?: string;
-  /** Tâche affichée dans l'onglet « Tâche » du panneau (page d'une session en charge d'une tâche). */
-  taskId?: string | null;
+  /** Tâches dont la session est en charge : un onglet « Tâche » par tâche dans le panneau (page d'une session). */
+  tasks?: { id: string; title: string }[] | null;
   /** Session affichée dans les onglets « Session » et « Modifications » du panneau (page d'une session). */
   sessionId?: string | null;
   /** Change quand la liste des fichiers modifiés par la session mérite d'être rechargée (résultat d'outil, état). */
@@ -25,7 +25,7 @@ const Ctx = createContext<State | null>(null);
 const OPEN_KEY = 'skipper.workbench.gitPanel';
 const isMobile = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767.98px)').matches;
 
-const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worksessionId === b!.worksessionId && a!.label === b!.label && (a!.taskId ?? null) === (b!.taskId ?? null) && (a!.sessionId ?? null) === (b!.sessionId ?? null) && (a!.changesKey ?? '') === (b!.changesKey ?? ''));
+const sameTarget = (a: GitTarget | null, b: GitTarget | null) => (a === b) || (Boolean(a && b) && a!.projectId === b!.projectId && a!.worksessionId === b!.worksessionId && a!.label === b!.label && (a!.tasks ?? []).map((t) => `${t.id}:${t.title}`).join('|') === (b!.tasks ?? []).map((t) => `${t.id}:${t.title}`).join('|') && (a!.sessionId ?? null) === (b!.sessionId ?? null) && (a!.changesKey ?? '') === (b!.changesKey ?? ''));
 
 export function GitTargetProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -81,7 +81,7 @@ export function useGitPanel(): State {
 /** Déclare, depuis une page, le workspace (et la tâche) que le panneau de droite doit suivre. */
 export function useGitTarget(target: GitTarget | null | undefined): void {
   const { setTarget } = useGitPanel();
-  const key = target ? `${target.projectId}|${target.worksessionId ?? ''}|${target.label ?? ''}|${target.taskId ?? ''}|${target.sessionId ?? ''}|${target.changesKey ?? ''}` : '';
+  const key = target ? `${target.projectId}|${target.worksessionId ?? ''}|${target.label ?? ''}|${(target.tasks ?? []).map((t) => `${t.id}:${t.title}`).join(',')}|${target.sessionId ?? ''}|${target.changesKey ?? ''}` : '';
   useEffect(() => {
     if (target) setTarget(target);
   }, [key, setTarget]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -111,6 +111,7 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
     autoStart: false,
   });
   // La branche reste attachée à la tâche (pull request) même après suppression de la work session.
-  await taskService.update(task.id, { sessionId: session.id, ...(branch ? { branch } : {}) });
+  // Les sessions précédentes de la tâche (archivées en libérant le dossier) lui passent la charge.
+  await taskService.update(task.id, { sessionId: session.id, releaseSessionIds: task.sessionIds.filter((id) => id !== session.id), ...(branch ? { branch } : {}) });
   return options.autoStart === false ? session : sessionService.start(session.id);
 }
