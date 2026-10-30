@@ -82,6 +82,8 @@ export default function TaskPage() {
   const target = targetsData?.projects.find((p) => p.id === task.project.id);
   const overdue = isOverdue(task);
   const canWrite = target ? target.myRole !== 'VIEWER' : false;
+  // Le fil s'écrit sauf pour un lecteur ; tant que le rôle n'est pas connu, la saisie est montrée (le serveur tranche).
+  const canPost = !target || target.myRole !== 'VIEWER';
   const openedBy = task.createdBySession?.name ?? task.reporter?.name ?? task.reporter?.email ?? (task.createdByType === 'agent' ? 'Un agent' : 'Quelqu’un');
 
   return (
@@ -124,7 +126,7 @@ export default function TaskPage() {
             <Card.Body>
               <TaskThread
                 taskId={task.id}
-                canWrite={canWrite}
+                canWrite={canPost}
                 opening={{
                   authorName: openedBy,
                   byAgent: task.createdByType === 'agent',

@@ -52,6 +52,8 @@ const SCENARIOS = [
   ['file-publish', '/projects/p1/files/previsionnel/Previsionnel_2026-2027.html', async (p) => p.locator('button', { hasText: 'Publier' }).first().click()],
   ['workflow-runs', '/workflows/w1', async (p) => p.locator('table').first().scrollIntoViewIfNeeded()],
   ['task-sessions', '/tasks/t1', async (p) => p.locator('table').first().scrollIntoViewIfNeeded()],
+  // Fil de la tâche : « @ » dans la saisie ouvre les suggestions de mention.
+  ['task-thread-mention', '/tasks/t1', async (p) => p.locator('.tt > .tt-composer textarea').fill('@')],
   ['settings-github', '/settings', async (p) => p.click('text=GitHub')],
   ['settings-opencode', '/settings', async (p) => p.click('text=OpenCode')],
   ['settings-server', '/settings', async (p) => p.click('text=Serveur')],
