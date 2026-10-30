@@ -65,6 +65,8 @@
 }
 .cc-user::before { content: '> '; color: var(--cc-dim); }
 .cc-user .cc-user-text { color: var(--cc-fg); }
+/* Instruction affichée dès l'envoi, avant sa confirmation par le serveur */
+.cc-user.pending { opacity: 0.75; }
 
 /* Repères de temps : heure discrète à droite des messages, séparateur à chaque changement de jour */
 .cc-time { float: right; margin-left: 12px; color: var(--cc-dimmer); font-size: 11px; font-variant-numeric: tabular-nums; cursor: default; }
