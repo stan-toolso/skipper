@@ -47,7 +47,7 @@ import { attachmentsNote, inlineBlocks, publicAttachment } from '../attachments.
 import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
-import { resultError } from './claudeResult.js';
+import { isEmptyNotificationResult, resultError } from './claudeResult.js';
 import { liveDraftService } from '../live.js';
 import { SESSION_ENV } from '../../runners/stats.js';
 
@@ -346,6 +346,12 @@ export class ClaudeProvider implements SessionProvider {
       const run: RunState = { rateLimitStatus: null };
       try {
         for await (const message of stream) {
+          // Le modèle travaille alors qu'aucun tour n'était en cours : tour lancé par le CLI lui-même (fin d'une
+          // commande de fond), ou suite d'une instruction après un résultat qui ne la concernait pas.
+          if (!turnInProgress && (message.type === 'stream_event' || message.type === 'assistant')) {
+            turnInProgress = true;
+            await ctx.setActivity('busy');
+          }
           if (message.type === 'stream_event') {
             liveDraftService.apply(ctx.session.id, message.event, message.parent_tool_use_id);
             continue;
@@ -364,11 +370,13 @@ export class ClaudeProvider implements SessionProvider {
             await ctx.setContextTokens?.(contextTokens);
           }
           if (message.type === 'result') {
+            previousModelTotals = await this.recordUsage(ctx, message, previousModelTotals, model ?? 'default');
+            await ctx.setContextTokens?.(contextTokens);
+            // Tour vide ouvert par le CLI sur une notification de tâche de fond : l'instruction envoyée reste à traiter.
+            if (turnInProgress && isEmptyNotificationResult(message)) continue;
             // Fin d'un tour : l'agent attend la prochaine instruction.
             lastResult = message;
             turnInProgress = false;
-            previousModelTotals = await this.recordUsage(ctx, message, previousModelTotals, model ?? 'default');
-            await ctx.setContextTokens?.(contextTokens);
             await ctx.setActivity('idle');
           }
         }

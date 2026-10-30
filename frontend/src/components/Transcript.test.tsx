@@ -107,4 +107,13 @@ describe('Transcript', () => {
     expect(failed).toContain('cc-note error');
     expect(failed).toContain('boom');
   });
+
+  it('n’affiche pas « Terminé » pour le tour vide ouvert par le CLI sur une notification de tâche de fond', () => {
+    // Résultat réel du CLI 2.1.314 à la reprise d'une session après un redémarrage (30/10/2026).
+    const empty = ev('claude.result', { subtype: 'success', is_error: false, result: '', num_turns: 0, duration_ms: 309, origin: { kind: 'task-notification' } });
+    const events = [ev('instruction', { text: 'Merge la pr' }), empty, text('Je fusionne.')];
+    expect(html(events)).not.toContain('Terminé');
+    // La vue technique garde tout.
+    expect(html(events, true)).toContain('Terminé');
+  });
 });
