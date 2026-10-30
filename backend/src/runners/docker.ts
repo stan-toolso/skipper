@@ -12,7 +12,7 @@ import { workspacePath } from '../projects/workspace.js';
 import { attachmentsRoot } from '../sessions/attachments.js';
 import { worksessionsRoot } from '../worksessions/service.js';
 import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type IsolatedCommand, type IsolatedResult, type Runner, type RunnerConfig, type RunnerStatus, type SpawnSpec } from './types.js';
-import { containerDrift, countZombies, cpusArgs, SPEC_LABEL, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
+import { containerDrift, countZombies, cpusArgs, SPEC_LABEL, updateCpusValue, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
 
@@ -121,8 +121,8 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const s = this.settings(project);
     const memory = parseDockerSize(s.memory);
     if (!memory) throw new AppError(`Limite mémoire illisible : ${s.memory}`);
-    // Même règle que `docker run --memory` sans --memory-swap : autant de swap que de mémoire. `--cpus 0` retire le plafond CPU.
-    await docker(['update', '--memory', String(memory), '--memory-swap', String(memory * 2), '--cpus', s.cpus || '0', this.containerName(project)]);
+    // Même règle que `docker run --memory` sans --memory-swap : autant de swap que de mémoire. Sans plafond CPU : tous les cœurs de l'hôte (`--cpus 0` ne retire pas un plafond existant).
+    await docker(['update', '--memory', String(memory), '--memory-swap', String(memory * 2), '--cpus', updateCpusValue(s.cpus, os.availableParallelism()), this.containerName(project)]);
     invalidateContainerStats(this.containerName(project));
     return true;
   }

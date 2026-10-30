@@ -22,6 +22,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
 import { pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { trackedPullRequestService } from '../pullRequests/service.js';
+import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { gitService } from '../git/service.js';
 import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
@@ -344,6 +345,7 @@ export const resolvers = {
     createdBySession: (pr: TrackedPullRequest) => (pr.createdBySessionId ? sessionService.get(pr.createdBySessionId) : null),
     // En direct depuis GitHub (cache de 20 s côté service) : null si le projet n'y est pas ou si GitHub ne répond pas.
     github: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => pullRequestService.get(pr.projectId, ctx.user?.id, pr.number).catch(() => null),
+    session: (pr: TrackedPullRequest) => pullRequestSession(pr),
   },
 
   VaultItem: {
@@ -949,6 +951,11 @@ export const resolvers = {
     syncPullRequests: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return trackedPullRequestService.sync(args.projectId, requireUser(ctx).id, { force: true });
+    },
+    resolvePullRequestConflicts: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      const pr = await trackedPullRequestService.get(args.id);
+      await requireProject(ctx, pr.projectId, 'member');
+      return requestConflictResolution(args.id, { type: 'human', userId: requireUser(ctx).id });
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');

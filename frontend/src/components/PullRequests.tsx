@@ -11,6 +11,7 @@ import {
   type PullRequestMergeMethod,
   type PullRequestSummary,
 } from '../graphql/operations';
+import { Link } from 'react-router-dom';
 import Markdown from './Markdown';
 import { usePollingQuery } from '../lib/usePollingQuery';
 
@@ -98,11 +99,60 @@ function DetailsLine({ pr }: { pr: PullRequest }) {
   );
 }
 
+/** Tâches et sessions reliées à une PR, connues hors de GitHub (PR suivie : tâche, session rattachée, session qui l'a ouverte). */
+export interface PullRequestRelated {
+  tasks?: { id: string; title: string }[];
+  sessions?: { id: string; name: string }[];
+}
+
+/**
+ * Liens vers les tâches et sessions reliées : celles de la PR suivie (`extra`) puis celles que GitHub permet de
+ * retrouver (tâches de la branche, sessions de son dossier de travail), sans doublon. Un clic ferme la fenêtre.
+ */
+function RelatedLinks({ pr, extra, onNavigate }: { pr: PullRequest; extra?: PullRequestRelated; onNavigate: () => void }) {
+  const uniq = <T extends { id: string }>(items: T[]) => items.filter((it, i) => items.findIndex((o) => o.id === it.id) === i);
+  const tasks = uniq([...(extra?.tasks ?? []), ...pr.tasks]);
+  const sessions = uniq([...(extra?.sessions ?? []), ...(pr.worksession?.sessions ?? [])]);
+  if (tasks.length === 0 && sessions.length === 0) return null;
+  return (
+    <div className="pr-related d-flex flex-wrap gap-2 mt-2">
+      {tasks.map((t) => (
+        <Link key={t.id} to={`/tasks/${t.id}`} className="btn btn-sm btn-outline-secondary text-truncate" title={`Tâche : ${t.title}`} onClick={onNavigate}>
+          <i className="bi bi-check2-square me-1" />
+          {t.title}
+        </Link>
+      ))}
+      {sessions.map((s) => (
+        <Link key={s.id} to={`/sessions/${s.id}`} className="btn btn-sm btn-outline-secondary text-truncate" title={`Session : ${s.name}`} onClick={onNavigate}>
+          <i className="bi bi-terminal me-1" />
+          {s.name}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Détail d'une PR : checks, revues, possibilité de fusion ; fusion (merge, squash, rebase) avec
- * nettoyage du dossier de travail, des branches et des tâches liées.
+ * nettoyage du dossier de travail, des branches et des tâches liées. `onResolveConflicts` (PR suivie avec une
+ * session rattachée) ajoute à l'alerte de conflits le bouton qui demande à cette session de les résoudre. `related`
+ * complète les liens vers les tâches et sessions reliées (affichés sous les détails de la PR).
  */
-export function PullRequestModal({ projectId, number, onClose, onMerged }: { projectId: string; number: number; onClose: () => void; onMerged?: (deletedWorksessionIds: string[]) => void }) {
+export function PullRequestModal({
+  projectId,
+  number,
+  onClose,
+  onMerged,
+  onResolveConflicts,
+  related,
+}: {
+  projectId: string;
+  number: number;
+  onClose: () => void;
+  onMerged?: (deletedWorksessionIds: string[]) => void;
+  onResolveConflicts?: { sessionName: string; run: () => void };
+  related?: PullRequestRelated;
+}) {
   const q = usePollingQuery<{ githubPullRequest: PullRequest }>(GITHUB_PULL_REQUEST, { variables: { projectId, number }, fetchPolicy: 'cache-and-network', pollInterval: 15000 });
   const pr = q.data?.githubPullRequest;
   const [method, setMethod] = useState<PullRequestMergeMethod>('SQUASH');
@@ -148,6 +198,7 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
               </a>
             </div>
             <DetailsLine pr={pr} />
+            <RelatedLinks pr={pr} extra={related} onNavigate={onClose} />
             {pr.body.trim() && (
               <div className="border rounded p-2 mt-2 small" style={{ maxHeight: 220, overflowY: 'auto' }}>
                 <Markdown text={pr.body} />
@@ -192,7 +243,17 @@ export function PullRequestModal({ projectId, number, onClose, onMerged }: { pro
               <div className="mt-3 border-top pt-3">
                 <div className="fw-semibold small mb-2">Fusionner</div>
                 {pr.isDraft && <Alert variant="secondary" className="py-1 small">Brouillon : marquez-la prête pour la revue sur GitHub avant de la fusionner.</Alert>}
-                {pr.mergeable === 'CONFLICTING' && <Alert variant="danger" className="py-1 small">Conflits avec {pr.baseRefName} : à résoudre dans la branche avant la fusion.</Alert>}
+                {pr.mergeable === 'CONFLICTING' && (
+                  <Alert variant="danger" className="py-1 small d-flex flex-wrap align-items-center gap-2">
+                    <span>Conflits avec {pr.baseRefName} : à résoudre dans la branche avant la fusion.</span>
+                    {onResolveConflicts && (
+                      <Button size="sm" variant="outline-danger" className="py-0" title={`Demander à la session « ${onResolveConflicts.sessionName} » de résoudre les conflits`} onClick={onResolveConflicts.run}>
+                        <i className="bi bi-robot me-1" />
+                        Résoudre les conflits
+                      </Button>
+                    )}
+                  </Alert>
+                )}
                 {pr.mergeable === 'UNKNOWN' && <div className="small text-secondary mb-2">GitHub calcule encore si la fusion est possible…</div>}
                 {hint && pr.mergeable !== 'CONFLICTING' && !pr.isDraft && <div className="small text-warning mb-2">Attention : {hint}.</div>}
                 <Form.Group className="mb-2 d-flex gap-3 flex-wrap small">
