@@ -13,7 +13,7 @@ const m = vi.hoisted(() => ({
   session: { id: 's1', worksessionId: 'w1' as string | null, ownerId: 'u1' },
   calls: [] as Array<[string, unknown[]]>,
 }));
-vi.mock('./service.js', () => ({ taskService: m.tasks, describeComment: () => [], formatPerson: () => '', statusTagText: () => '' }));
+vi.mock('./service.js', () => ({ taskService: m.tasks, describeThread: () => ['Fil de discussion :'], summarizeReactions: () => '', formatPerson: () => '', statusTagText: () => '' }));
 vi.mock('./attachments.js', () => ({ describeAttachments: () => [], imageBlocks: async () => [] }));
 vi.mock('../pullRequests/service.js', () => ({ trackedPullRequestService: m.prs }));
 vi.mock('../sessions/service.js', () => ({ sessionService: { get: async () => m.session } }));
@@ -84,6 +84,19 @@ beforeEach(() => {
     },
     comments: async () => [],
     attachments: async () => [],
+    reactions: async () => [],
+    mentionables: async () => [
+      { kind: 'user', id: 'u1', label: 'Alice Martin', detail: 'alice@example.com', text: '@Alice Martin' },
+      { kind: 'session', id: 's1', label: 'Session', detail: 'session · running', text: '@session:s1' },
+    ],
+    addComment: async (...args: unknown[]) => {
+      record('addComment')(...args);
+      return { id: 'c9', parentId: (args[4] as { parentId?: string } | undefined)?.parentId ?? null, mentions: [{ kind: 'user', id: 'u1', label: 'Alice Martin', text: '@Alice Martin' }] };
+    },
+    toggleReaction: async (...args: unknown[]) => {
+      record('toggleReaction')(...args);
+      return { added: true, reaction: { emoji: args[2] } };
+    },
   });
   Object.assign(m.prs, {
     projectRepo: () => 'acme/app',
@@ -115,10 +128,35 @@ describe('serveur MCP tasks', () => {
   it('déclare tous ses outils (schémas acceptés par le SDK), dont ceux des pull requests', async () => {
     const client = await connect();
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(names).toEqual(['claim', 'comment', 'create', 'get', 'list', 'pr_list', 'pr_open', 'pr_register', 'pr_update', 'update']);
+    expect(names).toEqual(['claim', 'comment', 'create', 'get', 'list', 'people', 'pr_list', 'pr_open', 'pr_register', 'pr_update', 'react', 'update']);
     // Tout outil libre existe ; pr_open (pousse et ouvre sur GitHub) n'est pas libre.
     for (const free of TASKS_FREE_TOOLS) expect(names).toContain(free.replace('mcp__tasks__', ''));
     expect(TASKS_FREE_TOOLS).not.toContain('mcp__tasks__pr_open');
+  });
+
+  it('comment poste dans le fil (reply_to) et rend compte des mentions', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'comment', arguments: { id: 't1', body: 'Vu @Alice Martin', reply_to: 'c1' } }));
+    expect(text).toBe('Message posté (c9) dans le fil de c1 ; mentionne Alice Martin.');
+    const [name, args] = m.calls[0];
+    expect(name).toBe('addComment');
+    expect(args.slice(0, 3)).toEqual(['t1', 'Vu @Alice Martin', { type: 'agent', sessionId: 's1', name: 'Session' }]);
+    expect(args[4]).toEqual({ parentId: 'c1' });
+  });
+
+  it('react pose un emoji sur un message ou sur la tâche', async () => {
+    const client = await connect();
+    expect(textOf(await client.callTool({ name: 'react', arguments: { id: 't1', comment_id: 'c1', emoji: '👍' } }))).toBe('Réaction 👍 posée sur le message c1.');
+    expect(m.calls[0]).toEqual(['toggleReaction', ['t1', 'c1', '👍', { type: 'agent', sessionId: 's1', name: 'Session' }]]);
+    expect(textOf(await client.callTool({ name: 'react', arguments: { id: 't1', emoji: '✅' } }))).toBe('Réaction ✅ posée sur la tâche.');
+    expect(m.calls[1][1][1]).toBeNull();
+  });
+
+  it('people liste les membres et sessions mentionnables, en repérant la session courante', async () => {
+    const client = await connect();
+    const text = textOf(await client.callTool({ name: 'people', arguments: {} }));
+    expect(text).toContain('- @Alice Martin → membre Alice Martin (alice@example.com)');
+    expect(text).toContain('- @session:s1 → session Session (session · running) (cette session)');
   });
 
   it('get montre les pull requests suivies de la tâche', async () => {

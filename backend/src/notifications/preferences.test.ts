@@ -24,6 +24,8 @@ const KNOWN_TYPES = [
   'session.created',
   'task.created',
   'task.completed',
+  'task.mentioned',
+  'task.replied',
   'pull_request.opened',
   'pull_request.merged',
   'pull_request.closed',
