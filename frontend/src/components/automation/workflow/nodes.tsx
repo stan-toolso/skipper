@@ -17,7 +17,7 @@ export type WfNode = Node<WfNodeData, 'wf'>;
 /** Rendu d'un nœud : bande de type, libellé, résumé, poignées d'entrée et de sortie selon le type. */
 export function WfNodeView({ data, selected }: NodeProps<WfNode>) {
   const { node, summary, status, issue } = data;
-  const info = nodeTypeInfo[node.type];
+  const info = nodeTypeInfo[node.type] ?? { label: node.type, icon: 'bi-question-circle', hint: '' };
   const classes = ['wf-node', `type-${node.type}`, selected ? 'selected' : '', status ? `status-${status}` : '', issue === 'error' ? 'has-error' : issue === 'warning' ? 'has-issue' : ''].filter(Boolean).join(' ');
   return (
     <div className={classes}>

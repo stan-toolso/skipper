@@ -2,7 +2,7 @@ import { Badge } from 'react-bootstrap';
 import type { RunStatus, RunTrigger } from '../../graphql/automation';
 import { runStatusLabels, runTriggerLabels } from '../../lib/automation';
 
-/** Statut d'une exécution d'agent ou de workflow. */
+/** Statut d'une exécution de workflow. */
 export function RunStatusBadge({ status }: { status: RunStatus }) {
   const s = runStatusLabels[status] ?? { label: status, bg: 'secondary' };
   return (

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { placeholders, render, resolve } from '../agents/template.js';
+import { placeholders, render, resolve } from './template.js';
 import { compareValues, isEmptyValue, truthy } from './expressions.js';
 
 /**

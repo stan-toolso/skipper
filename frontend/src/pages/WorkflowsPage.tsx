@@ -124,7 +124,7 @@ export default function WorkflowsPage() {
         </div>
       </div>
       <p className="text-secondary small">
-        Un workflow enchaîne des <Link to="/agents">agents</Link>, des sessions et des tâches selon un graphe à branches, lancé à la main, par planification ou quand une tâche est créée.
+        Un workflow enchaîne des appels de modèle, des sessions et des tâches selon un graphe à branches, lancé à la main, par planification ou quand une tâche est créée.
       </p>
       {workflows.length === 0 ? (
         <div className="text-secondary fst-italic">Aucun workflow{search ? ' ne correspond' : ''}.</div>

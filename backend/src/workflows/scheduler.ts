@@ -1,6 +1,3 @@
-import { failStaleAgentRuns, startAgentRun } from '../agents/execution.js';
-import { agentRepository } from '../agents/repository.js';
-import type { Agent } from '../agents/types.js';
 import { nextRun, parseCron } from '../schedules/cron.js';
 import { serverSettings } from '../settings/server.js';
 import { failStaleWorkflowRuns } from './engine.js';
@@ -16,22 +13,9 @@ let timer: NodeJS.Timeout | null = null;
 let ticking = false;
 
 /**
- * Ordonnanceur des agents et des workflows : toutes les trente secondes, les échéances passées sont
- * réservées atomiquement et lancées ; les exécutions perdues par un arrêt du serveur passent en échec.
+ * Ordonnanceur des workflows : toutes les trente secondes, les échéances passées sont réservées
+ * atomiquement et lancées ; les exécutions perdues par un arrêt du serveur passent en échec.
  */
-async function runScheduledAgent(agent: Agent): Promise<void> {
-  if (serverSettings.maintenance) {
-    await agentRepository.setLastResult(agent.id, 'Ignorée : le serveur est en maintenance');
-    return;
-  }
-  const active = await agentRepository.listRuns({ agentId: agent.id, status: ['pending', 'running'], limit: 1 });
-  if (active.length) {
-    await agentRepository.setLastResult(agent.id, "Ignorée : l'exécution précédente n'est pas terminée");
-    return;
-  }
-  await startAgentRun(agent, { inputs: agent.scheduleInputs, trigger: 'schedule', ownerId: agent.scheduleOwnerId ?? agent.createdById });
-}
-
 async function runScheduledWorkflow(workflow: Workflow): Promise<void> {
   if (!workflow.enabled) {
     await workflowRepository.setLastResult(workflow.id, 'Ignorée : le workflow est en pause');
@@ -81,10 +65,8 @@ async function tick(): Promise<void> {
   ticking = true;
   try {
     const now = new Date();
-    const lostAgents = await failStaleAgentRuns(now);
     const lostWorkflows = await failStaleWorkflowRuns(now);
-    if (lostAgents || lostWorkflows) console.warn(`[automation] exécutions perdues passées en échec : ${lostAgents} agent(s), ${lostWorkflows} workflow(s)`);
-    await tickKind('agent', await agentRepository.listDue(now), agentRepository.claim.bind(agentRepository), agentRepository.setLastResult.bind(agentRepository), runScheduledAgent, now);
+    if (lostWorkflows) console.warn(`[automation] exécutions perdues passées en échec : ${lostWorkflows} workflow(s)`);
     await tickKind('workflow', await workflowRepository.listDue(now), workflowRepository.claim.bind(workflowRepository), workflowRepository.setLastResult.bind(workflowRepository), runScheduledWorkflow, now);
     // Exécutions restées en file (serveur arrêté, maintenance levée).
     for (const workflowId of await workflowRepository.listWithQueue()) await dispatchQueue(workflowId).catch((err) => console.error(`[automation] file du workflow ${workflowId}`, err));
@@ -113,7 +95,6 @@ export const automationScheduler = {
         }
       }
     };
-    await recompute(await agentRepository.listScheduled(), agentRepository.setNextRunAt.bind(agentRepository), agentRepository.setLastResult.bind(agentRepository));
     await recompute(await workflowRepository.listScheduled(), workflowRepository.setNextRunAt.bind(workflowRepository), workflowRepository.setLastResult.bind(workflowRepository));
     timer = setInterval(() => void tick().catch((err) => console.error('[automation] ordonnanceur', err)), TICK_MS);
     timer.unref();

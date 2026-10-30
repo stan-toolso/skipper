@@ -3,15 +3,14 @@ import { Button, Nav } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { useSessionLauncher } from './SessionLauncher';
 
-export type ProjectTab = 'overview' | 'tasks' | 'context' | 'vault' | 'agents' | 'workflows' | 'history';
+export type ProjectTab = 'overview' | 'tasks' | 'context' | 'vault' | 'workflows' | 'history';
 
 const TABS: { key: ProjectTab; label: string; path: string; icon: string; title?: string }[] = [
   { key: 'overview', label: 'Aperçu', path: '', icon: 'bi-folder2-open' },
   { key: 'tasks', label: 'Tâches', path: '/tasks', icon: 'bi-check2-square' },
   { key: 'context', label: 'Contexte', path: '/context', icon: 'bi-journal-text', title: 'Bibliothèque d’instructions consultée par les agents' },
   { key: 'vault', label: 'Coffre', path: '/vault', icon: 'bi-shield-lock', title: 'Serveurs, bases, API, sites et comptes utilisables par les agents' },
-  { key: 'agents', label: 'Agents', path: '/agents', icon: 'bi-robot', title: 'Agents : configurations réutilisables et planifiables' },
-  { key: 'workflows', label: 'Workflows', path: '/workflows', icon: 'bi-diagram-3', title: 'Workflows : enchaînements d’agents, de sessions et de tâches' },
+  { key: 'workflows', label: 'Workflows', path: '/workflows', icon: 'bi-diagram-3', title: 'Workflows : enchaînements d’appels de modèle, de sessions et de tâches' },
   { key: 'history', label: 'Historique', path: '/history', icon: 'bi-clock-history', title: 'Sessions et work sessions archivées' },
 ];
 

@@ -15,12 +15,11 @@ interface Props {
   issues?: WorkflowIssue[];
   /** Statut de chaque nœud (exécution). */
   statuses?: Record<string, string>;
-  agents?: { id: string; name: string }[];
 }
 
 const MIME = 'application/skipper-workflow-node';
 
-function CanvasInner({ definition, readonly = false, selectedKey, onSelect, onChange, issues = [], statuses = {}, agents = [] }: Props) {
+function CanvasInner({ definition, readonly = false, selectedKey, onSelect, onChange, issues = [], statuses = {} }: Props) {
   const flow = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
 
@@ -35,10 +34,10 @@ function CanvasInner({ definition, readonly = false, selectedKey, onSelect, onCh
           selected: n.key === selectedKey,
           draggable: !readonly,
           connectable: !readonly,
-          data: { node: n, summary: nodeSummary(n, agents), status: statuses[n.key] ?? null, issue: mine.some((i) => i.severity === 'error') ? 'error' : mine.length ? 'warning' : null },
+          data: { node: n, summary: nodeSummary(n), status: statuses[n.key] ?? null, issue: mine.some((i) => i.severity === 'error') ? 'error' : mine.length ? 'warning' : null },
         };
       }),
-    [definition.nodes, selectedKey, readonly, issues, statuses, agents],
+    [definition.nodes, selectedKey, readonly, issues, statuses],
   );
   const edges = useMemo<Edge[]>(
     () =>

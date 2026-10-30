@@ -1,6 +1,6 @@
 import type { RunStatus, RunTrigger, WorkflowNodeType } from '../graphql/automation';
 
-/** Libellés et couleurs des statuts d'exécution (agents et workflows). */
+/** Libellés et couleurs des statuts d'exécution des workflows. */
 export const runStatusLabels: Record<RunStatus, { label: string; bg: string; text?: string }> = {
   QUEUED: { label: "En file d'attente", bg: 'info', text: 'dark' },
   PENDING: { label: 'En attente', bg: 'secondary' },
@@ -33,19 +33,13 @@ export const nodeStatusLabels: Record<string, string> = {
 /** Types de nœuds d'un workflow : libellé, icône et aide (palette de l'éditeur). */
 export const nodeTypeInfo: Record<WorkflowNodeType, { label: string; icon: string; hint: string }> = {
   trigger: { label: 'Déclencheur', icon: 'bi-play-circle', hint: 'Le départ : lancé à la main, par planification, ou par une tâche créée.' },
-  agent: { label: 'Agent', icon: 'bi-robot', hint: 'Exécute un agent du projet avec des entrées remplies par des modèles.' },
+  callLlm: { label: 'Appel de modèle', icon: 'bi-cpu', hint: 'Appelle un modèle de langage (LiteLLM, OpenAI, Anthropic) avec des instructions et un prompt ; réponse texte ou JSON.' },
   task: { label: 'Tâche', icon: 'bi-check2-square', hint: 'Confie une tâche existante à une session dédiée.' },
   session: { label: 'Session', icon: 'bi-chat-dots', hint: 'Ouvre une session avec une instruction.' },
   createTask: { label: 'Créer une tâche', icon: 'bi-plus-square', hint: 'Crée une tâche dans le projet.' },
   condition: { label: 'Condition', icon: 'bi-signpost-split', hint: 'Oriente vers la branche « oui » ou « non ».' },
   end: { label: 'Fin', icon: 'bi-flag', hint: "Termine l'exécution et en fixe la sortie." },
 };
-
-/** Libellé d'un fournisseur d'agent : appel direct ou type de session. */
-export function providerLabel(provider: string, providers: { type: string; label: string }[] = []): string {
-  if (provider === 'llm') return 'Modèle (appel direct)';
-  return providers.find((p) => p.type === provider)?.label ?? provider;
-}
 
 export const fmtDateTime = (iso: string | null | undefined): string => (iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 

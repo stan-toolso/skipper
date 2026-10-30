@@ -1,10 +1,7 @@
-import { cancelAgentRun, collectOutput, HEARTBEAT_MS, runAgent, STALE_AFTER_MS } from '../agents/execution.js';
-import { agentRepository } from '../agents/repository.js';
-import { agentService } from '../agents/service.js';
-import { render } from '../agents/template.js';
-import type { Agent, AgentRun } from '../agents/types.js';
 import { notificationService } from '../notifications/service.js';
 import { projectService, slugify } from '../projects/service.js';
+import { resultError as claudeResultError } from '../sessions/providers/claudeResult.js';
+import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
 import { startTaskSession } from '../tasks/launch.js';
@@ -17,8 +14,37 @@ import { worksessionService } from '../worksessions/service.js';
 import { conditionHolds, describeCondition } from './conditions.js';
 import { evaluateCondition } from './expressions.js';
 import { failureHandled, nextSteps, parseTaskPerson, peopleRefs, taskContext, triggerOf, type NodeState } from './graph.js';
+import { runLlmCall } from './llmCall.js';
 import { workflowRepository } from './repository.js';
+import { render } from './template.js';
 import { FALLIBLE_NODE_TYPES, type LogLevel, type Workflow, type WorkflowNode, type WorkflowNodeType, type WorkflowRun } from './types.js';
+
+export const HEARTBEAT_MS = 30_000;
+/** Une exécution dont le battement a cet âge a été perdue avec son serveur. */
+export const STALE_AFTER_MS = 3 * 60_000;
+const OUTPUT_MAX_CHARS = 200_000;
+/** Délai par défaut d'un appel de modèle (minutes) ; les sessions ont une heure. */
+const LLM_DEFAULT_TIMEOUT_MINUTES = 10;
+
+/** La réponse d'une session : le résultat de son dernier tour, ou la sortie du shell pour le type shell. */
+export async function collectOutput(session: Session): Promise<{ output: string; error: string | null }> {
+  const result = await sessionRepository.findLastEvent(session.id, ['claude.result']);
+  if (result) {
+    const payload = result.payload;
+    const text = typeof payload.result === 'string' ? payload.result : '';
+    const error = claudeResultError(payload);
+    return { output: text.slice(0, OUTPUT_MAX_CHARS), error };
+  }
+  if (session.provider === 'shell') {
+    const events = await sessionRepository.listEvents(session.id, { limit: 5000 });
+    const output = events
+      .filter((e) => e.type === 'stdout')
+      .map((e) => String(e.payload.text ?? ''))
+      .join('\n');
+    return { output: output.slice(0, OUTPUT_MAX_CHARS), error: null };
+  }
+  return { output: '', error: null };
+}
 
 /** Appelés quand une exécution est réglée (la file de son workflow peut avancer). */
 const settledListeners: ((run: WorkflowRun) => void)[] = [];
@@ -35,8 +61,12 @@ interface NodeContext {
   error?: string | null;
   sessionId?: string | null;
   costUsd?: number;
-  /** Agent qui résout une tâche : la tâche après le tour (statut, branche…) ; tâche créée par un nœud « créer une tâche ». */
+  /** Nœud « tâche » : la tâche après le tour (statut, branche…) ; nœud « créer une tâche » : la tâche créée. */
   task?: Record<string, unknown> | null;
+  /** Nœud « appel de modèle » : le modèle qui a répondu et les jetons consommés. */
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
   /** Nœud « session » : la branche de sa work session. */
   branch?: string | null;
 }
@@ -51,18 +81,17 @@ export interface RunContext {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isActive = (run: WorkflowRun) => run.status === 'pending' || run.status === 'running';
-const STEP_VERBS: Record<WorkflowNodeType, string> = { trigger: 'Départ', agent: "Exécution de l'agent", task: 'Traitement de la tâche', session: 'Ouverture de la session', createTask: 'Création de la tâche', condition: 'Évaluation de la condition', end: 'Fin atteinte' };
+const STEP_VERBS: Record<WorkflowNodeType, string> = { trigger: 'Départ', callLlm: 'Appel du modèle', task: 'Traitement de la tâche', session: 'Ouverture de la session', createTask: 'Création de la tâche', condition: 'Évaluation de la condition', end: 'Fin atteinte' };
 const fmtCost = (usd: number) => `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
 
 /** Ce qu'un nœud garde de son contexte dans son enregistrement (`workflow_run_nodes.output`). */
 function recordOf(ctx: NodeContext): Record<string, unknown> {
-  return { output: ctx.output, json: ctx.json ?? null, ...(ctx.task ? { task: ctx.task } : {}), ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}), ...(ctx.branch ? { branch: ctx.branch } : {}) };
+  return { output: ctx.output, json: ctx.json ?? null, ...(ctx.task ? { task: ctx.task } : {}), ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}), ...(ctx.branch ? { branch: ctx.branch } : {}), ...(ctx.model ? { model: ctx.model, inputTokens: ctx.inputTokens ?? null, outputTokens: ctx.outputTokens ?? null } : {}) };
 }
 
 class Execution {
   private readonly states = new Map<string, NodeState>();
   private readonly context: RunContext;
-  private readonly agents: Map<string, Agent>;
   private readonly endOutputs: Record<string, string> = {};
   private costUsd = 0;
   private fatal: string | null = null;
@@ -71,9 +100,7 @@ class Execution {
   constructor(
     private readonly workflow: Workflow,
     private run: WorkflowRun,
-    agents: Agent[],
   ) {
-    this.agents = new Map(agents.map((a) => [a.id, a]));
     this.context = { input: run.inputs, nodes: {}, run: { id: run.id, startedAt: new Date().toISOString(), trigger: run.trigger, triggerKey: triggerOf(run.definition, run.triggerKey)?.key ?? null }, workflow: { id: workflow.id, name: workflow.name } };
   }
 
@@ -157,10 +184,8 @@ class Execution {
     }
   }
 
-  /** Marque annulés les nœuds en attente et arrête les exécutions d'agent encore en cours. */
+  /** Attend les étapes en cours (elles voient l'annulation et arrêtent leur session) puis marque annulés les nœuds en attente. */
   private async cancelRunning(running: Map<string, Promise<void>>): Promise<void> {
-    const active = await agentRepository.listRuns({ workflowRunId: this.run.id, status: ['pending', 'running'] });
-    for (const ar of active) await cancelAgentRun(ar.id).catch(() => undefined);
     await Promise.allSettled(running.values());
     for (const n of this.def.nodes) {
       const status = this.states.get(n.key)?.status ?? 'pending';
@@ -181,16 +206,16 @@ class Execution {
           ctx = { status: 'succeeded', output: this.run.inputs };
           state = { status: 'succeeded' };
           break;
-        case 'agent':
+        case 'callLlm':
         case 'task':
         case 'session':
         case 'createTask': {
-          const result = node.type === 'agent' ? await this.executeAgent(node) : node.type === 'task' ? await this.executeTask(node) : node.type === 'session' ? await this.executeSession(node) : await this.executeCreateTask(node);
+          const result = node.type === 'callLlm' ? await this.executeCallLlm(node) : node.type === 'task' ? await this.executeTask(node) : node.type === 'session' ? await this.executeSession(node) : await this.executeCreateTask(node);
           ctx = result.ctx;
           state = { status: result.ok ? 'succeeded' : 'failed' };
           if (!result.ok) {
             this.context.nodes[key] = ctx;
-            await this.setState(key, state, { output: recordOf(node.type === 'agent' ? { ...ctx, sessionId: null } : ctx), error: ctx.error ?? 'échec', finishedAt: new Date() });
+            await this.setState(key, state, { output: recordOf(ctx), error: ctx.error ?? 'échec', finishedAt: new Date() });
             if (failureHandled(this.def, key)) await this.log('warn', `« ${this.label(node)} » a échoué : ${ctx.error ?? 'erreur'} — on suit sa branche « en cas d'erreur »`, key);
             else {
               this.fatal = `« ${this.label(node)} » a échoué : ${ctx.error ?? 'erreur'}`;
@@ -218,7 +243,7 @@ class Execution {
           throw new Error(`Type de nœud inconnu ${String(node.type)}`);
       }
       this.context.nodes[key] = ctx;
-      await this.setState(key, state, { output: recordOf(node.type === 'agent' ? { ...ctx, sessionId: null } : ctx), finishedAt: new Date() });
+      await this.setState(key, state, { output: recordOf(ctx), finishedAt: new Date() });
       if (node.type !== 'condition') await this.log('info', `« ${this.label(node)} » terminé`, key, FALLIBLE_NODE_TYPES.includes(node.type) ? { durationMs: Date.now() - startedAt.getTime() } : null);
     } catch (err) {
       const message = (err as Error).message;
@@ -445,34 +470,32 @@ class Execution {
     return { ownerId: owner?.id ?? this.run.ownerId, owner };
   }
 
-  private async executeAgent(node: WorkflowNode): Promise<{ ok: boolean; ctx: NodeContext }> {
-    const agent = node.agentId ? this.agents.get(node.agentId) : undefined;
-    if (!agent) return { ok: false, ctx: { status: 'failed', output: null, error: "L'agent de ce nœud n'existe plus" } };
-    const inputs: Record<string, unknown> = {};
-    for (const [k, template] of Object.entries(node.inputs ?? {})) inputs[k] = render(template, this.context);
-    const taskId = node.taskId?.trim() ? render(node.taskId, this.context).trim() : null;
-    await workflowRepository.upsertNode(this.run.id, node.key, 'agent', { input: taskId ? { ...inputs, taskId } : inputs });
-    if (taskId !== null) {
-      const { task, error } = await this.takeableTask(taskId);
-      if (error) return { ok: false, ctx: { status: 'failed', output: null, error, task: this.snapshot(task) } };
-    }
-    let announced = false;
-    const onUpdate = (ar: AgentRun) => {
-      void workflowRepository.upsertNode(this.run.id, node.key, 'agent', { agentRunId: ar.id }).catch(() => undefined);
-      if (ar.sessionId && !announced) {
-        announced = true;
-        void this.log('info', `Session démarrée pour « ${this.label(node)} » (${agent.name})`, node.key, { sessionId: ar.sessionId, agentRunId: ar.id });
-      }
-    };
-    const { run } = await runAgent(agent, { inputs, trigger: 'workflow', ownerId: this.run.ownerId, workflowRunId: this.run.id, nodeKey: node.key, timeoutMinutes: node.timeoutMinutes ?? null, onUpdate, taskId });
-    this.costUsd += run.costUsd;
-    const ctx: NodeContext = { status: run.status, output: run.output ?? '', json: run.outputJson ?? null, error: run.error, sessionId: run.sessionId, costUsd: run.costUsd };
-    if (taskId) {
-      const task = await taskService.get(taskId).catch(() => null);
-      ctx.task = this.snapshot(task);
-      if (run.sessionId) await this.log('info', `La session de « ${this.label(node)} » reste ouverte sur la tâche${task?.branch ? ` (branche ${task.branch})` : ''}`, node.key, { sessionId: run.sessionId, taskId });
-    }
-    return { ok: run.status === 'succeeded', ctx };
+  /** Nœud « appel de modèle » : prompt système et instruction rendus, un appel au modèle avec la clé du coffre du propriétaire de l'exécution, la réponse (texte ou JSON) comme sortie. */
+  private async executeCallLlm(node: WorkflowNode): Promise<{ ok: boolean; ctx: NodeContext }> {
+    const systemPrompt = render(node.systemPrompt ?? '', this.context).trim();
+    const prompt = render(node.prompt ?? '', this.context).trim();
+    const outputFormat = node.outputFormat === 'json' ? 'json' : 'text';
+    const model = node.llm?.model ?? '';
+    await workflowRepository.upsertNode(this.run.id, node.key, 'callLlm', { input: { backend: node.llm?.backend ?? null, model, ...(systemPrompt ? { systemPrompt } : {}), prompt, outputFormat } });
+    if (!prompt) return { ok: false, ctx: { status: 'failed', output: null, error: "L'instruction est vide" } };
+    const outcome = await runLlmCall({
+      projectId: this.workflow.projectId,
+      ownerId: this.run.ownerId,
+      runId: this.run.id,
+      nodeKey: node.key,
+      nodeLabel: this.label(node),
+      workflowName: this.workflow.name,
+      config: node.llm as Record<string, unknown> | null | undefined,
+      systemPrompt,
+      prompt,
+      outputFormat,
+      outputSchema: node.outputSchema ?? null,
+      timeoutMs: (node.timeoutMinutes ?? LLM_DEFAULT_TIMEOUT_MINUTES) * 60_000,
+    });
+    this.costUsd += outcome.costUsd;
+    if (outcome.model) await this.log('info', `Réponse de ${outcome.model}${outcome.inputTokens !== null || outcome.outputTokens !== null ? ` (${outcome.inputTokens ?? '?'} jetons en entrée, ${outcome.outputTokens ?? '?'} en sortie)` : ''}`, node.key, { costUsd: outcome.costUsd });
+    const ctx: NodeContext = { status: outcome.error ? 'failed' : 'succeeded', output: outcome.output, json: outcome.json, error: outcome.error, costUsd: outcome.costUsd, model: outcome.model, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens };
+    return { ok: !outcome.error, ctx };
   }
 
   private async finish(): Promise<WorkflowRun> {
@@ -517,11 +540,10 @@ function formatDuration(ms: number): string {
 
 /** Exécute une exécution en attente jusqu'au bout (dans ce processus). */
 export async function executeWorkflowRun(workflow: Workflow, run: WorkflowRun): Promise<WorkflowRun> {
-  const agents = await agentService.list({ projectId: workflow.projectId });
-  return new Execution(workflow, run, agents).start();
+  return new Execution(workflow, run).start();
 }
 
-/** Demande l'arrêt d'une exécution : ses sessions d'agent sont arrêtées, les étapes en attente annulées. */
+/** Demande l'arrêt d'une exécution : les sessions que ses étapes attendent sont arrêtées, les étapes en attente annulées. */
 export async function cancelWorkflowRun(id: string): Promise<WorkflowRun> {
   const run = await workflowRepository.findRun(id);
   if (!run) throw new Error('Exécution introuvable');
@@ -533,21 +555,13 @@ export async function cancelWorkflowRun(id: string): Promise<WorkflowRun> {
   }
   if (!isActive(run)) return run;
   cancelled.add(id);
-  const updated = (await workflowRepository.updateRun(id, { cancelRequested: true })) ?? run;
-  const active = await agentRepository.listRuns({ workflowRunId: id, status: ['pending', 'running'] });
-  for (const ar of active) await cancelAgentRun(ar.id).catch(() => undefined);
-  return updated;
+  return (await workflowRepository.updateRun(id, { cancelRequested: true })) ?? run;
 }
 
 /** Les exécutions perdues par un serveur arrêté (battement périmé) passent en échec ; renvoie leur nombre. */
 export async function failStaleWorkflowRuns(now = new Date()): Promise<number> {
   const stale = await workflowRepository.listStaleRuns(new Date(now.getTime() - STALE_AFTER_MS));
   for (const run of stale) {
-    const active = await agentRepository.listRuns({ workflowRunId: run.id, status: ['pending', 'running'] });
-    for (const ar of active) {
-      await agentRepository.updateRun(ar.id, { status: 'failed', error: "Perdue : le serveur s'est arrêté pendant l'exécution", finishedAt: now, heartbeatAt: now });
-      if (ar.sessionId) void sessionService.stop(ar.sessionId).catch(() => undefined);
-    }
     await workflowRepository.updateRun(run.id, { status: 'failed', error: "Perdue : le serveur s'est arrêté pendant l'exécution", finishedAt: now, heartbeatAt: now });
     await workflowRepository.addLog(run.id, 'error', "Exécution perdue : le serveur s'est arrêté pendant qu'elle tournait", null, null).catch(() => undefined);
   }

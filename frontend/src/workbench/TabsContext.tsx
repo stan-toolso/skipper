@@ -27,8 +27,6 @@ export type TabKind =
   | 'worksession'
   | 'shared-pages'
   | 'shared-page'
-  | 'agents'
-  | 'agent'
   | 'workflows'
   | 'workflow'
   | 'workflow-run'
@@ -88,8 +86,6 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/tasks') return { title: 'Tâches', kind: 'tasks' };
   if (/^\/tasks\/[^/]+$/.test(pathname)) return { title: 'Tâche', kind: 'task' };
   if (pathname === '/vault') return { title: 'Coffre', kind: 'vault' };
-  if (pathname === '/agents' || /^\/projects\/[^/]+\/agents$/.test(pathname)) return { title: 'Agents', kind: 'agents' };
-  if (/^\/agents\/[^/]+$/.test(pathname)) return { title: 'Agent', kind: 'agent' };
   if (pathname === '/workflows' || /^\/projects\/[^/]+\/workflows$/.test(pathname)) return { title: 'Workflows', kind: 'workflows' };
   if (/^\/workflows\/[^/]+\/runs\/[^/]+$/.test(pathname)) return { title: 'Exécution', kind: 'workflow-run' };
   if (/^\/workflows\/[^/]+$/.test(pathname)) return { title: 'Workflow', kind: 'workflow' };

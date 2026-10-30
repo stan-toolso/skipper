@@ -2,12 +2,11 @@ import { AppError } from '../errors.js';
 import { safeRequest } from '../vault/http.js';
 
 /**
- * Agents qui appellent un modèle de langage directement (sans session) : à travers un proxy LiteLLM, ou droit
- * vers OpenAI ou Anthropic. La clé vient du coffre ; l'appel est tracé dans Langfuse quand l'agent nomme un
- * élément Langfuse. L'agent range cette configuration dans `agents.config` avec le fournisseur `llm`.
+ * Appel direct d'un modèle de langage (sans session) : à travers un proxy LiteLLM, ou droit vers OpenAI ou
+ * Anthropic. La clé vient du coffre ; l'appel est tracé dans Langfuse quand le nœud nomme un élément Langfuse.
+ * Un nœud « appel de modèle » (`callLlm`) d'un workflow range cette configuration dans `node.llm`.
  */
 
-export const LLM_PROVIDER = 'llm';
 export type LlmBackend = 'litellm' | 'openai' | 'anthropic';
 export const LLM_BACKENDS: LlmBackend[] = ['litellm', 'openai', 'anthropic'];
 
@@ -36,7 +35,7 @@ function optionalNumber(raw: unknown, label: string, min: number, max: number, i
   return n;
 }
 
-/** Valide et normalise la configuration enregistrée d'un agent `llm`. */
+/** Valide et normalise la configuration enregistrée d'un nœud « appel de modèle ». */
 export function parseLlmConfig(raw: Record<string, unknown>): LlmConfig {
   const backend = String(raw.backend ?? '') as LlmBackend;
   if (!LLM_BACKENDS.includes(backend)) throw new AppError('Choisissez comment joindre le modèle : LiteLLM, OpenAI ou Anthropic');
@@ -109,7 +108,7 @@ export async function callLlm(call: LlmCall): Promise<LlmResult> {
     const body: Json = { model: config.model, max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS, messages: [{ role: 'user', content: call.prompt }] };
     if (call.systemPrompt) body.system = call.systemPrompt;
     if (config.temperature !== null) body.temperature = Math.min(config.temperature, 1);
-    const res = await safeRequest(new URL(ANTHROPIC_URL), { ...common, method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': call.apiKey, 'anthropic-version': '2023-06-01', 'user-agent': 'Skipper agents' }, body: JSON.stringify(body) });
+    const res = await safeRequest(new URL(ANTHROPIC_URL), { ...common, method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': call.apiKey, 'anthropic-version': '2023-06-01', 'user-agent': 'Skipper workflows' }, body: JSON.stringify(body) });
     if (res.status >= 400) throw apiError('Anthropic', res.status, res.body);
     const json = parseBody(res.body, 'Anthropic');
     const blocks = Array.isArray(json.content) ? (json.content as Json[]) : [];
@@ -134,7 +133,7 @@ export async function callLlm(call: LlmCall): Promise<LlmResult> {
   const body: Json = { model: config.model, messages };
   if (config.temperature !== null) body.temperature = config.temperature;
   if (config.maxTokens !== null) body.max_tokens = config.maxTokens;
-  const res = await safeRequest(new URL(url), { ...common, method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${call.apiKey}`, 'user-agent': 'Skipper agents' }, body: JSON.stringify(body) });
+  const res = await safeRequest(new URL(url), { ...common, method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${call.apiKey}`, 'user-agent': 'Skipper workflows' }, body: JSON.stringify(body) });
   if (res.status >= 400) throw apiError(label, res.status, res.body);
   const json = parseBody(res.body, label);
   const choice = (Array.isArray(json.choices) ? (json.choices[0] as Json | undefined) : undefined) ?? {};
@@ -201,7 +200,7 @@ export async function sendLangfuseTrace(t: LangfuseTrace): Promise<string | null
   try {
     const res = await safeRequest(new URL(`${t.host.replace(/\/+$/, '')}/api/public/ingestion`), {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(`${t.publicKey}:${t.secretKey}`).toString('base64')}`, 'user-agent': 'Skipper agents' },
+      headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(`${t.publicKey}:${t.secretKey}`).toString('base64')}`, 'user-agent': 'Skipper workflows' },
       body: JSON.stringify({ batch }),
       timeoutMs: 15_000,
     });

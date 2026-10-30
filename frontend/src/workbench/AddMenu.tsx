@@ -26,7 +26,7 @@ export interface AddMenuProject {
 
 /**
  * Menu « ⋮ » d'un projet ou d'un dossier de travail (et « + » de la sous-barre) : fichiers, tout ce qu'on peut
- * créer (work session au niveau du projet ; session et terminal dans une work session ; agent, workflow), les pages du projet, puis la gestion :
+ * créer (work session au niveau du projet ; session et terminal dans une work session ; workflow), les pages du projet, puis la gestion :
  * renommer, archiver, supprimer une work session ; modifier, supprimer un projet (administrateurs).
  */
 export default function AddMenu({ projectId, project, worksession, canWorksession, onClose }: { projectId: string; project?: AddMenuProject | null; worksession?: AddMenuWorksession | null; canWorksession: boolean; onClose: () => void }) {
@@ -87,9 +87,6 @@ export default function AddMenu({ projectId, project, worksession, canWorksessio
       )}
       {!worksessionId && (
         <>
-          <Link to={`/projects/${projectId}/agents?new=1`} className="wb-pop-item" onClick={onClose}>
-            <i className="bi bi-robot wb-icon" /> Nouvel agent
-          </Link>
           <Link to={`/projects/${projectId}/workflows?new=1`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-diagram-3 wb-icon" /> Nouveau workflow
           </Link>
@@ -102,9 +99,6 @@ export default function AddMenu({ projectId, project, worksession, canWorksessio
           </Link>
           <Link to={`/projects/${projectId}/context`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-journal-text wb-icon" /> Contexte
-          </Link>
-          <Link to={`/projects/${projectId}/agents`} className="wb-pop-item" onClick={onClose}>
-            <i className="bi bi-robot wb-icon" /> Agents
           </Link>
           <Link to={`/projects/${projectId}/workflows`} className="wb-pop-item" onClick={onClose}>
             <i className="bi bi-diagram-3 wb-icon" /> Workflows

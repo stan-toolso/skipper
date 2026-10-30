@@ -1,4 +1,4 @@
-/* Agents et workflows : listes, éditeur de graphe, exécutions. Préfixes auto- (pages) et wf- (graphe). */
+/* Workflows : listes, éditeur de graphe, exécutions. Préfixes auto- (pages) et wf- (graphe). */
 
 .auto-card { background: var(--cc-bg-elevated); border: 1px solid var(--cc-border); border-radius: 8px; padding: 12px 14px; height: 100%; display: flex; flex-direction: column; gap: 6px; }
 .auto-card:hover { border-color: var(--cc-dim); }
@@ -48,7 +48,7 @@
 .wf-node-type { margin-left: auto; font-weight: 400; font-size: 10px; color: var(--cc-dim); text-transform: uppercase; letter-spacing: 0.04em; }
 .wf-node-body { padding: 6px 10px; color: var(--cc-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wf-node.type-trigger { --wf-type-color: var(--cc-green); }
-.wf-node.type-agent { --wf-type-color: var(--cc-accent); }
+.wf-node.type-callLlm { --wf-type-color: var(--cc-accent); }
 .wf-node.type-task { --wf-type-color: var(--cc-blue); }
 .wf-node.type-session { --wf-type-color: var(--cc-blue); }
 .wf-node.type-createTask { --wf-type-color: var(--cc-purple); }

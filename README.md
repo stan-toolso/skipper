@@ -61,13 +61,11 @@ Trois notions :
   (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
   tâche comme consigne.
-- **Agent** : configuration réutilisable et paramétrée d'un projet — un appel direct de modèle (LiteLLM,
-  OpenAI, Anthropic, tracé dans Langfuse) ou un type de session (Claude, OpenCode, shell) et ses options,
-  un prompt système, un modèle d'instruction à variables, une sortie texte ou JSON. Exécuté à la main,
-  par planification ou par un workflow ; chaque exécution d'un agent de session est une session dédiée.
-- **Workflow** : graphe d'un projet (déclencheur, agents, sessions, tâches, créations de tâche,
+- **Workflow** : graphe d'un projet (déclencheur, appels de modèle, sessions, tâches, créations de tâche,
   conditions, fins) avec des branches oui / non et « en cas d'erreur », lancé à la main, par
-  planification ou par une tâche créée. Voir « Agents et workflows » plus bas.
+  planification ou par une tâche créée. Un nœud **appel de modèle** (`callLlm`) appelle directement un
+  modèle (LiteLLM, OpenAI, Anthropic, tracé dans Langfuse) avec des instructions, un prompt à variables et
+  une sortie texte ou JSON. Voir « Workflows » plus bas.
 
 ## Stack
 
@@ -177,14 +175,12 @@ backend/
       usage.ts                 # consommation (usage_ledger) par personne
       legacy.ts                # reprise des réglages Claude / GitHub d'application vers le premier administrateur
       server.ts / rateLimits.ts # réglages du serveur et limites de l'abonnement (administrateurs)
-    agents/
-      service.ts               # agents : création, entrées, prompt rendu, planification
-      execution.ts             # exécutions : session dédiée ou appel direct, attente, sortie, annulation
-      llm.ts                   # appel direct d'un modèle (LiteLLM, OpenAI, Anthropic) et trace Langfuse
-      template.ts              # modèles {{input.x}}, {{nodes.k.output}}, | default
     workflows/
       graph.ts                 # définition d'un graphe : lecture, validation, prochains pas
       engine.ts                # exécution d'un workflow : nœuds, branches, journal, notification
+      llm.ts / llmCall.ts      # nœud « appel de modèle » : appel direct (LiteLLM, OpenAI, Anthropic), clé du coffre, trace Langfuse
+      template.ts              # modèles {{input.x}}, {{nodes.k.output}}, | default
+      inputs.ts                # variables d'un déclencheur, valeurs d'une exécution, planification cron
       conditions.ts / expressions.ts / taskFilter.ts  # conditions visuelles, formules, filtres de tâches
       service.ts / triggers.ts / scheduler.ts         # file d'exécutions, déclencheur « tâche créée », planification
     tasks/
@@ -240,9 +236,9 @@ frontend/
   src/
     apollo.ts                  # client GraphQL
     graphql/operations.ts      # queries / mutations + types TS (settings.ts, vault.ts, automation.ts…)
-    pages/                     # projets, sessions, tâches, coffre, agents, workflows, paramètres…
+    pages/                     # projets, sessions, tâches, coffre, workflows, paramètres…
     components/                # layout, badge de statut, journal, carte de demande, dialogues (Dialogs.tsx)
-    components/automation/     # agents et workflows : éditeurs, canvas (@xyflow/react), exécutions
+    components/automation/     # workflows : éditeur de graphe (@xyflow/react), inspecteur des nœuds, exécutions
 ```
 
 ## Utilisateurs et droits
@@ -378,14 +374,11 @@ conteneur de l'agent.
 - **UserSettings** (`user_settings`, une ligne par personne et par clé : `claude`, `claude.verification`,
   `opencode`, `opencode.models`) et **UserGithubAccount** (`user_github_accounts` : `login`, `method`,
   `scopes`, `organizations`, `isDefault`, `vaultItemId` du jeton, expiration).
-- **Agent** (`agents`) : `projectId`, `name`, `provider` (`llm`, `claude`, `opencode`, `shell`), `config`,
-  `systemPrompt`, `promptTemplate`, `inputs`, `outputFormat`, `outputSchema`, `worksessionId`,
-  `timeoutMinutes`, planification (`schedule`, `scheduleInputs`, `scheduleOwnerId`). **AgentRun**
-  (`agent_runs`) : déclencheur, statut, entrées, prompt rendu, sortie (et JSON), erreur, coût, session.
 - **Workflow** (`workflows`) : `projectId`, `name`, `definition` (nœuds et arêtes), `enabled`,
-  planification, `eventOwnerId`. **WorkflowRun** (`workflow_runs`, `workflow_run_nodes`,
-  `workflow_run_logs`) : définition figée au lancement, entrées, état de chaque nœud, journal, sortie.
-  Une session garde `agentId`, `agentRunId` et `workflowRunId` quand une exécution l'a ouverte.
+  planification (`schedule`, `scheduleInputs`, `scheduleOwnerId`), `eventOwnerId`. **WorkflowRun**
+  (`workflow_runs`, `workflow_run_nodes`, `workflow_run_logs`) : définition figée au lancement, entrées,
+  état de chaque nœud (entrée, sortie, erreur), journal, sortie. Une session garde `workflowRunId` quand
+  une exécution l'a ouverte. (Les tables `agents` et `agent_runs` ont disparu avec la migration 039.)
 - **Work session** (`worksessions`) : `projectId`, `name` (dossier), `branch` (le nom du dossier pour un
   projet sans dépôt), `label` (libellé libre, sinon la branche), `taskId` (tâche à laquelle elle est
   consacrée), `archivedAt`. Dossier `WORKSPACES_ROOT/<slug>.worktrees/<name>` ; pour un projet git, créé
@@ -1018,42 +1011,39 @@ de la conversation est reflété en base (`opencode_sessions`, `opencodeState.ts
 session après recréation du conteneur. Les décisions d'autorisation passent par les règles du projet
 puis par les demandes humaines, comme pour Claude.
 
-## Agents et workflows
-
-**Agents** (`/agents`, `/projects/:id/agents`, `backend/src/agents/`). Un agent est une configuration
-réutilisable d'un projet : un **fournisseur** — `llm` pour un appel direct de modèle via un proxy
-LiteLLM, OpenAI ou Anthropic (clé du coffre, température, longueur maximale, trace envoyée à un projet
-Langfuse), ou un type de session (`claude`, `opencode`, `shell`) et ses options —, un prompt système,
-un **modèle d'instruction** à variables (`{{input.ticket}}`, `{{ticket | default: "…"}}`), des
-**entrées** déclarées (clé, libellé, obligatoire, valeur par défaut), une sortie **texte** ou **JSON**
-(schéma montré à l'agent, réponse lue comme JSON), une work session de travail (sinon une nouvelle par
-exécution) et un délai. Une
-**exécution** (`agent_runs`) se lance à la main, en test, par planification (cron et fuseau, entrées
-mémorisées, comptes de la personne qui l'a réglée) ou par un workflow : pour un agent de session, une
-session dédiée est créée avec l'instruction rendue, attendue jusqu'à la fin du tour (ou du délai), sa
-réponse lue, puis terminée — sauf quand l'agent résout une tâche, sa session reste ouverte dans le
-work session de la tâche. Coût, durée, sortie et erreur sont conservés ; les exécutions perdues au
-redémarrage sont marquées en échec (`failStaleAgentRuns`).
+## Workflows
 
 **Workflows** (`/workflows`, `/projects/:id/workflows`, `backend/src/workflows/`). Un workflow est un
 **graphe** dessiné dans l'interface (canvas `@xyflow/react`, mise en page automatique) : un ou
-plusieurs **déclencheurs** (manuel, avec ses variables, ou « tâche créée » avec un filtre visuel sur
-la tâche), des nœuds **agent** (entrées remplies par des modèles), **tâche** (session qui traite une
+plusieurs **déclencheurs** (manuel, avec ses **variables** déclarées — clé, libellé, obligatoire, valeur
+par défaut, disponibles comme `{{input.ticket}}` ou `{{ticket | default: "…"}}` —, ou « tâche créée »
+avec un filtre visuel sur la tâche), des nœuds **appel de modèle**, **tâche** (session qui traite une
 tâche existante, dans la work session de la tâche ou une work session choisie), **session**
 (session libre, avec ou sans attente du tour, terminée ou non ensuite), **créer une tâche**,
 **condition** (règles visuelles imbriquées ou formule `nodes.review.json.approved and input.env ==
 "prod"`, voir `expressions.ts`) et **fin** (sortie de l'exécution). Les arêtes d'une condition portent
-sa branche oui / non ; un agent, une tâche, une session ou une création de tâche peuvent avoir une
-branche « en cas d'erreur ». Le graphe est **validé** en continu (`graph.ts` : déclencheur absent,
-arête orpheline, agent inconnu, entrée obligatoire vide, cycle, branches mal utilisées…) ; les erreurs
-bloquent l'exécution, pas les avertissements. Une **exécution** (`workflow_runs`) fige la définition,
+sa branche oui / non ; un appel de modèle, une tâche, une session ou une création de tâche peuvent avoir
+une branche « en cas d'erreur ». Le graphe est **validé** en continu (`graph.ts` : déclencheur absent,
+arête orpheline, appel de modèle sans clé ni modèle, cycle, branches mal utilisées…) ; les erreurs
+bloquent l'exécution, pas les avertissements.
+
+**Appel de modèle** (nœud `callLlm`, `llm.ts`, `llmCall.ts`). Le nœud appelle **directement** un
+modèle de langage, sans session ni outils : un **fournisseur** (proxy LiteLLM, OpenAI ou Anthropic) et la
+**clé du coffre** correspondante (élément `litellm`, ou jeton applicatif OpenAI / Anthropic de la
+personne), le **modèle**, la température et la longueur maximale de la réponse, un projet **Langfuse**
+optionnel où tracer l'appel, des **instructions** (prompt système), le **prompt** (modèle rendu avec
+`{{input.x}}` et `{{nodes.k.output}}`), une sortie **texte** ou **JSON** (forme attendue montrée au
+modèle, réponse lue comme JSON dans `nodes.k.json`) et un délai (10 min par défaut). La clé est résolue
+au nom du propriétaire de l'exécution ; l'enregistrement du nœud garde la sortie, le modèle qui a répondu
+et les jetons consommés, le coût (rapporté par LiteLLM) s'ajoute à celui de l'exécution. Une réponse vide
+ou non JSON met le nœud en échec (branche « en cas d'erreur » ou arrêt de l'exécution). Une **exécution** (`workflow_runs`) fige la définition,
 avance nœud par nœud (`engine.ts`, journal détaillé, état de chaque nœud, coût cumulé, annulation),
 et se lance à la main (choix du déclencheur, saisie des variables), en test, par planification
 (`scheduler.ts`, toutes les 30 s), ou par une **tâche créée** dans le projet (`triggers.ts` : file
 d'exécutions, au plus cinq actives par workflow, garde anti-boucle quand la tâche vient d'une session
 du workflow lui-même). Les sessions ouvertes par une exécution appartiennent à la personne qui l'a
 lancée (ou au propriétaire de la planification / du déclencheur) et travaillent avec ses comptes.
-Notifications `agent.run`, `agent.failed`, `workflow.run`, `workflow.failed` à la fin des exécutions.
+Notifications `workflow.run` et `workflow.failed` à la fin des exécutions.
 
 ## Ajouter un type d'agent
 

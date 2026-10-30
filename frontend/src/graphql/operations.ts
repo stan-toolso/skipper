@@ -168,9 +168,7 @@ export interface Session {
   parentSession: { id: string; name: string; status: SessionStatus; activity: SessionActivity | null } | null;
   /** Sessions lancées par l'agent de cette session (requête Session seulement). */
   childSessions?: ChildSession[];
-  /** Agent (configuration) et exécution qui ont ouvert la session ; null pour une session lancée à la main. */
-  agent: { id: string; name: string } | null;
-  agentRun: { id: string } | null;
+  /** Exécution de workflow qui a ouvert la session ; null pour une session lancée à la main. */
   workflowRun: { id: string; workflow: { id: string; name: string } } | null;
   /** Utilisateur qui a lancé la session (null : session d'avant cette version). */
   owner: Pick<User, 'id' | 'name' | 'email' | 'avatarUrl'> | null;
@@ -588,13 +586,6 @@ export const SESSION_FIELDS = gql`
       name
       status
       activity
-    }
-    agent {
-      id
-      name
-    }
-    agentRun {
-      id
     }
     workflowRun {
       id

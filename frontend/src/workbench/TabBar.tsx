@@ -28,8 +28,6 @@ const icons: Record<TabKind, string> = {
   worksession: 'bi-layers',
   'shared-pages': 'bi-file-earmark-richtext',
   'shared-page': 'bi-file-earmark-richtext',
-  agents: 'bi-robot',
-  agent: 'bi-robot',
   workflows: 'bi-diagram-3',
   workflow: 'bi-diagram-3',
   'workflow-run': 'bi-play-circle',

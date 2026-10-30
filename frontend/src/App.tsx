@@ -25,8 +25,6 @@ import VaultPage from './pages/VaultPage';
 import ProjectVaultPage from './pages/ProjectVaultPage';
 import SharedPagesPage from './pages/SharedPagesPage';
 import SharedPagePage from './pages/SharedPagePage';
-import AgentsPage from './pages/AgentsPage';
-import AgentPage from './pages/AgentPage';
 import WorkflowsPage from './pages/WorkflowsPage';
 import WorkflowPage from './pages/WorkflowPage';
 import WorkflowRunPage from './pages/WorkflowRunPage';
@@ -48,9 +46,6 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/tasks/:id" element={<TaskPage />} />
       <Route path="/vault" element={<VaultPage />} />
-      <Route path="/agents" element={<AgentsPage />} />
-      <Route path="/agents/:id" element={<AgentPage />} />
-      <Route path="/projects/:id/agents" element={<AgentsPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/workflows/:id" element={<WorkflowPage />} />
       <Route path="/workflows/:id/runs/:runId" element={<WorkflowRunPage />} />

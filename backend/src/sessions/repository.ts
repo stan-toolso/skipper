@@ -8,8 +8,6 @@ interface SessionRow {
   worksession_id: string | null;
   parent_session_id: string | null;
   owner_id: string | null;
-  agent_id: string | null;
-  agent_run_id: string | null;
   workflow_run_id: string | null;
   archived_at: Date | null;
   former_worksession: FormerWorksession | null;
@@ -51,8 +49,6 @@ function toSession(row: SessionRow): Session {
     worksessionId: row.worksession_id,
     parentSessionId: row.parent_session_id,
     ownerId: row.owner_id ?? null,
-    agentId: row.agent_id ?? null,
-    agentRunId: row.agent_run_id ?? null,
     workflowRunId: row.workflow_run_id ?? null,
     archivedAt: row.archived_at ?? null,
     formerWorksession: row.former_worksession ?? null,
@@ -135,10 +131,10 @@ const patchColumns: Record<keyof SessionPatch, string> = {
 export const sessionRepository = {
   async create(input: CreateSessionInput): Promise<Session> {
     const { rows } = await pool.query<SessionRow>(
-      `INSERT INTO sessions (project_id, worksession_id, parent_session_id, owner_id, name, provider, prompt, config, agent_id, agent_run_id, workflow_run_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO sessions (project_id, worksession_id, parent_session_id, owner_id, name, provider, prompt, config, workflow_run_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [input.projectId, input.worksessionId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.agentId ?? null, input.agentRunId ?? null, input.workflowRunId ?? null],
+      [input.projectId, input.worksessionId ?? null, input.parentSessionId ?? null, input.ownerId ?? null, input.name, input.provider, input.prompt ?? null, JSON.stringify(input.config ?? {}), input.workflowRunId ?? null],
     );
     return toSession(rows[0]);
   },

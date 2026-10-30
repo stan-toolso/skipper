@@ -1,6 +1,7 @@
+import { useQuery } from '@apollo/client';
 import { useRef, useState } from 'react';
-import { Button, Form } from 'react-bootstrap';
-import type { Agent, ConditionGroup, InputVariable, NewTaskTemplate, TaskWorksessionMode, TriggerEvent, WorkflowDefinition, WorkflowIssue, WorkflowNode } from '../../../graphql/automation';
+import { Button, Col, Form, Row } from 'react-bootstrap';
+import { LLM_KEYS, type ConditionGroup, type InputVariable, type LlmBackend, type LlmKeyItem, type LlmKeys, type LlmNodeConfig, type LlmOutputFormat, type NewTaskTemplate, type TaskWorksessionMode, type TriggerEvent, type WorkflowDefinition, type WorkflowIssue, type WorkflowNode } from '../../../graphql/automation';
 import type { Provider, Worksession } from '../../../graphql/operations';
 import { nodeTypeInfo, VARIABLE_KEY_PATTERN } from '../../../lib/automation';
 import { availablePaths } from '../../../lib/workflowGraph';
@@ -14,7 +15,6 @@ interface Props {
   definition: WorkflowDefinition;
   onChange: (node: WorkflowNode) => void;
   onDelete: () => void;
-  agents: Agent[];
   providers: Provider[];
   worksessions: Worksession[];
   issues: WorkflowIssue[];
@@ -58,6 +58,81 @@ function VariablesEditor({ variables, onChange }: { variables: InputVariable[]; 
         <i className="bi bi-plus-lg me-1" /> Variable
       </Button>
     </div>
+  );
+}
+
+const LLM_BACKENDS: { value: LlmBackend; label: string; hint: string }[] = [
+  { value: 'litellm', label: 'LiteLLM', hint: 'Un proxy LiteLLM du coffre : son adresse et sa clé.' },
+  { value: 'openai', label: 'OpenAI', hint: 'Une clé OpenAI du coffre (jeton applicatif).' },
+  { value: 'anthropic', label: 'Anthropic', hint: 'Une clé API Anthropic du coffre (jeton applicatif).' },
+];
+const EMPTY_LLM: LlmNodeConfig = { backend: 'litellm', keyItemId: '', model: '', temperature: null, maxTokens: null, langfuseItemId: null };
+const ownerOf = (i: LlmKeyItem) => (i.ownerProject ? `projet ${i.ownerProject.name}` : i.ownerUser ? i.ownerUser.name : '');
+
+/** Comment joindre le modèle d'un nœud « appel de modèle » : fournisseur, clé du coffre, modèle, réglages, trace Langfuse. */
+function LlmConfigFields({ llm, onChange }: { llm: LlmNodeConfig; onChange: (llm: LlmNodeConfig) => void }) {
+  const { data } = useQuery<{ llmKeys: LlmKeys }>(LLM_KEYS);
+  const keys = data?.llmKeys;
+  const set = (p: Partial<LlmNodeConfig>) => onChange({ ...llm, ...p });
+  const keyChoices: LlmKeyItem[] = !keys ? [] : llm.backend === 'litellm' ? keys.litellm : keys.tokens.filter((t) => t.token?.service === llm.backend);
+  const number = (v: string, integer: boolean) => (v.trim() === '' ? null : integer ? Math.round(Number(v)) : Number(v.replace(',', '.')));
+  return (
+    <>
+      <Form.Group className="mb-2">
+        <Form.Label>Fournisseur</Form.Label>
+        <Form.Select value={llm.backend} onChange={(e) => set({ backend: e.target.value as LlmBackend, keyItemId: '' })}>
+          {LLM_BACKENDS.map((b) => (
+            <option key={b.value} value={b.value}>
+              {b.label}
+            </option>
+          ))}
+        </Form.Select>
+        <Form.Text>{LLM_BACKENDS.find((b) => b.value === llm.backend)?.hint}</Form.Text>
+      </Form.Group>
+      <Form.Group className="mb-2">
+        <Form.Label>Clé du coffre *</Form.Label>
+        <Form.Select value={llm.keyItemId} onChange={(e) => set({ keyItemId: e.target.value })}>
+          <option value="">Choisir…</option>
+          {keyChoices.map((i) => (
+            <option key={i.id} value={i.id}>
+              {i.name}
+              {i.url ? ` — ${i.url}` : ''} ({ownerOf(i)})
+            </option>
+          ))}
+        </Form.Select>
+        {keys && keyChoices.length === 0 && <Form.Text className="text-warning">Aucun élément utilisable : ajoutez {llm.backend === 'litellm' ? 'un proxy LiteLLM' : `un jeton ${llm.backend === 'openai' ? 'OpenAI' : 'Anthropic'}`} dans votre coffre.</Form.Text>}
+      </Form.Group>
+      <Form.Group className="mb-2">
+        <Form.Label>Modèle *</Form.Label>
+        <Form.Control value={llm.model} onChange={(e) => set({ model: e.target.value })} placeholder={llm.backend === 'anthropic' ? 'claude-sonnet-5-5' : llm.backend === 'openai' ? 'gpt-5' : 'nom du modèle du proxy'} className="font-monospace" />
+      </Form.Group>
+      <Row className="g-2 mb-2">
+        <Col xs={6}>
+          <Form.Group>
+            <Form.Label>Température</Form.Label>
+            <Form.Control type="number" step="0.1" min={0} max={2} value={llm.temperature ?? ''} onChange={(e) => set({ temperature: number(e.target.value, false) })} placeholder="défaut" />
+          </Form.Group>
+        </Col>
+        <Col xs={6}>
+          <Form.Group>
+            <Form.Label>Réponse max (jetons)</Form.Label>
+            <Form.Control type="number" min={1} value={llm.maxTokens ?? ''} onChange={(e) => set({ maxTokens: number(e.target.value, true) })} placeholder="défaut" />
+          </Form.Group>
+        </Col>
+      </Row>
+      <Form.Group className="mb-2">
+        <Form.Label>Traçage Langfuse (optionnel)</Form.Label>
+        <Form.Select value={llm.langfuseItemId ?? ''} onChange={(e) => set({ langfuseItemId: e.target.value || null })}>
+          <option value="">Aucun</option>
+          {(keys?.langfuse ?? []).map((i) => (
+            <option key={i.id} value={i.id}>
+              {i.name}
+              {i.url ? ` — ${i.url}` : ''} ({ownerOf(i)})
+            </option>
+          ))}
+        </Form.Select>
+      </Form.Group>
+    </>
   );
 }
 
@@ -123,12 +198,11 @@ function WorksessionChoice({ node, worksessions, onChange, modes }: { node: Work
 const EXPRESSION_HELP = 'Opérateurs : == != > >= < <= contains matches startsWith endsWith in, and / or / not, « is empty », parenthèses. Ex. : nodes.review.json.approved and input.env == "prod"';
 
 /** Panneau de droite de l'éditeur : les réglages du nœud sélectionné, selon son type. */
-export default function NodeInspector({ node, definition, onChange, onDelete, agents, providers, worksessions, issues }: Props) {
+export default function NodeInspector({ node, definition, onChange, onDelete, providers, worksessions, issues }: Props) {
   const paths = availablePaths(definition, node.key);
   const patch = (p: Partial<WorkflowNode>) => onChange({ ...node, ...p });
   const info = nodeTypeInfo[node.type];
   const [conditionMode, setConditionMode] = useState<'visual' | 'expression'>(node.type === 'condition' && !node.condition && node.expression ? 'expression' : 'visual');
-  const agent = node.type === 'agent' ? agents.find((a) => a.id === node.agentId) : undefined;
   const newTask: NewTaskTemplate = node.newTask ?? { title: '', description: '', priority: '', status: '', dueDate: '', assignee: '', reporter: '', fields: [] };
   const setTask = (p: Partial<NewTaskTemplate>) => patch({ newTask: { ...newTask, ...p } });
 
@@ -183,27 +257,27 @@ export default function NodeInspector({ node, definition, onChange, onDelete, ag
         </>
       )}
 
-      {node.type === 'agent' && (
+      {node.type === 'callLlm' && (
         <>
+          <LlmConfigFields llm={node.llm ?? EMPTY_LLM} onChange={(llm) => patch({ llm })} />
+          <TemplateField label="Instructions (prompt système)" value={node.systemPrompt ?? ''} onChange={(systemPrompt) => patch({ systemPrompt })} paths={paths} rows={3} placeholder="Tu es un relecteur de code exigeant…" hint="Rôle et consignes permanentes du modèle." />
+          <TemplateField label="Prompt *" value={node.prompt ?? ''} onChange={(prompt) => patch({ prompt })} paths={paths} rows={5} placeholder="Relis le ticket {{input.ticket}} et liste les risques." hint="Le message envoyé au modèle, rempli à l'exécution. Sa réponse est {{nodes.clé.output}}." />
           <Form.Group className="mb-2">
-            <Form.Label>Agent</Form.Label>
-            <Form.Select value={node.agentId ?? ''} onChange={(e) => patch({ agentId: e.target.value || null, inputs: {} })}>
-              <option value="">Choisir…</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
+            <Form.Label>Format de la réponse</Form.Label>
+            <Form.Select value={node.outputFormat ?? 'text'} onChange={(e) => patch({ outputFormat: e.target.value as LlmOutputFormat })}>
+              <option value="text">Texte libre</option>
+              <option value="json">JSON (lisible par les conditions : nodes.clé.json)</option>
             </Form.Select>
-            {agents.length === 0 && <Form.Text className="text-warning">Aucun agent dans ce projet.</Form.Text>}
           </Form.Group>
-          {agent?.inputs.map((v) => (
-            <TemplateField key={v.key} label={`${v.label || v.key}${v.required && v.defaultValue === null ? ' *' : ''}`} value={node.inputs?.[v.key] ?? ''} onChange={(val) => patch({ inputs: { ...(node.inputs ?? {}), [v.key]: val } })} paths={paths} rows={2} placeholder={v.defaultValue ?? ''} hint={v.description ?? undefined} />
-          ))}
-          <TemplateField label="Tâche à résoudre (optionnel)" value={node.taskId ?? ''} onChange={(taskId) => patch({ taskId })} paths={paths} placeholder="{{input.task.id}}" hint="L'agent de session travaille sur cette tâche (son texte lui est transmis, la tâche passe en cours)." />
+          {node.outputFormat === 'json' && (
+            <Form.Group className="mb-2">
+              <Form.Label>Forme JSON attendue (montrée au modèle)</Form.Label>
+              <Form.Control as="textarea" rows={3} value={node.outputSchema ?? ''} onChange={(e) => patch({ outputSchema: e.target.value })} className="font-monospace" placeholder={'{ "approved": true, "comments": ["…"] }'} />
+            </Form.Group>
+          )}
           <Form.Group className="mb-2">
-            <Form.Label>Délai maximal (minutes, vide = celui de l'agent)</Form.Label>
-            <Form.Control type="number" min={1} value={node.timeoutMinutes ?? ''} onChange={(e) => patch({ timeoutMinutes: e.target.value ? Number(e.target.value) : null })} />
+            <Form.Label>Délai maximal (minutes)</Form.Label>
+            <Form.Control type="number" min={1} value={node.timeoutMinutes ?? ''} onChange={(e) => patch({ timeoutMinutes: e.target.value ? Number(e.target.value) : null })} placeholder="10" />
           </Form.Group>
         </>
       )}
