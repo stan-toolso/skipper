@@ -50,7 +50,7 @@ fi
 
 if [ "$SKIP_FILES" = 0 ]; then
   step "Workspaces, clé maîtresse, pièces jointes (rsync)"
-  rsync -aHAX --delete --info=progress2 --exclude='*/node_modules' --exclude='*.worktrees/*/node_modules' \
+  rsync -aHAX --delete --stats --exclude='*/node_modules' --exclude='*.worktrees/*/node_modules' \
     "$OLD:/home/skipper/skipper-workspaces/" /home/skipper/skipper-workspaces/
   [ -f /home/skipper/skipper-workspaces/.secret-key ] && echo "clé maîtresse copiée" || echo "ATTENTION : .secret-key absente (SKIPPER_SECRET_KEY dans l'ancien .env ?)" >&2
   # Les node_modules des workspaces se réinstallent ; les conteneurs sont recréés au premier usage (chemins identiques).
