@@ -62,7 +62,7 @@ Trois notions :
   est réglée (répondue, annulée avec la session, expirée au redémarrage) : la cloche ne réclame que ce
   qui attend encore. Réservées aux administrateurs de l'application : les limites d'utilisation de
   l'abonnement Claude (fenêtre à 75 % puis 90 %, tours refusés). Notifications natives du navigateur
-  activables en option.
+  activables en option, avec le choix des familles reçues (voir « Notifications » plus bas).
 - **Coffre** : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS, sites web, secrets et comptes Google que les
   agents utilisent sans jamais voir les identifiants : le serveur agit pour eux (outils MCP, saisie dans le
   navigateur headless). Un élément appartient à une personne (coffre personnel, partageable et ouvrable à
@@ -93,7 +93,7 @@ Paramètres (menu en bas de la sidebar), **propres à chaque personne** : **Clau
 connecté depuis la page ou clé API du coffre, modèles, budgets et consommation), **OpenCode** (modèle
 par défaut, clés des fournisseurs, liste des modèles), **GitHub** (comptes connectés par code ou par
 jeton du coffre, dépôts), **Serveur** (administrateurs : santé, sessions simultanées, maintenance,
-limites de l'abonnement) et **Apparence**. Les sessions, actions git et pull requests d'une personne
+limites de l'abonnement), **Notifications** (familles reçues en push) et **Apparence**. Les sessions, actions git et pull requests d'une personne
 utilisent ses propres comptes.
 
 ```bash
@@ -1072,6 +1072,17 @@ clés VAPID générées au premier démarrage dans `app_settings`), le service w
 `vite-plugin-pwa` en mode `injectManifest`) affiche la notification système même application fermée,
 met à jour le badge de l'icône et ouvre la page concernée au clic. « Tester » envoie une notification
 à tous ses appareils ; des conseils par système sont affichés quand elles sont bloquées.
+
+**Ce que chacun reçoit** se règle dans Paramètres › Notifications (lien « Choisir ce que vous recevez »
+dans la cloche) : les notifications sont regroupées en familles (`backend/src/notifications/preferences.ts`,
+`PUSH_CATEGORIES` : demandes d'un agent, sessions terminées ou en erreur, sessions lancées par un agent,
+tâches, pull requests, planifications, workflows, contexte, pages partagées, ressources des projets et,
+pour les administrateurs, alertes du serveur et de l'abonnement), chacune activable ou non. Le choix suit
+la personne sur tous ses appareils (`user_settings`, clé `notifications.push`, qui ne garde que les
+familles coupées : une famille ajoutée plus tard est reçue par défaut). Il filtre l'envoi push
+(`pushService.deliver`) et les notifications du navigateur affichées par la cloche quand la fenêtre n'a
+pas le focus ; la cloche elle-même affiche tout. Un type de notification absent des familles est toujours
+envoyé. API : `pushPreferences`, `setPushPreference(category, enabled)`.
 
 ## Apparence
 
