@@ -5,6 +5,7 @@ import { liveDraftService } from '../sessions/live.js';
 import { apiKeyService } from '../apiKeys/service.js';
 import { contextService, HUMAN } from '../context/service.js';
 import { accountOf, googleAccountService } from '../google/service.js';
+import { pushPreferencesService } from '../notifications/preferences.js';
 import { pushService, type PushSubscriptionInput } from '../notifications/push.js';
 import { searchService, type SearchKind } from '../search/service.js';
 import { sharedPageService } from '../sharedPages/service.js';
@@ -682,6 +683,10 @@ export const resolvers = {
       requireUser(ctx);
       return pushService.publicKey();
     },
+    pushPreferences: (_: unknown, __: unknown, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      return pushPreferencesService.list(user.id, user.isAdmin);
+    },
     settings: (_: unknown, __: unknown, ctx: Ctx) => appSettings(ctx),
     vaultAwsAccounts: (_: unknown, args: { id: string }, ctx: Ctx) => awsService.accounts(vaultActor(ctx), args.id),
     vaultTokenServices: (_: unknown, __: unknown, ctx: Ctx) => {
@@ -1339,6 +1344,10 @@ export const resolvers = {
     },
     unsubscribePush: (_: unknown, args: { endpoint: string }, ctx: Ctx) => pushService.unsubscribe(requireUser(ctx).id, args.endpoint),
     sendTestPush: (_: unknown, __: unknown, ctx: Ctx) => pushService.test(requireUser(ctx).id),
+    setPushPreference: (_: unknown, args: { category: string; enabled: boolean }, ctx: Ctx) => {
+      const user = requireUser(ctx);
+      return pushPreferencesService.set(user.id, user.isAdmin, args.category, args.enabled);
+    },
     closeTerminal: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTerminal(ctx, args.id, 'member');
       return terminalService.close(args.id);

@@ -8,6 +8,7 @@ import GithubSection from '../components/GithubSection';
 import PageLoading from '../components/PageLoading';
 import RateLimitGauges from '../components/RateLimitGauges';
 import ServerHealthCard from '../components/ServerHealthCard';
+import NotificationsSection from '../components/settings/NotificationsSection';
 import OpencodeSection from '../components/settings/OpencodeSection';
 import VaultTokenPicker from '../components/settings/VaultTokenPicker';
 import {
@@ -650,7 +651,7 @@ function ServerSection({ server }: { server: ServerState }) {
   );
 }
 
-type SettingsSection = 'claude' | 'opencode' | 'github' | 'server' | 'appearance';
+type SettingsSection = 'claude' | 'opencode' | 'github' | 'server' | 'notifications' | 'appearance';
 
 /** Thème clair / sombre / système, mémorisé dans ce navigateur seulement. */
 function AppearanceSection() {
@@ -673,7 +674,7 @@ function AppearanceSection() {
   );
 }
 
-/** Paramètres de la personne connectée : Claude (identifiants, modèles, budgets), OpenCode, GitHub, apparence ; serveur pour les administrateurs. */
+/** Paramètres de la personne connectée : Claude (identifiants, modèles, budgets), OpenCode, GitHub, notifications, apparence ; serveur pour les administrateurs. */
 export default function SettingsPage() {
   useTabTitle('Paramètres');
   const { user } = useAuth();
@@ -718,6 +719,11 @@ export default function SettingsPage() {
           </Nav.Item>
         )}
         <Nav.Item>
+          <Nav.Link eventKey="notifications">
+            <i className="bi bi-bell me-1" /> Notifications
+          </Nav.Link>
+        </Nav.Item>
+        <Nav.Item>
           <Nav.Link eventKey="appearance">
             <i className="bi bi-palette me-1" /> Apparence
           </Nav.Link>
@@ -735,6 +741,7 @@ export default function SettingsPage() {
         {section === 'opencode' && <OpencodeSection settings={s} />}
         {section === 'github' && <GithubSection />}
         {section === 'server' && s.server && <ServerSection server={s.server} />}
+        {section === 'notifications' && <NotificationsSection />}
         {section === 'appearance' && <AppearanceSection />}
       </div>
     </>

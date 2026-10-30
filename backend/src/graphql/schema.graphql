@@ -380,7 +380,7 @@ type CreatedProjectApiKey {
 "Notification affichée dans la cloche de l'interface."
 type Notification {
   id: ID!
-  "request.created, task.created, task.completed, session.completed, session.failed, context.created"
+  "request.created, task.created, task.completed, session.completed, session.failed, context.created… (familles : PushCategory.types)"
   type: String!
   title: String!
   message: String
@@ -1843,6 +1843,18 @@ input PushSubscriptionInput {
   userAgent: String
 }
 
+"Famille de notifications qu'une personne reçoit ou non en push (et en notification du navigateur) ; la cloche affiche tout."
+type PushCategory {
+  key: String!
+  label: String!
+  description: String!
+  "Types de notification (Notification.type) de la famille."
+  types: [String!]!
+  enabled: Boolean!
+  "Réservée aux administrateurs de l'application."
+  adminsOnly: Boolean!
+}
+
 "Relance : la nouvelle session reprend le dossier et la branche de la session d'origine (archivée), ou un nouveau dossier s'il a disparu."
 input RelaunchSessionInput {
   name: String
@@ -2042,6 +2054,8 @@ type Query {
   sharedPages: [SharedPage!]!
   "Clé publique VAPID avec laquelle les navigateurs s'abonnent aux notifications push."
   pushPublicKey: String!
+  "Familles de notifications de la personne connectée, avec leur état (toutes reçues par défaut)."
+  pushPreferences: [PushCategory!]!
   "Contenu d'un dossier du workspace du projet (ou de la work session). path vide = racine."
   workspaceEntries(projectId: ID!, worksessionId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
@@ -2406,6 +2420,8 @@ type Mutation {
   unsubscribePush(endpoint: String!): Boolean!
   "Envoie une notification de test aux appareils de l'utilisateur ; renvoie leur nombre."
   sendTestPush: Int!
+  "Active ou coupe une famille de notifications push pour la personne connectée ; renvoie toutes ses familles."
+  setPushPreference(category: String!, enabled: Boolean!): [PushCategory!]!
   "Termine le shell."
   closeTerminal(id: ID!): Terminal!
   deleteTerminal(id: ID!): Boolean!
