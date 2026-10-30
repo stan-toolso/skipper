@@ -65,6 +65,7 @@ if [ -n "$S3_BUCKET" ]; then
     echo "ATTENTION : la phrase de chiffrement des sauvegardes est dans $CIPHER_FILE. La copier hors de la machine (gestionnaire de mots de passe) : sans elle, les sauvegardes sont illisibles."
   fi
   CIPHER="$(cat "$CIPHER_FILE")"
+  mkdir -p /etc/pgbackrest
   umask 077
   sed -e "s|__S3_REGION__|$S3_REGION|g" -e "s|__S3_BUCKET__|$S3_BUCKET|g" -e "s|__S3_KEY__|$S3_KEY|g" -e "s|__S3_SECRET__|$S3_SECRET|g" \
       -e "s|__HOSTNAME__|$(hostname)|g" -e "s|__CIPHER_PASS__|$CIPHER|g" "$T/pgbackrest.conf" > /etc/pgbackrest/pgbackrest.conf
