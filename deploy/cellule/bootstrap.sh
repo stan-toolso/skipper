@@ -101,11 +101,12 @@ step "Utilisateur skipper (docker, sudo restreint) et dossiers"
 id skipper >/dev/null 2>&1 || adduser --disabled-password --gecos "Skipper" skipper
 usermod -aG docker skipper
 mkdir -p /home/skipper/.ssh && chmod 700 /home/skipper/.ssh
-# Les clés installées par Scaleway sur root ouvrent aussi le compte skipper.
-if [ -f /root/.ssh/authorized_keys ]; then
-  touch /home/skipper/.ssh/authorized_keys
-  while read -r k; do [ -n "$k" ] && grep -qxF "$k" /home/skipper/.ssh/authorized_keys || echo "$k" >> /home/skipper/.ssh/authorized_keys; done < /root/.ssh/authorized_keys
-fi
+# Les clés installées par Scaleway (sur root, ou sur l'utilisateur `ubuntu` des images Ubuntu) ouvrent aussi le compte skipper.
+touch /home/skipper/.ssh/authorized_keys
+for src in /root/.ssh/authorized_keys /home/ubuntu/.ssh/authorized_keys; do
+  [ -f "$src" ] || continue
+  while read -r k; do [ -n "$k" ] && ! grep -qxF "$k" /home/skipper/.ssh/authorized_keys && echo "$k" >> /home/skipper/.ssh/authorized_keys; done < "$src"
+done
 chmod 600 /home/skipper/.ssh/authorized_keys
 mkdir -p /home/skipper/skipper-workspaces /etc/skipper
 chown -R skipper:skipper /home/skipper /var/www/skipper

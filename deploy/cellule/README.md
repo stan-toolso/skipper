@@ -22,8 +22,10 @@ Scaleway fr-par-2, Ubuntu 24.04). Ces scripts sont idempotents : relançables sa
 git clone https://github.com/stan-toolso/skipper.git /root/skipper-install
 cd /root/skipper-install/deploy/cellule
 ./bootstrap.sh --domain skipper2.toolso.io --hostname skipper-1 --certbot-email ops@toolso.io
-./postgres.sh --s3-bucket <bucket> --s3-key <clé> --s3-secret <secret>      # ou sans S3 pour commencer
-./backup-files.sh --install --s3-bucket <bucket> --s3-key <clé> --s3-secret <secret>
+#    Clé d'API Object Storage (application IAM « sauvegardes », permission ObjectStorageFullAccess), déposée une fois :
+install -m 600 /dev/null /etc/skipper/s3.env && printf 'S3_BUCKET=skipper-sauvegardes\nS3_KEY=SCW...\nS3_SECRET=...\nS3_REGION=fr-par\n' > /etc/skipper/s3.env
+./postgres.sh                 # lit /etc/skipper/s3.env ; ou --s3-bucket/--s3-key/--s3-secret ; ou rien pour commencer sans sauvegarde
+./backup-files.sh --install
 # 2. En skipper :
 sudo -iu skipper
 ~/skipper/deploy/cellule/install-skipper.sh --domain skipper2.toolso.io       # ou avec --google-client-id/--google-client-secret

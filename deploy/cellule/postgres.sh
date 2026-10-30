@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Base PostgreSQL de la cellule : rôle et base `skipper`, réglages, sauvegardes pgBackRest vers un bucket Object Storage.
 #   sudo ./postgres.sh [--s3-bucket skipper-sauvegardes --s3-key SCW... --s3-secret ... --s3-region fr-par]
-# Sans paramètres S3, la base est créée mais l'archivage WAL reste désactivé (relancer avec les paramètres plus tard).
+# Les paramètres S3 peuvent aussi venir de /etc/skipper/s3.env (S3_BUCKET=… S3_KEY=… S3_SECRET=…, mode 600), ce qui évite
+# de les passer sur une ligne de commande. Sans eux, la base est créée mais l'archivage WAL reste désactivé.
 # Écrit DATABASE_URL dans /etc/skipper/db.env (lisible par skipper seulement) pour install-skipper.sh.
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "à lancer en root (sudo)" >&2; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 T="$HERE/templates"
-S3_BUCKET=""; S3_KEY=""; S3_SECRET=""; S3_REGION="fr-par"
+# Paramètres S3 : arguments, sinon /etc/skipper/s3.env (S3_BUCKET, S3_KEY, S3_SECRET, S3_REGION), déposé par l'administrateur.
+S3_REGION="fr-par"
+[ -r /etc/skipper/s3.env ] && . /etc/skipper/s3.env
+S3_BUCKET="${S3_BUCKET:-}"; S3_KEY="${S3_KEY:-}"; S3_SECRET="${S3_SECRET:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --s3-bucket) S3_BUCKET="$2"; shift 2 ;;
