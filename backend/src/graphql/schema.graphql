@@ -1181,6 +1181,11 @@ type TrackedPullRequest {
   updatedAt: DateTime!
   "La PR GitHub en direct (checks, revues, fusion), null si GitHub ne répond pas."
   github: PullRequest
+  """
+  Session d'agent rattachée : la session (non archivée) la plus récente du dossier de travail de la branche de la PR,
+  sinon celle qui a ouvert la PR. C'est elle qui reçoit la demande de résolution des conflits.
+  """
+  session: Session
 }
 
 input UpdateTrackedPullRequestInput {
@@ -2371,6 +2376,8 @@ type Mutation {
   deletePullRequest(id: ID!): Boolean!
   "Rafraîchit tout de suite les pull requests suivies d'un projet depuis GitHub."
   syncPullRequests(projectId: ID!): [TrackedPullRequest!]!
+  "Demande à la session rattachée à la PR (TrackedPullRequest.session) de résoudre ses conflits avec la base : l'instruction lui est envoyée (la session est relancée si elle était terminée). Renvoie la session."
+  resolvePullRequestConflicts(id: ID!): Session!
 
   "Ouvre un shell dans une work session du projet, avec l'historique des commandes de l'utilisateur sur le projet."
   createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!

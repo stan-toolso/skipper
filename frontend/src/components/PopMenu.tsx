@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export interface MenuItem {
@@ -14,8 +14,11 @@ export interface MenuItem {
  * Petit menu flottant (sidebar, actions d'une ligne de tableau). Par défaut absolu sous son parent `position: relative` ;
  * avec `at`, fixe à l'écran (pour sortir d'une cellule ou d'un conteneur qui rogne). Se ferme au clic ailleurs, à
  * l'échappement et, fixe, quand la personne fait défiler (molette ou doigt : pas l'événement scroll lui-même, que le
- * navigateur émet aussi après le défilement automatique qui précède un clic sur un bouton à moitié visible).
+ * navigateur émet aussi après le défilement automatique qui précède un clic sur un bouton à moitié visible). Fixe,
+ * il est ramené dans la fenêtre s'il en sort (bouton « ⋮ » à gauche d'une carte sur mobile : ancré à droite du
+ * bouton, le menu partait hors écran ; bouton en bas : il remonte).
  */
+const EDGE = 8;
 export default function PopMenu({ items, onClose, up, at }: { items: MenuItem[]; onClose: () => void; up?: boolean; at?: { top: number; left?: number; right?: number } }) {
   useEffect(() => {
     const close = () => onClose();
@@ -39,9 +42,21 @@ export default function PopMenu({ items, onClose, up, at }: { items: MenuItem[];
       }
     };
   }, [onClose, at]);
-  const style = at ? { position: 'fixed' as const, top: at.top, left: at.left, right: at.right } : undefined;
+  const ref = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState<{ top?: number; left?: number; right?: number } | null>(null);
+  useLayoutEffect(() => {
+    setFit(null);
+    if (!at || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const next: { top?: number; left?: number; right?: number } = {};
+    if (r.left < EDGE) next.left = EDGE;
+    else if (r.right > window.innerWidth - EDGE) next.right = EDGE;
+    if (r.bottom > window.innerHeight - EDGE) next.top = Math.max(EDGE, window.innerHeight - EDGE - r.height);
+    if (Object.keys(next).length) setFit(next);
+  }, [at]);
+  const style = at ? { position: 'fixed' as const, top: fit?.top ?? at.top, left: fit?.left ?? (fit?.right != null ? undefined : at.left), right: fit?.right ?? (fit?.left != null ? undefined : at.right) } : undefined;
   return (
-    <div className={`wb-pop${up ? ' up' : ''}`} style={style} onClick={(e) => e.stopPropagation()}>
+    <div ref={ref} className={`wb-pop${up ? ' up' : ''}`} style={style} onClick={(e) => e.stopPropagation()}>
       {items.map((it) => (
         <div key={it.label}>
           {it.separatorBefore && <div className="wb-pop-sep" />}
