@@ -29,6 +29,7 @@ import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { containerMonitor } from './runners/monitor.js';
 import { trackedPullRequestService } from './pullRequests/service.js';
+import { reviewService } from './reviews/service.js';
 import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
 import { migrateLegacyCredentials } from './settings/legacy.js';
@@ -117,6 +118,8 @@ async function main() {
       });
   });
   attachWebSockets(server, [terminalUpgradeHandler(), browserUpgradeHandler()]);
+  // Guetteur des sessions de relecture (publication de leur rapport), lancé à l'écoute du serveur.
+  let stopReviewWatcher: (() => void) | null = null;
   server.listen(config.port, () => {
     log.info(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
     // Sessions restées en file d'attente avant l'arrêt d'abord (elles attendaient), puis reprise automatique
@@ -125,6 +128,7 @@ async function main() {
     healthService.startMonitor();
     containerMonitor.start();
     trackedPullRequestService.startBackgroundSync();
+    stopReviewWatcher = reviewService.startWatcher();
     gitServer.startBackgroundBackups();
     sessionService
       .drainQueue()
@@ -148,6 +152,7 @@ async function main() {
     healthService.stopMonitor();
     containerMonitor.stop();
     trackedPullRequestService.stopBackgroundSync();
+    stopReviewWatcher?.();
     gitServer.stopBackgroundBackups();
     loginService.shutdown();
     const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);

@@ -85,6 +85,12 @@ describe('session rattachée à une PR', () => {
     expect((await pullRequestSession(pr()))?.id).toBe('new');
   });
 
+  it('ignore une session de relecture (lecture seule) du dossier', async () => {
+    m.worksessions = [{ id: 'w1', projectId: 'p', branch: 'fluidite' }];
+    m.sessions = [session('worker', { worksessionId: 'w1', createdAt: new Date('2026-10-29T10:00:00Z') }), { ...session('reviewer', { worksessionId: 'w1' }), config: { review: { branch: 'fluidite' } } } as (typeof m.sessions)[number]];
+    expect((await pullRequestSession(pr()))?.id).toBe('worker');
+  });
+
   it('ignore les sessions archivées du dossier et se rabat sur la session qui a ouvert la PR', async () => {
     m.worksessions = [{ id: 'w1', projectId: 'p', branch: 'fluidite' }];
     m.sessions = [session('gone', { worksessionId: 'w1', archivedAt: new Date() }), session('creator')];

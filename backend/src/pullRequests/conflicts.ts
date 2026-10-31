@@ -1,4 +1,5 @@
 import { AppError } from '../errors.js';
+import { reviewOf } from '../reviews/types.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
 import type { Session } from '../sessions/types.js';
@@ -14,13 +15,14 @@ import type { PullRequestActor, TrackedPullRequest } from './types.js';
  */
 
 /**
- * La session rattachée : la session non archivée la plus récente du dossier de travail dont la branche est celle de
+ * La session rattachée : la session non archivée la plus récente (hors relecture) du dossier de travail dont la branche est celle de
  * la PR, sinon celle qui a ouvert la PR si elle n'est pas archivée. Null quand personne ne peut recevoir d'instruction.
  */
 export async function pullRequestSession(pr: Pick<TrackedPullRequest, 'projectId' | 'headBranch' | 'createdBySessionId'>): Promise<Session | null> {
   const ws = pr.headBranch ? await worksessionRepository.findByBranch(pr.projectId, pr.headBranch) : null;
   if (ws) {
-    const [session] = await sessionRepository.list({ projectId: pr.projectId, worksessionId: ws.id, limit: 1 });
+    // Une session de relecture (lecture seule) ne peut pas résoudre de conflits : la session qui travaille sur la branche.
+    const session = (await sessionRepository.list({ projectId: pr.projectId, worksessionId: ws.id, limit: 20 })).find((s) => !reviewOf(s));
     if (session) return session;
   }
   if (!pr.createdBySessionId) return null;
