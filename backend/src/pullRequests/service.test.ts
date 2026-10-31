@@ -487,6 +487,17 @@ describe('PR en préparation (refreshPending)', () => {
     await trackedPullRequestService.sync('p', 'u1', { force: true });
     expect(m.rows.map((r) => r.status).sort()).toEqual(['merged', 'pending']);
   });
+
+  it('rattache la tâche apparue après la création de la PR en préparation (tâche prise ensuite par la session)', async () => {
+    m.worksessions.push(ws('w1', 'feat/a'));
+    m.local.w1 = { branch: 'feat/a', baseBranch: 'main', commits: 0, changes: 7 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows[0]).toMatchObject({ status: 'pending', taskId: null });
+    m.tasks.push({ id: 't2', projectId: 'p', title: 'Tâche B', branch: 'feat/a', status: 'in_progress' });
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows).toHaveLength(1);
+    expect(m.rows[0]).toMatchObject({ status: 'pending', taskId: 't2' });
+  });
 });
 
 describe('open et markMerged', () => {

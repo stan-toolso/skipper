@@ -1238,17 +1238,16 @@ export const SIDEBAR = gql`
 `;
 
 /** Pull requests des branches des sessions (requête lente : GitHub), interrogée moins souvent que la sidebar. */
+/** PR suivie de chaque dossier de travail (base de Skipper, en préparation comprise ; aucun appel GitHub). */
 export const SIDEBAR_PULL_REQUESTS = gql`
+  ${TASK_PULL_REQUEST_FIELDS}
   query SidebarPullRequests($open: OpenItemsInput) {
     projects: sidebarProjects(open: $open) {
       id
       worksessions {
         id
-        pullRequest {
-          number
-          url
-          state
-          isDraft
+        trackedPullRequest {
+          ...TaskPullRequestFields
         }
       }
     }

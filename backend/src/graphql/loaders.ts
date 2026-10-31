@@ -1,4 +1,6 @@
 import type { Project } from '../projects/types.js';
+import { pullRequestRepository } from '../pullRequests/repository.js';
+import type { TrackedPullRequest } from '../pullRequests/types.js';
 import { projectRepository } from '../projects/repository.js';
 import { requestRepository } from '../requests/repository.js';
 import { sessionRepository } from '../sessions/repository.js';
@@ -75,6 +77,8 @@ export function createLoaders() {
     worksession: createBatcher<string, Worksession>(async (ids) => byId(await worksessionRepository.findByIds(ids))),
     task: createBatcher<string, Task>(async (ids) => byId(await taskRepository.findByIds(ids))),
     pendingRequestCount: createBatcher<string, number>((ids) => requestRepository.countPendingBySessions(ids)),
+    /** PR suivie d'une work session (en préparation comprise), voir `pullRequestRepository.findForWorksessions`. */
+    trackedPullRequest: createBatcher<{ id: string; projectId: string; branch: string }, TrackedPullRequest>((keys) => pullRequestRepository.findForWorksessions(keys), (k) => k.id),
     taskForBranch: createBatcher<{ projectId: string; branch: string }, Task>((keys) => taskRepository.findForBranches(keys), branchKey),
   };
 }

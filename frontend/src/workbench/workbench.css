@@ -872,6 +872,8 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 /* ---- Branche d'une session : état de la PR, dossier absent -------------------------------------- */
 .wt-pr-open { color: var(--cc-green); }
 .wt-pr-draft { color: var(--cc-dim); }
+.wt-pr-pending { color: var(--cc-dim); }
+.wb-ws-pr.wt-pr-pending { border-style: dashed; }
 .wt-pr-merged { color: var(--cc-purple); }
 .wt-pr-closed { color: var(--cc-red); }
 .wb-ws-pr { text-decoration: none; border-color: currentColor; background: none; font-family: inherit; line-height: inherit; cursor: pointer; }
