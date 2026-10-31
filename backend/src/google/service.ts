@@ -6,6 +6,7 @@ import { vaultRepository } from '../vault/repository.js';
 import { vaultService } from '../vault/service.js';
 import { GOOGLE_ACCESSES, type GoogleSettings, type VaultActor, type VaultItem } from '../vault/types.js';
 import type { GoogleAccess, GoogleAccessRequest, GoogleAccount } from './types.js';
+import { log } from '../log.js';
 
 /**
  * Comptes Google du coffre (éléments `google`, personnels ou d'un projet) : flux OAuth « authorization
@@ -207,7 +208,7 @@ export const googleAccountService = {
       await vaultRepository.delete(replaced.id);
     }
     await vaultService.audit(item, 'connected', actor, `${settings.email} · Gmail ${access.gmail}, Drive ${access.drive}`);
-    console.log(`[google] compte ${settings.email} relié (${owner.projectId ? `projet ${owner.projectId}` : 'coffre personnel'}, gmail: ${access.gmail}, drive: ${access.drive})`);
+    log.info(`[google] compte ${settings.email} relié (${owner.projectId ? `projet ${owner.projectId}` : 'coffre personnel'}, gmail: ${access.gmail}, drive: ${access.drive})`);
     return item;
   },
 
@@ -216,7 +217,7 @@ export const googleAccountService = {
     try {
       await fetch(REVOKE_URL, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token }) });
     } catch (err) {
-      console.warn('[google] révocation impossible :', (err as Error).message);
+      log.warn('[google] révocation impossible :', (err as Error).message);
     }
   },
 
@@ -228,7 +229,7 @@ export const googleAccountService = {
         const refreshToken = vaultService.secretsOf(item).refreshToken;
         if (refreshToken) await this.revoke(refreshToken);
       } catch (err) {
-        console.warn('[google] jeton illisible, révocation ignorée :', (err as Error).message);
+        log.warn('[google] jeton illisible, révocation ignorée :', (err as Error).message);
       }
     }
     accessTokens.delete(item.id);

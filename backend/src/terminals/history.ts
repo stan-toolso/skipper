@@ -1,6 +1,7 @@
 import type { Project } from '../projects/types.js';
 import { runner } from '../runners/index.js';
 import { HISTORY_LIMIT, terminalRepository } from './repository.js';
+import { log } from '../log.js';
 
 /**
  * Historique des commandes d'un terminal, par projet et par utilisateur : chargé dans le shell à l'ouverture
@@ -49,7 +50,7 @@ export class TerminalHistory {
       await runner.putFile(project, files.histfile, seed);
       await runner.putFile(project, files.rcfile, bashrc(files.histfile));
     } catch (err) {
-      console.warn(`[terminals] historique non chargé : ${(err as Error).message}`);
+      log.warn(`[terminals] historique non chargé : ${(err as Error).message}`);
       return null;
     }
     const h = new TerminalHistory(project, project.id, userId, files);
@@ -78,7 +79,7 @@ export class TerminalHistory {
       if (lines.length) await terminalRepository.appendHistory(this.projectId, this.userId, lines.slice(-HISTORY_LIMIT));
       this.offset += Buffer.byteLength(complete, 'utf8');
     })()
-      .catch((err) => console.warn(`[terminals] historique non enregistré : ${(err as Error).message}`))
+      .catch((err) => log.warn(`[terminals] historique non enregistré : ${(err as Error).message}`))
       .finally(() => {
         this.flushing = null;
       });

@@ -8,6 +8,7 @@ import { worksessionService } from '../worksessions/service.js';
 import { TerminalHistory } from './history.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
+import { log } from '../log.js';
 
 /** Messages échangés avec le navigateur (JSON). */
 type ClientMessage = { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number };
@@ -76,7 +77,7 @@ export const terminalService = {
       broadcast(t, { type: 'exit', code: exitCode });
       for (const ws of t.clients) ws.close();
       void history?.dispose();
-      void terminalRepository.close(record.id, exitCode).catch((err) => console.error('[terminals] clôture', err));
+      void terminalRepository.close(record.id, exitCode).catch((err) => log.error('[terminals] clôture', err));
     });
     return record;
   },
