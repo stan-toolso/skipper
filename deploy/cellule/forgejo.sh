@@ -39,7 +39,9 @@ DOMAIN="$(echo "$URL" | sed -E 's#^https?://([^/:]+).*#\1#')"
 log() { echo "[forgejo] $*"; }
 
 # 1. Base PostgreSQL ------------------------------------------------------------
-install -d -m 750 /etc/skipper
+# Jamais `install -d -m …` ici : sur un dossier existant, il en réécrit les droits (root:root 750 le 31/10/2026), et
+# skipper ne pouvait plus lire /etc/skipper/db.env (deploy.sh en échec). Chaque fichier y porte ses propres droits.
+mkdir -p /etc/skipper
 if [[ ! -f /etc/skipper/forgejo.env ]]; then
   umask 077
   printf 'FORGEJO_DB_PASSWORD=%s\n' "$(openssl rand -hex 24)" > /etc/skipper/forgejo.env
