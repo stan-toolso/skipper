@@ -480,6 +480,8 @@ type Worksession {
   archivedAt: DateTime
   "Pull request de la branche (ouverte de préférence), null si aucune ou si GitHub ne répond pas."
   pullRequest: PullRequest
+  "PR suivie de la work session (base de Skipper, sans appel GitHub) : ouverte de préférence, sinon en préparation (modifications locales), fusionnée ou fermée."
+  trackedPullRequest: TrackedPullRequest
   "Tâche à laquelle la work session est consacrée (sinon : tâche traitée sur sa branche)."
   task: Task
   createdAt: DateTime!

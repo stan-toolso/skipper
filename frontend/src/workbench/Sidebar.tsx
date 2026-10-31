@@ -13,7 +13,8 @@ import { useDialogs } from '../components/Dialogs';
 import { useSearchPalette } from '../components/SearchPalette';
 import { useShortcutsHelp } from '../components/ShortcutsHelp';
 import { displayComboText } from '../lib/shortcuts';
-import { PullRequestModal } from '../components/PullRequests';
+import { PullRequestWindow, windowFor } from '../components/TrackedPullRequests';
+import { localWorkText, type TrackedPullRequestSummary } from '../graphql/pullRequests';
 import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
@@ -132,12 +133,8 @@ const MAIN_MENU: { to: string; label: string; icon: string; title?: string }[] =
   { to: '/requests', label: 'Demandes', icon: 'bi-bell' },
 ];
 
-interface PullRequestRef {
-  number: number;
-  url: string;
-  state: 'OPEN' | 'CLOSED' | 'MERGED';
-  isDraft: boolean;
-}
+/** PR suivie d'un dossier de travail : en préparation dès que la branche porte des modifications, puis ouverte sur GitHub. */
+type PullRequestRef = TrackedPullRequestSummary;
 
 /** « sous-agent de « Nom » » ou « sous-agent (lancé par un agent) » pour une session lancée par l'agent d'une autre session (sessions.create). */
 const byAgentTitle = (n: Pick<SessionNode<unknown>, 'byAgent' | 'parentName'>) => (n.byAgent ? ` · sous-agent${n.parentName ? ` de « ${n.parentName} »` : ' (lancé par un agent)'}` : '');
@@ -173,10 +170,13 @@ function statusTitle(s: SidebarSession): string {
   return 'Pas encore démarrée';
 }
 
-/** Pastille de la pull request de la branche : visible tant qu'elle attend une action (brouillon, à fusionner) ou juste fusionnée. */
-const PR_PILL: Record<string, string> = { open: 'à fusionner', draft: 'brouillon', merged: 'fusionnée' };
+/** Pastille de la pull request de la branche : visible tant qu'elle attend une action (en préparation, brouillon, à fusionner) ou juste fusionnée. */
+const PR_PILL: Record<string, string> = { pending: 'en préparation', open: 'à fusionner', draft: 'brouillon', merged: 'fusionnée' };
 
-const prState = (pr: PullRequestRef) => (pr.state === 'OPEN' && pr.isDraft ? 'draft' : pr.state.toLowerCase());
+const PR_STATE: Record<PullRequestRef['stage'], string> = { PENDING: 'pending', DRAFT: 'draft', TO_MERGE: 'open', MERGED: 'merged', CANCELLED: 'closed' };
+const prState = (pr: PullRequestRef) => PR_STATE[pr.stage];
+/** « #42 » d'une PR ouverte, travail local (« 3 commits, 2 fichiers non commités ») d'une PR en préparation. */
+const prLabel = (pr: PullRequestRef) => (pr.number == null ? localWorkText(pr) || 'modifications locales' : `#${pr.number}`);
 
 /** Icône du dossier d'une session, colorée par l'état de la pull request de sa branche. */
 function branchIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls: string; title: string } {
@@ -184,6 +184,7 @@ function branchIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls
   const base = `Branche ${ws.branch}`;
   if (!pr) return { cls: '', title: base };
   const state = prState(pr);
+  if (state === 'pending') return { cls: 'wt-pr-pending', title: `${base} · pull request en préparation (${prLabel(pr)}), pas encore ouverte` };
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
 }
 
@@ -337,6 +338,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
   const taskChip = ws.task ? taskChipOf(ws.task, session ?? null) : null;
   const pending = [...ws.sessions, ...children.map((c) => c.session)].reduce((n, s) => n + s.pendingRequestCount, 0);
   const icon = branchIcon(ws, pr);
+  const prWindow = pr ? windowFor(pr) : null;
   const hint = session ? sessionStateHint(session.status, session.activity, session.pendingRequestCount) : null;
   const mine = session ? participates(session, userId) : true;
   const chips = ws.primary
@@ -438,12 +440,12 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
             </Link>
           )}
           {pr && PR_PILL[prState(pr)] && (
-            <button type="button" className={`wb-ws-pr task-status wt-pr-${prState(pr)}`} title={`${icon.title} · voir la pull request`} onClick={() => setPrOpen(true)}>
-              <i className="bi bi-git" /> #{pr.number}
+            <button type="button" className={`wb-ws-pr task-status wt-pr-${prState(pr)}`} title={`${icon.title} · ${pr.number == null ? 'créer la pull request' : 'voir la pull request'}`} disabled={!prWindow} onClick={() => setPrOpen(true)}>
+              <i className="bi bi-git" /> {pr.number == null ? null : prLabel(pr)}
               <span className="task-status-tag">{PR_PILL[prState(pr)]}</span>
             </button>
           )}
-          {pr && prOpen && <PullRequestModal projectId={ws.projectId} number={pr.number} onClose={() => setPrOpen(false)} />}
+          {prOpen && prWindow && <PullRequestWindow projectId={ws.projectId} window={prWindow} onClose={() => setPrOpen(false)} />}
           {!ws.primary && children.length > 0 && !expanded && (
             <button type="button" className="wb-chip" title={`${subagentsSummary(children.map((c) => c.session)).label} lancé(s) par l'agent de cette session · cliquer pour détailler`} onClick={onToggle}>
               <SubagentsCount children={children.map((c) => c.session)} />
@@ -570,10 +572,10 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
   const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[] }>(SIDEBAR, { variables: { open }, pollInterval: 5000, fetchPolicy: 'cache-and-network' });
   const chats = data?.chats ?? [];
-  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; pullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; trackedPullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
   const { data: pendingData } = usePollingQuery<{ requests: HumanRequest[] }>(REQUESTS, { variables: { status: 'PENDING' }, pollInterval: 3000 });
   const pending = pendingData?.requests.length ?? 0;
-  const prByWorksession = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worksessions.map((w) => [w.id, w.pullRequest] as const))), [prData]);
+  const prByWorksession = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worksessions.map((w) => [w.id, w.trackedPullRequest] as const))), [prData]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
   const [filter, setFilter] = useState<'mine' | 'all'>(() => {
     try {

@@ -527,6 +527,7 @@ export const resolvers = {
     exists: async (w: Worksession, _: unknown, ctx: Ctx) => worksessionService.exists(await projectOf(ctx, w.projectId), w),
     git: async (w: Worksession, _: unknown, ctx: Ctx) => worksessionService.gitInfo(await projectOf(ctx, w.projectId), w),
     pullRequest: async (w: Worksession, _: unknown, ctx: Ctx) => ((await projectOf(ctx, w.projectId)).gitUrl ? pullRequestService.forBranch(w.projectId, ctx.user?.id, w.branch).catch(() => null) : null),
+    trackedPullRequest: async (w: Worksession, _: unknown, ctx: Ctx) => (await loadersOf(ctx).trackedPullRequest({ id: w.id, projectId: w.projectId, branch: w.branch })) ?? null,
     task: async (w: Worksession, _: unknown, ctx: Ctx) => (w.taskId ? await loadersOf(ctx).task(w.taskId) : null) ?? (await loadersOf(ctx).taskForBranch({ projectId: w.projectId, branch: w.branch })) ?? null,
     sessions: (w: Worksession) => sessionService.list({ projectId: w.projectId, worksessionId: w.id, limit: 200 }),
     terminals: async (w: Worksession, _: unknown, ctx: Ctx) => (await terminalService.listByProject(w.projectId, requireUser(ctx).id)).filter((t) => t.worksessionId === w.id),

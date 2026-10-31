@@ -138,11 +138,20 @@ async function linkSession(db: Queryable, taskId: string, sessionId: string | nu
   await db.query('INSERT INTO task_sessions (task_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, sessionId]);
 }
 
-/** La session prend la charge de la tâche (en plus des sessions déjà en charge). */
+/**
+ * La session prend la charge de la tâche (en plus des sessions déjà en charge). Une tâche sans branche reçoit celle du
+ * dossier de travail de la session : c'est par la branche que la sidebar et la PR en préparation retrouvent la tâche
+ * (une tâche créée « en cours » par l'agent, ou prise par claim, restait sinon invisible sur sa session).
+ */
 async function takeCharge(db: Queryable, taskId: string, sessionId: string): Promise<void> {
   await db.query(
     `INSERT INTO task_sessions (task_id, session_id, in_charge_since) VALUES ($1, $2, now())
      ON CONFLICT (task_id, session_id) DO UPDATE SET in_charge_since = COALESCE(task_sessions.in_charge_since, now())`,
+    [taskId, sessionId],
+  );
+  await db.query(
+    `UPDATE tasks t SET branch = w.branch FROM sessions s JOIN worksessions w ON w.id = s.worksession_id
+     WHERE t.id = $1 AND s.id = $2 AND t.branch IS NULL AND w.project_id = t.project_id`,
     [taskId, sessionId],
   );
 }

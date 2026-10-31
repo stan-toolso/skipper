@@ -397,6 +397,11 @@ export const trackedPullRequestService = {
         continue;
       }
       if (pending) {
+        // Tâche apparue depuis la création (prise par la session après ses premières modifications) : on la rattache.
+        if (!pending.taskId) {
+          const task = ws.taskId ? await taskService.get(ws.taskId).catch(() => null) : await taskService.forBranch(project.id, work.branch);
+          if (task) await pullRequestRepository.update(pending.id, { taskId: task.id });
+        }
         if (pending.localCommits !== work.commits || pending.localChanges !== work.changes || pending.headBranch !== work.branch) {
           await pullRequestRepository.update(pending.id, { localCommits: work.commits, localChanges: work.changes, headBranch: work.branch, baseBranch: work.baseBranch, syncedAt: new Date() });
         }
