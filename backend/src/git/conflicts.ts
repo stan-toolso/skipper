@@ -1,4 +1,5 @@
 import { AppError } from '../errors.js';
+import { reviewOf } from '../reviews/types.js';
 import type { WorkspaceRef } from '../files/service.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { sessionService } from '../sessions/service.js';
@@ -53,7 +54,8 @@ export async function requestGitConflictResolution(ref: WorkspaceRef, ownerId: s
   const status = await gitService.status(ref);
   if (!conflictedFiles(status).length && !status.operation) throw new AppError('Aucun conflit à résoudre dans ce dossier');
   const prompt = gitConflictPrompt(status);
-  const [active] = await sessionRepository.list({ projectId: ref.projectId, worksessionId: ref.worksessionId, archived: 'exclude', limit: 1 });
+  // Une session de relecture (lecture seule) ne peut rien résoudre : la session qui travaille dans le dossier.
+  const active = (await sessionRepository.list({ projectId: ref.projectId, worksessionId: ref.worksessionId, archived: 'exclude', limit: 20 })).find((s) => !reviewOf(s));
   if (active) return sessionService.sendMessage(active.id, prompt);
   return sessionService.create({
     projectId: ref.projectId,

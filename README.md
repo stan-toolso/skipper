@@ -854,6 +854,20 @@ API : query `pullRequests(projectId, taskId, status, stage, limit)`, `pullReques
 mutations `registerPullRequest`, `updatePullRequest`, `deletePullRequest`, `syncPullRequests` ;
 `githubPullRequest` et `mergePullRequest` acceptent `repo` (« owner/name ») pour une PR d'un autre dépôt.
 
+**Revue de code par un agent** (`backend/src/reviews/`) : « Faire relire par un agent » (section « Branche vs base »
+du panneau git, menu « ⋮ » d'une PR suivie ouverte ou en préparation) lance une session Claude **en lecture seule**
+dans le dossier de travail de la branche (un nouveau dossier sur la branche d'une PR qui n'en a pas), à côté de la
+session qui y travaille (la règle « une session active par dossier » ne compte pas les relectures). Sa consigne : le
+diff complet par rapport à la base (commits, travail non validé, fichiers non suivis ; joint en fichier au-delà de
+60 000 caractères), la tâche liée et une grille (bugs et régressions, sécurité, simplifications, tests), avec un format
+de rapport (verdict puis constats par gravité, `fichier:ligne`). Lecture seule garantie par le provider
+(`config.review` de la session) : outils intégrés réduits à Read, Grep et Glob, contexte en lecture, mode `dontAsk`
+(tout autre outil refusé sans demande), ni coffre, ni tâches, ni navigateur, ni réglages ou hooks du dépôt. À la fin du
+premier tour, le rapport est publié une fois : message dans le fil de la tâche, commentaire GitHub sur la PR ouverte
+(compte de la personne qui a demandé la relecture), bloc « Relecture » de l'onglet Session du panneau de droite ; puis
+la session est terminée (un message la relance pour discuter du rapport). API : mutation
+`requestCodeReview(projectId, worksessionId | pullRequestId)`, champ `Session.review`.
+
 La page de session a un onglet **Modifications** (`frontend/src/components/SessionChanges.tsx`) : les
 fichiers modifiés dans son dossier de travail depuis le début de la session, avec le nombre de lignes
 et le diff coloré de chacun, un bouton pour l'ouvrir dans l'éditeur et un pour l'abandonner (retour à

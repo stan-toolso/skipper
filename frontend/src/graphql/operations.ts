@@ -828,6 +828,25 @@ export const SESSION = gql`
         id
         approvalConnections
       }
+      review {
+        branch
+        baseBranch
+        commits
+        reportedAt
+        report
+        error
+        githubCommentUrl
+        githubError
+        task {
+          id
+          title
+        }
+        pullRequest {
+          id
+          number
+          url
+        }
+      }
       requests(status: PENDING) {
         ...RequestFields
       }

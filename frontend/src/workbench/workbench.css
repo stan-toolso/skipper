@@ -1038,3 +1038,12 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .session-panel .cc-context-banner-text { flex: none; font-size: 12.5px; }
 .session-panel .cc-context-banner-actions { flex-direction: column; }
 .session-panel .cc-context-banner-actions .cc-btn { width: 100%; text-align: center; }
+
+/* Rapport d'une session de relecture (onglet « Session » du panneau de droite, components/CodeReview.tsx). */
+.session-review { padding-bottom: 6px; }
+.session-review-scope { padding: 0 10px 2px; color: var(--cc-dim); overflow-wrap: anywhere; }
+.session-review-note { padding: 0 10px 4px; font-size: 12.5px; overflow-wrap: anywhere; }
+.session-review-links { display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 0 10px 4px; }
+.session-review-links a { color: var(--cc-fg); text-decoration: none; }
+.session-review-links a:hover { color: var(--cc-accent); }
+.session-review-report { margin: 2px 10px 0; padding: 6px 8px; border: 1px solid var(--cc-border); border-radius: 6px; font-size: 12.5px; overflow-wrap: anywhere; }

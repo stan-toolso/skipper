@@ -48,6 +48,9 @@ export interface TrackedPullRequest {
   session: { id: string; name: string; status: string } | null;
 }
 
+/** PR qu'un agent peut relire : dans le dépôt du projet, ouverte, ou en préparation avec son dossier de travail. */
+export const canRequestReview = (pr: Pick<TrackedPullRequest, 'status' | 'foreignRepo' | 'worksession'>) => !pr.foreignRepo && (pr.status === 'OPEN' || (pr.status === 'PENDING' && pr.worksession != null));
+
 /** Une PR ouverte dont GitHub signale des conflits avec la base, et à laquelle une session peut les résoudre. */
 export const canResolveConflicts = (pr: Pick<TrackedPullRequest, 'status' | 'mergeable' | 'session'>) => pr.status === 'OPEN' && pr.mergeable === 'CONFLICTING' && pr.session != null;
 
@@ -190,6 +193,17 @@ export const DELETE_PULL_REQUEST = gql`
 export const RESOLVE_PULL_REQUEST_CONFLICTS = gql`
   mutation ResolvePullRequestConflicts($id: ID!) {
     resolvePullRequestConflicts(id: $id) {
+      id
+      name
+      status
+    }
+  }
+`;
+
+/** Revue de code par un agent : branche (dossier de travail) ou PR suivie ; renvoie la session de relecture. */
+export const REQUEST_CODE_REVIEW = gql`
+  mutation RequestCodeReview($projectId: ID!, $worksessionId: ID, $pullRequestId: ID) {
+    requestCodeReview(projectId: $projectId, worksessionId: $worksessionId, pullRequestId: $pullRequestId) {
       id
       name
       status

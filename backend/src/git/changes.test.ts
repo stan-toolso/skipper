@@ -115,6 +115,20 @@ describe('modifications de la branche depuis sa base', () => {
     expect(changes?.files.map((f) => f.path).sort()).toEqual(['a.txt', 'c.txt']);
   });
 
+  it('diff complet pour une revue : commits, travail non validé et fichiers non suivis', async () => {
+    run('checkout', '-q', '-b', 'feature');
+    await write('a.txt', 'un\ndeux\ntrois\n');
+    run('commit', '-q', '-am', 'sur la branche');
+    await write('b.txt', 'abeille\n');
+    await write('c.txt', 'nouveau\n');
+    const patch = await gitService.branchPatch(ref);
+    expect(patch).toMatchObject({ branch: 'feature', baseBranch: 'main', commits: 1 });
+    expect(patch?.stat).toContain('a.txt');
+    expect(patch?.patch).toContain('+trois');
+    expect(patch?.patch).toContain('+abeille');
+    expect(patch?.patch).toContain('+nouveau');
+  });
+
   it("renvoie null, sans erreur, quand le dépôt n'a aucune branche de base", async () => {
     run('branch', '-m', 'main', 'trunk');
     gitService.invalidate(ref);
