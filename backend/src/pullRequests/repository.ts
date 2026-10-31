@@ -154,6 +154,30 @@ export const pullRequestRepository = {
     return rows.map(toPr);
   },
 
+  /**
+   * Projets git à synchroniser en fond : ceux qui ont une PR suivie ouverte ou en préparation, ou une work session
+   * active (une PR en préparation peut y naître). Pour chacun, le membre dont le compte GitHub servira à lire le dépôt :
+   * l'auteur de la PR ouverte la plus récente s'il a un compte, sinon un administrateur, sinon un autre membre ; null
+   * si personne n'a de compte (seul le travail local des branches est alors relu).
+   */
+  async syncTargets(): Promise<Array<{ projectId: string; userId: string | null }>> {
+    const { rows } = await pool.query<{ project_id: string; user_id: string | null }>(
+      `SELECT p.id AS project_id,
+              (SELECT m.user_id FROM project_members m
+               WHERE m.project_id = p.id AND EXISTS (SELECT 1 FROM user_github_accounts a WHERE a.user_id = m.user_id)
+               ORDER BY m.user_id = (SELECT pr.created_by_user_id FROM pull_requests pr
+                                     WHERE pr.project_id = p.id AND pr.status = 'open' AND pr.created_by_user_id IS NOT NULL
+                                     ORDER BY pr.opened_at DESC NULLS LAST LIMIT 1) DESC NULLS LAST,
+                        m.role = 'admin' DESC, m.created_at
+               LIMIT 1) AS user_id
+       FROM projects p
+       WHERE p.git_url IS NOT NULL AND p.git_url <> ''
+         AND (EXISTS (SELECT 1 FROM pull_requests pr WHERE pr.project_id = p.id AND pr.status IN ('open', 'pending'))
+              OR EXISTS (SELECT 1 FROM worksessions w WHERE w.project_id = p.id AND w.archived_at IS NULL))`,
+    );
+    return rows.map((r) => ({ projectId: r.project_id, userId: r.user_id }));
+  },
+
   /** Nombre de PR « à traiter » pour des projets : ouvertes (à fusionner, brouillons compris) et en préparation. */
   async countPending(projectIds: string[]): Promise<{ open: number; pending: number }> {
     if (!projectIds.length) return { open: 0, pending: 0 };
