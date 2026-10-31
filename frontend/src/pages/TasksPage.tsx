@@ -192,7 +192,8 @@ export default function TasksPage() {
     return m;
   }, [tasks]);
   const cols = (mine ? columns.filter((c) => c.status !== 'DONE') : columns).concat(showCancelled && !mine ? [{ status: 'CANCELLED' as TaskStatus, label: 'Annulées', hint: '' }] : []);
-  const newTaskProjectId = projectId || projectsData?.projects.find((p) => p.myRole !== 'VIEWER')?.id || '';
+  const writableProjects = (projectsData?.projects ?? []).filter((p) => p.myRole !== 'VIEWER');
+  const newTaskProjectId = projectId || writableProjects[0]?.id || '';
   const showProject = !routeProjectId;
   const people = peopleData?.taskPeople ?? [];
   const setFilter = (key: TaskColumnKey, value: string) => {
@@ -311,7 +312,7 @@ export default function TasksPage() {
         </Row>
       )}
 
-      {editing && <TaskModal task={editing === 'new' ? null : editing} projectId={editing === 'new' ? newTaskProjectId : editing.project.id} onClose={() => setEditing(null)} />}
+      {editing && <TaskModal task={editing === 'new' ? null : editing} projectId={editing === 'new' ? newTaskProjectId : editing.project.id} projects={routeProjectId ? undefined : writableProjects} onClose={() => setEditing(null)} />}
     </>
   );
 }
