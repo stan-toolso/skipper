@@ -58,9 +58,11 @@ const parking = new Set<string>();
 const SHUTDOWN_TIMEOUT_MS = 1200;
 /** Après la recréation du conteneur : délai maximal d'attente de la fin de l'ancien processus d'une session avant de la relancer. */
 const RESUME_AFTER_RUNNER_TIMEOUT_MS = 10_000;
-/** Reprise automatique : sessions interrompues depuis moins d'une heure, trois au plus (mémoire du serveur). */
+/**
+ * Reprise automatique : sessions interrompues depuis moins d'une heure, toutes. La limite de sessions
+ * simultanées s'applique comme à tout démarrage : celles qui la dépassent passent en file d'attente.
+ */
 const AUTO_RESUME_WINDOW_MS = 60 * 60 * 1000;
-const AUTO_RESUME_MAX = 3;
 
 /**
  * Pourquoi une session a été interrompue : arrêt du serveur (signal reçu, ou arrêt brutal constaté au
@@ -938,6 +940,8 @@ export const sessionService = {
   /**
    * Reprise automatique (réglage du serveur, activé par défaut) : relance les sessions interrompues
    * au milieu d'un tour par l'arrêt récent du serveur, avec une instruction qui explique la coupure.
+   * Toutes sont relancées, la plus anciennement coupée d'abord : au-delà de la limite de sessions simultanées,
+   * elles attendent dans la file (avec la même instruction de reprise) au lieu de rester interrompues.
    * Les sessions qui attendaient des instructions restent interrompues : un message suffit à les reprendre.
    */
   resumeInterruptedAfterRestart(): Promise<string[]> {
@@ -950,7 +954,7 @@ export const sessionService = {
 
   async resumeInterruptedOnce(): Promise<string[]> {
     if (!serverSettings.current.autoResumeInterrupted || drainingInstance) return [];
-    const sessions = await sessionRepository.listInterruptedMidTurn(new Date(Date.now() - AUTO_RESUME_WINDOW_MS), AUTO_RESUME_MAX);
+    const sessions = await sessionRepository.listInterruptedMidTurn(new Date(Date.now() - AUTO_RESUME_WINDOW_MS));
     const resumed: string[] = [];
     for (const session of sessions) {
       try {

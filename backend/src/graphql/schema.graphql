@@ -1840,7 +1840,7 @@ type ServerState {
   activeSessions: Int!
   "Parmi elles, celles dont l'agent travaille (tour en cours)."
   busySessions: Int!
-  "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (trois au plus, depuis moins d'une heure)."
+  "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (toutes, depuis moins d'une heure ; en file d'attente au-delà de la limite de sessions simultanées)."
   autoResumeInterrupted: Boolean!
   "Sessions simultanées au maximum sur le serveur (0 : illimité) ; au-delà, les sessions attendent en file. Un projet peut fixer sa propre limite (runnerConfig.maxSessions)."
   maxConcurrentSessions: Int!

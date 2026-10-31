@@ -700,7 +700,8 @@ que nginx envoie déjà le trafic à la nouvelle.
 refuse tout démarrage de session (création, relance par un message, tâche confiée à un agent ;
 erreur `MAINTENANCE`) et affiche le nombre de sessions encore actives, au travail ou en attente,
 pour choisir le moment du redémarrage. La **reprise automatique** (activée par défaut, désactivable) relance au
-démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, trois au plus, avec
+démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, toutes (au-delà de la
+limite de sessions simultanées, elles passent en file d'attente et repartent dès qu'une place se libère), avec
 une instruction qui explique la coupure et signale que les demandes en attente ont été annulées (elles
 ne sont pas rejouées : l'agent refait l'action s'il en a encore besoin). Les sessions qui attendaient
 des instructions restent interrompues, sans occuper de mémoire, jusqu'au prochain message.
