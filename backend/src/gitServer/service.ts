@@ -276,6 +276,29 @@ export const gitServer = {
     await this.syncMembers(project).catch((err) => log.warn(`[git-server] collaborateurs de ${project.slug} : ${(err as Error).message}`));
   },
 
+  /**
+   * Retire le dépôt d'un projet qu'on supprime. `delete` : supprimé de Forgejo, avec son miroir local. Sinon il est
+   * conservé dans Forgejo, archivé (lecture seule) et renommé `<slug>-supprime-<date>` : un futur projet du même slug
+   * ne le reprend pas en silence, et l'on peut encore le cloner ou le désarchiver depuis Forgejo. Les sauvegardes en
+   * base partent avec le projet.
+   */
+  async retire(project: Project, opts: { delete: boolean }): Promise<string | null> {
+    if (!project.gitHosted || !forgejoConfigured()) return null;
+    const { name } = hostedRepo(project.slug);
+    await rm(bareRepoPath(project.slug), { recursive: true, force: true });
+    if (!(await forgejoRepos.exists(name))) return null;
+    const repoPath = `/repos/${config.forgejo.org}/${name}`;
+    if (opts.delete) {
+      await forgejoApi('DELETE', repoPath);
+      log.info(`[git-server] dépôt ${config.forgejo.org}/${name} supprimé de Forgejo avec le projet`);
+      return null;
+    }
+    const kept = `${name}-supprime-${new Date().toISOString().slice(0, 10)}-${Date.now().toString(36).slice(-4)}`;
+    await forgejoApi('PATCH', repoPath, { name: kept, archived: true });
+    log.info(`[git-server] dépôt ${config.forgejo.org}/${name} conservé dans Forgejo, archivé sous ${kept}`);
+    return kept;
+  },
+
   /** Après un push (webhook de Forgejo) : sauvegarde regroupée quelques secondes plus tard. */
   afterPush(project: Project): void {
     const timer = pushTimers.get(project.id);
