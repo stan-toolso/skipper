@@ -427,7 +427,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
                     <Form.Group className="mt-2">
                       <Form.Label>Certificat de l'autorité du serveur (optionnel)</Form.Label>
                       <Form.Control as="textarea" rows={3} className="font-monospace small" value={sslCa} onChange={(e) => setSslCa(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" />
-                      <Form.Text className="text-secondary">Pour Cloud SQL et les serveurs à certificat privé : le certificat est vérifié, pas le nom d'hôte.</Form.Text>
+                      <Form.Text className="text-secondary">Pour RDS (bundle de la région, ex. https://truststore.pki.rds.amazonaws.com/eu-west-1/eu-west-1-bundle.pem), Cloud SQL et les serveurs à certificat privé : plusieurs certificats peuvent être collés à la suite ; la chaîne est vérifiée, pas le nom d'hôte.</Form.Text>
                     </Form.Group>
                   )}
                 </>
