@@ -241,7 +241,7 @@ docker créés avant cette version n'ont pas le dossier monté : « Recréer » 
 ## Application installable
 
 Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx
-(bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
+(`map $uri $skipper_cache_control` du site nginx) pour que chaque déploiement soit pris en compte à la
 prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 
 ## Compression et HTTP/2
@@ -256,6 +256,23 @@ sur une cellule déjà installée, reporter les directives `gzip_*` et ajouter `
 `listen … 443 ssl` de `/etc/nginx/sites-available/skipper`, puis `sudo nginx -t && sudo systemctl reload nginx`.
 Vérification : `curl -sI --http2 -H 'Accept-Encoding: gzip' https://skipper.toolso.io/assets/<index>.js` doit
 répondre `HTTP/2 200` avec `content-encoding: gzip`.
+
+## En-têtes de sécurité
+
+Le site nginx (`deploy/cellule/templates/nginx-site.conf`, `deploy/nginx-skipper.conf`) masque sa version
+(`server_tokens off`) et pose, au niveau `server`, HSTS, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Permissions-Policy` et une `Content-Security-Policy` (`default-src 'self'`, aucun script en
+ligne, `frame-ancestors 'none'` contre le clickjacking). La CSP et le `Cache-Control` dépendent du chemin par deux
+`map` en tête de fichier : les réponses du backend (`/graphql`, `/api/`, `/auth/`, WebSockets) n'en reçoivent pas de
+nginx (les pages partagées et aperçus de fichiers ont leur propre CSP `sandbox` et chargent des CDN).
+**Piège** : un `add_header` dans une `location` annule tous ceux du bloc `server` ; n'en ajouter aucun dans une
+location, passer par les `map`. Sur une cellule déjà installée, reporter les deux `map`, les lignes
+`server_tokens`/`add_header` et le retrait des `add_header`/`expires` des locations dans
+`/etc/nginx/sites-available/skipper` (sans toucher aux blocs certbot), puis `sudo nginx -t && sudo systemctl reload nginx`.
+Vérification : `curl -sI https://skipper.toolso.io/` montre `content-security-policy` et `strict-transport-security`,
+et `curl -sI https://skipper.toolso.io/assets/<index>.js` `cache-control: public, max-age=31536000, immutable`.
+Déployer le front (`theme-init.js`) avant ou en même temps que la CSP : l'ancien `index.html` a un script en ligne
+(sans effet grave s'il est bloqué : thème sombre par défaut au premier affichage).
 
 ## Image du runner Docker
 
