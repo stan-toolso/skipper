@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { access, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { AppError } from '../errors.js';
@@ -35,6 +35,9 @@ export interface GitFileChange {
   conflicted: boolean;
 }
 
+/** Opération git interrompue (conflits à résoudre, ou en attente de se terminer). */
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
 export interface GitStatus {
   branch: string | null;
   upstream: string | null;
@@ -43,6 +46,8 @@ export interface GitStatus {
   detached: boolean;
   changes: GitFileChange[];
   headCommit: GitCommit | null;
+  /** Fusion, rebase, cherry-pick ou revert en cours (fichiers en conflit, ou à terminer) ; null sinon. */
+  operation: GitOperation | null;
 }
 
 export interface GitBranch {
@@ -174,6 +179,28 @@ async function resolveBaseBranch(cwd: string, preferred: string | null): Promise
   return null;
 }
 
+/** Marqueurs de l'opération en cours dans le dossier .git (d'un worktree aussi : `git rev-parse --git-path`). */
+const OPERATION_MARKERS: Array<[GitOperation, string]> = [
+  ['rebase', 'rebase-merge'],
+  ['rebase', 'rebase-apply'],
+  ['merge', 'MERGE_HEAD'],
+  ['cherry-pick', 'CHERRY_PICK_HEAD'],
+  ['revert', 'REVERT_HEAD'],
+];
+
+/** Opération git interrompue dans le dossier, null s'il n'y en a pas. */
+export async function operationOf(cwd: string): Promise<GitOperation | null> {
+  const { stdout, code } = await gitRaw(['rev-parse', ...OPERATION_MARKERS.flatMap(([, marker]) => ['--git-path', marker])], cwd).catch(() => ({ stdout: '', code: 1 }));
+  if (code !== 0) return null;
+  const paths = stdout.split('\n').map((p) => p.trim());
+  for (let i = 0; i < OPERATION_MARKERS.length; i++) {
+    if (!paths[i]) continue;
+    const ok = await access(path.resolve(cwd, paths[i])).then(() => true, () => false);
+    if (ok) return OPERATION_MARKERS[i][0];
+  }
+  return null;
+}
+
 const NO_BASE_BRANCH = 'Aucune branche de base à comparer (ni la branche du projet, ni origin/HEAD, main ou master)';
 
 export const gitService = {
@@ -299,7 +326,7 @@ export const gitService = {
     const cwd = await resolveRoot(ref);
     const { stdout } = await gitRaw(['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'], cwd);
     const parts = stdout.split('\0');
-    const status: GitStatus = { branch: null, upstream: null, ahead: 0, behind: 0, detached: false, changes: [], headCommit: null };
+    const status: GitStatus = { branch: null, upstream: null, ahead: 0, behind: 0, detached: false, changes: [], headCommit: null, operation: await operationOf(cwd) };
     for (let i = 0; i < parts.length; i++) {
       const line = parts[i];
       if (!line) continue;
@@ -451,6 +478,35 @@ export const gitService = {
     const hasUpstream = (await gitRaw(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], cwd)).code === 0;
     const auth = await authOf(ref, actorId);
     return hasUpstream ? git(['push'], cwd, auth) : git(['push', '-u', 'origin', branch], cwd, auth);
+  },
+
+  /**
+   * Fusionne la branche de base (récupérée d'abord) dans la branche courante. Un conflit n'est pas une erreur : la
+   * fusion reste en cours, les fichiers en conflit apparaissent dans `status` (à résoudre, à la main ou par un agent).
+   */
+  async mergeBase(ref: WorkspaceRef, actorId?: string | null): Promise<void> {
+    const cwd = await resolveRoot(ref);
+    if (await operationOf(cwd)) throw new AppError('Une opération git est déjà en cours : terminez-la ou abandonnez-la d\'abord');
+    const project = await projectService.get(ref.projectId);
+    if (project.gitUrl) await git(['fetch', '--prune', 'origin'], cwd, await authOf(ref, actorId));
+    const baseBranch = await resolveBaseBranch(cwd, project.gitBranch);
+    if (!baseBranch) throw new AppError(NO_BASE_BRANCH);
+    try {
+      await execFileAsync('git', ['merge', '--no-edit', baseBranch], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, maxBuffer: 16 * 1024 * 1024 });
+    } catch (err) {
+      // Conflit : la fusion reste en cours, ce n'est pas une erreur. Sinon (modifications locales qui seraient écrasées…), le message de git.
+      if (await operationOf(cwd)) return;
+      const e = err as { stderr?: string; stdout?: string; message: string };
+      throw new AppError(`La fusion de ${baseBranch} a échoué : ${(e.stderr || e.stdout || e.message).trim()}`);
+    }
+  },
+
+  /** Abandonne l'opération en cours (merge, rebase, cherry-pick, revert) : le dossier revient à son état d'avant. */
+  async abortOperation(ref: WorkspaceRef): Promise<void> {
+    const cwd = await resolveRoot(ref);
+    const op = await operationOf(cwd);
+    if (!op) throw new AppError('Aucune opération git en cours');
+    await git([op, '--abort'], cwd);
   },
 
   /** Bascule sur une branche (locale, ou distante suivie automatiquement) ; `create` la crée depuis HEAD. */

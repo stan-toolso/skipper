@@ -23,6 +23,7 @@ import { fileService, type WorkspaceRef } from '../files/service.js';
 import { parseRepoFullName, pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pullRequests/service.js';
 import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
+import { requestGitConflictResolution } from '../git/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { gitService } from '../git/service.js';
 import { repoBrowser, type RepoEntry, type RepoRef } from '../gitServer/browse.js';
@@ -974,6 +975,22 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       await gitService.push(args, requireUser(ctx).id);
       return gitService.status(args);
+    },
+    gitMergeBase: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.mergeBase(args, requireUser(ctx).id);
+      gitService.invalidate(args);
+      return gitService.status(args);
+    },
+    gitAbortOperation: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.abortOperation(args);
+      gitService.invalidate(args);
+      return gitService.status(args);
+    },
+    resolveGitConflicts: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return requestGitConflictResolution(args, requireUser(ctx).id);
     },
     gitCheckout: async (_: unknown, args: WorkspaceRef & { branch: string; create?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
