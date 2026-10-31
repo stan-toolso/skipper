@@ -137,6 +137,26 @@ export const pullRequestRepository = {
     return rows[0] ? toPr(rows[0]) : null;
   },
 
+  /**
+   * PR suivie de chaque work session (sidebar) : celle qui la désigne (`worksession_id`) ou qui porte sa branche dans
+   * son projet, la plus avancée d'abord (ordre `ORDER` : ouverte, en préparation, fusionnée, fermée). Clé : la work session.
+   */
+  async findForWorksessions(keys: { id: string; projectId: string; branch: string }[]): Promise<Map<string, TrackedPullRequest>> {
+    const found = new Map<string, TrackedPullRequest>();
+    if (!keys.length) return found;
+    const { rows } = await pool.query<Row>(`SELECT * FROM pull_requests WHERE worksession_id = ANY($1::uuid[]) OR (project_id = ANY($2::uuid[]) AND head_branch = ANY($3::text[])) ${ORDER}`, [
+      keys.map((k) => k.id),
+      [...new Set(keys.map((k) => k.projectId))],
+      [...new Set(keys.map((k) => k.branch))],
+    ]);
+    const prs = rows.map(toPr);
+    for (const k of keys) {
+      const pr = prs.find((p) => p.worksessionId === k.id || (p.projectId === k.projectId && p.headBranch === k.branch));
+      if (pr) found.set(k.id, pr);
+    }
+    return found;
+  },
+
   async list(filter: TrackedPullRequestFilter = {}): Promise<TrackedPullRequest[]> {
     const where: string[] = [];
     const params: unknown[] = [];
