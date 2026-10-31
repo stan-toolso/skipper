@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
 import { githubService } from '../settings/github.js';
-import { bareRepoPath, hostedGitUrl } from '../gitServer/paths.js';
+import { forgejoGitAuthArgs } from '../gitServer/forgejo.js';
 import type { Project } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -26,11 +26,11 @@ export async function workspaceExists(project: Pick<Project, 'slug'>): Promise<b
 
 /**
  * Arguments d'authentification git d'une personne pour le dépôt d'un projet (jeton de son compte GitHub qui sert le
- * dépôt), vides sans compte. Dépôt hébergé par Skipper : sur le serveur, l'URL de clone est réécrite vers le chemin du
- * dépôt nu (`url.<chemin>.insteadOf`) — ni HTTP ni jeton pour les commandes de Skipper lui-même.
+ * dépôt), vides sans compte. Dépôt hébergé par Skipper (Forgejo) : les commandes du serveur passent par l'adresse
+ * directe de Forgejo avec le jeton administrateur (voir `forgejoGitAuthArgs`).
  */
 export async function gitAuthFor(project: Pick<Project, 'gitUrl' | 'gitHosted' | 'slug'>, actorId: string | null | undefined): Promise<string[]> {
-  if (project.gitHosted) return ['-c', `url.${bareRepoPath(project.slug)}.insteadOf=${hostedGitUrl(project.slug)}`];
+  if (project.gitHosted) return forgejoGitAuthArgs();
   if (!actorId || !project.gitUrl) return [];
   return githubService.gitConfigArgs(actorId, project.gitUrl).catch(() => []);
 }

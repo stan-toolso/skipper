@@ -61,11 +61,12 @@ export const projectService = {
     validateRunnerConfig(input.runnerConfig);
     const hosted = Boolean(input.gitHosted);
     if (hosted && input.gitUrl?.trim()) throw new AppError("Un dépôt hébergé par Skipper n'a pas d'adresse distante : choisissez l'un ou l'autre");
+    if (hosted && !gitServer.available()) throw new AppError("L'hébergement de dépôts n'est pas configuré sur ce serveur (Forgejo)");
 
     const project = await projectRepository.create({ ...input, name: input.name.trim(), slug, gitUrl: hosted ? null : input.gitUrl });
     try {
-      // Projet hébergé : le dépôt nu (avec un premier commit) existe avant le clone du dossier de travail.
-      if (hosted) await gitServer.init(project, { initialCommit: true });
+      // Projet hébergé : le dépôt Forgejo (avec un premier commit) existe avant le clone du dossier de travail.
+      if (hosted) await gitServer.ensure(project);
       await ensureWorkspace(project, actorId);
     } catch (err) {
       // Le workspace n'a pas pu être préparé (ex. clone impossible) : on ne garde pas le projet.

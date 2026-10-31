@@ -1,8 +1,10 @@
+import { log } from '../log.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { isHostedGitUrl } from '../gitServer/paths.js';
-import { gitTokenService } from '../gitServer/tokens.js';
+import { forgejoAccounts } from '../gitServer/forgejo.js';
+import { userService } from '../users/service.js';
 import { githubService } from '../settings/github.js';
 
 const execFileAsync = promisify(execFile);
@@ -43,8 +45,8 @@ async function hostIdentity(): Promise<{ name: string | null; email: string | nu
  * dépôt du projet (servi par un credential helper via GIT_CONFIG_*, jamais écrit sur disque), et l'identité
  * des commits (celle du compte GitHub, sinon celle du serveur). Sans propriétaire ou sans compte : pas de
  * jeton (les dépôts publics restent accessibles). Un usage par une session est journalisé sur le jeton.
- * Dépôt hébergé par Skipper : le jeton d'agent du propriétaire (gitServer/tokens.ts), servi de la même façon
- * pour l'origine de l'API, afin que fetch et push depuis le conteneur passent par le serveur git de Skipper.
+ * Dépôt hébergé par Skipper (Forgejo) : le jeton Forgejo des sessions du propriétaire (forge_accounts), servi de la même
+ * façon pour l'origine de Forgejo, afin que fetch et push depuis le conteneur passent par la forge avec son compte.
  */
 export async function agentGitEnv(ownerId: string | null | undefined, repoUrl?: string | null, actor: { sessionId?: string | null; projectId?: string | null } = {}): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
@@ -52,7 +54,7 @@ export async function agentGitEnv(ownerId: string | null | undefined, repoUrl?: 
   const [auth, identity, hostedToken] = await Promise.all([
     hosted ? null : githubService.gitAuth(ownerId, repoUrl, actor).catch(() => null),
     hostIdentity(),
-    hosted && ownerId ? gitTokenService.agentToken(ownerId).catch(() => null) : null,
+    hosted && ownerId ? userService.get(ownerId).then((u) => forgejoAccounts.agentToken(u)).catch((err) => (log.warn(`[forgejo] jeton des sessions : ${(err as Error).message}`), null)) : null,
   ]);
   const configs: [string, string][] = [];
   if (auth) {
@@ -62,7 +64,7 @@ export async function agentGitEnv(ownerId: string | null | undefined, repoUrl?: 
   }
   if (hostedToken) {
     env.SKIPPER_GIT_TOKEN = hostedToken;
-    configs.push([`credential.${new URL(config.apiUrl).origin}.helper`, '!f() { echo username=skipper; echo "password=$SKIPPER_GIT_TOKEN"; }; f']);
+    configs.push([`credential.${new URL(config.forgejo.url).origin}.helper`, '!f() { echo username=skipper; echo "password=$SKIPPER_GIT_TOKEN"; }; f']);
   }
   if (configs.length) {
     env.GIT_CONFIG_COUNT = String(configs.length);

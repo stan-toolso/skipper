@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, Form, Modal, Nav, Spinner, Table } from 'react-bootstrap';
+import { Alert, Badge, Button, Card, Form, Modal, Nav, Spinner } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
 import DiffView from '../components/DiffView';
 import { useDialogs } from '../components/Dialogs';
@@ -9,17 +9,12 @@ import ProjectHeader from '../components/ProjectHeader';
 import { UPDATE_PROJECT } from '../graphql/operations';
 import {
   BACKUP_HOSTED_GIT,
-  CREATE_GIT_TOKEN,
-  MY_GIT_TOKENS,
   REPO_COMMIT,
   REPO_FILE,
   REPO_LOG,
   REPO_PROJECT,
   REPO_REFS,
   REPO_TREE,
-  REVOKE_GIT_TOKEN,
-  ROTATE_AGENT_GIT_TOKEN,
-  type GitAccessToken,
   type HostedGit,
   type RepoCommit,
   type RepoCommitDetail,
@@ -58,90 +53,7 @@ function CopyField({ value }: { value: string }) {
   );
 }
 
-/** Jetons d'accès git personnels : mot de passe HTTP pour cloner et pousser les dépôts hébergés depuis son poste. */
-function GitTokens() {
-  const { data, refetch } = useQuery<{ myGitTokens: GitAccessToken[] }>(MY_GIT_TOKENS);
-  const [create, { loading: creating }] = useMutation<{ createGitToken: { token: GitAccessToken; secret: string } }>(CREATE_GIT_TOKEN);
-  const [revoke] = useMutation(REVOKE_GIT_TOKEN);
-  const [rotate] = useMutation(ROTATE_AGENT_GIT_TOKEN);
-  const { prompt, confirm, showError, alert } = useDialogs();
-  const [secret, setSecret] = useState<string | null>(null);
-  const tokens = data?.myGitTokens ?? [];
-  return (
-    <div>
-      <div className="d-flex align-items-center gap-2 mb-2 flex-wrap">
-        <strong className="small">Vos jetons d'accès</strong>
-        <span className="small text-secondary">valables pour tous les projets hébergés dont vous êtes membre, avec votre rôle (lecteur : lecture seule)</span>
-        <Button
-          size="sm"
-          variant="outline-primary"
-          className="ms-auto"
-          disabled={creating}
-          onClick={async () => {
-            const label = await prompt({ title: "Nouveau jeton d'accès git", message: 'Un nom pour le reconnaître (poste, outil…). Il est valable un an.', placeholder: 'Portable', confirmLabel: 'Créer' });
-            if (!label) return;
-            try {
-              const res = await create({ variables: { label, expiresInDays: 365 } });
-              setSecret(res.data?.createGitToken.secret ?? null);
-              await refetch();
-            } catch (err) {
-              void showError(err);
-            }
-          }}
-        >
-          <i className="bi bi-key me-1" /> Nouveau jeton
-        </Button>
-      </div>
-      {secret && (
-        <Alert variant="success" dismissible onClose={() => setSecret(null)} className="small">
-          Copiez ce jeton maintenant, il ne sera plus affiché. Utilisez-le comme mot de passe (nom d'utilisateur libre) :
-          <CopyField value={secret} />
-        </Alert>
-      )}
-      {tokens.length > 0 && (
-        <Table size="sm" className="small mb-2 table-stack">
-          <tbody>
-            {tokens.map((t) => (
-              <tr key={t.id}>
-                <td>{t.label}</td>
-                <td className="font-monospace text-secondary">{t.prefix}…</td>
-                <td className="text-secondary">{t.lastUsedAt ? `utilisé ${timeAgo(t.lastUsedAt)}` : 'jamais utilisé'}</td>
-                <td className="text-secondary">{t.expiresAt ? `expire le ${new Date(t.expiresAt).toLocaleDateString('fr-FR')}` : 'sans expiration'}</td>
-                <td className="text-end">
-                  <Button
-                    size="sm"
-                    variant="link"
-                    className="text-danger p-0"
-                    onClick={async () => {
-                      if (!(await confirm({ message: `Révoquer le jeton « ${t.label} » ? Les clones qui l'utilisent ne pourront plus se synchroniser.`, danger: true, confirmLabel: 'Révoquer' }))) return;
-                      await revoke({ variables: { id: t.id } }).catch(showError);
-                      await refetch();
-                    }}
-                  >
-                    Révoquer
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      )}
-      <Button
-        size="sm"
-        variant="link"
-        className="p-0 small"
-        onClick={async () => {
-          if (!(await confirm({ message: 'Renouveler le jeton que Skipper donne à vos sessions et terminaux ? Les sessions en cours garderont l’ancien, qui ne sera plus accepté, jusqu’à leur prochain lancement.', confirmLabel: 'Renouveler' }))) return;
-          await rotate().then(() => alert('Jeton des sessions renouvelé.'), showError);
-        }}
-      >
-        Renouveler le jeton de mes sessions
-      </Button>
-    </div>
-  );
-}
-
-/** Dépôt hébergé : adresse de clone, état, sauvegardes en base. */
+/** Dépôt hébergé dans Forgejo : lien vers la forge, adresse de clone, jetons, sauvegardes en base. */
 function HostedCard({ project, hosted }: { project: RepoProject; hosted: HostedGit }) {
   const [backup, { loading: backingUp }] = useMutation(BACKUP_HOSTED_GIT, { refetchQueries: ['RepoProject'] });
   const { showError } = useDialogs();
@@ -149,17 +61,27 @@ function HostedCard({ project, hosted }: { project: RepoProject; hosted: HostedG
   const last = hosted.lastBackup;
   return (
     <Card className="mb-3">
-      <Card.Header className="d-flex align-items-center gap-2">
-        <i className="bi bi-hdd-network" /> Dépôt hébergé par Skipper
+      <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
+        <i className="bi bi-hdd-network" /> Dépôt hébergé par Skipper (Forgejo)
         {!hosted.exists && (
           <Badge bg="warning" text="dark">
-            absent du disque : restauré à la prochaine utilisation
+            absent de Forgejo : recréé depuis la sauvegarde à la prochaine utilisation
           </Badge>
         )}
+        <Button size="sm" variant="primary" className="ms-auto" href={hosted.webUrl} target="_blank" rel="noreferrer">
+          <i className="bi bi-box-arrow-up-right me-1" /> Ouvrir dans Forgejo
+        </Button>
       </Card.Header>
       <Card.Body className="small">
+        <div className="text-secondary mb-2">Pull requests, revues, issues et historique complet sont dans Forgejo, où vous êtes connecté avec votre compte Skipper. Les pull requests apparaissent aussi dans Skipper (panneau git, onglet Pull requests, tâches).</div>
         <div className="mb-2">
-          <div className="text-secondary mb-1">Cloner (mot de passe : un de vos jetons d'accès ci-dessous)</div>
+          <div className="text-secondary mb-1">
+            Cloner : le mot de passe est un jeton d'accès que vous créez dans Forgejo (
+            <a href={hosted.tokensUrl} target="_blank" rel="noreferrer">
+              Paramètres → Applications
+            </a>
+            , portée « repository » en lecture et écriture). Vos sessions ont déjà le leur.
+          </div>
           <CopyField value={`git clone ${hosted.url}`} />
         </div>
         <div className="d-flex flex-wrap gap-3 mb-3 text-secondary">
@@ -177,7 +99,7 @@ function HostedCard({ project, hosted }: { project: RepoProject; hosted: HostedG
             </Button>
           )}
         </div>
-        <div className="text-secondary mb-2">Le dépôt complet (toutes les branches et tags) est enregistré dans la base PostgreSQL après chaque push et vérifié toutes les 10 minutes ; les trois dernières prises sont conservées. Un bundle se relit par <code>git clone fichier.bundle</code>.</div>
+        <div className="text-secondary mb-2">Toutes les branches et tags sont enregistrés dans la base PostgreSQL après chaque push et vérifiés toutes les 10 minutes ; les trois dernières prises sont conservées. Si le dépôt disparaît de Forgejo, il est recréé depuis la plus récente. Un bundle se relit par <code>git clone fichier.bundle</code>.</div>
         {hosted.backups.length > 0 && (
           <ul className="list-unstyled mb-3">
             {hosted.backups.map((b) => (
@@ -193,14 +115,13 @@ function HostedCard({ project, hosted }: { project: RepoProject; hosted: HostedG
             ))}
           </ul>
         )}
-        <GitTokens />
       </Card.Body>
     </Card>
   );
 }
 
 /** Projet sans dépôt : proposer de l'héberger. */
-function NoRepoCard({ project }: { project: RepoProject }) {
+function NoRepoCard({ project, available }: { project: RepoProject; available: boolean }) {
   const [update, { loading }] = useMutation(UPDATE_PROJECT, { refetchQueries: ['RepoProject'] });
   const { confirm, showError } = useDialogs();
   const isAdmin = project.myRole === 'ADMIN';
@@ -209,10 +130,12 @@ function NoRepoCard({ project }: { project: RepoProject }) {
       <Card.Body>
         <h2 className="h6">Ce projet n'a pas de dépôt git</h2>
         <p className="small text-secondary mb-2">
-          Skipper peut héberger son dépôt : les sessions travaillent alors sur des branches, gardent un historique et poussent leur travail sur ce serveur, qui le sauvegarde dans sa base. Le dossier actuel du projet (et celui de chaque session) devient le premier commit de sa
-          branche. Vous pouvez aussi relier un dépôt distant depuis « Modifier ».
+          Skipper peut héberger son dépôt dans sa forge Forgejo : les sessions travaillent alors sur des branches et ouvrent des pull requests, avec revues et historique, et le dépôt est sauvegardé dans la base de Skipper. Le dossier actuel du projet (et celui de chaque
+          session) devient le premier commit de sa branche. Vous pouvez aussi relier un dépôt distant depuis « Modifier ».
         </p>
-        {isAdmin ? (
+        {!available ? (
+          <div className="small text-secondary">L'hébergement de dépôts (Forgejo) n'est pas configuré sur ce serveur.</div>
+        ) : isAdmin ? (
           <Button
             size="sm"
             disabled={loading}
@@ -496,7 +419,7 @@ function Browser({ project }: { project: RepoProject }) {
  */
 export default function RepoPage() {
   const { id = '' } = useParams();
-  const { data, loading, error } = useQuery<{ project: RepoProject | null }>(REPO_PROJECT, { variables: { id } });
+  const { data, loading, error } = useQuery<{ project: RepoProject | null; hostedGitAvailable: boolean }>(REPO_PROJECT, { variables: { id } });
   const project = data?.project;
   useTabTitle(project ? `Dépôt · ${project.name}` : null);
   useGitTarget(project?.gitUrl ? { projectId: project.id, worksessionId: null, label: project.name } : null);
@@ -518,7 +441,7 @@ export default function RepoPage() {
               <Link to={`/projects/${project.id}/pull-requests`}>Pull requests</Link>.
             </div>
           ) : (
-            <NoRepoCard project={project} />
+            <NoRepoCard project={project} available={Boolean(data?.hostedGitAvailable)} />
           )}
           {project.gitUrl && <Browser project={project} />}
         </>

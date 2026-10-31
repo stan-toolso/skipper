@@ -6,7 +6,10 @@ import { git, gitAuthFor, workspacePath } from '../projects/workspace.js';
 import path from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { sessionService } from '../sessions/service.js';
+import { forgejoAccounts, forgejoPulls } from '../gitServer/forgejo.js';
+import { hostedRepo } from '../gitServer/paths.js';
 import { githubOwnerOf, githubService } from '../settings/github.js';
+import { userService } from '../users/service.js';
 import { taskRepository } from '../tasks/repository.js';
 import { taskService } from '../tasks/service.js';
 import { worksessionRepository } from '../worksessions/repository.js';
@@ -16,6 +19,9 @@ import { gitService } from './service.js';
  * Pull requests GitHub d'un projet, avec le jeton de la connexion GitHub (Paramètres) : liste avec
  * l'état des checks, des revues et de la fusion (API GraphQL de GitHub, une requête), création et
  * fusion (API REST), puis nettoyage de la work session et des branches de la PR fusionnée.
+ * Un projet dont le dépôt est hébergé par Skipper a ses PR dans Forgejo (gitServer/forgejo.ts), au même format et avec
+ * le même nettoyage : les actions y sont faites au nom de la personne qui agit (compte Forgejo, `sudo`). Les PR d'un
+ * autre dépôt que celui du projet restent sur GitHub.
  */
 
 export interface GithubRepoRef {
@@ -370,13 +376,26 @@ const repoKey = (repo: GithubRepoRef, suffix: string) => `${repo.owner}/${repo.n
 
 // --- Service -------------------------------------------------------------------
 
-function repoOf(project: { gitUrl: string | null }): GithubRepoRef {
+function repoOf(project: { gitUrl: string | null; gitHosted?: boolean; slug?: string }): GithubRepoRef {
+  if (project.gitHosted && project.slug) return hostedRepo(project.slug);
   const repo = parseGithubRepo(project.gitUrl);
   if (!repo) throw new AppError(project.gitUrl ? "Le dépôt de ce projet n'est pas hébergé sur GitHub" : "Ce projet n'est pas relié à un dépôt git");
   return repo;
 }
 
 const projectRepo = async (projectId: string): Promise<GithubRepoRef> => repoOf(await projectService.get(projectId));
+
+/** Les PR de ce dépôt sont-elles dans Forgejo ? Celles du projet hébergé ; jamais celles d'un autre dépôt (`repoRef`). */
+async function onForgejo(projectId: string, repoRef?: GithubRepoRef | null): Promise<boolean> {
+  if (repoRef) return false;
+  return Boolean((await projectService.get(projectId)).gitHosted);
+}
+
+/** Compte Forgejo de la personne qui agit (créé au besoin), au nom duquel la PR est ouverte ou fusionnée ; null : l'administrateur. */
+async function forgejoActor(userId: string | null | undefined): Promise<string | null> {
+  if (!userId) return null;
+  return forgejoAccounts.ensure(await userService.get(userId));
+}
 
 async function defaultBranch(repo: GithubRepoRef, token: string): Promise<string> {
   return cached(repoKey(repo, 'default'), async () => {
@@ -398,6 +417,11 @@ async function currentBranch(cwd: string): Promise<string> {
 
 export const pullRequestService = {
   isGithubProject: async (projectId: string) => Boolean(parseGithubRepo((await projectService.get(projectId)).gitUrl)),
+  /** Le projet a-t-il des pull requests (dépôt GitHub, ou dépôt hébergé dans Forgejo) ? */
+  hasPullRequests: async (projectId: string) => {
+    const project = await projectService.get(projectId);
+    return project.gitHosted || Boolean(parseGithubRepo(project.gitUrl));
+  },
 
   /**
    * PR d'un dépôt (celui du projet, ou `opts.repo`), les plus récemment mises à jour d'abord. `userId` : personne qui
@@ -412,6 +436,10 @@ export const pullRequestService = {
       // Projet sans dépôt : rien à lister, ce n'est pas une erreur (le panneau git interroge tous les projets).
       if (!project.gitUrl) return [];
       repo = repoOf(project);
+      if (project.gitHosted) {
+        const fjRepo = repo;
+        return cached(repoKey(fjRepo, `forgejo:list:${filter}:${limit}`), () => forgejoPulls.list(projectId, fjRepo, filter, Math.min(Math.max(limit, 1), 100)), opts);
+      }
     }
     const token = await requireToken(projectId, userId, repoRef);
     const states = filter === 'ALL' ? ['OPEN', 'CLOSED', 'MERGED'] : [filter];
@@ -435,6 +463,7 @@ export const pullRequestService = {
   /** Une PR du dépôt du projet, ou de `repo` (un autre dépôt GitHub, lu avec le compte de la personne qui le sert). */
   async get(projectId: string, userId: string | null | undefined, number: number, repoRef?: GithubRepoRef | null): Promise<PullRequest> {
     const repo = repoRef ?? (await projectRepo(projectId));
+    if (await onForgejo(projectId, repoRef)) return forgejoPulls.get(projectId, repo, number);
     const token = await requireToken(projectId, userId, repoRef);
     const data = await graphql<{ repository: { pullRequest: GqlPullRequest | null } }>(
       token,
@@ -463,10 +492,9 @@ export const pullRequestService = {
   async draft(ref: WorkspaceRef, userId: string | null | undefined): Promise<PullRequestDraft> {
     const repo = await projectRepo(ref.projectId);
     const project = await projectService.get(ref.projectId);
-    const token = await requireToken(ref.projectId, userId);
     const cwd = await resolveRoot(ref);
     const branch = await currentBranch(cwd);
-    const base = project.gitBranch || (await defaultBranch(repo, token));
+    const base = project.gitBranch || (project.gitHosted ? await forgejoPulls.defaultBranch(repo) : await defaultBranch(repo, await requireToken(ref.projectId, userId)));
     if (branch === base) throw new AppError(`Vous êtes sur la branche de base (${base}) : créez ou choisissez une autre branche`);
     await git(['fetch', 'origin', base], cwd, await gitAuthFor(project, userId)).catch(() => undefined);
     const baseRef = (await git(['rev-parse', '--verify', '--quiet', `origin/${base}`], cwd).catch(() => '')) ? `origin/${base}` : base;
@@ -509,10 +537,19 @@ export const pullRequestService = {
     } else {
       repo = (await remoteRepoOf(cwd)) ?? repoOf(project);
     }
-    const projectRepoRef = parseGithubRepo(project.gitUrl);
+    const projectRepoRef = project.gitHosted ? hostedRepo(project.slug) : parseGithubRepo(project.gitUrl);
     const sameAsProject = Boolean(projectRepoRef && repoFullName(projectRepoRef).toLowerCase() === repoFullName(repo).toLowerCase());
-    const token = await requireToken(ref.projectId, userId, sameAsProject ? null : repo);
     const branch = await currentBranch(cwd);
+    // Dépôt hébergé : la PR est ouverte dans Forgejo, au nom de la personne qui agit.
+    if (project.gitHosted && sameAsProject && cwd === root) {
+      const base = validateBranchName(input.base?.trim() || project.gitBranch || (await forgejoPulls.defaultBranch(repo)));
+      if (branch === base) throw new AppError('La branche et la base sont identiques');
+      await gitService.push(ref, userId);
+      const number = await forgejoPulls.create(repo, { title, head: branch, base, body: input.body ?? '', draft: Boolean(input.draft) }, await forgejoActor(userId));
+      invalidate(repo);
+      return this.get(ref.projectId, userId, number);
+    }
+    const token = await requireToken(ref.projectId, userId, sameAsProject ? null : repo);
     const base = validateBranchName(input.base?.trim() || (sameAsProject ? project.gitBranch : null) || (await defaultBranch(repo, token)));
     if (branch === base) throw new AppError('La branche et la base sont identiques');
     if (cwd === root) await gitService.push(ref, userId);
@@ -548,18 +585,24 @@ export const pullRequestService = {
    */
   async merge(projectId: string, userId: string | null | undefined, number: number, method: MergeMethod = 'MERGE', cleanup: MergeCleanup = {}, repoRef?: GithubRepoRef | null): Promise<MergeResult> {
     const repo = repoRef ?? (await projectRepo(projectId));
-    const token = await requireToken(projectId, userId, repoRef);
+    const forgejo = await onForgejo(projectId, repoRef);
+    const token = forgejo ? null : await requireToken(projectId, userId, repoRef);
     const pr = await this.get(projectId, userId, number, repoRef);
+    const forgeName = forgejo ? 'Forgejo' : 'GitHub';
     if (pr.state !== 'OPEN') throw new AppError(`La pull request #${number} n'est pas ouverte`);
-    if (pr.isDraft) throw new AppError('Pull request en brouillon : marquez-la prête pour la revue sur GitHub avant de la fusionner');
+    if (pr.isDraft) throw new AppError(`Pull request en brouillon : marquez-la prête pour la revue sur ${forgeName} avant de la fusionner`);
     let sha: string | null = null;
-    try {
-      const res = await rest<{ sha: string; merged: boolean; message: string }>(token, 'PUT', `/repos/${repo.owner}/${repo.name}/pulls/${number}/merge`, { merge_method: method.toLowerCase() });
-      sha = res.sha;
-    } catch (err) {
-      if (err instanceof RestError && err.status === 405) throw new AppError(`Fusion refusée par GitHub : ${err.message.replace(/^GitHub \(405\) : /, '')}`);
-      if (err instanceof RestError && err.status === 409) throw new AppError('La branche a changé pendant la fusion : rechargez et réessayez');
-      throw err;
+    if (forgejo) {
+      sha = await forgejoPulls.merge(repo, number, method, await forgejoActor(userId));
+    } else {
+      try {
+        const res = await rest<{ sha: string; merged: boolean; message: string }>(token!, 'PUT', `/repos/${repo.owner}/${repo.name}/pulls/${number}/merge`, { merge_method: method.toLowerCase() });
+        sha = res.sha;
+      } catch (err) {
+        if (err instanceof RestError && err.status === 405) throw new AppError(`Fusion refusée par GitHub : ${err.message.replace(/^GitHub \(405\) : /, '')}`);
+        if (err instanceof RestError && err.status === 409) throw new AppError('La branche a changé pendant la fusion : rechargez et réessayez');
+        throw err;
+      }
     }
     invalidate(repo);
 
@@ -570,7 +613,8 @@ export const pullRequestService = {
 
     if (cleanup.deleteRemoteBranch && !pr.isCrossRepository) {
       try {
-        await rest(token, 'DELETE', `/repos/${repo.owner}/${repo.name}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`);
+        if (forgejo) await forgejoPulls.deleteBranch(repo, branch);
+        else await rest(token!, 'DELETE', `/repos/${repo.owner}/${repo.name}/git/refs/heads/${branch.split('/').map(encodeURIComponent).join('/')}`);
       } catch (err) {
         // 422 : déjà supprimée (suppression automatique des branches activée sur le dépôt).
         if (!(err instanceof RestError && err.status === 422)) warnings.push(`Branche distante ${branch} conservée : ${(err as Error).message}`);

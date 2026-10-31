@@ -58,4 +58,30 @@ export const config = {
   logLevel: logLevel(),
   /** Horodatage des lignes du journal : auto (absent quand pm2 ou journald datent déjà chaque ligne), on, off. */
   logTimestamp: logTimestamp(),
+  /**
+   * Forge Forgejo qui héberge les dépôts des projets « hébergés » (voir gitServer/). Sans `FORGEJO_URL` ni `FORGEJO_TOKEN`,
+   * l'hébergement de dépôts est indisponible.
+   */
+  forgejo: {
+    /** Adresse publique (navigateurs, conteneurs des sessions, URL de clone), ex. https://skipper.toolso.io/forge. */
+    url: (process.env.FORGEJO_URL ?? '').replace(/\/+$/, ''),
+    /** Adresse directe depuis le serveur (sans nginx), ex. http://127.0.0.1:3000 ; défaut : l'adresse publique. */
+    internalUrl: (process.env.FORGEJO_INTERNAL_URL || process.env.FORGEJO_URL || '').replace(/\/+$/, ''),
+    /** Jeton d'un compte administrateur de Forgejo (portée « all »). */
+    token: process.env.FORGEJO_TOKEN ?? '',
+    /** Organisation qui possède les dépôts des projets. */
+    org: process.env.FORGEJO_ORG || 'skipper',
+    /** Commande de la CLI Forgejo, pour créer les jetons des personnes (l'API ne le permet pas à un administrateur). */
+    cli: (process.env.FORGEJO_CLI || 'docker exec forgejo forgejo').split(/\s+/).filter(Boolean),
+    /** Secret des webhooks Forgejo → Skipper (signature HMAC). */
+    webhookSecret: process.env.FORGEJO_WEBHOOK_SECRET ?? '',
+    /**
+     * Adresse à laquelle Forgejo joint Skipper pour ses webhooks ; défaut : l'adresse publique de l'API, qui suit l'instance
+     * active du backend (bleu/vert : les ports des instances changent à chaque mise à jour).
+     */
+    webhookUrl: process.env.FORGEJO_WEBHOOK_URL || `${env('API_URL', `http://localhost:${env('PORT', '4000')}`).replace(/\/+$/, '')}/api/forge/webhook`,
+  },
 };
+
+/** Forgejo est-il configuré (hébergement de dépôts disponible) ? */
+export const forgejoConfigured = (): boolean => Boolean(config.forgejo.url && config.forgejo.token);

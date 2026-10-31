@@ -2,7 +2,7 @@ import { gql } from '@apollo/client';
 import type { ProjectRole } from './operations';
 
 /**
- * Page « Dépôt » d'un projet : le dépôt hébergé par Skipper (clone, sauvegardes, jetons d'accès) et la consultation
+ * Page « Dépôt » d'un projet : le dépôt hébergé par Skipper dans sa forge Forgejo (lien, clone, sauvegardes) et la consultation
  * du dépôt (branches et tags, historique, détail d'un commit, arbre et fichiers à une révision), disponible aussi pour
  * un projet relié à un dépôt distant.
  */
@@ -18,6 +18,10 @@ export interface GitBackup {
 
 export interface HostedGit {
   url: string;
+  /** Page du dépôt dans Forgejo. */
+  webUrl: string;
+  /** Page Forgejo des jetons d'accès de la personne. */
+  tokensUrl: string;
   exists: boolean;
   defaultBranch: string;
   diskSize: number | null;
@@ -89,15 +93,6 @@ export interface RepoFile {
   truncated: boolean;
 }
 
-export interface GitAccessToken {
-  id: string;
-  label: string;
-  prefix: string;
-  createdAt: string;
-  lastUsedAt: string | null;
-  expiresAt: string | null;
-}
-
 export const GIT_BACKUP_FIELDS = gql`
   fragment GitBackupFields on GitBackup {
     id
@@ -113,6 +108,8 @@ export const HOSTED_GIT_FIELDS = gql`
   ${GIT_BACKUP_FIELDS}
   fragment HostedGitFields on HostedGit {
     url
+    webUrl
+    tokensUrl
     exists
     defaultBranch
     diskSize
@@ -128,6 +125,7 @@ export const HOSTED_GIT_FIELDS = gql`
 export const REPO_PROJECT = gql`
   ${HOSTED_GIT_FIELDS}
   query RepoProject($id: ID!) {
+    hostedGitAvailable
     project(id: $id) {
       id
       name
@@ -223,52 +221,17 @@ export const REPO_FILE = gql`
   }
 `;
 
-export const MY_GIT_TOKENS = gql`
-  query MyGitTokens {
-    myGitTokens {
-      id
-      label
-      prefix
-      createdAt
-      lastUsedAt
-      expiresAt
-    }
-  }
-`;
-
-export const CREATE_GIT_TOKEN = gql`
-  mutation CreateGitToken($label: String!, $expiresInDays: Int) {
-    createGitToken(label: $label, expiresInDays: $expiresInDays) {
-      token {
-        id
-        label
-        prefix
-        createdAt
-        lastUsedAt
-        expiresAt
-      }
-      secret
-    }
-  }
-`;
-
-export const REVOKE_GIT_TOKEN = gql`
-  mutation RevokeGitToken($id: ID!) {
-    revokeGitToken(id: $id)
-  }
-`;
-
-export const ROTATE_AGENT_GIT_TOKEN = gql`
-  mutation RotateAgentGitToken {
-    rotateAgentGitToken
-  }
-`;
-
 export const BACKUP_HOSTED_GIT = gql`
   ${HOSTED_GIT_FIELDS}
   mutation BackupHostedGit($projectId: ID!) {
     backupHostedGit(projectId: $projectId) {
       ...HostedGitFields
     }
+  }
+`;
+
+export const HOSTED_GIT_AVAILABLE = gql`
+  query HostedGitAvailable {
+    hostedGitAvailable
   }
 `;
