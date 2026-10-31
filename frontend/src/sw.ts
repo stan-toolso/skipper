@@ -10,7 +10,8 @@ declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: Parameters<typeo
  */
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
-registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/graphql/, /^\/terminals\//, /^\/browsers\//, /^\/auth\//, /^\/api\//, /^\/privacy\.html$/] }));
+// /forge/ : la forge Forgejo des dépôts hébergés, servie par nginx sur le même domaine (pas l'application).
+registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/graphql/, /^\/terminals\//, /^\/browsers\//, /^\/auth\//, /^\/api\//, /^\/privacy\.html$/, /^\/forge(\/|$)/] }));
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') void self.skipWaiting();
