@@ -95,6 +95,8 @@ sed "s/__DOMAIN__/$DOMAIN/g" "$T/nginx-site.conf" > /etc/nginx/sites-available/s
 ln -sf /etc/nginx/sites-available/skipper /etc/nginx/sites-enabled/skipper
 rm -f /etc/nginx/sites-enabled/default
 mkdir -p /var/www/skipper
+# Instance active du backend (bleu/vert), commutée par deploy.sh ; propriétaire et droits posés par bluegreen-setup.sh.
+[ -f /etc/nginx/skipper-upstream.conf ] || printf 'server 127.0.0.1:4101;\n' > /etc/nginx/skipper-upstream.conf
 nginx -t && systemctl enable --now nginx && systemctl reload nginx
 
 step "Utilisateur skipper (docker, sudo restreint) et dossiers"
@@ -111,16 +113,9 @@ chmod 600 /home/skipper/.ssh/authorized_keys
 mkdir -p /home/skipper/skipper-workspaces /etc/skipper
 chown -R skipper:skipper /home/skipper /var/www/skipper
 chmod 750 /home/skipper
-cat > /etc/sudoers.d/skipper <<'SUDO'
-# Ce dont deploy.sh a besoin, et rien d'autre.
-skipper ALL=(root) NOPASSWD: /usr/bin/systemctl restart skipper, /usr/bin/systemctl start skipper, /usr/bin/systemctl stop skipper, /usr/bin/systemctl status skipper, /usr/bin/systemctl reload nginx, /usr/sbin/nginx -t, /usr/bin/journalctl -u skipper *
-SUDO
-chmod 440 /etc/sudoers.d/skipper && visudo -cf /etc/sudoers.d/skipper
 
-step "Service systemd skipper (activé, démarré par install-skipper.sh)"
-install -m 0644 "$T/skipper.service" /etc/systemd/system/skipper.service
-systemctl daemon-reload
-systemctl enable skipper
+step "Services systemd skipper@blue / skipper@green, upstream nginx, sudo restreint (démarrés par install-skipper.sh)"
+"$HERE/bluegreen-setup.sh"
 
 step "SSH : clés seulement, pas de root par mot de passe"
 cat > /etc/ssh/sshd_config.d/90-skipper.conf <<'CONF'

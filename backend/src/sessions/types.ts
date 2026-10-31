@@ -91,6 +91,13 @@ export interface Session {
   queuedAt: Date | null;
   /** Instruction de démarrage différée par la file d'attente (null : la consigne de la session). */
   queuedStart: QueuedStart | null;
+  /** Instance du backend qui tient le processus de la session (déploiement bleu/vert), null : aucune. Interne, hors GraphQL. */
+  instanceId?: string | null;
+  /**
+   * Session « garée » par une instance en drainage à la fin de son tour : processus arrêté, statut `running`/`idle`
+   * conservé ; la prochaine instruction la relance sur l'instance qui la reçoit. Interne, hors GraphQL.
+   */
+  parkedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
   startedAt: Date | null;

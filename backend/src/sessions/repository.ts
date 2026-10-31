@@ -29,6 +29,8 @@ interface SessionRow {
   base_commit: string | null;
   queued_at: Date | null;
   queued_start: QueuedStart | null;
+  instance_id: string | null;
+  parked_at: Date | null;
   created_at: Date;
   updated_at: Date;
   started_at: Date | null;
@@ -72,6 +74,8 @@ function toSession(row: SessionRow): Session {
     queuedAt: row.queued_at ?? null,
     queuedStart: row.queued_start ?? null,
     createdAt: row.created_at,
+    instanceId: row.instance_id ?? null,
+    parkedAt: row.parked_at ?? null,
     updatedAt: row.updated_at,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -107,6 +111,8 @@ export interface SessionPatch {
   endedAt?: Date | null;
   queuedAt?: Date | null;
   queuedStart?: QueuedStart | null;
+  instanceId?: string | null;
+  parkedAt?: Date | null;
 }
 
 const patchColumns: Record<keyof SessionPatch, string> = {
@@ -128,6 +134,8 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   endedAt: 'ended_at',
   queuedAt: 'queued_at',
   queuedStart: 'queued_start',
+  instanceId: 'instance_id',
+  parkedAt: 'parked_at',
 };
 
 export const sessionRepository = {
@@ -278,7 +286,7 @@ export const sessionRepository = {
   async markInterrupted(id: string): Promise<Session | null> {
     const { rows } = await pool.query<SessionRow>(
       `UPDATE sessions
-       SET status = 'interrupted', exit_code = NULL, error = NULL, ended_at = now(), updated_at = now()
+       SET status = 'interrupted', exit_code = NULL, error = NULL, ended_at = now(), updated_at = now(), instance_id = NULL, parked_at = NULL
        WHERE id = $1 AND status = 'running'
        RETURNING *`,
       [id],
@@ -287,17 +295,31 @@ export const sessionRepository = {
   },
 
   /**
-   * Marque comme "interrupted" toute session encore "running" (utilisé au démarrage du serveur,
-   * après un arrêt brutal qui n'a pas pu les clôturer). L'activité est conservée, comme ci-dessus.
+   * Marque comme "interrupted" les sessions encore "running" dont plus aucun processus ne tourne (au démarrage du
+   * serveur, après un arrêt brutal qui n'a pas pu les clôturer) : celles qu'aucune instance vivante ne tient
+   * (`liveInstanceIds`). Les sessions garées (`parked_at`) restent en attente d'instruction. L'activité est conservée.
    */
-  async markRunningAsInterrupted(): Promise<Session[]> {
+  async markRunningAsInterrupted(liveInstanceIds: string[] = []): Promise<Session[]> {
     const { rows } = await pool.query<SessionRow>(
       `UPDATE sessions
-       SET status = 'interrupted', exit_code = NULL, error = NULL, ended_at = now(), updated_at = now()
-       WHERE status = 'running'
+       SET status = 'interrupted', exit_code = NULL, error = NULL, ended_at = now(), updated_at = now(), instance_id = NULL
+       WHERE status = 'running' AND parked_at IS NULL AND (instance_id IS NULL OR NOT instance_id = ANY($1::uuid[]))
        RETURNING *`,
+      [liveInstanceIds],
     );
     return rows.map(toSession);
+  },
+
+  /** Sessions garées depuis avant `before` (fin pour inactivité, comme une session qui attend sans processus). */
+  async listParkedBefore(before: Date): Promise<Session[]> {
+    const { rows } = await pool.query<SessionRow>(`SELECT * FROM sessions WHERE status = 'running' AND parked_at IS NOT NULL AND parked_at < $1`, [before]);
+    return rows.map(toSession);
+  },
+
+  /** Réserve une session garée pour cette instance (une seule instance la relance) ; false si elle ne l'est plus. */
+  async claimParked(id: string, instanceId: string): Promise<boolean> {
+    const { rowCount } = await pool.query(`UPDATE sessions SET parked_at = NULL, instance_id = $2, updated_at = now() WHERE id = $1 AND status = 'running' AND parked_at IS NOT NULL`, [id, instanceId]);
+    return Boolean(rowCount);
   },
 
   /**
@@ -373,6 +395,12 @@ export const sessionRepository = {
   async listWithRetention(): Promise<Session[]> {
     const { rows } = await pool.query<SessionRow>(`SELECT * FROM sessions WHERE (cleanup->>'retentionDays') IS NOT NULL`);
     return rows.map(toSession);
+  },
+
+  /** Un événement par son identifiant (événement publié par une autre instance du backend). */
+  async findEvent(id: string): Promise<SessionEvent | null> {
+    const { rows } = await pool.query<EventRow>('SELECT * FROM session_events WHERE id = $1', [id]);
+    return rows[0] ? toEvent(rows[0]) : null;
   },
 
   /** Dernier événement d'un des types donnés (ex. le dernier résultat d'un tour). */

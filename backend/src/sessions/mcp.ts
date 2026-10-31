@@ -177,7 +177,7 @@ export function createSessionsMcpServer(project: Project, sessionId: string, sco
       tool('end', "Termine proprement une session que tu as lancée : l'agent finit son tour en cours, puis la session se ferme (libère la mémoire).", { id: z.string() }, async ({ id }) =>
         run(async () => {
           const child = await getChild(id);
-          if (!sessionService.isRunning(child.id) && child.status !== 'queued') return `La session est déjà ${stateOf(child)}.`;
+          if (child.status !== 'running' && child.status !== 'queued') return `La session est déjà ${stateOf(child)}.`;
           const s = await sessionService.end(child.id);
           return `Fin demandée :\n${await describe(s)}`;
         }),

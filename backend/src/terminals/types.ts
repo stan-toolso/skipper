@@ -11,4 +11,6 @@ export interface TerminalRecord {
   exitCode: number | null;
   createdAt: Date;
   closedAt: Date | null;
+  /** Instance du backend qui tient le shell (déploiement bleu/vert), null : aucune. Interne, hors GraphQL. */
+  instanceId?: string | null;
 }
