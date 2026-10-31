@@ -297,6 +297,14 @@ frontend/
   notifications) sont restreintes aux projets de l'utilisateur ; les subscriptions filtrent de même ;
   la WebSocket d'un terminal exige le cookie de session et le rôle `member`. Les notifications sont
   partagées entre les membres d'un projet (état lu / non lu commun).
+- **Défenses HTTP** : les upgrades WebSocket (`/terminals/`, `/browsers/`) dont l'en-tête `Origin` n'est pas
+  `APP_URL` (ou localhost) sont refusés en 403 (`backend/src/websockets.ts`, règle partagée avec le CORS dans
+  `backend/src/origin.ts`) : le cookie `SameSite=Lax` part aussi depuis un autre sous-domaine. GraphQL refuse les
+  POST « simples » sans en-tête `x-graphql-yoga-csrf` ou `apollo-require-preflight` (formulaire, `text/plain` :
+  prévention CSRF, le client Apollo envoie du JSON) et réserve l'introspection (`__schema`, `__type`) aux
+  utilisateurs connectés (`backend/src/graphql/security.ts`). Les en-têtes de sécurité (CSP, HSTS…) sont posés
+  par nginx (voir DEPLOY.md) ; la CSP interdit les scripts en ligne : le thème initial est dans
+  `frontend/public/theme-init.js`, pas dans `index.html`.
 - Première migration : `stan@toolso.io` est créé administrateur de l'application et de tous les
   projets existants.
 ## Coffre
