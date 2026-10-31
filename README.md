@@ -712,7 +712,8 @@ que nginx envoie déjà le trafic à la nouvelle.
 refuse tout démarrage de session (création, relance par un message, tâche confiée à un agent ;
 erreur `MAINTENANCE`) et affiche le nombre de sessions encore actives, au travail ou en attente,
 pour choisir le moment du redémarrage. La **reprise automatique** (activée par défaut, désactivable) relance au
-démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, trois au plus, avec
+démarrage les sessions interrompues au milieu d'un tour depuis moins d'une heure, toutes (au-delà de la
+limite de sessions simultanées, elles passent en file d'attente et repartent dès qu'une place se libère), avec
 une instruction qui explique la coupure et signale que les demandes en attente ont été annulées (elles
 ne sont pas rejouées : l'agent refait l'action s'il en a encore besoin). Les sessions qui attendaient
 des instructions restent interrompues, sans occuper de mémoire, jusqu'au prochain message.
@@ -865,6 +866,20 @@ API : query `pullRequests(projectId, taskId, status, stage, limit)`, `pullReques
 `Dashboard.pullRequests` et compteurs `openPullRequests` / `pendingPullRequests` ;
 mutations `registerPullRequest`, `updatePullRequest`, `deletePullRequest`, `syncPullRequests` ;
 `githubPullRequest` et `mergePullRequest` acceptent `repo` (« owner/name ») pour une PR d'un autre dépôt.
+
+**Revue de code par un agent** (`backend/src/reviews/`) : « Faire relire par un agent » (section « Branche vs base »
+du panneau git, menu « ⋮ » d'une PR suivie ouverte ou en préparation) lance une session Claude **en lecture seule**
+dans le dossier de travail de la branche (un nouveau dossier sur la branche d'une PR qui n'en a pas), à côté de la
+session qui y travaille (la règle « une session active par dossier » ne compte pas les relectures). Sa consigne : le
+diff complet par rapport à la base (commits, travail non validé, fichiers non suivis ; joint en fichier au-delà de
+60 000 caractères), la tâche liée et une grille (bugs et régressions, sécurité, simplifications, tests), avec un format
+de rapport (verdict puis constats par gravité, `fichier:ligne`). Lecture seule garantie par le provider
+(`config.review` de la session) : outils intégrés réduits à Read, Grep et Glob, contexte en lecture, mode `dontAsk`
+(tout autre outil refusé sans demande), ni coffre, ni tâches, ni navigateur, ni réglages ou hooks du dépôt. À la fin du
+premier tour, le rapport est publié une fois : message dans le fil de la tâche, commentaire GitHub sur la PR ouverte
+(compte de la personne qui a demandé la relecture), bloc « Relecture » de l'onglet Session du panneau de droite ; puis
+la session est terminée (un message la relance pour discuter du rapport). API : mutation
+`requestCodeReview(projectId, worksessionId | pullRequestId)`, champ `Session.review`.
 
 La page de session a un onglet **Modifications** (`frontend/src/components/SessionChanges.tsx`) : les
 fichiers modifiés dans son dossier de travail depuis le début de la session, avec le nombre de lignes

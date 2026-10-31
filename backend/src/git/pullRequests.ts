@@ -570,6 +570,14 @@ export const pullRequestService = {
     return this.get(ref.projectId, userId, created.number, sameAsProject ? null : repo);
   },
 
+  /** Poste un commentaire sur la PR (fil de conversation GitHub) avec le compte de la personne ; renvoie son URL. */
+  async comment(projectId: string, userId: string | null | undefined, number: number, body: string, repoRef?: GithubRepoRef | null): Promise<string> {
+    const repo = repoRef ?? (await projectRepo(projectId));
+    const token = await requireToken(projectId, userId, repoRef);
+    const res = await rest<{ html_url: string }>(token, 'POST', `/repos/${repo.owner}/${repo.name}/issues/${number}/comments`, { body });
+    return res.html_url;
+  },
+
   /**
    * Fusionne la PR, puis nettoie selon `cleanup` : branche distante, worksession(s) et branche locale de
    * la branche de la PR (sessions encore ouvertes arrêtées si `stopSessions`), tâches liées terminées.

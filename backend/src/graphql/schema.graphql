@@ -1432,6 +1432,28 @@ type Session {
   queuedAt: DateTime
   "Rang dans la file d'attente (1 : la prochaine à démarrer), null hors de la file."
   queuePosition: Int
+  "Session de relecture de code (lecture seule) : ce qu'elle relit et son rapport ; null pour une session ordinaire."
+  review: SessionReview
+}
+
+"Revue de code par un agent : branche relue, publication du rapport."
+type SessionReview {
+  branch: String
+  "Branche de base comparée (ex. origin/main)."
+  baseBranch: String!
+  commits: Int!
+  pullRequest: TrackedPullRequest
+  task: Task
+  "Rapport publié (null tant que l'agent n'a pas conclu)."
+  reportedAt: DateTime
+  "Rapport de l'agent (Markdown)."
+  report: String
+  "La relecture n'a pas abouti."
+  error: String
+  "Commentaire posté sur la PR GitHub."
+  githubCommentUrl: String
+  "Le commentaire GitHub n'a pas pu être posté."
+  githubError: String
 }
 
 enum RequestStatus {
@@ -1807,7 +1829,7 @@ type ServerState {
   activeSessions: Int!
   "Parmi elles, celles dont l'agent travaille (tour en cours)."
   busySessions: Int!
-  "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (trois au plus, depuis moins d'une heure)."
+  "Au démarrage, relancer les sessions interrompues au milieu d'un tour par l'arrêt précédent (toutes, depuis moins d'une heure ; en file d'attente au-delà de la limite de sessions simultanées)."
   autoResumeInterrupted: Boolean!
   "Sessions simultanées au maximum sur le serveur (0 : illimité) ; au-delà, les sessions attendent en file. Un projet peut fixer sa propre limite (runnerConfig.maxSessions)."
   maxConcurrentSessions: Int!
@@ -2571,6 +2593,8 @@ type Mutation {
   syncPullRequests(projectId: ID!): [TrackedPullRequest!]!
   "Demande à la session rattachée à la PR (TrackedPullRequest.session) de résoudre ses conflits avec la base : l'instruction lui est envoyée (la session est relancée si elle était terminée). Renvoie la session."
   resolvePullRequestConflicts(id: ID!): Session!
+  "Fait relire une branche (dossier de travail) ou une PR suivie par un agent : session Claude en lecture seule dans le dossier de la branche, avec le diff par rapport à la base ; son rapport est publié dans le fil de la tâche et, pour une PR ouverte, en commentaire GitHub. Renvoie la session de relecture."
+  requestCodeReview(projectId: ID!, worksessionId: ID, pullRequestId: ID): Session!
 
   "Ouvre un shell dans une work session du projet, avec l'historique des commandes de l'utilisateur sur le projet."
   createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!

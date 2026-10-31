@@ -233,6 +233,27 @@ export const gitService = {
     return value;
   },
 
+  /**
+   * Diff complet de la branche depuis sa base (`preferredBase` : branche de base d'une PR, sinon celle du projet),
+   * travail non validé compris, plus le contenu des fichiers non suivis : ce que relit une revue de code.
+   * Null sans branche de base.
+   */
+  async branchPatch(ref: WorkspaceRef, preferredBase?: string | null): Promise<{ branch: string | null; baseBranch: string; mergeBase: string; commits: number; stat: string; patch: string } | null> {
+    const cwd = await resolveRoot(ref);
+    const project = await projectService.get(ref.projectId);
+    const baseBranch = await resolveBaseBranch(cwd, preferredBase || project.gitBranch);
+    if (!baseBranch) return null;
+    const mergeBase = (await gitRaw(['merge-base', 'HEAD', baseBranch], cwd)).stdout.trim();
+    if (!mergeBase) throw new AppError(`La branche courante ne partage aucun historique avec ${baseBranch}`);
+    const branch = (await gitRaw(['rev-parse', '--abbrev-ref', 'HEAD'], cwd)).stdout.trim();
+    const commits = Number((await gitRaw(['rev-list', '--count', `${mergeBase}..HEAD`], cwd)).stdout.trim() || 0);
+    const stat = (await gitRaw(['diff', '--stat', '-M', mergeBase, '--'], cwd)).stdout;
+    let patch = (await gitRaw(['diff', '-M', mergeBase, '--'], cwd)).stdout;
+    const others = (await gitRaw(['ls-files', '--others', '--exclude-standard', '-z'], cwd)).stdout.split('\0').filter(Boolean);
+    for (const p of others) patch += (await gitRaw(['diff', '--no-index', '--', '/dev/null', p], cwd)).stdout;
+    return { branch: branch === 'HEAD' ? null : branch, baseBranch, mergeBase, commits, stat, patch };
+  },
+
   /** Diff d'un fichier entre la base de la branche et l'arbre de travail. */
   async branchDiff(ref: WorkspaceRef, file: string, origPath?: string | null): Promise<GitDiff> {
     const base = await this.branchBase(ref);

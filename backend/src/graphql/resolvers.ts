@@ -24,6 +24,8 @@ import { parseRepoFullName, pullRequestService, type MergeCleanup, type MergeMet
 import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pullRequests/service.js';
 import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
 import { requestGitConflictResolution } from '../git/conflicts.js';
+import { reviewService } from '../reviews/service.js';
+import { reviewOf, type SessionReview } from '../reviews/types.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { config } from '../config.js';
 import { gitService } from '../git/service.js';
@@ -369,6 +371,10 @@ export const resolvers = {
     tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
   },
 
+  SessionReview: {
+    pullRequest: (r: SessionReview) => (r.pullRequestId ? trackedPullRequestService.get(r.pullRequestId).catch(() => null) : null),
+    task: async (r: SessionReview, _: unknown, ctx: Ctx) => (r.taskId ? (await loadersOf(ctx).task(r.taskId)) ?? null : null),
+  },
   TrackedPullRequest: {
     project: (pr: TrackedPullRequest) => projectService.get(pr.projectId),
     task: (pr: TrackedPullRequest) => (pr.taskId ? taskService.get(pr.taskId).catch(() => null) : null),
@@ -605,6 +611,7 @@ export const resolvers = {
 
   Session: {
     kind: (session: Session) => session.kind.toUpperCase(),
+    review: (session: Session) => reviewOf(session),
     project: (session: Session, _: unknown, ctx: Ctx) => projectOf(ctx, session.projectId),
     worksession: (session: Session, _: unknown, ctx: Ctx) => worksessionOrNull(ctx, session.worksessionId),
     owner: (session: Session, _: unknown, ctx: Ctx) => userOrNull(ctx, session.ownerId),
@@ -1051,6 +1058,10 @@ export const resolvers = {
       const pr = await trackedPullRequestService.get(args.id);
       await requireProject(ctx, pr.projectId, 'member');
       return requestConflictResolution(args.id, { type: 'human', userId: requireUser(ctx).id });
+    },
+    requestCodeReview: async (_: unknown, args: { projectId: string; worksessionId?: string | null; pullRequestId?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return reviewService.request(args, requireUser(ctx).id);
     },
     writeWorkspaceFile: async (_: unknown, args: WorkspaceRef & { path: string; content: string; expectedModifiedAt?: Date | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');

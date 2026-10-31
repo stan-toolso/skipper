@@ -1,6 +1,7 @@
 import { useQuery } from '@apollo/client';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { SessionReviewReport, type SessionReviewInfo } from '../components/CodeReview';
 import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import { SessionChildren, SessionParentNote, useSessionActions, type ControlledSession } from '../components/SessionControls';
 import { SESSION } from '../graphql/operations';
@@ -17,7 +18,7 @@ const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 
  * La requête est celle de la page, qui la sonde : le panneau lit le cache.
  */
 export default function SessionPanel({ sessionId }: { sessionId: string }) {
-  const { data } = useQuery<{ session: ControlledSession | null }>(SESSION, { variables: { id: sessionId } });
+  const { data } = useQuery<{ session: (ControlledSession & { review: SessionReviewInfo | null }) | null }>(SESSION, { variables: { id: sessionId } });
   const { user } = useAuth();
   const session = data?.session ?? null;
   const actions = useSessionActions(session);
@@ -46,6 +47,7 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
       </div>
       <ContextBanner session={session} busy={busy} />
       <div className="cc-actions stacked">{actions.buttons}</div>
+      {session.review && <SessionReviewReport review={session.review} />}
 
       <div className="git-subhead">Détail</div>
       <dl className="session-panel-fields">

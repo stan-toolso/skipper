@@ -4,6 +4,7 @@ import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
 import { useLocation, useNavigate } from 'react-router-dom';
 import DiffView from '../components/DiffView';
 import { CreatePullRequestModal, PullRequestIndicators, PullRequestModal } from '../components/PullRequests';
+import { useRequestCodeReview } from '../components/CodeReview';
 import { useDialogs } from '../components/Dialogs';
 import {
   GIT_ABORT_OPERATION,
@@ -206,6 +207,7 @@ function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number
 function BranchSection({ vars, open, onOpen, onMergeBase }: { vars: { projectId: string; worksessionId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void; onMergeBase?: (baseBranch: string) => void }) {
   const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges | null }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
   const [review, setReview] = useState(false);
+  const requestReview = useRequestCodeReview();
   const changes = q.data?.gitBranchChanges ?? undefined;
   return (
     <Section
@@ -238,6 +240,19 @@ function BranchSection({ vars, open, onOpen, onMergeBase }: { vars: { projectId:
             {changes.commits} commit(s) + travail non validé
           </div>
           {changes.files.length === 0 && <div className="git-empty">Aucune modification depuis {changes.baseBranch}.</div>}
+          {changes.files.length > 0 && vars.worksessionId && (
+            <div className="px-2 pb-1">
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="w-100"
+                title="Un agent Claude en lecture seule relit le diff (bugs, sécurité, simplifications) ; son rapport va dans le fil de la tâche et sur la PR"
+                onClick={() => void requestReview({ projectId: vars.projectId, worksessionId: vars.worksessionId, label: `la branche ${changes.branch ?? 'courante'} (${changes.files.length} fichier(s) depuis ${changes.baseBranch})` })}
+              >
+                <i className="bi bi-robot me-1" /> Faire relire par un agent
+              </Button>
+            </div>
+          )}
           {changes.files.map((f) => {
             const st = statusLabels[f.status] ?? { label: f.status, cls: '' };
             const name = f.path.split('/').pop() ?? f.path;

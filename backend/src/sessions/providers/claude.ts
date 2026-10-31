@@ -52,6 +52,7 @@ import { isEmptyNotificationResult, resultError } from './claudeResult.js';
 import { liveDraftService } from '../live.js';
 import { SESSION_ENV } from '../../runners/stats.js';
 import { log } from '../../log.js';
+import { REVIEW_ALLOWED_TOOLS, REVIEW_DISALLOWED_TOOLS, REVIEW_SYSTEM_PROMPT, REVIEW_TOOLS, reviewOf } from '../../reviews/types.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -186,6 +187,10 @@ export class ClaudeProvider implements SessionProvider {
     // Chat : session légère d'un espace personnel, sans conteneur ni dossier de travail ; le CLI tourne sur le serveur
     // sans outil de fichiers ni de commande, seulement les outils MCP de Skipper.
     const chat = ctx.session.kind === 'chat';
+    // Session de relecture (reviews/) : lecture seule. Outils intégrés réduits à Read, Grep et Glob, contexte en lecture,
+    // mode dontAsk (tout outil non pré-autorisé est refusé sans demander), ni coffre, ni tâches, ni navigateur, ni
+    // réglages ou hooks lus dans le dépôt : elle ne peut modifier aucun fichier.
+    const review = !chat && reviewOf(ctx.session) !== null;
     // Session d'un espace personnel : portée sur tous les projets de la personne (outils sessions, tasks, worksessions, projects).
     const scope = personalService.scopeFor(ctx.project, ownerId);
     const actor = { sessionId: ctx.session.id, projectId: ctx.project.id };
@@ -202,36 +207,39 @@ export class ClaudeProvider implements SessionProvider {
 
     const abortController = new AbortController();
     // Option « navigateur » du projet : un serveur MCP Playwright (Chromium headless) dans le conteneur du projet.
-    const browserEnabled = !chat && Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
+    const browserEnabled = !chat && !review && Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
     // Portée du coffre pour cette session : éléments du projet, reliés au projet, reliés par le propriétaire pour ses sessions.
-    const vaultItems = await vaultService.agentItems(ctx.project.id, ownerId);
+    const vaultItems = review ? [] : await vaultService.agentItems(ctx.project.id, ownerId);
     const vaultTools = vaultItems.some((i) => i.kind !== 'google');
     const vaultBrowser = vaultItems.some((i) => i.kind === 'website' || i.kind === 'secret');
     // Comptes Google de la portée (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
-    const googleAccounts = await googleAccountService.accountsFor(ctx.project.id, ownerId);
+    const googleAccounts = review ? [] : await googleAccountService.accountsFor(ctx.project.id, ownerId);
     // Prompt système : celui du projet, l'identité de la session, puis la bibliothèque de contexte, les tâches, le coffre et les comptes Google.
-    const systemPrompt = [
-      ctx.project.systemPrompt.trim(),
-      sessionIdentityPrompt(ctx.session, ctx.project),
-      scope ? await personalService.promptSummary(scope, await userService.get(scope.ownerId)) : '',
-      await contextService.promptSummary(ctx.project.id),
-      await taskService.linkedTaskPrompt(ctx.session.id),
-      await taskService.promptSummary(ctx.project.id, ctx.session.id),
-      ctx.project.gitUrl && !chat ? trackedPullRequestService.promptSummary() : '',
-      chat ? '' : gitServer.promptSummary(ctx.project),
-      vaultService.promptSummary(vaultItems, ctx.project),
-      sessionsPromptSummary(ctx.project, { chat }),
-      googleAccountService.promptSummary(googleAccounts),
-      chat ? '' : sharedPagesPrompt(),
-      browserEnabled
-        ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du coffre, clique le champ du formulaire puis appelle `browser_fill` : Skipper y saisit la valeur, que tu ne vois jamais."
-        : '',
-    ]
+    const systemPrompt = (review
+      ? [ctx.project.systemPrompt.trim(), sessionIdentityPrompt(ctx.session, ctx.project), await contextService.promptSummary(ctx.project.id), REVIEW_SYSTEM_PROMPT]
+      : [
+        ctx.project.systemPrompt.trim(),
+        sessionIdentityPrompt(ctx.session, ctx.project),
+        scope ? await personalService.promptSummary(scope, await userService.get(scope.ownerId)) : '',
+        await contextService.promptSummary(ctx.project.id),
+        await taskService.linkedTaskPrompt(ctx.session.id),
+        await taskService.promptSummary(ctx.project.id, ctx.session.id),
+        ctx.project.gitUrl && !chat ? trackedPullRequestService.promptSummary() : '',
+        chat ? '' : gitServer.promptSummary(ctx.project),
+        vaultService.promptSummary(vaultItems, ctx.project),
+        sessionsPromptSummary(ctx.project, { chat }),
+        googleAccountService.promptSummary(googleAccounts),
+        chat ? '' : sharedPagesPrompt(),
+        browserEnabled
+          ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du coffre, clique le champ du formulaire puis appelle `browser_fill` : Skipper y saisit la valeur, que tu ne vois jamais."
+          : '',
+      ]
+    )
       .filter(Boolean)
       .join('\n\n');
     // La bibliothèque de contexte est exposée deux fois : outils MCP (lecture/écriture) et skills (plugin local). Un chat n'a
     // pas l'outil Skill (aucun outil intégré) : il lit le contexte par les outils MCP.
-    const pluginDir = chat ? null : await materializeSkills(ctx.project);
+    const pluginDir = chat || review ? null : await materializeSkills(ctx.project);
     const allowedTools = cfg.allowedTools ? String(cfg.allowedTools).split(',').map((t) => t.trim()).filter(Boolean) : [];
     // Autorisations mémorisées pour le projet (« ne plus demander dans ce projet »).
     const projectRules = await permissionRuleService.list(ctx.project.id);
@@ -266,7 +274,7 @@ export class ClaudeProvider implements SessionProvider {
     const options: Options = {
       cwd: ctx.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
-      mcpServers: {
+      mcpServers: review ? { context: createContextMcpServer(ctx.project, ctx.session.id) } : {
         context: createContextMcpServer(ctx.project, ctx.session.id),
         tasks: createTasksMcpServer(ctx.project, ctx.session.id, ctx.session.name, scope),
         ...(vaultTools ? { vault: createVaultMcpServer(vaultContext) } : {}),
@@ -284,15 +292,16 @@ export class ClaudeProvider implements SessionProvider {
       plugins: pluginDir ? [{ type: 'local', path: pluginDir, skipMcpDiscovery: true }] : [],
       // Chat : aucun outil intégré (ni fichiers, ni commandes, ni web) et aucun réglage lu sur le disque du serveur.
       ...(chat ? { tools: [], settingSources: [] } : {}),
+      ...(review ? { tools: REVIEW_TOOLS, settingSources: [] } : {}),
       model,
       // Le CLI refuse un repli identique au modèle principal : le repli est alors simplement omis.
       fallbackModel: general.fallbackModel && general.fallbackModel !== model ? general.fallbackModel : undefined,
       env,
-      permissionMode: cfg.permissionMode || 'default',
+      permissionMode: review ? 'dontAsk' : cfg.permissionMode || 'default',
       // Garde-fou du SDK : le mode bypassPermissions doit être explicitement assumé. Toujours vrai ici, car il rend
       // ce mode *disponible* sans l'activer (drapeau --allow-dangerously-skip-permissions du CLI) : c'est la
       // condition pour pouvoir y passer en cours de session (setPermissionMode), choix explicite de l'humain.
-      allowDangerouslySkipPermissions: true,
+      allowDangerouslySkipPermissions: !review,
       maxTurns: cfg.maxTurns ? Number(cfg.maxTurns) : general.defaultMaxTurns ?? undefined,
       maxBudgetUsd: cfg.maxBudgetUsd ? Number(cfg.maxBudgetUsd) : general.sessionBudgetUsd ?? undefined,
       // Les outils du contexte et des tâches sont toujours autorisés : leurs effets restent dans la base et sont versionnés.
@@ -302,7 +311,8 @@ export class ClaudeProvider implements SessionProvider {
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
       // Pages partagées : lister est libre ; publier passe par l'autorisation quand la page est exposée à d'autres.
-      allowedTools: [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', ...TASKS_FREE_TOOLS, 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      allowedTools: review ? REVIEW_ALLOWED_TOOLS : [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', ...TASKS_FREE_TOOLS, 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      ...(review ? { disallowedTools: REVIEW_DISALLOWED_TOOLS } : {}),
       // Le coffre saisit des secrets dans le navigateur : les outils qui pourraient relire la valeur sont retirés à l'agent.
       ...(browserServer && vaultBrowser ? { disallowedTools: ['mcp__playwright__browser_evaluate', 'mcp__playwright__browser_run_code'] } : {}),
       // Reprise de la conversation Claude si la session a déjà tourné et que le CLI la retrouve encore.
@@ -314,7 +324,8 @@ export class ClaudeProvider implements SessionProvider {
       abortController,
       stderr: (data) => void ctx.emit('stderr', { text: data.trimEnd() }),
       // Les demandes de permission (et l'outil AskUserQuestion) deviennent des demandes d'intervention humaine.
-      canUseTool: this.canUseTool(ctx, ruleUsage),
+      // Relecture : aucune demande d'autorisation, tout outil hors de la liste est refusé.
+      canUseTool: review ? async (toolName, _input, options) => ({ behavior: 'deny', message: `Session de relecture en lecture seule : l'outil ${toolName} n'est pas disponible`, toolUseID: options.toolUseID }) : this.canUseTool(ctx, ruleUsage),
     };
 
     await ctx.emit('system', {
@@ -425,7 +436,7 @@ export class ClaudeProvider implements SessionProvider {
       // valent pour le prochain lancement).
       async updateConfig(patch) {
         const applied: string[] = [];
-        if ('permissionMode' in patch) {
+        if ('permissionMode' in patch && !review) {
           const mode = (patch.permissionMode || 'default') as PermissionMode;
           if (!permissionModes.includes(mode)) throw new AppError(`permissionMode invalide : ${String(mode)}`);
           await stream.setPermissionMode(mode);

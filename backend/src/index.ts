@@ -30,6 +30,7 @@ import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { containerMonitor } from './runners/monitor.js';
 import { trackedPullRequestService } from './pullRequests/service.js';
+import { reviewService } from './reviews/service.js';
 import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
 import { migrateLegacyCredentials } from './settings/legacy.js';
@@ -135,6 +136,8 @@ async function main() {
   if (purged) log.info(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
   log.info(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
 
+  // Guetteur des sessions de relecture (publication de leur rapport), tâche de l'instance meneuse.
+  let stopReviewWatcher: (() => void) | null = null;
   /**
    * Tâches périodiques uniques : seule l'instance qui tient le verrou consultatif (instances/leadership.ts) les fait
    * tourner ; en déploiement bleu/vert, l'ancienne instance le cède en drainage et la nouvelle le reprend.
@@ -151,6 +154,8 @@ async function main() {
     { name: 'planificateur des workflows', start: async () => void (await automationScheduler.start()), stop: () => automationScheduler.stop() },
     { name: 'surveillance mémoire', start: () => healthService.startMonitor(), stop: () => healthService.stopMonitor() },
     { name: 'synchronisation des pull requests', start: () => trackedPullRequestService.startBackgroundSync(), stop: () => trackedPullRequestService.stopBackgroundSync() },
+    // Les mises à jour de session sont relayées entre instances : un seul guetteur publie les rapports de relecture.
+    { name: 'rapports de relecture', start: () => void (stopReviewWatcher = reviewService.startWatcher()), stop: () => { stopReviewWatcher?.(); stopReviewWatcher = null; } },
     { name: 'sauvegardes git', start: () => gitServer.startBackgroundBackups(), stop: () => gitServer.stopBackgroundBackups() },
     { name: 'reprise des sessions orphelines', start: () => orphanSweep.start(), stop: () => orphanSweep.stop() },
   ];

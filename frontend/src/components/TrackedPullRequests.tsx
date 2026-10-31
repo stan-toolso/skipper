@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Form, Modal, Table } from 'react-bootstrap';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  canRequestReview,
   canResolveConflicts,
   DELETE_PULL_REQUEST,
   localWorkText,
@@ -17,6 +18,7 @@ import {
   type TrackedPullRequestSummary,
 } from '../graphql/pullRequests';
 import { timeAgo } from '../lib/humanize';
+import { useRequestCodeReview } from './CodeReview';
 import { useDialogs } from './Dialogs';
 import PopMenu, { type MenuItem } from './PopMenu';
 import { CreatePullRequestModal, PullRequestIndicators, PullRequestModal, type PullRequestRelated } from './PullRequests';
@@ -103,6 +105,7 @@ export function useTrackedPullRequestActions() {
   const [update] = useMutation(UPDATE_PULL_REQUEST, { refetchQueries: TRACKED_PR_REFETCH });
   const [remove] = useMutation(DELETE_PULL_REQUEST, { refetchQueries: TRACKED_PR_REFETCH });
   const [resolveConflicts] = useMutation<{ resolvePullRequestConflicts: { id: string; name: string } }>(RESOLVE_PULL_REQUEST_CONFLICTS, { refetchQueries: TRACKED_PR_REFETCH });
+  const requestReview = useRequestCodeReview();
   const run = (p: Promise<unknown>) => p.catch((err) => void showError(err));
 
   return {
@@ -123,6 +126,13 @@ export function useTrackedPullRequestActions() {
         }),
       );
     },
+    /** Relecture par un agent : la PR ouverte, ou le dossier de travail d'une PR en préparation. */
+    review: (pr: TrackedPullRequest) =>
+      requestReview(
+        pr.status === 'PENDING'
+          ? { projectId: pr.project.id, worksessionId: pr.worksession?.id, label: `la branche ${pr.headBranch}` }
+          : { projectId: pr.project.id, pullRequestId: pr.id, label: `la pull request ${prRef(pr)} « ${pr.title} »` },
+      ),
     setStatus: async (pr: TrackedPullRequest, status: 'OPEN' | 'MERGED' | 'CLOSED') => {
       const labels = { OPEN: 'rouvrir', MERGED: 'marquer comme fusionnée', CLOSED: 'marquer comme annulée (fermée sans fusion)' };
       if (!(await confirm({ title: `Pull request ${prRef(pr)}`, message: `Voulez-vous ${labels[status]} le suivi de « ${pr.title} » ? La PR sur GitHub n'est pas modifiée.`, confirmLabel: 'Oui' }))) return;
@@ -149,11 +159,13 @@ function ActionsMenu({ pr, onOpen }: { pr: TrackedPullRequest; onOpen: () => voi
   if (pending) {
     if (pr.worksession) items.push({ label: 'Créer la pull request', icon: 'bi-git', onClick: onOpen });
     if (pr.session) items.push({ label: `Session : ${pr.session.name}`, icon: 'bi-terminal', to: `/sessions/${pr.session.id}` });
+    if (canRequestReview(pr)) items.push({ label: 'Faire relire par un agent', icon: 'bi-robot', onClick: () => void actions.review(pr) });
     items.push({ label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) });
     if (pr.task) items.push({ label: 'Détacher de la tâche', icon: 'bi-link-45deg', onClick: () => void actions.detachTask(pr) });
   } else {
     items.push({ label: 'Détail et fusion', icon: 'bi-git', onClick: onOpen });
     items.push({ label: 'Ouvrir sur GitHub', icon: 'bi-box-arrow-up-right', onClick: () => window.open(pr.url, '_blank', 'noopener') });
+    if (canRequestReview(pr)) items.push({ label: 'Faire relire par un agent', icon: 'bi-robot', onClick: () => void actions.review(pr) });
     items.push({ label: 'Modifier la note', icon: 'bi-pencil', onClick: () => void actions.editNote(pr) });
     if (pr.status === 'OPEN') {
       items.push({ label: 'Marquer comme fusionnée', icon: 'bi-check2-circle', onClick: () => void actions.setStatus(pr, 'MERGED') });
