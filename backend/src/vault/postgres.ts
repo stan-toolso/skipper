@@ -45,6 +45,20 @@ function sslConfig(creds: PostgresCredentials): pg.ClientConfig['ssl'] {
   return { rejectUnauthorized: process.env.VAULT_POSTGRES_SSL_VERIFY !== 'false' };
 }
 
+/** Codes TLS d'une chaîne non reconnue par les autorités publiques (RDS, Cloud SQL, autorité privée). */
+const UNTRUSTED_CHAIN = new Set(['SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']);
+
+/** Message d'échec de connexion, avec la marche à suivre quand l'autorité du serveur manque. */
+export function connectionErrorMessage(creds: Pick<PostgresCredentials, 'username' | 'host' | 'port' | 'database' | 'sslCa'>, err: Error & { code?: string }): string {
+  let msg = `Connexion PostgreSQL à ${creds.username}@${creds.host}:${creds.port}/${creds.database} impossible : ${err.message}`;
+  if (err.code && UNTRUSTED_CHAIN.has(err.code)) {
+    msg += creds.sslCa
+      ? ' (le certificat d\'autorité de l\'élément ne valide pas la chaîne du serveur : vérifiez qu\'il s\'agit du bon, par exemple le bundle de la région pour RDS)'
+      : ' (autorité inconnue : collez le certificat de l\'autorité du serveur dans l\'élément du coffre, par exemple le bundle de la région pour RDS : https://truststore.pki.rds.amazonaws.com/<région>/<région>-bundle.pem)';
+  }
+  return msg;
+}
+
 /** Ouvre le tunnel SSH si besoin puis la connexion PostgreSQL. */
 async function open(creds: PostgresCredentials, readOnly: boolean): Promise<Opened> {
   let ssh: SshSession | null = null;
@@ -79,7 +93,7 @@ async function open(creds: PostgresCredentials, readOnly: boolean): Promise<Open
   } catch (err) {
     await close();
     const e = err as Error;
-    throw e instanceof AppError ? e : new AppError(`Connexion PostgreSQL à ${creds.username}@${creds.host}:${creds.port}/${creds.database} impossible : ${e.message}`, 'POSTGRES');
+    throw e instanceof AppError ? e : new AppError(connectionErrorMessage(creds, e), 'POSTGRES');
   }
   return { client, close, sshHostKey: ssh?.hostKey ?? null };
 }
