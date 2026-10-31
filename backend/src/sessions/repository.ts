@@ -304,13 +304,12 @@ export const sessionRepository = {
    * Sessions interrompues par un arrêt du serveur au milieu d'un tour (activité 'busy'), depuis
    * `since`, à relancer au démarrage si la reprise automatique est activée.
    */
-  async listInterruptedMidTurn(since: Date, limit: number): Promise<Session[]> {
+  async listInterruptedMidTurn(since: Date): Promise<Session[]> {
     const { rows } = await pool.query<SessionRow>(
       `SELECT * FROM sessions
        WHERE status = 'interrupted' AND activity = 'busy' AND external_id IS NOT NULL AND archived_at IS NULL AND ended_at >= $1
-       ORDER BY ended_at DESC
-       LIMIT $2`,
-      [since, limit],
+       ORDER BY ended_at ASC`,
+      [since],
     );
     return rows.map(toSession);
   },

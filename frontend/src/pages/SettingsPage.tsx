@@ -639,8 +639,8 @@ function ServerSection({ server }: { server: ServerState }) {
             onChange={(e) => void updateServer({ variables: { autoResumeInterrupted: e.target.checked } }).catch(() => undefined)}
           />
           <Form.Text className="text-secondary">
-            Seules les sessions dont l’agent travaillait au moment de l’arrêt sont relancées, trois au plus et si l’arrêt date de moins
-            d’une heure. L’agent reçoit une instruction lui expliquant la coupure. Chaque session relancée occupe plusieurs centaines de Mo
+            Seules les sessions dont l’agent travaillait au moment de l’arrêt sont relancées, si l’arrêt date de moins d’une heure ;
+            au-delà de la limite de sessions simultanées, elles attendent leur tour dans la file. L’agent reçoit une instruction lui expliquant la coupure. Chaque session relancée occupe plusieurs centaines de Mo
             de mémoire : désactiver la reprise si le serveur en manque. Les sessions qui attendaient des instructions restent
             interrompues : un message suffit à les reprendre.
           </Form.Text>

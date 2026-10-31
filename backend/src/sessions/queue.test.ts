@@ -30,6 +30,7 @@ const repo = vi.hoisted(() => {
       return { id: String(store.events.length), sessionId, type, payload, createdAt: new Date() };
     }),
     listQueued: vi.fn(async () => queued().map((s) => ({ ...s }))),
+    listInterruptedMidTurn: vi.fn(async () => [...store.sessions.values()].filter((s) => s.status === 'interrupted' && s.activity === 'busy').map((s) => ({ ...s }))),
     queuePosition: vi.fn(async (id: string) => {
       const i = queued().findIndex((s) => s.id === id);
       return i < 0 ? null : i + 1;
@@ -184,6 +185,26 @@ describe("file d'attente", () => {
     await serverSettings.update({ maxConcurrentSessions: 0 });
     await sessionService.drainQueue();
     expect(session(b.id).status).toBe('running');
+  });
+
+  it('la reprise après redémarrage relance toutes les sessions coupées en plein tour, en file au-delà de la limite', async () => {
+    const { sessionService } = await load({ maxConcurrentSessions: 2 });
+    const fake = fakeProvider();
+    providers.current = fake.provider;
+    const ids = ['i1', 'i2', 'i3', 'i4', 'i5'];
+    for (const id of ids) store.sessions.set(id, { id, projectId: 'p', worksessionId: 'w1', name: id, provider: 'fake', status: 'interrupted', activity: 'busy', prompt: 'p', promptAttachments: [], config: {}, externalId: 'conv', queuedAt: null, queuedStart: null });
+
+    expect(await sessionService.resumeInterruptedAfterRestart()).toEqual(ids);
+    expect(ids.map((id) => session(id).status)).toEqual(['running', 'running', 'queued', 'queued', 'queued']);
+    expect(session('i3').queuedStart?.message).toMatch(/a redémarré/);
+
+    // Les places se libèrent : les sessions en file repartent avec l'instruction de reprise.
+    fake.handles.get('i1')!.finish();
+    fake.handles.get('i2')!.finish();
+    await settle();
+    expect(session('i3').status).toBe('running');
+    expect(session('i4').status).toBe('running');
+    expect(fake.handles.get('i3')!.message).toMatch(/a redémarré/);
   });
 
   it("sans limite, rien n'est mis en file", async () => {
