@@ -42,6 +42,7 @@ fi
 [ -r "$ENV" ] || { echo "$ENV absent : lancer avec --install" >&2; exit 2; }
 . "$ENV"
 restic backup --quiet --exclude='**/node_modules' --exclude='**/.runners/*/claude-home/cache' \
-  /home/skipper/skipper-workspaces /home/skipper/skipper/.env /etc/skipper /etc/pgbackrest/pgbackrest.conf
+  /home/skipper/skipper-workspaces /home/skipper/skipper/.env /etc/skipper /etc/pgbackrest/pgbackrest.conf \
+  $( [ -d /var/lib/forgejo ] && echo /var/lib/forgejo )
 restic forget --quiet --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune
 restic snapshots --latest 1

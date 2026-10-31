@@ -1,4 +1,6 @@
+import { config } from '../config.js';
 import { AppError, NotFoundError } from '../errors.js';
+import { hostedRepo } from '../gitServer/paths.js';
 import type { WorkspaceRef } from '../files/service.js';
 import { buildDraftText, parseGithubRepo, parseRepoFullName, pullRequestService, repoFullName, type GithubRepoRef, type PullRequest } from '../git/pullRequests.js';
 import { notificationService } from '../notifications/service.js';
@@ -54,10 +56,20 @@ const lastSync = new Map<string, number>();
 let backgroundTimer: NodeJS.Timeout | null = null;
 let backgroundRunning = false;
 
-/** Numéro d'une PR depuis son URL GitHub (`https://github.com/owner/repo/pull/123`), avec le dépôt. */
+/**
+ * Numéro d'une PR depuis son URL, avec le dépôt : GitHub (`https://github.com/owner/repo/pull/123`) ou la forge Forgejo
+ * de Skipper (`<FORGEJO_URL>/owner/repo/pulls/123`).
+ */
 export function parsePullRequestUrl(url: string): { owner: string; name: string; number: number } | null {
-  const m = url.trim().match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/i);
-  return m ? { owner: m[1], name: m[2], number: Number(m[3]) } : null;
+  const t = url.trim();
+  const m = t.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/i);
+  if (m) return { owner: m[1], name: m[2], number: Number(m[3]) };
+  const base = config.forgejo.url;
+  if (base && t.toLowerCase().startsWith(`${base.toLowerCase()}/`)) {
+    const f = t.slice(base.length).match(/^\/([^/]+)\/([^/]+)\/pulls\/(\d+)(?:[/?#].*)?$/);
+    if (f) return { owner: f[1], name: f[2], number: Number(f[3]) };
+  }
+  return null;
 }
 
 /** Numéro d'une référence libre : « 42 », « #42 » ou l'URL de la PR. */
@@ -67,9 +79,15 @@ export function parsePullRequestRef(ref: string): number | null {
   return parsePullRequestUrl(t)?.number ?? null;
 }
 
-/** « owner/name » du dépôt GitHub d'un projet, vide sans dépôt GitHub. */
-export function projectRepoName(project: Pick<Project, 'gitUrl'>): string {
-  const repo = parseGithubRepo(project.gitUrl);
+/** Dépôt du projet dont on suit les PR : le dépôt Forgejo d'un projet hébergé, sinon son dépôt GitHub ; null sinon. */
+export function projectRepoRef(project: Pick<Project, 'gitUrl' | 'gitHosted' | 'slug'>): GithubRepoRef | null {
+  if (project.gitHosted) return hostedRepo(project.slug);
+  return parseGithubRepo(project.gitUrl);
+}
+
+/** « owner/name » du dépôt d'un projet (GitHub, ou Forgejo pour un projet hébergé), vide sans dépôt suivi. */
+export function projectRepoName(project: Pick<Project, 'gitUrl' | 'gitHosted' | 'slug'>): string {
+  const repo = projectRepoRef(project);
   return repo ? repoFullName(repo) : '';
 }
 
@@ -195,15 +213,16 @@ export const trackedPullRequestService = {
     actor: PullRequestActor,
   ): Promise<TrackedPullRequest> {
     const project = await projectService.get(projectId);
-    const projectRepo = parseGithubRepo(project.gitUrl);
+    const projectRepo = projectRepoRef(project);
     let number = ref.number ?? null;
     let url: string | null = null;
     /** Dépôt de la PR quand ce n'est pas celui du projet. */
     let foreign: GithubRepoRef | null = null;
     if (ref.url?.trim()) {
       const parsed = parsePullRequestUrl(ref.url);
-      if (!parsed) throw new AppError(`URL de pull request GitHub attendue (https://github.com/<owner>/<repo>/pull/<n>) : ${ref.url}`);
+      if (!parsed) throw new AppError(`URL de pull request attendue (https://github.com/<owner>/<repo>/pull/<n>, ou celle de la forge du projet) : ${ref.url}`);
       if (!projectRepo || parsed.owner.toLowerCase() !== projectRepo.owner.toLowerCase() || parsed.name.toLowerCase() !== projectRepo.name.toLowerCase()) foreign = { owner: parsed.owner, name: parsed.name };
+      if (foreign && config.forgejo.url && ref.url.trim().toLowerCase().startsWith(config.forgejo.url.toLowerCase())) throw new AppError("Seules les PR Forgejo du dépôt de ce projet peuvent être suivies ici");
       number = parsed.number;
       url = ref.url.trim();
     }
@@ -230,7 +249,7 @@ export const trackedPullRequestService = {
     const taskId = opts.taskId ?? (foreign ? null : (await taskService.forBranch(projectId, headBranch))?.id ?? null);
     const created = await pullRequestRepository.create(
       projectId,
-      { repo: repoName, number, url: url ?? (repoName ? `https://github.com/${repoName}/pull/${number}` : ''), title, headBranch, baseBranch: foreign ? '' : project.gitBranch ?? '', taskId, note: validateNote(opts.note) },
+      { repo: repoName, number, url: url ?? (repoName ? (project.gitHosted && !foreign ? `${config.forgejo.url}/${repoName}/pulls/${number}` : `https://github.com/${repoName}/pull/${number}`) : ''), title, headBranch, baseBranch: foreign ? '' : project.gitBranch ?? '', taskId, note: validateNote(opts.note) },
       actor,
     );
     if (created.taskId) await this.linkTaskBranch(created.taskId, headBranch);
@@ -300,7 +319,7 @@ export const trackedPullRequestService = {
     if (!project?.gitUrl) return current();
     lastSync.set(projectId, Date.now());
     // GitHub d'abord (une PR fusionnée ailleurs l'est avant d'examiner sa branche), puis le travail local des branches.
-    const projectRepo = parseGithubRepo(project.gitUrl);
+    const projectRepo = projectRepoRef(project);
     if (projectRepo) await this.syncGithub(projectId, userId, projectRepo).catch((err) => console.error('[pull-requests] synchronisation GitHub', err));
     await this.refreshPending(project).catch((err) => console.error('[pull-requests] travail local des branches', err));
     return current();
@@ -452,7 +471,7 @@ export const trackedPullRequestService = {
 
   /** Paragraphe du prompt système : les outils de suivi des PR du serveur `tasks`. */
   promptSummary(): string {
-    return "Les pull requests se suivent au niveau de la tâche avec les outils `tasks` : dès qu'une branche porte des modifications, Skipper y voit une PR « en préparation » (pr_list stage pending) ; `pr_open` pousse la branche courante et ouvre la PR sur GitHub avec le compte de la personne qui pilote la session (soumis à son autorisation ; paramètre `path` pour un autre dépôt cloné dans un sous-dossier), `pr_register` déclare une PR déjà ouverte (URL, du dépôt du projet ou d'un autre dépôt GitHub, ou numéro), `pr_update` tient à jour son statut (open, merged, closed), sa note et sa tâche, `pr_list` les liste par étape (en préparation, brouillon, à fusionner, fusionnée, annulée). Quand tu ouvres une PR par un autre moyen, déclare-la avec `pr_register` pour qu'elle apparaisse dans le suivi. Le statut suit GitHub tout seul (synchronisation).";
+    return "Les pull requests se suivent au niveau de la tâche avec les outils `tasks` : dès qu'une branche porte des modifications, Skipper y voit une PR « en préparation » (pr_list stage pending) ; `pr_open` pousse la branche courante et ouvre la PR sur GitHub (ou dans la forge Forgejo de Skipper pour un dépôt hébergé) avec le compte de la personne qui pilote la session (soumis à son autorisation ; paramètre `path` pour un autre dépôt cloné dans un sous-dossier), `pr_register` déclare une PR déjà ouverte (URL, du dépôt du projet ou d'un autre dépôt GitHub, ou numéro), `pr_update` tient à jour son statut (open, merged, closed), sa note et sa tâche, `pr_list` les liste par étape (en préparation, brouillon, à fusionner, fusionnée, annulée). Quand tu ouvres une PR par un autre moyen, déclare-la avec `pr_register` pour qu'elle apparaisse dans le suivi. Le statut suit GitHub tout seul (synchronisation).";
   },
 
   stages: PR_STAGES,

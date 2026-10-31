@@ -5,14 +5,13 @@ import { promisify } from 'node:util';
 import { AppError, NotFoundError } from '../errors.js';
 import type { Project } from '../projects/types.js';
 import { gitAuthFor, isGitRepository, workspacePath } from '../projects/workspace.js';
-import { bareRepoPath } from './paths.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
  * Consultation en lecture du dépôt d'un projet (page « Dépôt ») : références, historique, détail d'un commit, arbre
- * et fichiers à une révision. Pour un projet hébergé, on lit le dépôt nu ; pour un projet relié à un dépôt distant,
- * le checkout principal et ses références `origin/*`, rafraîchies par un fetch au plus toutes les minutes.
+ * et fichiers à une révision. On lit le checkout principal et ses références `origin/*` (dépôt GitHub, ou Forgejo pour
+ * un projet hébergé), rafraîchies par un fetch au plus toutes les minutes.
  */
 
 export interface RepoRef {
@@ -143,13 +142,8 @@ function checkPath(p: string): string {
   return cleaned;
 }
 
-/** Dépôt à consulter : le dépôt nu d'un projet hébergé, sinon le checkout principal (références origin/*). */
+/** Dépôt à consulter : le checkout principal (références origin/*). */
 async function repoOf(project: Project): Promise<{ cwd: string; hosted: boolean }> {
-  if (project.gitHosted) {
-    const cwd = bareRepoPath(project.slug);
-    if (!(await exists(cwd))) throw new NotFoundError("Le dépôt hébergé n'existe pas encore sur le serveur");
-    return { cwd, hosted: true };
-  }
   if (!project.gitUrl) throw new AppError("Ce projet n'a pas de dépôt git");
   const cwd = workspacePath(project);
   if (!(await exists(cwd)) || !(await isGitRepository(cwd))) throw new NotFoundError("Le dépôt n'a pas encore été récupéré sur le serveur");
@@ -171,7 +165,7 @@ async function resolveRef(cwd: string, hosted: boolean, ref: string): Promise<st
 export const repoBrowser = {
   /** Projet distant : fetch des références au plus toutes les minutes (silencieux en cas d'échec). `force` ignore le délai. */
   async refresh(project: Project, actorId: string | null | undefined, force = false): Promise<void> {
-    if (project.gitHosted || !project.gitUrl) return;
+    if (!project.gitUrl) return;
     const now = Date.now();
     if (!force && now - (lastFetch.get(project.id) ?? 0) < FETCH_THROTTLE_MS) return;
     lastFetch.set(project.id, now);

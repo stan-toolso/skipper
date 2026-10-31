@@ -1761,6 +1761,8 @@ export interface PullRequestSummary {
 }
 
 export interface PullRequest extends PullRequestSummary {
+  /** « GitHub » ou « Forgejo » (dépôt hébergé par Skipper). */
+  forgeName: string;
   body: string;
   author: string | null;
   authorAvatarUrl: string | null;
@@ -1792,6 +1794,7 @@ export interface PullRequestDraft {
 export const PULL_REQUEST_FIELDS = gql`
   fragment PullRequestFields on PullRequest {
     repo
+    forgeName
     number
     title
     body

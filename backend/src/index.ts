@@ -13,7 +13,6 @@ import { handleFileViewRoute } from './files/viewRoute.js';
 import { handleTasksApiRoute } from './tasks/api.js';
 import { handleGitHttpRoute } from './gitServer/httpRoute.js';
 import { gitServer } from './gitServer/service.js';
-import { gitTokenService } from './gitServer/tokens.js';
 import { registerTaskSessionFeed } from './tasks/sessionFeed.js';
 import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
@@ -75,8 +74,6 @@ async function main() {
   automationScheduler.start();
   const purged = await authSession.purgeExpired();
   if (purged) log.info(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
-  const purgedTokens = await gitTokenService.purgeExpired();
-  if (purgedTokens) log.info(`[git-server] ${purgedTokens} jeton(s) d'accès git expiré(s) supprimé(s)`);
   log.info(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
 
   // Origines autorisées à appeler l'API avec le cookie de session : l'application, et le poste de développement.

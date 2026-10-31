@@ -88,8 +88,8 @@ function DetailsLine({ pr, showRepo = false }: { pr: PullRequest; showRepo?: boo
   return (
     <div className="small text-secondary d-flex flex-wrap gap-2 align-items-center">
       {showRepo && pr.repo && (
-        <span className="font-monospace" title="Dépôt GitHub de la pull request">
-          <i className="bi bi-github me-1" />
+        <span className="font-monospace" title={`Dépôt ${pr.forgeName} de la pull request`}>
+          <i className={`bi ${pr.forgeName === 'GitHub' ? 'bi-github' : 'bi-git'} me-1`} />
           {pr.repo}
         </span>
       )}
@@ -204,7 +204,7 @@ export function PullRequestModal({
             <div className="d-flex flex-wrap gap-2 align-items-center mb-2">
               <PullRequestIndicators pr={pr} />
               <a href={pr.url} target="_blank" rel="noreferrer" className="small ms-auto">
-                Ouvrir sur GitHub <i className="bi bi-box-arrow-up-right" />
+                Ouvrir sur {pr.forgeName} <i className="bi bi-box-arrow-up-right" />
               </a>
             </div>
             <DetailsLine pr={pr} showRepo={foreign} />
@@ -252,7 +252,7 @@ export function PullRequestModal({
             {pr.state === 'OPEN' && !result && (
               <div className="mt-3 border-top pt-3">
                 <div className="fw-semibold small mb-2">Fusionner</div>
-                {pr.isDraft && <Alert variant="secondary" className="py-1 small">Brouillon : marquez-la prête pour la revue sur GitHub avant de la fusionner.</Alert>}
+                {pr.isDraft && <Alert variant="secondary" className="py-1 small">Brouillon : marquez-la prête pour la revue sur {pr.forgeName} avant de la fusionner.</Alert>}
                 {pr.mergeable === 'CONFLICTING' && (
                   <Alert variant="danger" className="py-1 small d-flex flex-wrap align-items-center gap-2">
                     <span>Conflits avec {pr.baseRefName} : à résoudre dans la branche avant la fusion.</span>
@@ -264,7 +264,7 @@ export function PullRequestModal({
                     )}
                   </Alert>
                 )}
-                {pr.mergeable === 'UNKNOWN' && <div className="small text-secondary mb-2">GitHub calcule encore si la fusion est possible…</div>}
+                {pr.mergeable === 'UNKNOWN' && <div className="small text-secondary mb-2">{pr.forgeName} calcule encore si la fusion est possible…</div>}
                 {hint && pr.mergeable !== 'CONFLICTING' && !pr.isDraft && <div className="small text-warning mb-2">Attention : {hint}.</div>}
                 <Form.Group className="mb-2 d-flex gap-3 flex-wrap small">
                   {(
@@ -278,7 +278,7 @@ export function PullRequestModal({
                   ))}
                 </Form.Group>
                 <div className="small">
-                  <Form.Check id="pr-del-remote" label={`Supprimer la branche ${pr.headRefName} sur GitHub`} checked={deleteRemoteBranch} disabled={pr.isCrossRepository} onChange={(e) => setDeleteRemoteBranch(e.target.checked)} />
+                  <Form.Check id="pr-del-remote" label={`Supprimer la branche ${pr.headRefName} sur ${pr.forgeName}`} checked={deleteRemoteBranch} disabled={pr.isCrossRepository} onChange={(e) => setDeleteRemoteBranch(e.target.checked)} />
                   {!foreign && (
                     <Form.Check
                       id="pr-del-wt"
@@ -409,7 +409,7 @@ export function CreatePullRequestModal({ projectId, worksessionId, onClose, onCr
               </div>
               <div className="small text-secondary mt-2">
                 {d.commits.length} commit{d.commits.length > 1 ? 's' : ''} par rapport à {d.base}
-                {d.needsPush ? ' · la branche sera poussée sur GitHub' : ' · les commits non poussés le seront'}.
+                {d.needsPush ? ' · la branche sera poussée' : ' · les commits non poussés le seront'}.
               </div>
               {d.commits.length === 0 && <Alert variant="warning" className="py-1 small mt-2 mb-0">Aucun commit par rapport à {d.base} : validez et poussez d'abord des modifications.</Alert>}
             </>

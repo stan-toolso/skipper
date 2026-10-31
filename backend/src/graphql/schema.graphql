@@ -1050,14 +1050,18 @@ type WorkspaceGit {
   commit: String!
 }
 
-"Dépôt git hébergé par Skipper : clone, état et sauvegardes en base."
+"Dépôt git hébergé par Skipper dans sa forge Forgejo : clone, état et sauvegardes en base."
 type HostedGit {
-  "URL de clone ; mot de passe HTTP = jeton d'accès git de la personne (myGitTokens) ou clé d'API du projet."
+  "URL de clone (Forgejo) ; mot de passe HTTP = un jeton d'accès créé dans Forgejo (Paramètres → Applications)."
   url: String!
-  "Le dépôt nu existe sur le serveur (sinon il est restauré ou créé à la première utilisation)."
+  "Page du dépôt dans Forgejo (pull requests, revues, issues)."
+  webUrl: String!
+  "Page Forgejo où la personne crée ses jetons d'accès."
+  tokensUrl: String!
+  "Le dépôt existe dans Forgejo (sinon il est recréé depuis la dernière sauvegarde à la première utilisation)."
   exists: Boolean!
   defaultBranch: String!
-  "Taille des objets sur disque (octets), null si le dépôt n'existe pas."
+  "Taille du dépôt dans Forgejo (octets), null s'il n'existe pas."
   diskSize: Float
   lastBackup: GitBackup
   "Sauvegardes conservées, la plus récente d'abord."
@@ -1149,23 +1153,6 @@ type RepoFile {
   truncated: Boolean!
 }
 
-"Jeton d'accès git personnel : mot de passe HTTP pour cloner et pousser les dépôts hébergés par Skipper, avec les droits de la personne sur chaque projet. Le secret n'est montré qu'à la création."
-type GitAccessToken {
-  id: ID!
-  label: String!
-  "Début du secret, pour le reconnaître."
-  prefix: String!
-  createdAt: DateTime!
-  lastUsedAt: DateTime
-  expiresAt: DateTime
-}
-
-type CreatedGitAccessToken {
-  token: GitAccessToken!
-  "Secret complet, à copier maintenant."
-  secret: String!
-}
-
 enum PullRequestState {
   OPEN
   CLOSED
@@ -1201,10 +1188,12 @@ type PullRequestReview {
   state: String!
 }
 
-"Pull request GitHub du dépôt d'un projet, ou d'un autre dépôt (lue avec le jeton de la connexion GitHub)."
+"Pull request GitHub du dépôt d'un projet, ou d'un autre dépôt (lue avec le jeton de la connexion GitHub) ; pour un dépôt hébergé par Skipper, pull request de sa forge Forgejo."
 type PullRequest {
-  "Dépôt GitHub « owner/name »."
+  "Dépôt « owner/name » (GitHub, ou Forgejo pour un dépôt hébergé)."
   repo: String!
+  "Forge de la PR, pour les libellés : « GitHub » ou « Forgejo »."
+  forgeName: String!
   number: Int!
   title: String!
   body: String!
@@ -2296,8 +2285,8 @@ type Query {
   "Entrées d'un dossier (path vide : racine) à une révision."
   repoTree(projectId: ID!, ref: String!, path: String): [RepoEntry!]!
   repoFile(projectId: ID!, ref: String!, path: String!): RepoFile!
-  "Jetons d'accès git personnels de la personne connectée."
-  myGitTokens: [GitAccessToken!]!
+  "L'hébergement de dépôts (forge Forgejo) est-il configuré sur ce serveur ?"
+  hostedGitAvailable: Boolean!
   "Pull requests GitHub du dépôt du projet, les plus récemment mises à jour d'abord."
   githubPullRequests(projectId: ID!, state: PullRequestFilter = OPEN, limit: Int): [PullRequest!]!
   "Une PR du dépôt du projet, ou d'un autre dépôt GitHub (`repo` : « owner/name »)."
@@ -2558,11 +2547,6 @@ type Mutation {
   gitPush(projectId: ID!, worksessionId: ID): GitStatus!
   "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
   gitCheckout(projectId: ID!, worksessionId: ID, branch: String!, create: Boolean = false): GitStatus!
-  "Crée un jeton d'accès git personnel (expiresInDays absent : sans expiration) ; le secret n'est renvoyé qu'ici."
-  createGitToken(label: String!, expiresInDays: Int): CreatedGitAccessToken!
-  revokeGitToken(id: ID!): Boolean!
-  "Renouvelle le jeton que Skipper donne à vos sessions et terminaux pour les dépôts hébergés (les sessions en cours gardent l'ancien jusqu'à leur prochain lancement)."
-  rotateAgentGitToken: Boolean!
   "Sauvegarde le dépôt hébergé en base maintenant (membres)."
   backupHostedGit(projectId: ID!): HostedGit!
   "Pousse la branche courante du workspace puis ouvre une pull request GitHub (base par défaut : branche du projet, sinon celle du dépôt)."

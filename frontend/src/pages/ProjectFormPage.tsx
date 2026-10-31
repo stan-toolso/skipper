@@ -48,6 +48,7 @@ function GithubRepoPicker({ onPick }: { onPick: (repo: GithubRepository) => void
   );
 }
 import { useTabTitle } from '../workbench/TabsContext';
+import { HOSTED_GIT_AVAILABLE } from '../graphql/repo';
 
 
 /** Création (sans id) ou édition (avec id) d'un projet. */
@@ -75,6 +76,8 @@ export default function ProjectFormPage() {
   const [gitBranch, setGitBranch] = useState('');
   /** Aucun dépôt, dépôt hébergé par Skipper, ou dépôt distant (URL). */
   const [repoMode, setRepoMode] = useState<'none' | 'hosted' | 'remote'>('none');
+  const hostedQ = useQuery<{ hostedGitAvailable: boolean }>(HOSTED_GIT_AVAILABLE);
+  const hostedAvailable = Boolean(hostedQ.data?.hostedGitAvailable);
   const [runnerImage, setRunnerImage] = useState('');
   const [runnerMemory, setRunnerMemory] = useState('');
   const [runnerCpus, setRunnerCpus] = useState('');
@@ -253,11 +256,11 @@ export default function ProjectFormPage() {
                       type="radio"
                       id="repo-hosted"
                       name="repoMode"
-                      label="Hébergé par Skipper : un dépôt git servi par ce serveur, sauvegardé dans sa base"
+                      label="Hébergé par Skipper : un dépôt dans la forge Forgejo du serveur (pull requests, revues), sauvegardé dans sa base"
                       checked={repoMode === 'hosted'}
-                      disabled={hadRemote}
+                      disabled={hadRemote || (!wasHosted && !hostedAvailable)}
                       onChange={() => setRepoMode('hosted')}
-                      title={hadRemote ? 'Un projet relié à un dépôt distant ne peut pas passer en dépôt hébergé' : undefined}
+                      title={hadRemote ? 'Un projet relié à un dépôt distant ne peut pas passer en dépôt hébergé' : !hostedAvailable && !wasHosted ? "L'hébergement de dépôts (Forgejo) n'est pas configuré sur ce serveur" : undefined}
                     />
                     <Form.Check type="radio" id="repo-remote" name="repoMode" label="Dépôt distant (GitHub ou autre), par son adresse" checked={repoMode === 'remote'} disabled={wasHosted} onChange={() => setRepoMode('remote')} />
                     {wasHosted && <Form.Text>Le dépôt de ce projet est hébergé par Skipper ; l'hébergement ne se désactive pas.</Form.Text>}
@@ -289,7 +292,7 @@ export default function ProjectFormPage() {
                 {repoMode === 'hosted'
                   ? isEdit && !data?.project?.gitHosted
                     ? "À l'enregistrement, le dossier du projet (et ceux de ses sessions) sont importés dans le dépôt hébergé : leur contenu devient le premier commit de chaque branche. Ajoutez d'abord un .gitignore si certains fichiers (node_modules…) ne doivent pas y entrer."
-                    : 'Le dépôt est créé avec un premier commit ; les sessions y poussent leurs branches, et vous pouvez le cloner avec un jeton d’accès (page Dépôt du projet).'
+                    : 'Le dépôt est créé dans Forgejo avec un premier commit ; les sessions y poussent leurs branches et y ouvrent leurs pull requests. Vous y êtes connecté avec votre compte Skipper (page Dépôt du projet).'
                   : repoMode === 'remote'
                     ? isEdit
                       ? "Modifier l'adresse n'affecte pas un dossier de travail déjà créé."

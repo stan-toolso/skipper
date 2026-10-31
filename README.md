@@ -207,12 +207,13 @@ backend/
       launch.ts                # confier une tâche à un nouvel agent
       api.ts                   # API REST /api/v1/tasks (clés d'API du projet)
     gitServer/
-      paths.ts                 # dossier des dépôts nus (WORKSPACES_ROOT/.git-server), URL de clone dérivée de API_URL
-      service.ts               # dépôts hébergés : création, import d'un projet sans dépôt, sauvegarde (bundle en base) et restauration, passage de fond
-      httpRoute.ts             # smart HTTP /api/git/<slug>.git (git http-backend), authentification par jeton, téléchargement des sauvegardes
-      tokens.ts                # jetons d'accès git par personne (jeton d'agent chiffré, jetons personnels hachés)
+      paths.ts                 # dépôt Forgejo d'un projet (organisation, URL de clone et web), miroirs locaux
+      forgejo.ts               # client Forgejo : API, comptes des personnes et jetons des sessions, dépôts et collaborateurs, webhook, pull requests
+      accounts.ts              # table forge_accounts
+      service.ts               # dépôts hébergés : création, import d'un projet sans dépôt, membres, sauvegarde (bundle en base) et recréation, passage de fond
+      httpRoute.ts             # /api/forge/auth (connexion à Forgejo par la session Skipper, pour nginx), webhook, téléchargement des sauvegardes
       backups.ts               # table git_repository_backups
-      browse.ts                # consultation d'un dépôt (hébergé ou distant) : références, historique, commit, arbre, fichier
+      browse.ts                # consultation d'un dépôt : références, historique, commit, arbre, fichier
     pullRequests/
       types.ts                 # pull request suivie : statut, étape dérivée (en préparation, brouillon, à fusionner, fusionnée, annulée), dépôt, textes pour les agents
       repository.ts            # table pull_requests
@@ -407,44 +408,55 @@ mémorisé par élément pour la session ou le projet.
 « shell » (ssh-agent, PGSERVICEFILE, variables d'environnement) n'existe plus : rien n'atteint jamais le
 conteneur de l'agent.
 
-## Serveur git hébergé
+## Serveur git hébergé (Forgejo)
 
-Un projet sans dépôt distant peut faire **héberger son dépôt par Skipper** : à la création (formulaire du projet,
-« Hébergé par Skipper ») ou plus tard (page **Dépôt** du projet, « Héberger un dépôt git », administrateurs ; le
-dossier du projet devient le premier commit de la branche principale, celui de chaque session une branche à son nom,
-recréé en worktree). L'hébergement ne se désactive pas.
+Un projet sans dépôt distant peut faire **héberger son dépôt par Skipper**, dans sa forge **Forgejo** (forge open source,
+fork communautaire de Gitea : pull requests, revues, issues, Actions), à la création (formulaire du projet, « Hébergé par
+Skipper ») ou plus tard (page **Dépôt** du projet, « Héberger un dépôt git », administrateurs ; le dossier du projet
+devient le premier commit de la branche principale, celui de chaque session une branche à son nom, recréé en worktree).
+L'hébergement ne se désactive pas.
 
-- **Stockage** : un dépôt nu par projet, `WORKSPACES_ROOT/.git-server/<slug>.git` (colonne `projects.git_hosted`,
-  migration `046_hosted_git.sql`). Le checkout principal et les work sessions en sont des clones ordinaires (remote
-  `origin`) : worktrees, panneau git, PR en préparation fonctionnent sans changement. Sur le serveur, git atteint le
-  dépôt nu par son chemin (`gitAuthFor` ajoute `url.<chemin>.insteadOf=<url>`), sans HTTP.
-- **Accès HTTP** (smart HTTP, `git http-backend`) : `<API_URL>/api/git/<slug>.git`, adresse dérivée de `API_URL` (jamais
-  stockée : un changement de domaine met à jour le remote des checkouts à leur prochaine préparation). Authentification
-  basic dont le mot de passe est un **jeton d'accès git** de la personne (table `git_access_tokens`) ou une clé d'API du
-  projet ; lecteur : clone et fetch ; membre et administrateur : push. Les sessions et terminaux reçoivent le **jeton
-  d'agent** de leur propriétaire (créé à la demande, gardé chiffré, renouvelable depuis la page Dépôt) par un credential
-  helper (`SKIPPER_GIT_TOKEN`, `GIT_CONFIG_*`), comme le jeton GitHub. Les jetons personnels (page Dépôt, « Nouveau
-  jeton », un an) servent aux clones sur les postes. nginx : bloc `location ^~ /api/git/` sans limite de taille de
-  requête ni mise en tampon (`deploy/cellule/templates/nginx-site.conf`).
-- **Sauvegarde en base** (table `git_repository_backups`) : un bundle complet (`git bundle create --all`) après chaque
-  push reçu en HTTP (regroupé 3 s), par un passage de fond toutes les 10 minutes pour tout dépôt dont les références ont
-  changé, ou à la demande (« Sauvegarder maintenant ») ; trois prises conservées par dépôt. Un dépôt dont le dossier a
-  disparu est **restauré automatiquement** depuis la plus récente à sa prochaine utilisation. Chaque prise se télécharge
-  depuis la page Dépôt (`/api/git/<slug>.git/backup?id=…`, cookie de session) et se relit par `git clone x.bundle`.
-- **Page Dépôt** (`/projects/:id/repo`, onglet de l'en-tête des projets ; aussi pour un projet relié à un dépôt distant,
-  lu dans les références `origin/*` du checkout principal, fetch au plus toutes les minutes) : branches et tags,
-  fichiers et contenu à une révision, historique (d'une branche, d'un dossier ou d'un fichier), détail d'un commit avec
-  son diff. Requêtes `repoRefs`, `repoLog`, `repoCommit`, `repoTree`, `repoFile`, `myGitTokens` ; mutations
-  `createGitToken`, `revokeGitToken`, `rotateAgentGitToken`, `backupHostedGit` ; champs `Project.gitHosted`,
-  `Project.hostedGit`.
-- Les sessions d'un projet hébergé sont prévenues dans leur prompt (pas de GitHub, donc ni pull request ni CI : elles
-  poussent leur branche). Supprimer un projet supprime ses sauvegardes mais conserve le dépôt nu sur disque, comme son
-  dossier ; un nouveau projet du même slug refuse alors de l'écraser.
+- **Installation** : `deploy/cellule/forgejo.sh --url https://<domaine>/forge` (root, idempotent) : conteneur Docker
+  `forgejo` (image rootless, réseau de l'hôte, écoute sur 127.0.0.1:3000 seulement), base `forgejo` du PostgreSQL local,
+  configuration `/var/lib/forgejo/conf/app.ini` (modèle `templates/forgejo-app.ini`), compte administrateur
+  `skipper-admin`, et les variables `FORGEJO_URL`, `FORGEJO_INTERNAL_URL`, `FORGEJO_TOKEN`, `FORGEJO_WEBHOOK_SECRET`,
+  `FORGEJO_CLI` ajoutées au `.env` (`backend/src/config.ts`). Sans elles, l'option « Hébergé par Skipper » est indisponible.
+  nginx sert la forge sous `/forge/` (bloc dans `templates/nginx-site.conf`). Les données de Forgejo (`/var/lib/forgejo`)
+  sont dans la sauvegarde restic, sa base dans pgBackRest.
+- **Connexion** : on n'a pas de mot de passe Forgejo. nginx demande à Skipper (`auth_request` vers `/api/forge/auth`) le
+  compte Forgejo de la personne connectée (cookie de session) et le transmet dans `X-WEBAUTH-USER` (authentification
+  par proxy de Forgejo, réservée à 127.0.0.1) ; sans session, une page renvoie vers la connexion de Skipper, tandis que git
+  et l'API passent (ils s'authentifient par jeton). Un compte Forgejo est créé par personne à la demande (table
+  `forge_accounts`, nom tiré de l'e-mail).
+- **Dépôts et droits** : un dépôt privé par projet dans l'organisation `skipper` (`FORGEJO_ORG`), nommé d'après le slug ;
+  clone `<FORGEJO_URL>/skipper/<slug>.git`. Les membres du projet en sont collaborateurs (lecteur → lecture, membre →
+  écriture, administrateur → administration), resynchronisés à chaque changement de membres et toutes les 10 minutes.
+  Depuis le serveur, git passe par l'adresse directe avec le jeton administrateur (`forgejoGitAuthArgs`) ; les sessions et
+  terminaux reçoivent le **jeton Forgejo de leur propriétaire** (créé par la CLI de Forgejo, l'API ne le permettant pas à
+  un administrateur, puis gardé chiffré) par un credential helper (`SKIPPER_GIT_TOKEN`). Pour cloner depuis un poste, on
+  crée son jeton dans Forgejo (Paramètres → Applications).
+- **Pull requests** : celles d'un dépôt hébergé sont dans Forgejo et Skipper les traite comme celles de GitHub
+  (`git/pullRequests.ts` choisit la forge selon le projet ; client `gitServer/forgejo.ts`) : liste avec statuts de commit,
+  revues et conflits, ouverture et fusion depuis le panneau git ou par `tasks.pr_open` **au nom de la personne qui agit**
+  (`sudo` de l'API), suivi, PR en préparation, notifications. Un webhook d'organisation signé (`/api/forge/webhook`) fait
+  synchroniser les PR et sauvegarder le dépôt à chaque événement. `PullRequest.forgeName` donne le libellé (« GitHub »,
+  « Forgejo »).
+- **Sauvegarde en base** (table `git_repository_backups`) : un miroir local (`WORKSPACES_ROOT/.git-server/<slug>.git`) est
+  rafraîchi depuis Forgejo et mis en bundle (toutes les branches et tags) quand ses références ont changé : après chaque
+  push (webhook), au passage de fond (10 minutes) ou à la demande ; trois prises conservées. Un dépôt absent de Forgejo est
+  **recréé automatiquement**, depuis le miroir, sinon depuis la plus récente sauvegarde (les dépôts nus du serveur git
+  minimal qui a précédé Forgejo, au même endroit, sont repris de la même façon). Téléchargement : `/api/repo-backups/<id>`.
+- **Page Dépôt** (`/projects/:id/repo`, aussi pour un dépôt GitHub) : lien « Ouvrir dans Forgejo », clone, sauvegardes, puis
+  branches et tags, fichiers à une révision, historique, détail des commits (lus dans le checkout principal, références
+  `origin/*` rafraîchies au plus toutes les minutes). Requêtes `repoRefs`, `repoLog`, `repoCommit`, `repoTree`, `repoFile`,
+  `hostedGitAvailable` ; mutation `backupHostedGit` ; champs `Project.gitHosted`, `Project.hostedGit`.
+- Tests : `gitServer/forgejo.test.ts` (fonctions pures toujours ; contre un vrai Forgejo jetable quand
+  `FORGEJO_TEST_BIN` donne le binaire, ignoré sinon).
 
 ## Modèle
 
 - **Project** : `name`, `slug` (nom du dossier, fixé à la création), `description`, `systemPrompt`,
-  `gitUrl`, `gitBranch`, `gitHosted` (dépôt hébergé par Skipper, voir « Serveur git hébergé » ; `gitUrl` est alors dérivé). Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
+  `gitUrl`, `gitBranch`, `gitHosted` (dépôt hébergé dans la forge Forgejo de Skipper, voir « Serveur git hébergé » ; `gitUrl` est alors dérivé). Le workspace est `WORKSPACES_ROOT/<slug>` ; il est créé (ou cloné) à la
   création du projet et au plus tard au démarrage d'une session. Supprimer un projet supprime ses
   sessions en base mais conserve le dossier sur disque.
 - **VaultItem** : `ownerUserId` ou `ownerProjectId` (exactement l'un des deux), `name`, `kind` (ssh,

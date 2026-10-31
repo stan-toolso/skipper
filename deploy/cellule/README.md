@@ -10,6 +10,7 @@ Scaleway fr-par-2, Ubuntu 24.04). Ces scripts sont idempotents : relançables sa
 | `postgres.sh [--s3-…]` | root | Rôle et base `skipper`, réglages, sauvegardes pgBackRest chiffrées vers un bucket Object Storage ; écrit `/etc/skipper/db.env` |
 | `backup-files.sh --install --s3-…` | root | Sauvegarde restic quotidienne des workspaces, de la clé maîtresse, des pièces jointes et du `.env` |
 | `install-skipper.sh --domain …` | skipper | Clone, `.env`, dépendances, build, front, image du runner, démarrage |
+| `forgejo.sh --url https://<domaine>/forge` | root | Forge Forgejo des dépôts hébergés : base PostgreSQL `forgejo`, conteneur `forgejo` (127.0.0.1:3000), compte `skipper-admin`, variables `FORGEJO_*` ajoutées au `.env` ; puis bloc nginx `/forge/` et redémarrage de Skipper |
 | `deploy.sh` | skipper | **Mise à jour** : build sans toucher au backend, publication du front seule si possible, sinon attente de la fin des tours d'agents puis redémarrage de quelques secondes |
 | `migrate-from-ec2.sh --old …` | skipper | Reprise des données de l'ancienne installation (base RDS, workspaces, secrets du `.env`) |
 

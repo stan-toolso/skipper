@@ -41,4 +41,27 @@ export const config = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
   /** Niveau minimal du journal (debug, info, warn, error). */
   logLevel: logLevel(),
+  /**
+   * Forge Forgejo qui héberge les dépôts des projets « hébergés » (voir gitServer/). Sans `FORGEJO_URL` ni `FORGEJO_TOKEN`,
+   * l'hébergement de dépôts est indisponible.
+   */
+  forgejo: {
+    /** Adresse publique (navigateurs, conteneurs des sessions, URL de clone), ex. https://skipper.toolso.io/forge. */
+    url: (process.env.FORGEJO_URL ?? '').replace(/\/+$/, ''),
+    /** Adresse directe depuis le serveur (sans nginx), ex. http://127.0.0.1:3000 ; défaut : l'adresse publique. */
+    internalUrl: (process.env.FORGEJO_INTERNAL_URL || process.env.FORGEJO_URL || '').replace(/\/+$/, ''),
+    /** Jeton d'un compte administrateur de Forgejo (portée « all »). */
+    token: process.env.FORGEJO_TOKEN ?? '',
+    /** Organisation qui possède les dépôts des projets. */
+    org: process.env.FORGEJO_ORG || 'skipper',
+    /** Commande de la CLI Forgejo, pour créer les jetons des personnes (l'API ne le permet pas à un administrateur). */
+    cli: (process.env.FORGEJO_CLI || 'docker exec forgejo forgejo').split(/\s+/).filter(Boolean),
+    /** Secret des webhooks Forgejo → Skipper (signature HMAC). */
+    webhookSecret: process.env.FORGEJO_WEBHOOK_SECRET ?? '',
+    /** Adresse à laquelle Forgejo joint Skipper pour ses webhooks ; défaut : le backend en local. */
+    webhookUrl: process.env.FORGEJO_WEBHOOK_URL || `http://127.0.0.1:${env('PORT', '4000')}/api/forge/webhook`,
+  },
 };
+
+/** Forgejo est-il configuré (hébergement de dépôts disponible) ? */
+export const forgejoConfigured = (): boolean => Boolean(config.forgejo.url && config.forgejo.token);

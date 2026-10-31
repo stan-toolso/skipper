@@ -24,12 +24,11 @@ import { parseRepoFullName, pullRequestService, type MergeCleanup, type MergeMet
 import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pullRequests/service.js';
 import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
+import { config } from '../config.js';
 import { gitService } from '../git/service.js';
 import { repoBrowser, type RepoEntry, type RepoRef } from '../gitServer/browse.js';
-import { hostedGitUrl } from '../gitServer/paths.js';
 import { gitServer } from '../gitServer/service.js';
 import type { GitBackup } from '../gitServer/backups.js';
-import { gitTokenService } from '../gitServer/tokens.js';
 import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
 import { runner, type RunnerConfig } from '../runners/index.js';
 import { containerMonitor } from '../runners/monitor.js';
@@ -206,8 +205,16 @@ const userOrNull = async (ctx: Ctx, id: string | null | undefined) => (id ? ((aw
 /** État du dépôt hébergé pour le client, avec l'adresse de téléchargement de chaque sauvegarde. */
 async function hostedGitView(project: Project) {
   const status = await gitServer.status(project);
-  const withUrl = (b: GitBackup) => ({ ...b, downloadUrl: `${hostedGitUrl(project.slug)}/backup?id=${b.id}` });
-  return { ...status, lastBackup: status.lastBackup ? withUrl(status.lastBackup) : null, backups: status.backups.map(withUrl) };
+  const withUrl = (b: GitBackup) => ({ ...b, downloadUrl: `${config.apiUrl}/api/repo-backups/${b.id}` });
+  return { ...status, tokensUrl: `${config.forgejo.url}/user/settings/applications`, lastBackup: status.lastBackup ? withUrl(status.lastBackup) : null, backups: status.backups.map(withUrl) };
+}
+
+/** Membres d'un projet hébergé → collaborateurs de son dépôt Forgejo, sans faire attendre la mutation (repris par le passage de fond en cas d'échec). */
+function syncHostedMembers(projectId: string): void {
+  void projectService
+    .get(projectId)
+    .then((p) => gitServer.syncMembers(p))
+    .catch((err) => console.warn(`[forgejo] collaborateurs du projet ${projectId} : ${(err as Error).message}`));
 }
 
 const projectOf = async (ctx: Ctx, id: string): Promise<Project> => {
@@ -355,6 +362,7 @@ export const resolvers = {
   },
 
   PullRequest: {
+    forgeName: (pr: PullRequest) => (config.forgejo.url && pr.url.startsWith(`${config.forgejo.url}/`) ? 'Forgejo' : 'GitHub'),
     worksession: async (pr: PullRequest) => (pr.isCrossRepository ? null : (await worksessionService.listByProject(pr.projectId)).find((w) => w.branch === pr.headRefName) ?? null),
     tasks: async (pr: PullRequest) => (pr.isCrossRepository ? [] : (await taskService.list({ projectId: pr.projectId, limit: 1000 })).filter((t) => t.branch === pr.headRefName)),
   },
@@ -677,7 +685,7 @@ export const resolvers = {
       await requireProject(ctx, args.projectId);
       return repoBrowser.file(await projectService.get(args.projectId), args.ref, args.path);
     },
-    myGitTokens: (_: unknown, __: unknown, ctx: Ctx) => gitTokenService.listPersonal(requireUser(ctx).id),
+    hostedGitAvailable: (_: unknown, __: unknown, ctx: Ctx) => (requireUser(ctx), gitServer.available()),
     githubPullRequests: async (_: unknown, args: { projectId: string; state?: PullRequestFilter | null; limit?: number | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return pullRequestService.list(args.projectId, requireUser(ctx).id, args.state ?? 'OPEN', args.limit ?? 50);
@@ -980,12 +988,6 @@ export const resolvers = {
       await gitService.checkout(args, args.branch, args.create ?? false);
       return gitService.status(args);
     },
-    createGitToken: (_: unknown, args: { label: string; expiresInDays?: number | null }, ctx: Ctx) => gitTokenService.createPersonal(requireUser(ctx).id, args.label, args.expiresInDays ?? null),
-    revokeGitToken: (_: unknown, args: { id: string }, ctx: Ctx) => gitTokenService.revoke(requireUser(ctx).id, args.id),
-    rotateAgentGitToken: async (_: unknown, __: unknown, ctx: Ctx) => {
-      await gitTokenService.rotateAgentToken(requireUser(ctx).id);
-      return true;
-    },
     backupHostedGit: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
       const project = await projectService.get(args.projectId);
@@ -1175,12 +1177,16 @@ export const resolvers = {
       const user = requireUser(ctx);
       await requireProject(ctx, args.projectId, 'admin');
       await personalService.assertNotPersonal(args.projectId, 'Inviter quelqu\'un');
-      return userService.invite(args.projectId, args.email, fromGqlRole(args.role), user);
+      const member = await userService.invite(args.projectId, args.email, fromGqlRole(args.role), user);
+      syncHostedMembers(args.projectId);
+      return member;
     },
     updateProjectMemberRole: async (_: unknown, args: { projectId: string; userId: string; role: GqlRole }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');
       await personalService.assertNotPersonal(args.projectId, 'Changer un rôle');
-      return userService.setRole(args.projectId, args.userId, fromGqlRole(args.role));
+      const member = await userService.setRole(args.projectId, args.userId, fromGqlRole(args.role));
+      syncHostedMembers(args.projectId);
+      return member;
     },
     addProjectPermissionRule: async (_: unknown, args: { projectId: string; toolName: string; ruleContent?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
@@ -1201,13 +1207,16 @@ export const resolvers = {
     removeProjectMember: async (_: unknown, args: { projectId: string; userId: string }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'admin');
       await personalService.assertNotPersonal(args.projectId, 'Retirer un membre');
-      return userService.remove(args.projectId, args.userId);
+      const removed = await userService.remove(args.projectId, args.userId);
+      syncHostedMembers(args.projectId);
+      return removed;
     },
 
     createProject: async (_: unknown, { input }: { input: CreateProjectInput }, ctx: Ctx) => {
       const user = requireUser(ctx);
       const project = await projectService.create(input, user.id);
       await userService.addCreator(project.id, user);
+      syncHostedMembers(project.id);
       return project;
     },
     updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {

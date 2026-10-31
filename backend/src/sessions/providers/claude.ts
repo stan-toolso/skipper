@@ -216,7 +216,7 @@ export class ClaudeProvider implements SessionProvider {
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
-      ctx.project.gitUrl && !ctx.project.gitHosted && !chat ? trackedPullRequestService.promptSummary() : '',
+      ctx.project.gitUrl && !chat ? trackedPullRequestService.promptSummary() : '',
       chat ? '' : gitServer.promptSummary(ctx.project),
       vaultService.promptSummary(vaultItems, ctx.project),
       sessionsPromptSummary(ctx.project, { chat }),
