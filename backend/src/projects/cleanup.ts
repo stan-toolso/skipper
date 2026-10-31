@@ -10,9 +10,11 @@ import type { Session } from '../sessions/types.js';
 import { terminalService } from '../terminals/service.js';
 import { worksessionService, worksessionsRoot } from '../worksessions/service.js';
 import { worksessionLabel, type Worksession } from '../worksessions/types.js';
+import { projectRepository } from './repository.js';
 import { projectService } from './service.js';
 import { workspacePath } from './workspace.js';
 import { log } from '../log.js';
+import { gitServer } from '../gitServer/service.js';
 
 /** Arrête et supprime toutes les sessions correspondant au filtre (par lots, la liste est paginée). */
 async function deleteSessions(filter: { projectId?: string; worksessionId?: string; archived?: 'exclude' | 'only' | 'all' }): Promise<number> {
@@ -130,8 +132,15 @@ export async function restoreWorksessionCascade(id: string): Promise<Worksession
  * Supprime un projet et tout ce qui en dépend : sessions (arrêtées, archivées comprises), terminaux (fermés),
  * worksessions, conteneur d'exécution, dossier de travail, skills générés et relais. Irréversible.
  */
-export async function deleteProjectCascade(id: string): Promise<boolean> {
+/**
+ * Supprime le projet et tout ce qu'il a sur disque. Dépôt hébergé : supprimé de Forgejo avec `deleteHostedRepo`, sinon
+ * conservé dans Forgejo, archivé et renommé (voir `gitServer.retire`). Le dépôt est traité d'abord : en cas d'échec de
+ * Forgejo, rien n'est supprimé.
+ */
+export async function deleteProjectCascade(id: string, opts: { deleteHostedRepo?: boolean } = {}): Promise<boolean> {
   const project = await projectService.get(id);
+  if ((await projectRepository.countRunningSessions(id)) > 0) throw new AppError('Impossible de supprimer un projet ayant des sessions en cours');
+  await gitServer.retire(project, { delete: Boolean(opts.deleteHostedRepo) });
   await deleteSessions({ projectId: id, archived: 'all' });
   for (const t of await terminalService.listByProject(id)) await terminalService.delete(t.id);
   for (const w of await worksessionService.listByProject(id, { includeArchived: true })) {

@@ -658,7 +658,18 @@ export default function ProjectDetailPage() {
                 size="sm"
                 variant="outline-danger"
                 onClick={async () => {
-                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
+                  const message = `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`;
+                  if (project.gitHosted) {
+                    // Dépôt hébergé dans Forgejo : conservé (archivé) par défaut, supprimé sur demande.
+                    const answer = await confirm({
+                      title: 'Supprimer le projet',
+                      message: `${message} Sans la case ci-dessous, son dépôt git reste dans Forgejo, archivé (lecture seule) et renommé ; ses sauvegardes en base sont supprimées.`,
+                      confirmLabel: 'Supprimer définitivement',
+                      danger: true,
+                      checkbox: { label: 'Supprimer aussi le dépôt git dans Forgejo (branches, pull requests, issues)', defaultChecked: false },
+                    });
+                    if (answer) deleteProject({ variables: { id, deleteHostedRepo: answer.checked } });
+                  } else if (await confirm({ title: 'Supprimer le projet', message, confirmLabel: 'Supprimer définitivement', danger: true })) {
                     deleteProject({ variables: { id } });
                   }
                 }}

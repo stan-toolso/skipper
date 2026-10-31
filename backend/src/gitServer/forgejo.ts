@@ -207,10 +207,14 @@ export const forgejoRepos = {
     else await forgejoApi('POST', `/orgs/${org}/hooks`, body);
   },
 
+  /**
+   * Le dépôt existe-t-il sous ce nom ? Forgejo garde une redirection depuis l'ancien nom d'un dépôt renommé (dépôt d'un
+   * projet supprimé, archivé) : seul un dépôt dont le nom est bien celui demandé compte.
+   */
   async exists(name: string): Promise<boolean> {
     try {
-      await forgejoApi('GET', `/repos/${config.forgejo.org}/${name}`);
-      return true;
+      const repo = await forgejoApi<{ name: string }>('GET', `/repos/${config.forgejo.org}/${name}`);
+      return repo.name.toLowerCase() === name.toLowerCase();
     } catch (err) {
       if (notFound(err)) return false;
       throw err;
