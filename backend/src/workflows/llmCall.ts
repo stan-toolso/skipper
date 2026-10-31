@@ -5,6 +5,7 @@ import type { LangfuseSettings, LitellmSettings, TokenSettings } from '../vault/
 import { callLlm, parseLlmConfig, sendLangfuseTrace, type LlmConfig, type LlmResult } from './llm.js';
 import { extractJson } from './template.js';
 import type { LlmOutputFormat } from './types.js';
+import { log } from '../log.js';
 
 /**
  * Exécution d'un nœud « appel de modèle » : la clé du coffre est résolue au nom du propriétaire de
@@ -93,9 +94,9 @@ async function traceInLangfuse(config: LlmConfig, ownerId: string, req: LlmCallR
       costUsd: call.result?.costUsd ?? 0,
       modelParameters: { temperature: config.temperature, maxTokens: config.maxTokens },
     });
-    if (problem) console.warn(`[workflows] trace Langfuse non enregistrée (${where}) : ${problem}`);
+    if (problem) log.warn(`[workflows] trace Langfuse non enregistrée (${where}) : ${problem}`);
   } catch (err) {
-    console.warn(`[workflows] trace Langfuse non enregistrée (${where}) : ${(err as Error).message}`);
+    log.warn(`[workflows] trace Langfuse non enregistrée (${where}) : ${(err as Error).message}`);
   }
 }
 

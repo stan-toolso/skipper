@@ -13,6 +13,7 @@ import { claudeSettings } from '../settings/claude.js';
 import { CronError, isValidTimeZone, nextRun, nextRuns, parseCron } from './cron.js';
 import { scheduleRepository } from './repository.js';
 import type { SessionSchedule, SessionScheduleInput } from './types.js';
+import { log } from '../log.js';
 
 /** Fréquence de vérification des échéances. */
 const TICK_MS = 30_000;
@@ -169,7 +170,7 @@ export const scheduleService = {
       await cleanupService.applyRetention(session);
       await cleanupService.prepareContext(id);
     } catch (err) {
-      console.error(`[schedules] nettoyage de la session ${id}`, err);
+      log.error(`[schedules] nettoyage de la session ${id}`, err);
       await emit(id, 'cleanup', { action: 'failed', error: (err as Error).message });
     }
     const startedAt = Date.now();
@@ -210,7 +211,7 @@ export const scheduleService = {
           payload: { cost, durationMs },
         });
       } catch (err) {
-        console.error('[schedules] suivi de l\'exécution', err);
+        log.error('[schedules] suivi de l\'exécution', err);
       } finally {
         scheduledRuns.delete(id);
         const fresh = await sessionRepository.findById(id);
@@ -228,7 +229,7 @@ export const scheduleService = {
       if (now.getTime() - lastSweep >= SWEEP_MS) {
         lastSweep = now.getTime();
         const swept = await cleanupService.sweep();
-        if (swept.deleted) console.log(`[cleanup] ${swept.deleted} événement(s) purgé(s) sur ${swept.sessions} session(s)`);
+        if (swept.deleted) log.info(`[cleanup] ${swept.deleted} événement(s) purgé(s) sur ${swept.sessions} session(s)`);
       }
       for (const due of await scheduleRepository.listDue(now)) {
         if (!due.nextRunAt) continue;
@@ -236,7 +237,7 @@ export const scheduleService = {
         try {
           next = nextRun(parseCron(due.cron), now, due.timezone);
         } catch (err) {
-          console.error(`[schedules] expression invalide pour la session ${due.sessionId} : ${(err as Error).message}`);
+          log.error(`[schedules] expression invalide pour la session ${due.sessionId} : ${(err as Error).message}`);
         }
         // Réservation atomique : une seule instance du serveur exécute l'échéance.
         const claimed = await scheduleRepository.claim(due.sessionId, due.nextRunAt, next, now);
@@ -245,7 +246,7 @@ export const scheduleService = {
           await scheduleRepository.setResult(due.sessionId, `Échéance du ${due.nextRunAt.toISOString()} manquée (serveur arrêté), non rattrapée`);
           continue;
         }
-        await this.run(claimed).catch((err) => console.error('[schedules] exécution', err));
+        await this.run(claimed).catch((err) => log.error('[schedules] exécution', err));
       }
     } finally {
       ticking = false;
@@ -268,10 +269,10 @@ export const scheduleService = {
           await scheduleRepository.setResult(s.sessionId, `Échéance du ${s.nextRunAt.toISOString()} manquée (serveur arrêté), non rattrapée`);
         }
       } catch (err) {
-        console.error(`[schedules] expression invalide pour la session ${s.sessionId} : ${(err as Error).message}`);
+        log.error(`[schedules] expression invalide pour la session ${s.sessionId} : ${(err as Error).message}`);
       }
     }
-    timer = setInterval(() => void this.tick().catch((err) => console.error('[schedules] ordonnanceur', err)), TICK_MS);
+    timer = setInterval(() => void this.tick().catch((err) => log.error('[schedules] ordonnanceur', err)), TICK_MS);
     timer.unref?.();
     return skipped;
   },

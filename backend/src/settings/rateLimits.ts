@@ -1,6 +1,7 @@
 import type { SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
 import { notificationService } from '../notifications/service.js';
 import { settingsRepository } from './repository.js';
+import { log } from '../log.js';
 
 const KEY_RATE_LIMITS = 'claude.rate_limits';
 
@@ -184,7 +185,7 @@ class RateLimitService {
     // Écritures sérialisées : plusieurs sessions rapportent leurs événements en parallèle.
     this.saving = this.saving
       .then(() => settingsRepository.set(KEY_RATE_LIMITS, state))
-      .catch((err) => console.error('[rate-limits] enregistrement impossible', err));
+      .catch((err) => log.error('[rate-limits] enregistrement impossible', err));
     for (const alert of alerts) {
       const { title, message } = describeAlert(alert);
       void notificationService.notify({ type: 'claude.rate_limit', title, message, link: '/settings', adminsOnly: true, payload: { ...alert } });

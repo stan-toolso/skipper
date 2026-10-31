@@ -6,6 +6,7 @@ import { workflowRepository } from './repository.js';
 import { workflowService } from './service.js';
 import { taskMatches } from './taskFilter.js';
 import type { Workflow, WorkflowNode } from './types.js';
+import { log } from '../log.js';
 
 /**
  * Déclencheurs événementiels des workflows : une tâche créée dans un projet démarre les workflows actifs du
@@ -53,7 +54,7 @@ export async function handleTaskCreated(task: Task, actor: TaskActor): Promise<v
   }
   for (const workflow of workflows) {
     if (behind.has(workflow.id)) {
-      console.log(`[workflows] tâche ${task.id} créée par une session du workflow ${workflow.id} : pas de nouveau déclenchement`);
+      log.info(`[workflows] tâche ${task.id} créée par une session du workflow ${workflow.id} : pas de nouveau déclenchement`);
       continue;
     }
     const trigger = firstAccepting(triggersFor(workflow.definition, 'task.created'), (t) => filterAccepts(t, task));
@@ -61,7 +62,7 @@ export async function handleTaskCreated(task: Task, actor: TaskActor): Promise<v
     try {
       await workflowService.enqueue(workflow, { triggerKey: trigger.key, inputs: { [TASK_ID_INPUT]: task.id }, ownerId: workflow.eventOwnerId ?? workflow.createdById, reason: `Tâche créée : « ${task.title} »` });
     } catch (err) {
-      console.error(`[workflows] mise en file du workflow ${workflow.id} pour la tâche ${task.id}`, err);
+      log.error(`[workflows] mise en file du workflow ${workflow.id} pour la tâche ${task.id}`, err);
     }
   }
 }

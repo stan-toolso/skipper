@@ -12,6 +12,7 @@ import { worksessionService, worksessionsRoot } from '../worksessions/service.js
 import { worksessionLabel, type Worksession } from '../worksessions/types.js';
 import { projectService } from './service.js';
 import { workspacePath } from './workspace.js';
+import { log } from '../log.js';
 
 /** Arrête et supprime toutes les sessions correspondant au filtre (par lots, la liste est paginée). */
 async function deleteSessions(filter: { projectId?: string; worksessionId?: string; archived?: 'exclude' | 'only' | 'all' }): Promise<number> {
@@ -90,7 +91,7 @@ async function activeSessionsIn(worksessionId: string, exceptId: string | null =
 export async function archiveSessionCascade(id: string): Promise<Session> {
   const session = await sessionService.archive(id);
   if (session.worksessionId && !(await activeSessionsIn(session.worksessionId)).length) {
-    await archiveWorksessionCascade(session.worksessionId).catch((err) => console.warn('[sessions] work session non archivée avec sa session', session.worksessionId, err));
+    await archiveWorksessionCascade(session.worksessionId).catch((err) => log.warn('[sessions] work session non archivée avec sa session', session.worksessionId, err));
   }
   return session;
 }
@@ -110,9 +111,9 @@ export async function deleteSessionCascade(id: string, deleteBranch = false): Pr
   const remaining = await sessionService.list({ worksessionId, archived: 'all', limit: 1 });
   if (!remaining.length) {
     await deleteTerminals(wt.projectId, worksessionId);
-    await worksessionService.delete(worksessionId, deleteBranch).catch((err) => console.warn('[sessions] dossier non supprimé avec sa session', wt.name, err));
+    await worksessionService.delete(worksessionId, deleteBranch).catch((err) => log.warn('[sessions] dossier non supprimé avec sa session', wt.name, err));
   } else if (!wt.archivedAt && !(await activeSessionsIn(worksessionId)).length) {
-    await archiveWorksessionCascade(worksessionId).catch((err) => console.warn('[sessions] work session non archivée', wt.name, err));
+    await archiveWorksessionCascade(worksessionId).catch((err) => log.warn('[sessions] work session non archivée', wt.name, err));
   }
   return ok;
 }
@@ -134,11 +135,11 @@ export async function deleteProjectCascade(id: string): Promise<boolean> {
   await deleteSessions({ projectId: id, archived: 'all' });
   for (const t of await terminalService.listByProject(id)) await terminalService.delete(t.id);
   for (const w of await worksessionService.listByProject(id, { includeArchived: true })) {
-    await worksessionService.delete(w.id, false).catch((err) => console.error('[projects] suppression de la work session', w.name, err));
+    await worksessionService.delete(w.id, false).catch((err) => log.error('[projects] suppression de la work session', w.name, err));
   }
-  await runner.remove(project).catch((err) => console.error('[projects] suppression du conteneur', err));
+  await runner.remove(project).catch((err) => log.error('[projects] suppression du conteneur', err));
   for (const dir of [workspacePath(project), worksessionsRoot(project), contextPluginDir(project), path.join(config.workspacesRoot, '.runners', project.slug)]) {
-    await rm(dir, { recursive: true, force: true }).catch((err) => console.error('[projects] suppression de', dir, err));
+    await rm(dir, { recursive: true, force: true }).catch((err) => log.error('[projects] suppression de', dir, err));
   }
   return projectService.delete(id);
 }

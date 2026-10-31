@@ -19,6 +19,7 @@ import { isPersonalProject, type Project } from '../projects/types.js';
 import { userService } from '../users/service.js';
 import { ROLE_RANK } from '../users/types.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
+import { log } from '../log.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
 const ATTACHMENTS_ONLY_TEXT = 'Voir les fichiers joints.';
@@ -261,7 +262,7 @@ async function drainOnce(): Promise<void> {
       await sessionService.start(session.id, session.queuedStart?.message ?? undefined, session.queuedStart?.attachments ?? [], { fromQueue: true });
     } catch (err) {
       const message = (err as Error).message;
-      console.error(`[sessions] démarrage de ${session.id} depuis la file d'attente`, err);
+      log.error(`[sessions] démarrage de ${session.id} depuis la file d'attente`, err);
       await emitEvent(session.id, 'status', { status: 'failed', error: message }).catch(() => undefined);
       await sessionRepository
         .update(session.id, { status: 'failed', activity: null, error: message, endedAt: new Date(), queuedAt: null, queuedStart: null })
@@ -561,7 +562,7 @@ export const sessionService = {
         });
       }
     });
-    finishing.set(id, finished.catch((err) => console.error('[sessions] fin de session', err)).finally(() => finishing.delete(id)));
+    finishing.set(id, finished.catch((err) => log.error('[sessions] fin de session', err)).finally(() => finishing.delete(id)));
 
     return started;
   },
@@ -729,7 +730,7 @@ export const sessionService = {
     const session = await sessionRepository.findById(id);
     if (session) {
       const project = await projectService.get(session.projectId).catch(() => null);
-      if (project) await removeSessionAttachments(project, id).catch((err) => console.warn('[sessions] pièces jointes non supprimées', err));
+      if (project) await removeSessionAttachments(project, id).catch((err) => log.warn('[sessions] pièces jointes non supprimées', err));
     }
     return sessionRepository.delete(id);
   },
@@ -781,7 +782,7 @@ export const sessionService = {
     const interrupted: Session[] = [];
     for (const id of ids) {
       const session = await interruptSession(id, reason).catch((err) => {
-        console.error(`[sessions] interruption de ${id}`, err);
+        log.error(`[sessions] interruption de ${id}`, err);
         return null;
       });
       if (session) interrupted.push(session);
@@ -811,7 +812,7 @@ export const sessionService = {
         await this.start(session.id, session.activity === 'busy' ? resumeMessage(reason) : idleResumeMessage(reason));
         resumed.push(session.id);
       } catch (err) {
-        console.error(`[sessions] reprise de ${session.id} après recréation de l'environnement impossible`, err);
+        log.error(`[sessions] reprise de ${session.id} après recréation de l'environnement impossible`, err);
         await emitEvent(session.id, 'system', { message: `Reprise automatique impossible : ${(err as Error).message}`, notice: true, reason: 'auto_resume' }).catch(() => undefined);
       }
     }
@@ -833,7 +834,7 @@ export const sessionService = {
         await this.start(session.id, resumeMessage('server_shutdown'));
         resumed.push(session.id);
       } catch (err) {
-        console.error(`[sessions] reprise automatique de ${session.id} impossible`, err);
+        log.error(`[sessions] reprise automatique de ${session.id} impossible`, err);
         await emitEvent(session.id, 'system', { message: `Reprise automatique impossible : ${(err as Error).message}`, notice: true, reason: 'auto_resume' }).catch(() => undefined);
       }
     }
@@ -872,7 +873,7 @@ export const sessionService = {
         await drainOnce();
       } while (drainAgain);
     })()
-      .catch((err) => console.error("[sessions] file d'attente", err))
+      .catch((err) => log.error("[sessions] file d'attente", err))
       .finally(() => {
         draining = null;
       });
@@ -900,7 +901,7 @@ export const sessionService = {
         ended.push(id);
       } catch (err) {
         endedForIdle.delete(id);
-        console.error(`[sessions] arrêt de la session inactive ${id}`, err);
+        log.error(`[sessions] arrêt de la session inactive ${id}`, err);
       }
     }
     return ended;
@@ -911,8 +912,8 @@ export const sessionService = {
     if (housekeeping) return;
     housekeeping = setInterval(() => {
       void this.endIdleSessions()
-        .then((ids) => ids.length && console.log(`[sessions] ${ids.length} session(s) inactive(s) terminée(s)`))
-        .catch((err) => console.error('[sessions] sessions inactives', err));
+        .then((ids) => ids.length && log.info(`[sessions] ${ids.length} session(s) inactive(s) terminée(s)`))
+        .catch((err) => log.error('[sessions] sessions inactives', err));
       void this.drainQueue();
     }, HOUSEKEEPING_INTERVAL_MS);
     housekeeping.unref();
@@ -936,7 +937,7 @@ export const sessionService = {
     stopping = true;
     const ids = [...running.keys()];
     const work = (async () => {
-      await Promise.all(ids.map((id) => interruptSession(id, 'server_shutdown').catch((err) => console.error(`[sessions] interruption de ${id}`, err))));
+      await Promise.all(ids.map((id) => interruptSession(id, 'server_shutdown').catch((err) => log.error(`[sessions] interruption de ${id}`, err))));
       await Promise.all(ids.map((id) => running.get(id)?.stop().catch(() => undefined)));
       await Promise.all([...finishing.values()]);
     })();

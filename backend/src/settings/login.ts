@@ -9,6 +9,7 @@ import type { Terminal } from '@xterm/headless';
 import { config } from '../config.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { claudeSettings, cliEnv } from './claude.js';
+import { log } from '../log.js';
 
 const { Terminal: HeadlessTerminal } = xtermHeadless;
 
@@ -108,7 +109,7 @@ function finish(l: LiveLogin, status: 'done' | 'failed', error: string | null = 
   if (l.status === 'done' || l.status === 'failed') return;
   l.status = status;
   l.error = error;
-  console.log(`[login] ${l.id} ${status}${error ? ` : ${error}` : ''}\n--- écran du CLI ---\n${redactedTail(l)}\n---`);
+  log.info(`[login] ${l.id} ${status}${error ? ` : ${error}` : ''}\n--- écran du CLI ---\n${redactedTail(l)}\n---`);
   clearTimeout(l.timer);
   try {
     l.proc.kill();

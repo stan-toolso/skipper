@@ -5,6 +5,7 @@ import { decryptSecret } from './crypto.js';
 import { githubService } from './github.js';
 import { settingsRepository } from './repository.js';
 import type { ClaudeSettings } from './types.js';
+import { log } from '../log.js';
 
 /**
  * Reprise des réglages Claude et GitHub de l'application (une version antérieure les gardait pour tout le
@@ -48,7 +49,7 @@ export async function migrateLegacyCredentials(): Promise<string[]> {
         await settings.setOauthToken(decryptSecret(claudeSecrets.oauthToken));
         done.push('jeton Claude');
       } catch (err) {
-        console.error('[settings] reprise du jeton Claude impossible', err);
+        log.error('[settings] reprise du jeton Claude impossible', err);
       }
     }
     if (claudeSecrets?.apiKey) {
@@ -57,7 +58,7 @@ export async function migrateLegacyCredentials(): Promise<string[]> {
         await settings.setApiKeyItem(item.id);
         done.push('clé API Anthropic');
       } catch (err) {
-        console.error('[settings] reprise de la clé API Anthropic impossible', err);
+        log.error('[settings] reprise de la clé API Anthropic impossible', err);
       }
     }
     if (claude?.authMode === 'oauth' || claude?.authMode === 'api_key') await settings.update({ authMode: claude.authMode }).catch(() => undefined);
@@ -67,7 +68,7 @@ export async function migrateLegacyCredentials(): Promise<string[]> {
         await githubService.connectKnown(admin.id, item.id, { login: github.login, avatarUrl: github.avatarUrl ?? null, scopes: github.scopes ?? [], method: 'pat' });
         done.push(`compte GitHub ${github.login}`);
       } catch (err) {
-        console.error('[settings] reprise du compte GitHub impossible', err);
+        log.error('[settings] reprise du compte GitHub impossible', err);
       }
     }
   }

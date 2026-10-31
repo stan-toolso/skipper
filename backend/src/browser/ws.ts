@@ -4,6 +4,7 @@ import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { sessionService } from '../sessions/service.js';
 import { rejectUpgrade, type UpgradeHandler } from '../websockets.js';
 import { liveBrowserService } from './live.js';
+import { log } from '../log.js';
 
 /**
  * WebSockets `/browsers/<session>` : vue en direct du navigateur headless d'une session (lecture seule).
@@ -23,7 +24,7 @@ export function browserUpgradeHandler(): UpgradeHandler {
       await requireProject(createAuthContext(user), session.projectId, 'member');
       wss.handleUpgrade(req, socket, head, (ws) => liveBrowserService.attach(id, ws));
     })().catch((err) => {
-      console.warn(`[browser] connexion refusée sur ${id} : ${(err as Error).message}`);
+      log.warn(`[browser] connexion refusée sur ${id} : ${(err as Error).message}`);
       rejectUpgrade(socket, 403, 'Forbidden');
     });
     return true;

@@ -3,6 +3,7 @@ import { createAuthContext, requireProject } from '../auth/access.js';
 import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { rejectUpgrade, type UpgradeHandler } from '../websockets.js';
 import { terminalService } from './service.js';
+import { log } from '../log.js';
 
 /**
  * WebSockets `/terminals/<id>`. La connexion est authentifiée par le cookie de session ; il faut être
@@ -23,7 +24,7 @@ export function terminalUpgradeHandler(): UpgradeHandler {
       if (terminal.createdById && terminal.createdById !== user.id) return rejectUpgrade(socket, 403, 'Forbidden');
       wss.handleUpgrade(req, socket, head, (ws) => terminalService.attach(id, ws));
     })().catch((err) => {
-      console.warn(`[terminals] connexion refusée sur ${id} : ${(err as Error).message}`);
+      log.warn(`[terminals] connexion refusée sur ${id} : ${(err as Error).message}`);
       rejectUpgrade(socket, 403, 'Forbidden');
     });
     return true;

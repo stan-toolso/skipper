@@ -6,6 +6,7 @@ import { slugify } from '../projects/service.js';
 import { contextRepository, type FolderRecord, type InstructionRecord } from './repository.js';
 import { materializeSkills } from './skills.js';
 import type { Actor, ContextChange, ContextFolder, ContextInstruction, ContextInstructionVersion, ContextTree } from './types.js';
+import { log } from '../log.js';
 
 export const HUMAN: Actor = { type: 'human' };
 
@@ -53,7 +54,7 @@ function refreshSkills(projectId: string): void {
   void projectService
     .get(projectId)
     .then((project) => materializeSkills(project))
-    .catch((err) => console.error('[context] génération des skills', err));
+    .catch((err) => log.error('[context] génération des skills', err));
 }
 
 export type ResolvedPath = { kind: 'folder'; folder: ContextFolder } | { kind: 'instruction'; instruction: ContextInstruction } | { kind: 'root' } | null;
