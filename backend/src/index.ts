@@ -25,6 +25,7 @@ import { runner } from './runners/index.js';
 import { scheduleService } from './schedules/service.js';
 import { sessionService } from './sessions/service.js';
 import { containerMonitor } from './runners/monitor.js';
+import { trackedPullRequestService } from './pullRequests/service.js';
 import { healthService } from './health/service.js';
 import { loginService } from './settings/login.js';
 import { migrateLegacyCredentials } from './settings/legacy.js';
@@ -117,6 +118,7 @@ async function main() {
     sessionService.startHousekeeping();
     healthService.startMonitor();
     containerMonitor.start();
+    trackedPullRequestService.startBackgroundSync();
     sessionService
       .drainQueue()
       .then(() => sessionService.resumeInterruptedAfterRestart())
@@ -138,6 +140,7 @@ async function main() {
     automationScheduler.stop();
     healthService.stopMonitor();
     containerMonitor.stop();
+    trackedPullRequestService.stopBackgroundSync();
     loginService.shutdown();
     const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
     if (interrupted) log.info(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);

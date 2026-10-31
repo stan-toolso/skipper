@@ -1079,8 +1079,10 @@ type PullRequestReview {
   state: String!
 }
 
-"Pull request GitHub du dépôt d'un projet (lue avec le jeton de la connexion GitHub)."
+"Pull request GitHub du dépôt d'un projet, ou d'un autre dépôt (lue avec le jeton de la connexion GitHub)."
 type PullRequest {
+  "Dépôt GitHub « owner/name »."
+  repo: String!
   number: Int!
   title: String!
   body: String!
@@ -1159,8 +1161,9 @@ input MergePullRequestCleanup {
   completeTasks: Boolean = true
 }
 
-"Statut d'une pull request suivie : ouverte, fusionnée, fermée sans fusion (annulée)."
+"Statut d'une pull request suivie : en préparation (pas encore ouverte sur GitHub), ouverte, fusionnée, fermée sans fusion (annulée)."
 enum TrackedPullRequestStatus {
+  PENDING
   OPEN
   MERGED
   CLOSED
@@ -1168,6 +1171,8 @@ enum TrackedPullRequestStatus {
 
 "Étape d'une pull request suivie, dérivée de son statut et de son brouillon."
 enum PullRequestStage {
+  "En préparation : la branche porte des modifications, aucune pull request n'est ouverte."
+  PENDING
   "Ouverte en brouillon."
   DRAFT
   "Ouverte : à relire et fusionner."
@@ -1179,16 +1184,30 @@ enum PullRequestStage {
 }
 
 """
-Pull request suivie : l'objet qui matérialise une PR GitHub dans Skipper, rattaché à un projet et le plus souvent à une
-tâche. Créée par une session d'agent (outils tasks.pr_open / pr_register), par l'interface ou par la synchronisation
-avec GitHub ; son statut et son instantané GitHub sont rafraîchis à la synchronisation.
+Pull request suivie : l'objet qui matérialise une PR dans Skipper, rattaché à un projet et le plus souvent à une tâche.
+Elle existe avant GitHub (« en préparation » : une branche porte des modifications sans PR ouverte) et peut viser un
+autre dépôt que celui du projet. Créée par la synchronisation (travail local des branches, PR GitHub adoptées), par une
+session d'agent (outils tasks.pr_open / pr_register) ou par l'interface ; son statut et son instantané GitHub sont
+rafraîchis à la synchronisation.
 """
 type TrackedPullRequest {
   id: ID!
   project: Project!
   task: Task
-  number: Int!
+  "Dépôt GitHub « owner/name » de la PR (celui du projet le plus souvent) ; vide sans GitHub."
+  repo: String!
+  "La PR est dans un autre dépôt que celui du projet."
+  foreignRepo: Boolean!
+  "Numéro GitHub ; null tant que la PR est en préparation."
+  number: Int
+  "URL GitHub ; vide tant que la PR est en préparation."
   url: String!
+  "Work session (branche) dont la PR suit le travail, quand elle est connue."
+  worksession: Worksession
+  "PR en préparation : commits en avance sur la base, constatés à la dernière synchronisation."
+  localCommits: Int
+  "PR en préparation : fichiers modifiés non commités, constatés à la dernière synchronisation."
+  localChanges: Int
   title: String!
   headBranch: String!
   baseBranch: String!
@@ -1575,6 +1594,8 @@ type DashboardCounts {
   unreadNotifications: Int!
   "Pull requests suivies ouvertes (à fusionner, brouillons compris)."
   openPullRequests: Int!
+  "Pull requests en préparation : branches avec des modifications, sans pull request ouverte."
+  pendingPullRequests: Int!
 }
 
 type DashboardUsageDay {
@@ -1632,7 +1653,7 @@ type Dashboard {
   recentSessions: [Session!]!
   "Tâches ouvertes à surveiller : en retard, urgentes ou hautes."
   attentionTasks: [Task!]!
-  "Pull requests suivies qui attendent une action : ouvertes (à fusionner, brouillons)."
+  "Pull requests suivies qui attendent une action : à fusionner puis à déployer."
   pullRequests: [TrackedPullRequest!]!
 }
 
@@ -2147,12 +2168,13 @@ type Query {
   gitLog(projectId: ID!, worksessionId: ID, limit: Int): [GitCommit!]!
   "Pull requests GitHub du dépôt du projet, les plus récemment mises à jour d'abord."
   githubPullRequests(projectId: ID!, state: PullRequestFilter = OPEN, limit: Int): [PullRequest!]!
-  githubPullRequest(projectId: ID!, number: Int!): PullRequest!
+  "Une PR du dépôt du projet, ou d'un autre dépôt GitHub (`repo` : « owner/name »)."
+  githubPullRequest(projectId: ID!, number: Int!, repo: String): PullRequest!
   "Titre, description et base proposés pour une pull request de la branche courante du workspace."
   githubPullRequestDraft(projectId: ID!, worksessionId: ID): PullRequestDraft!
   """
-  Pull requests suivies : d'un projet (synchronisées avec GitHub au passage, au plus toutes les 20 s) ou de tous les projets
-  de l'utilisateur ; filtres par tâche, statut et étape. Celles qui attendent une action d'abord (ouvertes), puis les fusionnées.
+  Pull requests suivies : d'un projet (synchronisées avec GitHub au passage, au plus toutes les 30 s) ou de tous les projets
+  de l'utilisateur ; filtres par tâche, statut et étape. Celles qui attendent une action d'abord (à fusionner, à déployer).
   """
   pullRequests(projectId: ID, taskId: ID, status: [TrackedPullRequestStatus!], stage: [PullRequestStage!], limit: Int): [TrackedPullRequest!]!
   pullRequest(id: ID!): TrackedPullRequest
@@ -2403,7 +2425,7 @@ type Mutation {
   "Pousse la branche courante du workspace puis ouvre une pull request GitHub (base par défaut : branche du projet, sinon celle du dépôt)."
   createPullRequest(projectId: ID!, worksessionId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
   "Fusionne une pull request puis nettoie (branche distante, work session, branche locale, tâches) et met à jour le dossier principal."
-  mergePullRequest(projectId: ID!, number: Int!, method: PullRequestMergeMethod = MERGE, cleanup: MergePullRequestCleanup): MergePullRequestResult!
+  mergePullRequest(projectId: ID!, number: Int!, method: PullRequestMergeMethod = MERGE, cleanup: MergePullRequestCleanup, repo: String): MergePullRequestResult!
   "Suit une pull request GitHub déjà ouverte (URL ou numéro), reliée à une tâche (sinon à celle de sa branche)."
   registerPullRequest(projectId: ID!, url: String, number: Int, taskId: ID, note: String): TrackedPullRequest!
   "Statut, note, tâche reliée, déploiement d'une pull request suivie."

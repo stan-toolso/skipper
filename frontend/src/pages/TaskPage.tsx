@@ -5,7 +5,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import PageLoading from '../components/PageLoading';
 import { PullRequestChip } from '../components/PullRequests';
 import { RegisterPullRequestModal, TrackedPullRequestActions, TrackedPullRequestIndicators, PullRequestStageBadge } from '../components/TrackedPullRequests';
-import { PULL_REQUESTS, type TrackedPullRequest } from '../graphql/pullRequests';
+import { prRef, PULL_REQUESTS, type TrackedPullRequest } from '../graphql/pullRequests';
 import StatusBadge from '../components/StatusBadge';
 import TaskActions from '../components/TaskActions';
 import { isOverdue, Linkified, TaskPriorityBadge, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
@@ -278,9 +278,16 @@ export default function TaskPage() {
                     {trackedPrs.map((pr) => (
                       <div key={pr.id} className="tracked-pr-item border rounded p-2">
                         <div className="d-flex align-items-center gap-2 flex-wrap">
-                          <a href={pr.url} target="_blank" rel="noreferrer" className="text-reset text-decoration-none fw-semibold" title="Ouvrir sur GitHub">
-                            <span className="text-secondary">#{pr.number}</span> {pr.title}
-                          </a>
+                          {pr.number != null ? (
+                            <a href={pr.url} target="_blank" rel="noreferrer" className="text-reset text-decoration-none fw-semibold" title="Ouvrir sur GitHub">
+                              <span className="text-secondary">{prRef(pr)}</span> {pr.title}
+                            </a>
+                          ) : (
+                            <span className="fw-semibold" title="Pas encore ouverte sur GitHub">
+                              <i className="bi bi-code-slash text-secondary me-1" />
+                              {pr.title}
+                            </span>
+                          )}
                           <PullRequestStageBadge stage={pr.stage} />
                           <TrackedPullRequestIndicators pr={pr} />
                         </div>
@@ -293,7 +300,7 @@ export default function TaskPage() {
                             </>
                           )}
                           {pr.createdBy && ` · par ${pr.createdBy.name}`}
-                          {` · ouverte ${timeAgo(pr.openedAt)}`}
+                          {pr.status === 'PENDING' ? ` · en préparation depuis ${timeAgo(pr.openedAt)}` : ` · ouverte ${timeAgo(pr.openedAt)}`}
                           {pr.mergedAt && ` · fusionnée ${timeAgo(pr.mergedAt)}`}
                         </div>
                         {pr.note && (

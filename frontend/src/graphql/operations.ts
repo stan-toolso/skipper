@@ -1744,6 +1744,8 @@ export type PullRequestMergeMethod = 'MERGE' | 'SQUASH' | 'REBASE';
 
 /** Champs d'une PR affichés sur une carte de tâche. */
 export interface PullRequestSummary {
+  /** Dépôt GitHub « owner/name ». */
+  repo?: string;
   number: number;
   title: string;
   url: string;
@@ -1787,6 +1789,7 @@ export interface PullRequestDraft {
 
 export const PULL_REQUEST_FIELDS = gql`
   fragment PullRequestFields on PullRequest {
+    repo
     number
     title
     body
@@ -1846,8 +1849,8 @@ export const GITHUB_PULL_REQUESTS = gql`
 
 export const GITHUB_PULL_REQUEST = gql`
   ${PULL_REQUEST_FIELDS}
-  query GithubPullRequest($projectId: ID!, $number: Int!) {
-    githubPullRequest(projectId: $projectId, number: $number) {
+  query GithubPullRequest($projectId: ID!, $number: Int!, $repo: String) {
+    githubPullRequest(projectId: $projectId, number: $number, repo: $repo) {
       ...PullRequestFields
     }
   }
@@ -1884,8 +1887,8 @@ export const CREATE_PULL_REQUEST = gql`
 
 export const MERGE_PULL_REQUEST = gql`
   ${PULL_REQUEST_FIELDS}
-  mutation MergePullRequest($projectId: ID!, $number: Int!, $method: PullRequestMergeMethod, $cleanup: MergePullRequestCleanup) {
-    mergePullRequest(projectId: $projectId, number: $number, method: $method, cleanup: $cleanup) {
+  mutation MergePullRequest($projectId: ID!, $number: Int!, $method: PullRequestMergeMethod, $cleanup: MergePullRequestCleanup, $repo: String) {
+    mergePullRequest(projectId: $projectId, number: $number, method: $method, cleanup: $cleanup, repo: $repo) {
       sha
       deletedWorksessionIds
       completedTaskIds
@@ -1911,6 +1914,7 @@ export interface DashboardCounts {
   doneTasks7d: number;
   unreadNotifications: number;
   openPullRequests: number;
+  pendingPullRequests: number;
 }
 
 export interface DashboardUsage {
@@ -1970,6 +1974,7 @@ export const DASHBOARD = gql`
         doneTasks7d
         unreadNotifications
         openPullRequests
+        pendingPullRequests
       }
       usage {
         monthStart

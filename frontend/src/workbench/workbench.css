@@ -721,6 +721,7 @@
 .pr-stage { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; border: 1px solid transparent; white-space: nowrap; vertical-align: middle; }
 .pr-stage-to_merge { color: var(--cc-green); border-color: var(--cc-green); }
 .pr-stage-draft { color: var(--cc-dim); border-color: var(--cc-border); }
+.pr-stage-pending { color: var(--cc-dim); border-color: var(--cc-border); border-style: dashed; }
 .pr-stage-merged { color: var(--cc-purple); border-color: var(--cc-purple); }
 .pr-stage-cancelled { color: var(--cc-dimmer); border-color: var(--cc-border); text-decoration: line-through; }
 .pr-table .pr-row { cursor: pointer; }
@@ -873,7 +874,7 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .wt-pr-draft { color: var(--cc-dim); }
 .wt-pr-merged { color: var(--cc-purple); }
 .wt-pr-closed { color: var(--cc-red); }
-.wb-ws-pr { text-decoration: none; border-color: currentColor; }
+.wb-ws-pr { text-decoration: none; border-color: currentColor; background: none; font-family: inherit; line-height: inherit; cursor: pointer; }
 .wb-ws-pr:hover { text-decoration: none; filter: brightness(1.1); }
 .wt-missing { color: var(--cc-yellow); }
 
