@@ -1,0 +1,48 @@
+/* Page « Dépôt » d'un projet (RepoPage.tsx). Couleurs par variables --cc-* (theme.css). */
+.repo-copy { display: flex; align-items: center; gap: 0.5rem; background: var(--cc-bg); border: 1px solid var(--cc-border); border-radius: 6px; padding: 0.3rem 0.4rem 0.3rem 0.6rem; }
+.repo-copy code { flex: 1; min-width: 0; color: var(--cc-fg); }
+
+.repo-toolbar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.repo-ref-select { width: auto; max-width: 260px; }
+.repo-toolbar .nav-link { padding: 0.25rem 0.4rem; font-size: 0.9rem; }
+
+.repo-last, .repo-commit { display: flex; align-items: baseline; gap: 0.75rem; width: 100%; border: 0; background: none; text-align: left; color: var(--cc-fg); padding: 0.45rem 0.9rem; }
+.repo-last { border-bottom: 1px solid var(--cc-border); font-size: 0.85rem; }
+.repo-last:hover, .repo-commit:hover { background: var(--cc-bg-hover); }
+.repo-commit-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-commit-meta { color: var(--cc-dim); font-size: 0.8rem; white-space: nowrap; margin-left: auto; }
+.repo-commit-meta code { color: var(--cc-dim); }
+
+.repo-crumbs { padding: 0.45rem 0.9rem; border-bottom: 1px solid var(--cc-border); color: var(--cc-dim); }
+
+.repo-tree { display: flex; flex-direction: column; }
+.repo-entry { display: flex; align-items: center; gap: 0.5rem; border: 0; background: none; color: var(--cc-fg); text-align: left; padding: 0.3rem 0.9rem; font-size: 0.88rem; }
+.repo-entry:hover:not(:disabled) { background: var(--cc-bg-hover); }
+.repo-entry i { color: var(--cc-dim); width: 1.2em; text-align: center; }
+.repo-entry.dir i { color: var(--cc-yellow); }
+.repo-entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-entry-size { color: var(--cc-dimmer); font-size: 0.78rem; }
+
+.repo-file-head { padding: 0.35rem 0.9rem; border-bottom: 1px solid var(--cc-border); }
+.repo-code { margin: 0; font-size: 12px; line-height: 1.5; background: var(--cc-bg); color: var(--cc-fg); overflow-x: auto; padding: 6px 0; max-height: 75vh; }
+.repo-code-line { display: flex; white-space: pre; }
+.repo-ln { flex: 0 0 4.5em; text-align: right; padding-right: 1em; color: var(--cc-dimmer); user-select: none; }
+
+.repo-history { padding-bottom: 0.25rem; }
+.repo-day { padding: 0.5rem 0.9rem 0.2rem; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--cc-dim); }
+
+.repo-commit-head { padding: 0.75rem 1rem; border-bottom: 1px solid var(--cc-border); }
+.repo-commit-body { white-space: pre-wrap; margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--cc-fg); }
+.repo-status { display: inline-block; width: 1.4em; text-align: center; font-weight: 600; color: var(--cc-dim); }
+.repo-status-A { color: var(--cc-green); }
+.repo-status-D { color: var(--cc-red); }
+.repo-status-M { color: var(--cc-yellow); }
+.repo-status-R, .repo-status-C { color: var(--cc-blue); }
+.repo-add { color: var(--cc-diff-add-fg); }
+.repo-del { color: var(--cc-diff-del-fg); }
+
+@media (max-width: 640px) {
+  .repo-commit { flex-direction: column; gap: 0.1rem; }
+  .repo-commit-meta { margin-left: 0; }
+  .repo-last { flex-direction: column; gap: 0.1rem; }
+}

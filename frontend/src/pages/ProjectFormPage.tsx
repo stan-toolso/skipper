@@ -73,6 +73,8 @@ export default function ProjectFormPage() {
   const [taskInstructions, setTaskInstructions] = useState('');
   const [gitUrl, setGitUrl] = useState('');
   const [gitBranch, setGitBranch] = useState('');
+  /** Aucun dépôt, dépôt hébergé par Skipper, ou dépôt distant (URL). */
+  const [repoMode, setRepoMode] = useState<'none' | 'hosted' | 'remote'>('none');
   const [runnerImage, setRunnerImage] = useState('');
   const [runnerMemory, setRunnerMemory] = useState('');
   const [runnerCpus, setRunnerCpus] = useState('');
@@ -91,6 +93,7 @@ export default function ProjectFormPage() {
     setTaskInstructions(p.taskInstructions ?? '');
     setGitUrl(p.gitUrl ?? '');
     setGitBranch(p.gitBranch ?? '');
+    setRepoMode(p.gitHosted ? 'hosted' : p.gitUrl ? 'remote' : 'none');
     setRunnerImage(p.runnerConfig?.image ?? '');
     setRunnerMemory(p.runnerConfig?.memory ?? '');
     setRunnerCpus(p.runnerConfig?.cpus ?? '');
@@ -105,7 +108,17 @@ export default function ProjectFormPage() {
     if (runnerBrowser) runnerConfig.browser = true;
     const max = Math.round(Number(maxSessions));
     if (max > 0) runnerConfig.maxSessions = max;
-    const common = { name, description: description || null, systemPrompt, taskInstructions, gitUrl: gitUrl || null, gitBranch: gitBranch || null, runnerConfig, defaultPermissionMode: permissionMode };
+    const common = {
+      name,
+      description: description || null,
+      systemPrompt,
+      taskInstructions,
+      gitUrl: repoMode === 'remote' && gitUrl.trim() ? gitUrl.trim() : null,
+      gitHosted: repoMode === 'hosted',
+      gitBranch: gitBranch || null,
+      runnerConfig,
+      defaultPermissionMode: permissionMode,
+    };
     if (isEdit) updateProject({ variables: { id, input: common } });
     else createProject({ variables: { input: { ...common, slug: slug || null } } });
   };
@@ -229,8 +242,29 @@ export default function ProjectFormPage() {
             </div>
 
             <fieldset className="mb-3">
-              <legend className="h6">Dépôt git (facultatif)</legend>
-              {!isEdit && (
+              <legend className="h6">Dépôt git</legend>
+              {(() => {
+                const wasHosted = Boolean(data?.project?.gitHosted);
+                const hadRemote = Boolean(data?.project?.gitUrl) && !wasHosted;
+                return (
+                  <div className="mb-2">
+                    <Form.Check type="radio" id="repo-none" name="repoMode" label="Aucun dépôt : un simple dossier de travail" checked={repoMode === 'none'} disabled={wasHosted} onChange={() => setRepoMode('none')} />
+                    <Form.Check
+                      type="radio"
+                      id="repo-hosted"
+                      name="repoMode"
+                      label="Hébergé par Skipper : un dépôt git servi par ce serveur, sauvegardé dans sa base"
+                      checked={repoMode === 'hosted'}
+                      disabled={hadRemote}
+                      onChange={() => setRepoMode('hosted')}
+                      title={hadRemote ? 'Un projet relié à un dépôt distant ne peut pas passer en dépôt hébergé' : undefined}
+                    />
+                    <Form.Check type="radio" id="repo-remote" name="repoMode" label="Dépôt distant (GitHub ou autre), par son adresse" checked={repoMode === 'remote'} disabled={wasHosted} onChange={() => setRepoMode('remote')} />
+                    {wasHosted && <Form.Text>Le dépôt de ce projet est hébergé par Skipper ; l'hébergement ne se désactive pas.</Form.Text>}
+                  </div>
+                );
+              })()}
+              {repoMode === 'remote' && !isEdit && (
                 <GithubRepoPicker
                   onPick={(r) => {
                     setGitUrl(r.cloneUrl);
@@ -239,18 +273,28 @@ export default function ProjectFormPage() {
                   }}
                 />
               )}
-              <Form.Group className="mb-2">
-                <Form.Label className="small mb-1">URL</Form.Label>
-                <Form.Control value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git ou git@github.com:org/repo.git" />
-              </Form.Group>
-              <Form.Group className="mb-2">
-                <Form.Label className="small mb-1">Branche</Form.Label>
-                <Form.Control value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder="défaut du dépôt si vide" />
-              </Form.Group>
+              {repoMode === 'remote' && (
+                <Form.Group className="mb-2">
+                  <Form.Label className="small mb-1">URL</Form.Label>
+                  <Form.Control value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/org/repo.git ou git@github.com:org/repo.git" />
+                </Form.Group>
+              )}
+              {repoMode !== 'none' && (
+                <Form.Group className="mb-2">
+                  <Form.Label className="small mb-1">{repoMode === 'hosted' ? 'Branche principale' : 'Branche'}</Form.Label>
+                  <Form.Control value={gitBranch} onChange={(e) => setGitBranch(e.target.value)} placeholder={repoMode === 'hosted' ? 'main si vide' : 'défaut du dépôt si vide'} />
+                </Form.Group>
+              )}
               <Form.Text>
-                {isEdit
-                  ? "Modifier l'adresse n'affecte pas un dossier de travail déjà créé."
-                  : 'Si vous indiquez un dépôt, son code est récupéré dans le dossier de travail à la création du projet.'}
+                {repoMode === 'hosted'
+                  ? isEdit && !data?.project?.gitHosted
+                    ? "À l'enregistrement, le dossier du projet (et ceux de ses sessions) sont importés dans le dépôt hébergé : leur contenu devient le premier commit de chaque branche. Ajoutez d'abord un .gitignore si certains fichiers (node_modules…) ne doivent pas y entrer."
+                    : 'Le dépôt est créé avec un premier commit ; les sessions y poussent leurs branches, et vous pouvez le cloner avec un jeton d’accès (page Dépôt du projet).'
+                  : repoMode === 'remote'
+                    ? isEdit
+                      ? "Modifier l'adresse n'affecte pas un dossier de travail déjà créé."
+                      : 'Le code du dépôt est récupéré dans le dossier de travail à la création du projet.'
+                    : 'Sans dépôt, les sessions travaillent dans de simples dossiers, sans branche ni historique. Vous pourrez héberger un dépôt plus tard.'}
               </Form.Text>
             </fieldset>
 

@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { config } from '../config.js';
+import { isHostedGitUrl } from '../gitServer/paths.js';
+import { gitTokenService } from '../gitServer/tokens.js';
 import { githubService } from '../settings/github.js';
 
 const execFileAsync = promisify(execFile);
@@ -8,9 +11,12 @@ const execFileAsync = promisify(execFile);
 export const AGENT_GIT_ENV_KEYS = [
   'GITHUB_TOKEN',
   'GH_TOKEN',
+  'SKIPPER_GIT_TOKEN',
   'GIT_CONFIG_COUNT',
   'GIT_CONFIG_KEY_0',
   'GIT_CONFIG_VALUE_0',
+  'GIT_CONFIG_KEY_1',
+  'GIT_CONFIG_VALUE_1',
   'GIT_AUTHOR_NAME',
   'GIT_AUTHOR_EMAIL',
   'GIT_COMMITTER_NAME',
@@ -37,16 +43,33 @@ async function hostIdentity(): Promise<{ name: string | null; email: string | nu
  * dépôt du projet (servi par un credential helper via GIT_CONFIG_*, jamais écrit sur disque), et l'identité
  * des commits (celle du compte GitHub, sinon celle du serveur). Sans propriétaire ou sans compte : pas de
  * jeton (les dépôts publics restent accessibles). Un usage par une session est journalisé sur le jeton.
+ * Dépôt hébergé par Skipper : le jeton d'agent du propriétaire (gitServer/tokens.ts), servi de la même façon
+ * pour l'origine de l'API, afin que fetch et push depuis le conteneur passent par le serveur git de Skipper.
  */
 export async function agentGitEnv(ownerId: string | null | undefined, repoUrl?: string | null, actor: { sessionId?: string | null; projectId?: string | null } = {}): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
-  const [auth, identity] = await Promise.all([githubService.gitAuth(ownerId, repoUrl, actor).catch(() => null), hostIdentity()]);
+  const hosted = isHostedGitUrl(repoUrl);
+  const [auth, identity, hostedToken] = await Promise.all([
+    hosted ? null : githubService.gitAuth(ownerId, repoUrl, actor).catch(() => null),
+    hostIdentity(),
+    hosted && ownerId ? gitTokenService.agentToken(ownerId).catch(() => null) : null,
+  ]);
+  const configs: [string, string][] = [];
   if (auth) {
     env.GITHUB_TOKEN = auth.token;
     env.GH_TOKEN = auth.token;
-    env.GIT_CONFIG_COUNT = '1';
-    env.GIT_CONFIG_KEY_0 = 'credential.https://github.com.helper';
-    env.GIT_CONFIG_VALUE_0 = '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f';
+    configs.push(['credential.https://github.com.helper', '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f']);
+  }
+  if (hostedToken) {
+    env.SKIPPER_GIT_TOKEN = hostedToken;
+    configs.push([`credential.${new URL(config.apiUrl).origin}.helper`, '!f() { echo username=skipper; echo "password=$SKIPPER_GIT_TOKEN"; }; f']);
+  }
+  if (configs.length) {
+    env.GIT_CONFIG_COUNT = String(configs.length);
+    configs.forEach(([key, value], i) => {
+      env[`GIT_CONFIG_KEY_${i}`] = key;
+      env[`GIT_CONFIG_VALUE_${i}`] = value;
+    });
   }
   const name = auth?.name ?? identity.name ?? null;
   const email = auth?.email ?? identity.email ?? null;

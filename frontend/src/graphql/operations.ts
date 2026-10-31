@@ -122,6 +122,8 @@ export interface Project {
   taskInstructions: string;
   gitUrl: string | null;
   gitBranch: string | null;
+  /** Dépôt hébergé par Skipper : gitUrl est alors son URL de clone. */
+  gitHosted: boolean;
   runnerConfig: { image?: string; memory?: string; cpus?: string; browser?: boolean; maxSessions?: number };
   /** Mode d'autorisation des nouvelles sessions : default, acceptEdits, bypassPermissions ou plan. */
   defaultPermissionMode: string;
@@ -464,6 +466,7 @@ export const PROJECT_FIELDS = gql`
     taskInstructions
     gitUrl
     gitBranch
+    gitHosted
     runnerConfig
     defaultPermissionMode
     runnerStatus {

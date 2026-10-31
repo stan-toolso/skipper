@@ -134,6 +134,10 @@ type Project {
   myRole: ProjectRole!
   "Autorisations d'outils mémorisées pour le projet (« ne plus demander dans ce projet »)."
   permissionRules: [PermissionRule!]!
+  "Dépôt git hébergé par Skipper (dépôt nu sur le serveur, servi sous /api/git/<slug>.git, sauvegardé en base) ; gitUrl est alors son URL de clone."
+  gitHosted: Boolean!
+  "État du dépôt hébergé ; null pour un projet non hébergé."
+  hostedGit: HostedGit
 }
 
 "Règle d'autorisation d'outil mémorisée pour un projet, au format des permissions Claude Code (Read, Bash(git status:*)...)."
@@ -1042,6 +1046,122 @@ type ContainerProcess {
 type WorkspaceGit {
   branch: String!
   commit: String!
+}
+
+"Dépôt git hébergé par Skipper : clone, état et sauvegardes en base."
+type HostedGit {
+  "URL de clone ; mot de passe HTTP = jeton d'accès git de la personne (myGitTokens) ou clé d'API du projet."
+  url: String!
+  "Le dépôt nu existe sur le serveur (sinon il est restauré ou créé à la première utilisation)."
+  exists: Boolean!
+  defaultBranch: String!
+  "Taille des objets sur disque (octets), null si le dépôt n'existe pas."
+  diskSize: Float
+  lastBackup: GitBackup
+  "Sauvegardes conservées, la plus récente d'abord."
+  backups: [GitBackup!]!
+}
+
+"Sauvegarde d'un dépôt hébergé : un bundle git complet, en base."
+type GitBackup {
+  id: ID!
+  takenAt: DateTime!
+  "Taille du bundle (octets)."
+  size: Float!
+  "Branches et tags contenus."
+  refCount: Int!
+  "Branche de HEAD au moment de la prise."
+  head: String!
+  "Téléchargement du bundle (cookie de session) : `git clone <fichier.bundle>` le relit."
+  downloadUrl: String!
+}
+
+enum RepoRefKind {
+  BRANCH
+  TAG
+}
+
+"Branche ou tag du dépôt d'un projet (page Dépôt)."
+type RepoRef {
+  name: String!
+  kind: RepoRefKind!
+  hash: String!
+  shortHash: String!
+  subject: String!
+  author: String!
+  date: DateTime!
+  "Branche principale du projet."
+  isDefault: Boolean!
+}
+
+type RepoCommit {
+  hash: String!
+  shortHash: String!
+  subject: String!
+  body: String!
+  author: String!
+  email: String!
+  date: DateTime!
+  parents: [String!]!
+}
+
+"Fichier touché par un commit : statut A, M, D, R, C ou T ; lignes null pour un binaire."
+type RepoCommitFile {
+  path: String!
+  origPath: String
+  status: String!
+  additions: Int
+  deletions: Int
+}
+
+type RepoCommitDetail {
+  commit: RepoCommit!
+  files: [RepoCommitFile!]!
+  "Diff complet (tronqué au-delà de 400 Ko)."
+  diff: String!
+  truncated: Boolean!
+}
+
+enum RepoEntryKind {
+  DIR
+  FILE
+  SYMLINK
+  SUBMODULE
+}
+
+"Entrée d'un dossier à une révision."
+type RepoEntry {
+  name: String!
+  path: String!
+  kind: RepoEntryKind!
+  "Taille (octets) d'un fichier, null pour un dossier."
+  size: Float
+}
+
+"Fichier à une révision (2 Mo au plus ; contenu vide pour un binaire)."
+type RepoFile {
+  path: String!
+  content: String!
+  size: Float!
+  binary: Boolean!
+  truncated: Boolean!
+}
+
+"Jeton d'accès git personnel : mot de passe HTTP pour cloner et pousser les dépôts hébergés par Skipper, avec les droits de la personne sur chaque projet. Le secret n'est montré qu'à la création."
+type GitAccessToken {
+  id: ID!
+  label: String!
+  "Début du secret, pour le reconnaître."
+  prefix: String!
+  createdAt: DateTime!
+  lastUsedAt: DateTime
+  expiresAt: DateTime
+}
+
+type CreatedGitAccessToken {
+  token: GitAccessToken!
+  "Secret complet, à copier maintenant."
+  secret: String!
 }
 
 enum PullRequestState {
@@ -2166,6 +2286,16 @@ type Query {
   gitCommitDiff(projectId: ID!, worksessionId: ID, hash: String!): GitDiff!
   gitBranches(projectId: ID!, worksessionId: ID): [GitBranch!]!
   gitLog(projectId: ID!, worksessionId: ID, limit: Int): [GitCommit!]!
+  "Branches (la principale d'abord) et tags du dépôt du projet : le dépôt nu d'un projet hébergé, sinon origin/* du checkout principal, rafraîchi par un fetch au plus toutes les minutes (refresh : tout de suite)."
+  repoRefs(projectId: ID!, refresh: Boolean = false): [RepoRef!]!
+  "Historique d'une branche, d'un tag ou d'un commit (ref), du plus récent au plus ancien ; path restreint à un fichier ou un dossier."
+  repoLog(projectId: ID!, ref: String!, limit: Int = 50, skip: Int = 0, path: String): [RepoCommit!]!
+  repoCommit(projectId: ID!, hash: String!): RepoCommitDetail!
+  "Entrées d'un dossier (path vide : racine) à une révision."
+  repoTree(projectId: ID!, ref: String!, path: String): [RepoEntry!]!
+  repoFile(projectId: ID!, ref: String!, path: String!): RepoFile!
+  "Jetons d'accès git personnels de la personne connectée."
+  myGitTokens: [GitAccessToken!]!
   "Pull requests GitHub du dépôt du projet, les plus récemment mises à jour d'abord."
   githubPullRequests(projectId: ID!, state: PullRequestFilter = OPEN, limit: Int): [PullRequest!]!
   "Une PR du dépôt du projet, ou d'un autre dépôt GitHub (`repo` : « owner/name »)."
@@ -2215,6 +2345,8 @@ input CreateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
+  "Héberger le dépôt dans Skipper (exclusif de gitUrl). À la modification : un projet sans dépôt devient hébergé (dossier existant importé) ; l'hébergement ne se désactive pas."
+  gitHosted: Boolean
   runnerConfig: JSON
   defaultPermissionMode: String
   taskInstructions: String
@@ -2226,6 +2358,8 @@ input UpdateProjectInput {
   systemPrompt: String
   gitUrl: String
   gitBranch: String
+  "Héberger le dépôt dans Skipper (exclusif de gitUrl). À la modification : un projet sans dépôt devient hébergé (dossier existant importé) ; l'hébergement ne se désactive pas."
+  gitHosted: Boolean
   runnerConfig: JSON
   defaultPermissionMode: String
   taskInstructions: String
@@ -2422,6 +2556,13 @@ type Mutation {
   gitPush(projectId: ID!, worksessionId: ID): GitStatus!
   "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
   gitCheckout(projectId: ID!, worksessionId: ID, branch: String!, create: Boolean = false): GitStatus!
+  "Crée un jeton d'accès git personnel (expiresInDays absent : sans expiration) ; le secret n'est renvoyé qu'ici."
+  createGitToken(label: String!, expiresInDays: Int): CreatedGitAccessToken!
+  revokeGitToken(id: ID!): Boolean!
+  "Renouvelle le jeton que Skipper donne à vos sessions et terminaux pour les dépôts hébergés (les sessions en cours gardent l'ancien jusqu'à leur prochain lancement)."
+  rotateAgentGitToken: Boolean!
+  "Sauvegarde le dépôt hébergé en base maintenant (membres)."
+  backupHostedGit(projectId: ID!): HostedGit!
   "Pousse la branche courante du workspace puis ouvre une pull request GitHub (base par défaut : branche du projet, sinon celle du dépôt)."
   createPullRequest(projectId: ID!, worksessionId: ID, title: String!, body: String, base: String, draft: Boolean = false): PullRequest!
   "Fusionne une pull request puis nettoie (branche distante, work session, branche locale, tâches) et met à jour le dossier principal."

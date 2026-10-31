@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
 import { githubService } from '../settings/github.js';
+import { bareRepoPath, hostedGitUrl } from '../gitServer/paths.js';
 import type { Project } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -23,8 +24,13 @@ export async function workspaceExists(project: Pick<Project, 'slug'>): Promise<b
   }
 }
 
-/** Arguments d'authentification git d'une personne pour le dépôt d'un projet (jeton de son compte GitHub qui sert le dépôt), vides sans compte. */
-export async function gitAuthFor(project: Pick<Project, 'gitUrl'>, actorId: string | null | undefined): Promise<string[]> {
+/**
+ * Arguments d'authentification git d'une personne pour le dépôt d'un projet (jeton de son compte GitHub qui sert le
+ * dépôt), vides sans compte. Dépôt hébergé par Skipper : sur le serveur, l'URL de clone est réécrite vers le chemin du
+ * dépôt nu (`url.<chemin>.insteadOf`) — ni HTTP ni jeton pour les commandes de Skipper lui-même.
+ */
+export async function gitAuthFor(project: Pick<Project, 'gitUrl' | 'gitHosted' | 'slug'>, actorId: string | null | undefined): Promise<string[]> {
+  if (project.gitHosted) return ['-c', `url.${bareRepoPath(project.slug)}.insteadOf=${hostedGitUrl(project.slug)}`];
   if (!actorId || !project.gitUrl) return [];
   return githubService.gitConfigArgs(actorId, project.gitUrl).catch(() => []);
 }
@@ -67,12 +73,16 @@ async function isEmptyDir(dir: string): Promise<boolean> {
  */
 export async function ensureWorkspace(project: Project, actorId?: string | null): Promise<string> {
   const dir = workspacePath(project);
+  // Dépôt hébergé : le dépôt nu doit exister (restauré ou créé au besoin) avant tout clone.
+  if (project.gitHosted) await (await import('../gitServer/service.js')).gitServer.ensure(project);
   if (await workspaceExists(project)) {
     if (project.gitUrl && (await isEmptyDir(dir))) {
       const args = ['clone'];
       if (project.gitBranch) args.push('--branch', project.gitBranch);
       args.push('--', project.gitUrl, dir);
       await git(args, undefined, await gitAuthFor(project, actorId));
+    } else if (project.gitHosted) {
+      await fixHostedRemote(project, dir);
     }
     return dir;
   }
@@ -86,6 +96,13 @@ export async function ensureWorkspace(project: Project, actorId?: string | null)
     await mkdir(dir, { recursive: true });
   }
   return dir;
+}
+
+/** L'URL de clone d'un dépôt hébergé suit l'adresse de l'API : si elle a changé, origin du checkout principal (et de ses worktrees) est corrigé. */
+async function fixHostedRemote(project: Project, dir: string): Promise<void> {
+  if (!(await isGitRepository(dir))) return;
+  const url = await git(['remote', 'get-url', 'origin'], dir).catch(() => null);
+  if (url !== null && url !== project.gitUrl) await git(['remote', 'set-url', 'origin', project.gitUrl!], dir).catch(() => undefined);
 }
 
 /** Informations git du workspace (branche et dernier commit), ou null si ce n'est pas un dépôt. */

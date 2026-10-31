@@ -701,7 +701,25 @@ export default function ProjectDetailPage() {
                   )}
                 </dd>
                 <dt className="col-4">Dépôt git</dt>
-                <dd className="col-8 text-break">{project.gitUrl ?? 'aucun'}</dd>
+                <dd className="col-8 text-break">
+                  {project.gitHosted ? (
+                    <>
+                      <Badge bg="info" className="me-1">
+                        hébergé par Skipper
+                      </Badge>
+                      <Link to={`/projects/${project.id}/repo`}>branches, commits, sauvegardes</Link>
+                      <div className="text-secondary font-monospace small">{project.gitUrl}</div>
+                    </>
+                  ) : project.gitUrl ? (
+                    <>
+                      {project.gitUrl} <Link to={`/projects/${project.id}/repo`}>· consulter</Link>
+                    </>
+                  ) : (
+                    <>
+                      aucun{isAdmin && <Link to={`/projects/${project.id}/repo`}> · héberger un dépôt</Link>}
+                    </>
+                  )}
+                </dd>
                 <dt className="col-4">Branche</dt>
                 <dd className="col-8">
                   {project.git ? (
