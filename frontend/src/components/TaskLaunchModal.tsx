@@ -1,7 +1,6 @@
 import { useMutation, useQuery } from '@apollo/client';
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Button, Collapse, Form, Modal } from 'react-bootstrap';
-import { useNavigate } from 'react-router-dom';
 import { PROVIDERS, START_TASK_SESSION, type ConfigField, type Provider, type Task } from '../graphql/operations';
 import { TASK_LAUNCH_INFO, TASK_PROMPT } from '../graphql/tasks';
 import { bypassConnectionsWarning } from '../lib/humanize';
@@ -15,13 +14,43 @@ export interface LaunchTarget {
   approvalConnections?: string[];
 }
 
+interface TaskLauncherState {
+  launchTask: (task: Task, target: LaunchTarget | undefined) => void;
+}
+
+const TaskLauncherContext = createContext<TaskLauncherState | null>(null);
+
+export function useTaskLauncher(): TaskLauncherState {
+  const ctx = useContext(TaskLauncherContext);
+  if (!ctx) throw new Error('useTaskLauncher doit être utilisé dans un TaskLauncherProvider');
+  return ctx;
+}
+
+/**
+ * Hôte de la modale « Confier à un agent », au niveau du workbench et non dans la carte ou la ligne de la tâche :
+ * le serveur passe la tâche en cours dès le début du lancement, si bien qu'au sondage suivant la carte change de
+ * colonne (kanban) ou sort du filtre (liste). Rendue dans la carte, la modale disparaissait alors en plein
+ * « Lancement… », sans plus pouvoir afficher d'erreur.
+ */
+export function TaskLauncherProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<{ task: Task; target: LaunchTarget | undefined; key: number } | null>(null);
+  const launchTask = useCallback((task: Task, target: LaunchTarget | undefined) => setState((s) => ({ task, target, key: (s?.key ?? 0) + 1 })), []);
+  const value = useMemo(() => ({ launchTask }), [launchTask]);
+  return (
+    <TaskLauncherContext.Provider value={value}>
+      {children}
+      {state && <TaskLaunchModal key={state.key} task={state.task} target={state.target} onClose={() => setState(null)} />}
+    </TaskLauncherContext.Provider>
+  );
+}
+
 /**
  * « Confier à un agent » : consigne relue, type d'agent et ses options. L'agent travaille dans le dossier de la
  * tâche (sa branche task/… pour un projet git), créé à la première session et repris ensuite ; la session
- * précédente de la tâche, s'il y en a une d'active, est archivée.
+ * précédente de la tâche, s'il y en a une d'active, est archivée. Une fois la session lancée, on reste sur la page
+ * (liste, kanban, tâche) : la session apparaît sur la tâche et dans la sidebar, sans y être emmené.
  */
 export default function TaskLaunchModal({ task, target, onClose }: { task: Task; target: LaunchTarget | undefined; onClose: () => void }) {
-  const navigate = useNavigate();
   const { data: promptData, loading: promptLoading } = useQuery<{ taskPrompt: string }>(TASK_PROMPT, { variables: { id: task.id }, fetchPolicy: 'network-only' });
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const providers = providersData?.providers ?? [];
@@ -54,10 +83,9 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
 
   const [start, { loading, error }] = useMutation<{ startTaskSession: { id: string } }>(START_TASK_SESSION, {
     refetchQueries: ['Tasks', 'TaskPage', 'TaskDetail', 'Sidebar'],
-    onCompleted: (res) => {
+    onCompleted: () => {
       if (values.permissionMode) rememberPermissionMode(task.project.id, values.permissionMode);
       onClose();
-      navigate(`/sessions/${res.startTaskSession.id}`);
     },
   });
   const fields = useMemo(() => provider?.configFields ?? [], [provider]);
@@ -80,9 +108,9 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
   };
 
   return (
-    <Modal show onHide={onClose} size="lg" centered backdrop={loading ? 'static' : true}>
+    <Modal show onHide={() => !loading && onClose()} size="lg" centered backdrop={loading ? 'static' : true}>
       <Form onSubmit={submit}>
-        <Modal.Header closeButton>
+        <Modal.Header closeButton={!loading}>
           <Modal.Title className="h6">Confier à un agent · {task.title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
