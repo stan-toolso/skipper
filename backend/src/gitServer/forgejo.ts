@@ -201,7 +201,8 @@ export const forgejoRepos = {
       events: ['push', 'pull_request', 'pull_request_sync', 'pull_request_review_approved', 'pull_request_review_rejected', 'pull_request_review_comment'],
       config: { url: config.forgejo.webhookUrl, content_type: 'json', secret: config.forgejo.webhookSecret },
     };
-    const existing = hooks.find((h) => h.config?.url === config.forgejo.webhookUrl);
+    // Un webhook vers Skipper déjà posé (éventuellement vers une ancienne adresse) est mis à jour plutôt que doublé.
+    const existing = hooks.find((h) => h.config?.url === config.forgejo.webhookUrl) ?? hooks.find((h) => h.config?.url?.endsWith('/api/forge/webhook'));
     if (existing) await forgejoApi('PATCH', `/orgs/${org}/hooks/${existing.id}`, body);
     else await forgejoApi('POST', `/orgs/${org}/hooks`, body);
   },

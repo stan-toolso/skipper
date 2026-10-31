@@ -1,0 +1,37 @@
+# Backend Skipper, déploiement bleu/vert : deux instances possibles, skipper@blue (port 4101) et skipper@green (4102),
+# chacune dans son dossier /home/skipper/skipper-<couleur> (worktree du clone /home/skipper/skipper). Installé par
+# deploy/cellule/bluegreen-setup.sh ; démarré, basculé et drainé par deploy/cellule/deploy.sh.
+# Une seule couleur est activée (démarrée au boot) : celle vers laquelle pointe /etc/nginx/skipper-upstream.conf.
+# Drainage : SIGUSR2 (deploy.sh) ; l'instance finit les tours en cours, gare les sessions et sort d'elle-même (code 0,
+# pas de redémarrage). Un plantage (code non nul) est redémarré.
+[Unit]
+Description=Skipper %i (backend GraphQL et sessions d'agents)
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+Requires=postgresql.service docker.service
+
+[Service]
+Type=simple
+User=skipper
+Group=skipper
+WorkingDirectory=/home/skipper/skipper-%i/backend
+# PORT (4101 ou 4102) : prioritaire sur celui du .env (node --env-file ne remplace pas une variable déjà définie).
+EnvironmentFile=/etc/skipper/instance-%i.env
+Environment=SKIPPER_INSTANCE=%i
+ExecStart=/usr/bin/node --env-file=/home/skipper/skipper/.env /home/skipper/skipper-%i/backend/dist/index.js
+Restart=on-failure
+RestartSec=2
+# sessionService.shutdown est borné à 1,2 s ; au-delà de 10 s systemd tue l'arbre de processus.
+TimeoutStopSec=10
+KillMode=control-group
+Environment=NODE_ENV=production
+Environment=HOME=/home/skipper
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+LimitNOFILE=65536
+# Journal : journalctl -u skipper@blue (ou skipper@green)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=skipper-%i
+
+[Install]
+WantedBy=multi-user.target

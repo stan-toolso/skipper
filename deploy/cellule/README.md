@@ -6,12 +6,13 @@ Scaleway fr-par-2, Ubuntu 24.04). Ces scripts sont idempotents : relançables sa
 
 | Script | Qui | Rôle |
 | --- | --- | --- |
-| `bootstrap.sh --domain …` | root, une fois | Paquets, Node 22, Docker durci, PostgreSQL 17 + pgBackRest, nginx + certbot, utilisateur `skipper`, service systemd, pare-feu, fail2ban, mises à jour automatiques |
+| `bootstrap.sh --domain …` | root, une fois | Paquets, Node 22, Docker durci, PostgreSQL 17 + pgBackRest, nginx + certbot, utilisateur `skipper`, services systemd (via `bluegreen-setup.sh`), pare-feu, fail2ban, mises à jour automatiques |
+| `bluegreen-setup.sh` | root | Bleu/vert : unité `skipper@.service` (blue 4101, green 4102), upstream nginx commuté `/etc/nginx/skipper-upstream.conf`, sudo restreint de `deploy.sh`. Appelé par `bootstrap.sh` ; une fois à la main sur une cellule installée avant |
 | `postgres.sh [--s3-…]` | root | Rôle et base `skipper`, réglages, sauvegardes pgBackRest chiffrées vers un bucket Object Storage ; écrit `/etc/skipper/db.env` |
 | `backup-files.sh --install --s3-…` | root | Sauvegarde restic quotidienne des workspaces, de la clé maîtresse, des pièces jointes et du `.env` |
 | `install-skipper.sh --domain …` | skipper | Clone, `.env`, dépendances, build, front, image du runner, démarrage |
 | `forgejo.sh --url https://<domaine>/forge` | root | Forge Forgejo des dépôts hébergés : base PostgreSQL `forgejo`, conteneur `forgejo` (127.0.0.1:3000), compte `skipper-admin`, variables `FORGEJO_*` ajoutées au `.env` ; puis bloc nginx `/forge/` et redémarrage de Skipper |
-| `deploy.sh` | skipper | **Mise à jour** : build sans toucher au backend, publication du front seule si possible, sinon attente de la fin des tours d'agents puis redémarrage de quelques secondes |
+| `deploy.sh` | skipper | **Mise à jour sans interruption** : build dans le dossier de l'autre couleur, démarrage et vérification de la nouvelle instance, bascule de nginx, drainage de l'ancienne (front seul : publication sans rien redémarrer) |
 | `migrate-from-ec2.sh --old …` | skipper | Reprise des données de l'ancienne installation (base RDS, workspaces, secrets du `.env`) |
 
 ## Installation d'une cellule
@@ -43,10 +44,11 @@ les copie de l'ancien `.env` vers le nouveau, de machine à machine.
 
 | Élément | Emplacement |
 | --- | --- |
-| Clone de Skipper, `.env` | `/home/skipper/skipper` |
+| Clone de Skipper, `.env` | `/home/skipper/skipper` (sources et scripts ; aucun backend n'y tourne en bleu/vert) |
+| Instances du backend | `/home/skipper/skipper-blue`, `/home/skipper/skipper-green` : worktrees détachés du clone, chacun avec ses `node_modules` et son build |
 | Workspaces, clé maîtresse `.secret-key`, pièces jointes | `/home/skipper/skipper-workspaces` |
 | Front publié | `/var/www/skipper` |
-| Backend | service systemd `skipper` (`journalctl -u skipper`), port 4100 |
+| Backend | services systemd `skipper@blue` (port 4101) et `skipper@green` (4102), une seule activée hors mise à jour (`journalctl -u skipper@blue`) ; instance active : `/etc/nginx/skipper-upstream.conf`. Ancien mode : service `skipper`, port 4100 |
 | Base | PostgreSQL 17 local, `DATABASE_URL` dans `/etc/skipper/db.env` ; réglages `/etc/postgresql/17/main/conf.d/skipper.conf` |
 | Sauvegardes | pgBackRest (`/etc/pgbackrest/pgbackrest.conf`, complète le dimanche, différentielle les autres jours, WAL en continu) et restic (`/etc/skipper/restic.env`, 3 h 30) vers `s3://<bucket>/<hôte>/` ; phrases secrètes dans `/etc/skipper/` **à copier hors de la machine** |
 | nginx | `/etc/nginx/sites-available/skipper` (modèle `templates/nginx-site.conf` : compression gzip des bundles et du JSON), TLS Let's Encrypt, HTTP/2 ajouté par bootstrap.sh aux écoutes TLS de certbot |
@@ -57,22 +59,47 @@ les copie de l'ancien `.env` vers le nouveau, de machine à machine.
 ```bash
 sudo -iu skipper ~/skipper/deploy/cellule/deploy.sh            # origin/main
 ~/skipper/deploy/cellule/deploy.sh --ref origin/ma-branche      # une autre référence
-~/skipper/deploy/cellule/deploy.sh --max-wait 60                # attendre au plus une minute que les agents finissent
+~/skipper/deploy/cellule/deploy.sh --force                      # tout reconstruire et changer d'instance même sans changement
 ```
 
-Comportement : si seul `frontend/` a changé, le front est publié sans redémarrage. Sinon le script attend que plus
-aucune session ne soit `busy` (requête SQL locale), redémarre le service (3 à 5 secondes d'indisponibilité du
-backend), vérifie `/graphql`, puis publie le front. Les sessions qui étaient en plein tour sont relancées
-automatiquement par le nouveau backend (réglage Paramètres → Serveur). Le **bleu/vert sans aucune interruption**
-(deux instances, drainage, nginx commuté) est suivi par la tâche e1803f30 et remplacera ce redémarrage.
+**Bleu/vert** (cellule préparée par `bluegreen-setup.sh`). Deux instances du backend, `skipper@blue` (4101) et
+`skipper@green` (4102), chacune dans son dossier ; nginx envoie le trafic à l'instance active. `deploy.sh` :
+
+1. construit la référence dans le dossier de l'autre couleur (`git worktree` détaché du clone, `npm ci` si le lockfile
+   a changé, build, image du runner si `deploy/runner/` a changé) : l'instance active n'est pas touchée ;
+2. si seul `frontend/` a changé : publie le front, rien d'autre ;
+3. sinon démarre la nouvelle instance (elle applique les migrations, s'inscrit dans `backend_instances`, laisse en
+   place les sessions de l'autre), attend qu'elle réponde sur `/graphql` (échec : elle est arrêtée, nginx n'a pas
+   bougé), réécrit `/etc/nginx/skipper-upstream.conf`, `nginx -t` puis recharge nginx, publie le front ;
+4. envoie SIGUSR2 à l'ancienne et la désactive au boot. Elle cède les planificateurs à la nouvelle, finit les tours
+   en cours, gare chaque session à la fin de son tour (la prochaine instruction la relance sur la nouvelle instance,
+   conversation comprise) et sort d'elle-même quand plus rien n'y tourne (au plus `SKIPPER_DRAIN_TIMEOUT_MINUTES`,
+   120 par défaut). Pendant ce temps, l'interface servie par la nouvelle instance voit ce que fait l'ancienne (bus
+   PostgreSQL) et lui transmet instructions, interruptions et réponses aux demandes ; les connexions déjà ouvertes
+   (subscriptions, terminaux) restent sur l'ancienne jusqu'à sa sortie, puis se reconnectent.
+
+Suivi : `sudo journalctl -u skipper@blue -f` ; instances : `SELECT label, port, heartbeat_at, draining_since FROM
+backend_instances`. Une mise à jour lancée pendant que l'instance précédente se vide encore attend sa sortie (au plus
+`--max-wait`, puis abandon, ou arrêt forcé avec `--force`). Les migrations doivent rester compatibles avec la version
+précédente, qui tourne encore pendant le drainage : ajouter, pas retirer ni renommer dans la même livraison.
+
+**Transition d'une cellule installée avant** (skipper-1) : `sudo …/deploy/cellule/bluegreen-setup.sh` (root, depuis
+un clone à jour), qui laisse l'upstream sur l'ancien service (4100) ; le `deploy.sh` suivant fait une dernière mise à
+jour avec interruption (attente de la fin des tours, arrêt et désactivation de `skipper`, démarrage de `skipper@blue`,
+bascule). L'ancienne version ne sait pas se vider : la nouvelle prendrait ses sessions pour orphelines si les deux
+tournaient ensemble.
+
+**Ancien mode** (sans `/etc/nginx/skipper-upstream.conf`) : attente que plus aucune session ne soit `busy` (au plus
+`--max-wait`), redémarrage du service `skipper` (3 à 5 secondes), sessions coupées en plein tour relancées par le
+nouveau backend.
 
 ## Restaurer
 
 ```bash
 # Base, au dernier état (ou --type=time --target="2026-10-30 14:00:00+01")
-sudo systemctl stop skipper postgresql
+sudo systemctl stop skipper@blue skipper@green postgresql
 sudo -u postgres pgbackrest --stanza=skipper --delta restore
-sudo systemctl start postgresql skipper
+sudo systemctl start postgresql skipper@blue      # la couleur de /etc/nginx/skipper-upstream.conf (4101 : blue, 4102 : green)
 # Fichiers
 sudo bash -c '. /etc/skipper/restic.env; restic snapshots; restic restore latest --target /'
 ```
@@ -83,4 +110,4 @@ Tester une restauration sur une machine vide tous les mois : c'est la seule preu
 
 1. Ajouter l'URI de redirection `https://<domaine>/auth/google/callback` au client OAuth (console Google Cloud).
 2. Pointer le DNS, puis `sudo certbot --nginx -d <domaine>` et remplacer `server_name` dans le site nginx.
-3. Mettre `APP_URL`, `API_URL`, `VITE_GRAPHQL_URL` à jour dans `.env`, puis `deploy.sh --force` (rebuild du front, redémarrage).
+3. Mettre `APP_URL`, `API_URL`, `VITE_GRAPHQL_URL` à jour dans `.env`, puis `deploy.sh --force` (rebuild du front, nouvelle instance).

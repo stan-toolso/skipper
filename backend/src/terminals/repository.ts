@@ -11,6 +11,7 @@ interface Row {
   exit_code: number | null;
   created_at: Date;
   closed_at: Date | null;
+  instance_id: string | null;
 }
 
 const toRecord = (r: Row): TerminalRecord => ({
@@ -23,14 +24,15 @@ const toRecord = (r: Row): TerminalRecord => ({
   exitCode: r.exit_code,
   createdAt: r.created_at,
   closedAt: r.closed_at,
+  instanceId: r.instance_id ?? null,
 });
 
 /** Lignes d'historique conservées par projet et par utilisateur. */
 export const HISTORY_LIMIT = 5000;
 
 export const terminalRepository = {
-  async create(projectId: string, name: string, worksessionId: string | null = null, createdById: string | null = null): Promise<TerminalRecord> {
-    const { rows } = await pool.query<Row>('INSERT INTO terminals (project_id, name, worksession_id, created_by) VALUES ($1, $2, $3, $4) RETURNING *', [projectId, name, worksessionId, createdById]);
+  async create(projectId: string, name: string, worksessionId: string | null = null, createdById: string | null = null, instanceId: string | null = null): Promise<TerminalRecord> {
+    const { rows } = await pool.query<Row>('INSERT INTO terminals (project_id, name, worksession_id, created_by, instance_id) VALUES ($1, $2, $3, $4, $5) RETURNING *', [projectId, name, worksessionId, createdById, instanceId]);
     return toRecord(rows[0]);
   },
   async findById(id: string): Promise<TerminalRecord | null> {
@@ -56,8 +58,12 @@ export const terminalRepository = {
     const { rowCount } = await pool.query('DELETE FROM terminals WHERE id = $1', [id]);
     return (rowCount ?? 0) > 0;
   },
-  async closeAllRunning(): Promise<number> {
-    const { rowCount } = await pool.query(`UPDATE terminals SET status = 'closed', closed_at = now() WHERE status = 'running'`);
+  /** Terminaux ouverts dont le shell ne tourne plus : ceux qu'aucune instance vivante du backend (`liveInstanceIds`) ne tient. */
+  async closeAllRunning(liveInstanceIds: string[] = []): Promise<number> {
+    const { rowCount } = await pool.query(
+      `UPDATE terminals SET status = 'closed', closed_at = now() WHERE status = 'running' AND (instance_id IS NULL OR NOT instance_id = ANY($1::uuid[]))`,
+      [liveInstanceIds],
+    );
     return rowCount ?? 0;
   },
 

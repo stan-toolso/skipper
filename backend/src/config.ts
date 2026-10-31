@@ -50,6 +50,10 @@ export const config = {
   /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+  /** Nom de l'instance dans le registre (couleur du déploiement bleu/vert), pour les journaux et le diagnostic. */
+  instanceLabel: process.env.SKIPPER_INSTANCE || '',
+  /** Drainage (SIGUSR2) : délai maximal d'attente de la fin des sessions et terminaux avant l'arrêt, en minutes. */
+  drainTimeoutMinutes: Number(process.env.SKIPPER_DRAIN_TIMEOUT_MINUTES || 120),
   /** Niveau minimal du journal (debug, info, warn, error). */
   logLevel: logLevel(),
   /** Horodatage des lignes du journal : auto (absent quand pm2 ou journald datent déjà chaque ligne), on, off. */
@@ -71,8 +75,11 @@ export const config = {
     cli: (process.env.FORGEJO_CLI || 'docker exec forgejo forgejo').split(/\s+/).filter(Boolean),
     /** Secret des webhooks Forgejo → Skipper (signature HMAC). */
     webhookSecret: process.env.FORGEJO_WEBHOOK_SECRET ?? '',
-    /** Adresse à laquelle Forgejo joint Skipper pour ses webhooks ; défaut : le backend en local. */
-    webhookUrl: process.env.FORGEJO_WEBHOOK_URL || `http://127.0.0.1:${env('PORT', '4000')}/api/forge/webhook`,
+    /**
+     * Adresse à laquelle Forgejo joint Skipper pour ses webhooks ; défaut : l'adresse publique de l'API, qui suit l'instance
+     * active du backend (bleu/vert : les ports des instances changent à chaque mise à jour).
+     */
+    webhookUrl: process.env.FORGEJO_WEBHOOK_URL || `${env('API_URL', `http://localhost:${env('PORT', '4000')}`).replace(/\/+$/, '')}/api/forge/webhook`,
   },
 };
 
