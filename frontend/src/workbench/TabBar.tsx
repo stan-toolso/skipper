@@ -23,6 +23,7 @@ const icons: Record<TabKind, string> = {
   tasks: 'bi-check2-square',
   task: 'bi-check2-square',
   'pull-requests': 'bi-git',
+  repo: 'bi-code-square',
   history: 'bi-clock-history',
   settings: 'bi-gear',
   users: 'bi-people',

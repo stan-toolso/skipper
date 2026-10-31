@@ -25,6 +25,11 @@ import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pu
 import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { gitService } from '../git/service.js';
+import { repoBrowser, type RepoEntry, type RepoRef } from '../gitServer/browse.js';
+import { hostedGitUrl } from '../gitServer/paths.js';
+import { gitServer } from '../gitServer/service.js';
+import type { GitBackup } from '../gitServer/backups.js';
+import { gitTokenService } from '../gitServer/tokens.js';
 import { archiveSessionCascade, archiveWorksessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, restoreWorksessionCascade } from '../projects/cleanup.js';
 import { runner, type RunnerConfig } from '../runners/index.js';
 import { containerMonitor } from '../runners/monitor.js';
@@ -198,6 +203,13 @@ const loadersOf = (ctx: Ctx): Loaders => {
   return loaders;
 };
 const userOrNull = async (ctx: Ctx, id: string | null | undefined) => (id ? ((await loadersOf(ctx).user(id)) ?? null) : null);
+/** État du dépôt hébergé pour le client, avec l'adresse de téléchargement de chaque sauvegarde. */
+async function hostedGitView(project: Project) {
+  const status = await gitServer.status(project);
+  const withUrl = (b: GitBackup) => ({ ...b, downloadUrl: `${hostedGitUrl(project.slug)}/backup?id=${b.id}` });
+  return { ...status, lastBackup: status.lastBackup ? withUrl(status.lastBackup) : null, backups: status.backups.map(withUrl) };
+}
+
 const projectOf = async (ctx: Ctx, id: string): Promise<Project> => {
   const project = await loadersOf(ctx).project(id);
   if (!project) throw new NotFoundError('Projet introuvable');
@@ -562,8 +574,17 @@ export const resolvers = {
     contextChanges: (project: Project, args: { limit?: number | null }) => contextService.changes(project.id, args.limit ?? undefined),
     workspaceExists: (project: Project) => workspaceExists(project),
     git: (project: Project) => workspaceGitInfo(project),
+    gitHosted: (project: Project) => project.gitHosted,
+    hostedGit: (project: Project) => (project.gitHosted ? hostedGitView(project) : null),
     sessions: (project: Project, args: { status?: GqlStatus | null; limit?: number | null; offset?: number | null }) =>
       sessionService.list({ projectId: project.id, status: fromGqlStatus(args.status), limit: args.limit ?? undefined, offset: args.offset ?? undefined }),
+  },
+
+  RepoRef: {
+    kind: (ref: RepoRef) => ref.kind.toUpperCase(),
+  },
+  RepoEntry: {
+    kind: (entry: RepoEntry) => entry.kind.toUpperCase(),
   },
 
   Request: {
@@ -634,6 +655,29 @@ export const resolvers = {
       await requireProject(ctx, args.projectId);
       return gitService.log(args, args.limit ?? undefined);
     },
+    repoRefs: async (_: unknown, args: { projectId: string; refresh?: boolean | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      const project = await projectService.get(args.projectId);
+      await repoBrowser.refresh(project, ctx.user?.id, args.refresh ?? false);
+      return repoBrowser.refs(project);
+    },
+    repoLog: async (_: unknown, args: { projectId: string; ref: string; limit?: number | null; skip?: number | null; path?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return repoBrowser.log(await projectService.get(args.projectId), args.ref, args.limit ?? undefined, args.skip ?? undefined, args.path);
+    },
+    repoCommit: async (_: unknown, args: { projectId: string; hash: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return repoBrowser.commit(await projectService.get(args.projectId), args.hash);
+    },
+    repoTree: async (_: unknown, args: { projectId: string; ref: string; path?: string | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return repoBrowser.tree(await projectService.get(args.projectId), args.ref, args.path ?? '');
+    },
+    repoFile: async (_: unknown, args: { projectId: string; ref: string; path: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId);
+      return repoBrowser.file(await projectService.get(args.projectId), args.ref, args.path);
+    },
+    myGitTokens: (_: unknown, __: unknown, ctx: Ctx) => gitTokenService.listPersonal(requireUser(ctx).id),
     githubPullRequests: async (_: unknown, args: { projectId: string; state?: PullRequestFilter | null; limit?: number | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return pullRequestService.list(args.projectId, requireUser(ctx).id, args.state ?? 'OPEN', args.limit ?? 50);
@@ -935,6 +979,19 @@ export const resolvers = {
       await requireProject(ctx, args.projectId, 'member');
       await gitService.checkout(args, args.branch, args.create ?? false);
       return gitService.status(args);
+    },
+    createGitToken: (_: unknown, args: { label: string; expiresInDays?: number | null }, ctx: Ctx) => gitTokenService.createPersonal(requireUser(ctx).id, args.label, args.expiresInDays ?? null),
+    revokeGitToken: (_: unknown, args: { id: string }, ctx: Ctx) => gitTokenService.revoke(requireUser(ctx).id, args.id),
+    rotateAgentGitToken: async (_: unknown, __: unknown, ctx: Ctx) => {
+      await gitTokenService.rotateAgentToken(requireUser(ctx).id);
+      return true;
+    },
+    backupHostedGit: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      const project = await projectService.get(args.projectId);
+      if (!project.gitHosted) throw new AppError("Le dépôt de ce projet n'est pas hébergé par Skipper");
+      await gitServer.backup(project, { force: true });
+      return hostedGitView(project);
     },
     createPullRequest: async (_: unknown, args: WorkspaceRef & { title: string; body?: string | null; base?: string | null; draft?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');

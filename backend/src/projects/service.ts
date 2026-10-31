@@ -1,5 +1,6 @@
 import { parseDockerSize } from '../runners/stats.js';
 import { AppError, NotFoundError } from '../errors.js';
+import { gitServer } from '../gitServer/service.js';
 import { projectRepository } from './repository.js';
 import { projectPermissionModes, type CreateProjectInput, type Project, type UpdateProjectInput } from './types.js';
 import { slugify } from './slug.js';
@@ -58,9 +59,13 @@ export const projectService = {
     if (await projectRepository.slugExists(slug)) throw new AppError(`Le slug "${slug}" est déjà utilisé`);
     validatePermissionMode(input.defaultPermissionMode);
     validateRunnerConfig(input.runnerConfig);
+    const hosted = Boolean(input.gitHosted);
+    if (hosted && input.gitUrl?.trim()) throw new AppError("Un dépôt hébergé par Skipper n'a pas d'adresse distante : choisissez l'un ou l'autre");
 
-    const project = await projectRepository.create({ ...input, name: input.name.trim(), slug });
+    const project = await projectRepository.create({ ...input, name: input.name.trim(), slug, gitUrl: hosted ? null : input.gitUrl });
     try {
+      // Projet hébergé : le dépôt nu (avec un premier commit) existe avant le clone du dossier de travail.
+      if (hosted) await gitServer.init(project, { initialCommit: true });
       await ensureWorkspace(project, actorId);
     } catch (err) {
       // Le workspace n'a pas pu être préparé (ex. clone impossible) : on ne garde pas le projet.
@@ -74,7 +79,21 @@ export const projectService = {
     if (input.name !== undefined && !input.name?.trim()) throw new AppError('Le nom du projet est obligatoire');
     validatePermissionMode(input.defaultPermissionMode);
     validateRunnerConfig(input.runnerConfig);
-    const project = await projectRepository.update(id, { ...input, name: input.name?.trim() });
+    const before = await this.get(id);
+    const patch: UpdateProjectInput = { ...input, name: input.name?.trim() };
+    if (before.gitHosted) {
+      // L'hébergement ne se désactive pas (les dossiers de travail sont des clones du dépôt hébergé) et n'a pas d'adresse.
+      if (input.gitHosted === false) throw new AppError("L'hébergement du dépôt par Skipper ne se désactive pas : supprimez le projet, ou créez-en un autre");
+      if (input.gitUrl?.trim()) throw new AppError("Le dépôt de ce projet est hébergé par Skipper : il n'a pas d'adresse distante");
+      delete patch.gitUrl;
+      delete patch.gitHosted;
+    } else if (input.gitHosted) {
+      if (input.gitUrl?.trim()) throw new AppError("Un dépôt hébergé par Skipper n'a pas d'adresse distante : choisissez l'un ou l'autre");
+      // Le dépôt nu est créé et le dossier existant importé avant d'enregistrer : en cas d'échec, rien ne change.
+      await gitServer.enable({ ...before, gitBranch: input.gitBranch !== undefined ? input.gitBranch : before.gitBranch });
+      patch.gitUrl = null;
+    }
+    const project = await projectRepository.update(id, patch);
     if (!project) throw new NotFoundError('Projet introuvable');
     return project;
   },

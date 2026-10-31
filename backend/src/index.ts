@@ -11,6 +11,9 @@ import { handleTaskAttachmentRoute } from './tasks/attachmentRoute.js';
 import { handleSharedPageRoute } from './sharedPages/viewRoute.js';
 import { handleFileViewRoute } from './files/viewRoute.js';
 import { handleTasksApiRoute } from './tasks/api.js';
+import { handleGitHttpRoute } from './gitServer/httpRoute.js';
+import { gitServer } from './gitServer/service.js';
+import { gitTokenService } from './gitServer/tokens.js';
 import { registerTaskSessionFeed } from './tasks/sessionFeed.js';
 import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
@@ -72,6 +75,8 @@ async function main() {
   automationScheduler.start();
   const purged = await authSession.purgeExpired();
   if (purged) log.info(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
+  const purgedTokens = await gitTokenService.purgeExpired();
+  if (purgedTokens) log.info(`[git-server] ${purgedTokens} jeton(s) d'accès git expiré(s) supprimé(s)`);
   log.info(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
 
   // Origines autorisées à appeler l'API avec le cookie de session : l'application, et le poste de développement.
@@ -101,6 +106,7 @@ async function main() {
       .then((handled) => handled || handleSharedPageRoute(req, res))
       .then((handled) => handled || handleFileViewRoute(req, res))
       .then((handled) => handled || handleTasksApiRoute(req, res))
+      .then((handled) => handled || handleGitHttpRoute(req, res))
       .then((handled) => {
         if (!handled) return yoga(req, res);
       })
@@ -119,6 +125,7 @@ async function main() {
     healthService.startMonitor();
     containerMonitor.start();
     trackedPullRequestService.startBackgroundSync();
+    gitServer.startBackgroundBackups();
     sessionService
       .drainQueue()
       .then(() => sessionService.resumeInterruptedAfterRestart())
@@ -141,6 +148,7 @@ async function main() {
     healthService.stopMonitor();
     containerMonitor.stop();
     trackedPullRequestService.stopBackgroundSync();
+    gitServer.stopBackgroundBackups();
     loginService.shutdown();
     const [interrupted] = await Promise.all([sessionService.shutdown(), terminalService.shutdown()]);
     if (interrupted) log.info(`[sessions] ${interrupted} session(s) marquée(s) comme interrompue(s)`);

@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { hostedGitUrl } from '../gitServer/paths.js';
 import type { CreateProjectInput, Project, ProjectPermissionMode, UpdateProjectInput } from './types.js';
 
 interface ProjectRow {
@@ -9,6 +10,7 @@ interface ProjectRow {
   system_prompt: string;
   git_url: string | null;
   git_branch: string | null;
+  git_hosted: boolean;
   runner_config: Record<string, unknown>;
   default_permission_mode: ProjectPermissionMode;
   task_instructions: string | null;
@@ -24,8 +26,10 @@ function toProject(row: ProjectRow): Project {
     slug: row.slug,
     description: row.description,
     systemPrompt: row.system_prompt,
-    gitUrl: row.git_url,
+    // Dépôt hébergé : l'URL de clone suit l'adresse de l'API (jamais stockée, pour survivre à un changement de domaine).
+    gitUrl: row.git_hosted ? hostedGitUrl(row.slug) : row.git_url,
     gitBranch: row.git_branch,
+    gitHosted: Boolean(row.git_hosted),
     runnerConfig: row.runner_config ?? {},
     defaultPermissionMode: row.default_permission_mode ?? 'default',
     taskInstructions: row.task_instructions ?? '',
@@ -41,6 +45,7 @@ const updateColumns: Record<keyof UpdateProjectInput, string> = {
   systemPrompt: 'system_prompt',
   gitUrl: 'git_url',
   gitBranch: 'git_branch',
+  gitHosted: 'git_hosted',
   runnerConfig: 'runner_config',
   defaultPermissionMode: 'default_permission_mode',
   taskInstructions: 'task_instructions',
@@ -49,9 +54,9 @@ const updateColumns: Record<keyof UpdateProjectInput, string> = {
 export const projectRepository = {
   async create(input: CreateProjectInput & { slug: string }): Promise<Project> {
     const { rows } = await pool.query<ProjectRow>(
-      `INSERT INTO projects (name, slug, description, system_prompt, git_url, git_branch, runner_config, default_permission_mode, task_instructions, personal_owner_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [input.name, input.slug, input.description ?? null, input.systemPrompt ?? '', input.gitUrl || null, input.gitBranch || null, JSON.stringify(input.runnerConfig ?? {}), input.defaultPermissionMode || 'default', input.taskInstructions ?? '', input.personalOwnerId ?? null],
+      `INSERT INTO projects (name, slug, description, system_prompt, git_url, git_branch, git_hosted, runner_config, default_permission_mode, task_instructions, personal_owner_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [input.name, input.slug, input.description ?? null, input.systemPrompt ?? '', input.gitHosted ? null : input.gitUrl || null, input.gitBranch || null, Boolean(input.gitHosted), JSON.stringify(input.runnerConfig ?? {}), input.defaultPermissionMode || 'default', input.taskInstructions ?? '', input.personalOwnerId ?? null],
     );
     return toProject(rows[0]);
   },
@@ -66,6 +71,11 @@ export const projectRepository = {
     if (!ids.length) return [];
     const { rows } = await pool.query<ProjectRow>('SELECT * FROM projects WHERE id = ANY($1::uuid[])', [ids]);
     return rows.map(toProject);
+  },
+
+  async findBySlug(slug: string): Promise<Project | null> {
+    const { rows } = await pool.query<ProjectRow>('SELECT * FROM projects WHERE slug = $1', [slug]);
+    return rows[0] ? toProject(rows[0]) : null;
   },
 
   async slugExists(slug: string): Promise<boolean> {
@@ -108,6 +118,11 @@ export const projectRepository = {
       if (key === 'runnerConfig') {
         params.push(JSON.stringify(value ?? {}));
         sets.push(`${column} = $${params.length}::jsonb`);
+        continue;
+      }
+      if (key === 'gitHosted') {
+        params.push(Boolean(value));
+        sets.push(`${column} = $${params.length}`);
         continue;
       }
       // Les champs optionnels vides sont stockés en NULL ; le prompt système reste une chaîne, le mode d'autorisation a une valeur par défaut.

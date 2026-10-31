@@ -34,6 +34,7 @@ import { sessionIdentityPrompt } from '../identity.js';
 import { RequestCancelledError } from '../../requests/service.js';
 import { runner } from '../../runners/index.js';
 import { agentGitEnv } from '../../git/agentEnv.js';
+import { gitServer } from '../../gitServer/service.js';
 import { createTasksMcpServer, TASKS_FREE_TOOLS } from '../../tasks/mcp.js';
 import { trackedPullRequestService } from '../../pullRequests/service.js';
 import { taskService } from '../../tasks/service.js';
@@ -215,7 +216,8 @@ export class ClaudeProvider implements SessionProvider {
       await contextService.promptSummary(ctx.project.id),
       await taskService.linkedTaskPrompt(ctx.session.id),
       await taskService.promptSummary(ctx.project.id, ctx.session.id),
-      ctx.project.gitUrl && !chat ? trackedPullRequestService.promptSummary() : '',
+      ctx.project.gitUrl && !ctx.project.gitHosted && !chat ? trackedPullRequestService.promptSummary() : '',
+      chat ? '' : gitServer.promptSummary(ctx.project),
       vaultService.promptSummary(vaultItems, ctx.project),
       sessionsPromptSummary(ctx.project, { chat }),
       googleAccountService.promptSummary(googleAccounts),

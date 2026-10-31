@@ -3,10 +3,11 @@ import { Button, Nav } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { useSessionLauncher } from './SessionLauncher';
 
-export type ProjectTab = 'overview' | 'chats' | 'tasks' | 'pullRequests' | 'context' | 'vault' | 'workflows' | 'history';
+export type ProjectTab = 'overview' | 'chats' | 'repo' | 'tasks' | 'pullRequests' | 'context' | 'vault' | 'workflows' | 'history';
 
 const TABS: { key: ProjectTab; label: string; path: string; icon: string; title?: string; absolute?: boolean }[] = [
   { key: 'overview', label: 'Aperçu', path: '', icon: 'bi-folder2-open' },
+  { key: 'repo', label: 'Dépôt', path: '/repo', icon: 'bi-code-square', title: 'Dépôt git : branches, commits et fichiers ; dépôt hébergé par Skipper et ses sauvegardes' },
   { key: 'tasks', label: 'Tâches', path: '/tasks', icon: 'bi-check2-square' },
   { key: 'pullRequests', label: 'Pull requests', path: '/pull-requests', icon: 'bi-git', title: 'Pull requests suivies : à fusionner, fusionnées' },
   { key: 'context', label: 'Contexte', path: '/context', icon: 'bi-journal-text', title: 'Bibliothèque d’instructions consultée par les agents' },

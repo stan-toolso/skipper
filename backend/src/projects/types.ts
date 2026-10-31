@@ -8,8 +8,11 @@ export interface Project {
   slug: string;
   description: string | null;
   systemPrompt: string;
+  /** Adresse du dépôt ; pour un projet hébergé, l'URL de clone du dépôt servi par Skipper (dérivée, jamais stockée). */
   gitUrl: string | null;
   gitBranch: string | null;
+  /** Dépôt hébergé par Skipper (dépôt nu sur le serveur, sauvegardé en base) plutôt que distant. */
+  gitHosted: boolean;
   /** Réglages du conteneur Docker du projet : { image, memory, cpus, browser }. */
   runnerConfig: Record<string, unknown>;
   /** Mode d'autorisation des nouvelles sessions qui n'en précisent pas (sessions de tâches notamment). */
@@ -29,6 +32,8 @@ export interface CreateProjectInput {
   systemPrompt?: string | null;
   gitUrl?: string | null;
   gitBranch?: string | null;
+  /** Héberger le dépôt chez Skipper (exclusif d'une adresse de dépôt distant). */
+  gitHosted?: boolean | null;
   runnerConfig?: Record<string, unknown> | null;
   defaultPermissionMode?: string | null;
   taskInstructions?: string | null;
@@ -45,6 +50,8 @@ export interface UpdateProjectInput {
   systemPrompt?: string | null;
   gitUrl?: string | null;
   gitBranch?: string | null;
+  /** Passer à true héberge le dépôt chez Skipper (dossier existant importé) ; revenir à false n'est pas possible. */
+  gitHosted?: boolean | null;
   runnerConfig?: Record<string, unknown> | null;
   defaultPermissionMode?: string | null;
   taskInstructions?: string | null;
