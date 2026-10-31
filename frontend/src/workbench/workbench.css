@@ -443,6 +443,16 @@
 .git-row-actions a { color: var(--cc-dim); padding: 0 4px; font-size: 12px; text-decoration: none; }
 .git-row-actions a:hover { color: var(--cc-accent); }
 .git-commit { padding: 8px 10px; border-bottom: 1px solid var(--cc-border); }
+/* Opération git interrompue (conflits) : bandeau au filet rouge, fichiers en conflit marqués. */
+.git-conflict { padding: 8px 10px; border-bottom: 1px solid var(--cc-border); border-left: 3px solid var(--cc-red); background: color-mix(in srgb, var(--cc-red) 7%, transparent); }
+.git-conflict.done { border-left-color: var(--cc-green); background: color-mix(in srgb, var(--cc-green) 7%, transparent); }
+.git-conflict-title { font-weight: 600; color: var(--cc-fg); margin-bottom: 4px; }
+.git-conflict-title .bi { color: var(--cc-red); margin-right: 4px; }
+.git-conflict.done .git-conflict-title .bi { color: var(--cc-green); }
+.git-conflict-hint { color: var(--cc-dim); font-size: 11.5px; margin-bottom: 6px; }
+.git-conflict-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.git-row.conflicted .git-name { color: var(--cc-red); }
+.git-section.conflicts .git-section-toggle { color: var(--cc-red); }
 .spin { display: inline-block; animation: git-spin 1s linear infinite; }
 @keyframes git-spin { to { transform: rotate(360deg); } }
 
