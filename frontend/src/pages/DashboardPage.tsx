@@ -12,6 +12,7 @@ import { useTabTitle } from '../workbench/TabsContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
 import ChatComposer from '../components/ChatComposer';
+import TaskModal from '../components/TaskModal';
 import { PullRequestStageBadge, TrackedPullRequestIndicators } from '../components/TrackedPullRequests';
 import { prRef, type TrackedPullRequest } from '../graphql/pullRequests';
 import './dashboard.css';
@@ -27,6 +28,7 @@ export default function DashboardPage() {
   useTabTitle('Tableau de bord');
   const { data, loading, error, refetch } = usePollingQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
   const d = data?.dashboard;
+  const [newTask, setNewTask] = useState(false);
 
   if (!d && loading) {
     return (
@@ -48,6 +50,8 @@ export default function DashboardPage() {
   const { counts, usage } = d;
   const waiting = counts.pendingRequests + counts.idleSessions;
   // Sessions coupées en plein tour par un redémarrage du serveur (pas une erreur, mais un travail à reprendre).
+  // Projets où l'on peut créer une tâche (pas lecteur), proposés dans la modale de création.
+  const writableProjects = d.projects.filter((p) => p.project.myRole !== 'VIEWER').map((p) => p.project);
   const interruptedMidTurn = d.recentSessions.filter((s) => s.status === 'INTERRUPTED' && s.activity === 'BUSY' && isRecent(s.endedAt ?? s.updatedAt, 24));
 
   return (
@@ -59,6 +63,11 @@ export default function DashboardPage() {
           <Button size="sm" variant="outline-secondary" className="d-none d-sm-inline-block" onClick={() => refetch()} title="Rafraîchir">
             <i className="bi bi-arrow-clockwise" />
           </Button>
+          {writableProjects.length > 0 && (
+            <Button size="sm" variant="outline-primary" onClick={() => setNewTask(true)} title="Créer une tâche dans l'un de vos projets">
+              <i className="bi bi-plus-lg me-1" /> Tâche
+            </Button>
+          )}
           <Button size="sm" variant="primary" onClick={() => openNewSession()}>
             <i className="bi bi-plus-lg me-1" /> Session
           </Button>
@@ -176,6 +185,8 @@ export default function DashboardPage() {
         </h2>
         <ProjectsTable projects={d.projects} />
       </section>
+
+      {newTask && <TaskModal task={null} projectId={writableProjects[0]?.id ?? ''} projects={writableProjects} onClose={() => setNewTask(false)} />}
     </>
   );
 }
