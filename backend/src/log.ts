@@ -1,3 +1,4 @@
+import { fstatSync } from 'node:fs';
 import { inspect } from 'node:util';
 import { config, type LogLevel } from './config.js';
 
@@ -5,6 +6,11 @@ import { config, type LogLevel } from './config.js';
  * Journal du backend : une ligne par message, horodatage ISO, niveau, puis le message avec son préfixe
  * de module (`[sessions] …`). Les niveaux sous `LOG_LEVEL` (défaut : info) sont tus. `debug` et `info`
  * vont sur la sortie standard, `warn` et `error` sur la sortie d'erreur (pm2 les sépare dans deux fichiers).
+ *
+ * Horodatage (`LOG_TIMESTAMP`, défaut `auto`) : omis quand le gestionnaire du processus date déjà chaque
+ * ligne, pm2 (`pm_id`) ou journald (sortie raccordée au journal, `JOURNAL_STREAM`), pour une seule date
+ * par ligne. Vers journald, chaque ligne commence aussi par la priorité syslog (`<3>`…), que journald
+ * retire et enregistre : `journalctl -u skipper -p warning` filtre par niveau.
  *
  * Arguments supplémentaires : une `Error` donne `Nom : message`, avec sa trace seulement au niveau `error` ;
  * tout autre objet est inspecté sur une seule ligne.
@@ -14,6 +20,33 @@ const ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 }
 const LABEL: Record<LogLevel, string> = { debug: 'DEBUG', info: 'INFO ', warn: 'WARN ', error: 'ERROR' };
 
 let threshold: LogLevel = config.logLevel;
+
+/** Priorités syslog lues par journald en tête de ligne. */
+const PRIORITY: Record<LogLevel, number> = { debug: 7, info: 6, warn: 4, error: 3 };
+
+/**
+ * Sortie d'erreur raccordée à journald : systemd exporte `JOURNAL_STREAM=<périphérique>:<inode>` ; on compare
+ * avec le descripteur 2, car la variable est héritée par les processus lancés depuis le service (terminaux,
+ * sessions) dont la sortie va ailleurs.
+ */
+function writesToJournal(): boolean {
+  const stream = process.env.JOURNAL_STREAM;
+  if (!stream) return false;
+  try {
+    const st = fstatSync(2);
+    return stream === `${st.dev}:${st.ino}`;
+  } catch {
+    return false;
+  }
+}
+
+const journald = writesToJournal();
+
+/** Format des lignes : horodatage, priorité syslog en tête ; remplaçable dans les tests. */
+export const logFormat = {
+  timestamp: config.logTimestamp === 'on' || (config.logTimestamp === 'auto' && !journald && process.env.pm_id === undefined),
+  syslogPriority: journald,
+};
 
 /** Destinations, remplaçables dans les tests. */
 export const logOutput = {
@@ -47,7 +80,11 @@ function formatArg(value: unknown, level: LogLevel): string {
 /** Ligne complète d'un message (sans saut de ligne final). */
 export function formatLine(level: LogLevel, args: unknown[], at: Date = new Date()): string {
   const text = args.map((a) => formatArg(a, level)).join(' ');
-  return `${at.toISOString()} ${LABEL[level]} ${text}`;
+  const line = logFormat.timestamp ? `${at.toISOString()} ${LABEL[level]} ${text}` : `${LABEL[level]} ${text}`;
+  if (!logFormat.syslogPriority) return line;
+  // journald fait une entrée par ligne : chaque ligne d'une trace garde la priorité du message.
+  const prefix = `<${PRIORITY[level]}>`;
+  return line.split('\n').map((l) => prefix + l).join('\n');
 }
 
 function emit(level: LogLevel, args: unknown[]): void {

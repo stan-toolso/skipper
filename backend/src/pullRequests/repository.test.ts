@@ -33,4 +33,17 @@ describe('pullRequestRepository.update', () => {
     await pullRequestRepository.update('id', { status: 'closed' });
     expect(lastSql()).toContain('closed_at = COALESCE(closed_at, now())');
   });
+
+  it("n'assigne aucune colonne deux fois, quels que soient le statut et les champs de date fournis", async () => {
+    const statuses = [undefined, 'pending', 'open', 'merged', 'closed'] as const;
+    const values = { mergedAt: [undefined, null, new Date()], closedAt: [undefined, null, new Date()], mergeSha: [undefined, null, 'abc123'] };
+    for (const status of statuses)
+      for (const mergedAt of values.mergedAt)
+        for (const closedAt of values.closedAt)
+          for (const mergeSha of values.mergeSha) {
+            await pullRequestRepository.update('id', { status, mergedAt, closedAt, mergeSha });
+            const cols = assigned(lastSql());
+            expect(cols.filter((c, i) => cols.indexOf(c) !== i), JSON.stringify({ status, mergedAt, closedAt, mergeSha })).toEqual([]);
+          }
+  });
 });

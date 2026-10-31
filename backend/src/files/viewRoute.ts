@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { AppError } from '../errors.js';
 import { worksessionService } from '../worksessions/service.js';
 import { readRawFile } from './service.js';
+import { log } from '../log.js';
 
 /** Types servis d'après l'extension ; tout le reste est un flux binaire. */
 const TYPES: Record<string, string> = {
@@ -85,7 +86,7 @@ export async function handleFileViewRoute(req: IncomingMessage, res: ServerRespo
     res.end(req.method === 'HEAD' ? undefined : file.data);
   } catch (err) {
     if (err instanceof AppError) return text(err.code === 'NOT_FOUND' ? 404 : err.code === 'FORBIDDEN' ? 403 : 400, err.message), true;
-    console.error('[files] aperçu', err);
+    log.error('[files] aperçu', err);
     text(500, 'Impossible de lire le fichier.');
   }
   return true;

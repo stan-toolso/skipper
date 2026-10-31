@@ -6,6 +6,7 @@ import DiffView from '../components/DiffView';
 import { CreatePullRequestModal, PullRequestIndicators, PullRequestModal } from '../components/PullRequests';
 import { useDialogs } from '../components/Dialogs';
 import {
+  GIT_ABORT_OPERATION,
   GIT_BRANCHES,
   GIT_CHECKOUT,
   GIT_COMMIT,
@@ -14,12 +15,14 @@ import {
   GIT_DISCARD,
   GIT_FETCH,
   GIT_LOG,
+  GIT_MERGE_BASE,
   GIT_PULL,
   GIT_PUSH,
   GIT_STAGE,
   GIT_STATUS,
   GIT_UNSTAGE,
   GITHUB_PULL_REQUESTS,
+  RESOLVE_GIT_CONFLICTS,
   type GitBranch,
   type GitCommit,
   type GitDiff,
@@ -54,6 +57,9 @@ const statusLabels: Record<string, { label: string; cls: string }> = {
   '?': { label: 'U', cls: 'git-u' },
   T: { label: 'T', cls: 'git-m' },
 };
+
+/** Nom de l'opération git interrompue, pour le bandeau de conflits. */
+const operationLabels: Record<NonNullable<GitStatus['operation']>, string> = { merge: 'Fusion', rebase: 'Rebase', 'cherry-pick': 'Cherry-pick', revert: 'Revert' };
 
 type DiffRequest = { kind: 'file'; path: string; staged: boolean } | { kind: 'commit'; hash: string; subject: string } | { kind: 'branch'; path: string; origPath: string | null; base: string };
 
@@ -107,12 +113,13 @@ function DiffModal({ req, vars, onClose }: { req: DiffRequest; vars: { projectId
 }
 
 function ChangeRow({ c, staged, onOpen, onStage, onUnstage, onDiscard }: { c: GitFileChange; staged: boolean; onOpen: () => void; onStage?: () => void; onUnstage?: () => void; onDiscard?: () => void }) {
-  const code = staged ? c.indexStatus : c.untracked ? '?' : c.worktreeStatus;
+  const code = c.conflicted ? 'U' : staged ? c.indexStatus : c.untracked ? '?' : c.worktreeStatus;
   const st = statusLabels[code] ?? { label: code, cls: '' };
   const name = c.path.split('/').pop() ?? c.path;
   const dir = c.path.includes('/') ? c.path.slice(0, c.path.lastIndexOf('/')) : '';
+  const title = c.conflicted ? `${c.path} · en conflit (${c.indexStatus}${c.worktreeStatus})` : c.origPath ? `${c.origPath} → ${c.path}` : c.path;
   return (
-    <div className="git-row" title={c.origPath ? `${c.origPath} → ${c.path}` : c.path}>
+    <div className={`git-row${c.conflicted ? ' conflicted' : ''}`} title={title}>
       <button type="button" className="git-row-main" onClick={onOpen}>
         <span className={`git-status ${st.cls}`}>{st.label}</span>
         <span className="git-name">{name}</span>
@@ -125,8 +132,8 @@ function ChangeRow({ c, staged, onOpen, onStage, onUnstage, onDiscard }: { c: Gi
           </button>
         )}
         {onStage && (
-          <button type="button" title="Indexer (git add)" onClick={onStage}>
-            <i className="bi bi-plus-lg" />
+          <button type="button" title={c.conflicted ? 'Marquer comme résolu (git add)' : 'Indexer (git add)'} onClick={onStage}>
+            <i className={`bi ${c.conflicted ? 'bi-check-lg' : 'bi-plus-lg'}`} />
           </button>
         )}
         {onUnstage && (
@@ -139,10 +146,10 @@ function ChangeRow({ c, staged, onOpen, onStage, onUnstage, onDiscard }: { c: Gi
   );
 }
 
-function Section({ title, count, defaultOpen = true, children, action }: { title: string; count?: number; defaultOpen?: boolean; children: React.ReactNode; action?: React.ReactNode }) {
+function Section({ title, count, defaultOpen = true, children, action, className }: { title: string; count?: number; defaultOpen?: boolean; children: React.ReactNode; action?: React.ReactNode; className?: string }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="git-section">
+    <div className={`git-section${className ? ` ${className}` : ''}`}>
       <div className="git-section-head">
         <button type="button" className="git-section-toggle" onClick={() => setOpen((v) => !v)}>
           <i className={`bi bi-chevron-${open ? 'down' : 'right'}`} /> {title}
@@ -196,7 +203,7 @@ function BranchFileDiff({ file, vars }: { file: GitBranchChanges['files'][number
 }
 
 /** Modifications de la branche depuis son point de divergence avec sa base (commits et travail non validé). */
-function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; worksessionId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void }) {
+function BranchSection({ vars, open, onOpen, onMergeBase }: { vars: { projectId: string; worksessionId: string | null }; open: boolean; onOpen: (req: DiffRequest) => void; onMergeBase?: (baseBranch: string) => void }) {
   const q = usePollingQuery<{ gitBranchChanges: GitBranchChanges | null }>(GIT_BRANCH_CHANGES, { variables: vars, skip: !open, pollInterval: 15000 });
   const [review, setReview] = useState(false);
   const changes = q.data?.gitBranchChanges ?? undefined;
@@ -207,6 +214,11 @@ function BranchSection({ vars, open, onOpen }: { vars: { projectId: string; work
       defaultOpen={false}
       action={
         <span className="d-flex">
+          {changes && onMergeBase && (
+            <button type="button" className="git-icon-btn" title={`Fusionner ${changes.baseBranch} dans la branche (git merge)`} onClick={() => onMergeBase(changes.baseBranch)}>
+              <i className="bi bi-sign-merge-left" />
+            </button>
+          )}
           {changes && changes.files.length > 0 && (
             <button type="button" className="git-icon-btn" title="Relire toutes les modifications" onClick={() => setReview(true)}>
               <i className="bi bi-arrows-fullscreen" />
@@ -421,12 +433,16 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
   const opts = { onCompleted: () => void refetchAll(), onError: (e: Error) => setActionError(e.message) };
   const [stage, { loading: staging }] = useMutation(GIT_STAGE, opts);
   const [unstage, { loading: unstaging }] = useMutation(GIT_UNSTAGE, opts);
-  const { confirm } = useDialogs();
+  const { confirm, alert } = useDialogs();
   const [discard] = useMutation(GIT_DISCARD, opts);
   const [commit, { loading: committing }] = useMutation(GIT_COMMIT, { ...opts, onCompleted: () => { setMessage(''); void refetchAll(); } });
   const [fetch, { loading: fetching }] = useMutation(GIT_FETCH, opts);
   const [pull, { loading: pulling }] = useMutation(GIT_PULL, opts);
   const [push, { loading: pushing }] = useMutation(GIT_PUSH, opts);
+  const [mergeBase, { loading: merging }] = useMutation(GIT_MERGE_BASE, opts);
+  const [abortOperation, { loading: aborting }] = useMutation(GIT_ABORT_OPERATION, opts);
+  const [resolveConflicts, { loading: resolving }] = useMutation<{ resolveGitConflicts: { id: string; name: string } }>(RESOLVE_GIT_CONFLICTS, { onError: (e: Error) => setActionError(e.message) });
+  const navigate = useNavigate();
   const [checkout, { loading: checkingOut }] = useMutation(GIT_CHECKOUT, { ...opts, onCompleted: () => { setNewBranch(''); void refetchAll(); } });
   useEffect(() => setActionError(null), [target?.projectId, target?.worksessionId]);
 
@@ -446,8 +462,37 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
 
   const status = statusQ.data?.gitStatus;
   const staged = status?.changes.filter((c) => c.staged) ?? [];
-  const unstaged = status?.changes.filter((c) => c.unstaged || c.untracked || c.conflicted) ?? [];
-  const busy = staging || unstaging || committing || fetching || pulling || pushing || checkingOut;
+  const conflicts = status?.changes.filter((c) => c.conflicted) ?? [];
+  const unstaged = status?.changes.filter((c) => !c.conflicted && (c.unstaged || c.untracked)) ?? [];
+  const operation = status?.operation ?? null;
+  const busy = staging || unstaging || committing || fetching || pulling || pushing || checkingOut || merging || aborting || resolving;
+  const opLabel = operation ? operationLabels[operation] : 'Opération git';
+
+  /** Confie les conflits (ou la fin de l'opération) à la session du dossier, ou à une nouvelle session dans ce dossier. */
+  const resolveWithAgent = async () => {
+    if (!vars?.worksessionId) return;
+    const answer = await confirm({
+      title: 'Résoudre avec un agent',
+      message: `${conflicts.length ? `${conflicts.length} fichier(s) en conflit` : `${opLabel} à terminer`} sur ${status?.branch ?? 'HEAD détaché'}. La session de ce dossier reçoit la consigne de résoudre les conflits, lancer les vérifications (typecheck) et terminer l'opération sans pousser ; s'il n'y en a plus, une session est lancée dans ce dossier. Vous gardez la main sur le push.`,
+      confirmLabel: 'Confier à un agent',
+      checkbox: { label: 'Ouvrir la session', defaultChecked: true },
+    });
+    if (!answer) return;
+    const res = await resolveConflicts({ variables: vars });
+    const session = res.data?.resolveGitConflicts;
+    if (session && answer.checked) navigate(`/sessions/${session.id}`);
+  };
+  const abort = async () => {
+    const ok = await confirm({ title: `Abandonner : ${opLabel.toLowerCase()}`, message: `Annuler l'opération en cours (git ${operation ?? 'merge'} --abort) ? Le dossier revient à son état d'avant, les résolutions déjà faites sont perdues.`, confirmLabel: 'Abandonner', danger: true });
+    if (ok) abortOperation({ variables: vars ?? undefined });
+  };
+  const mergeBaseInto = async (baseBranch: string) => {
+    const ok = await confirm({ title: `Fusionner ${baseBranch}`, message: `Récupérer puis fusionner ${baseBranch} dans ${status?.branch ?? 'la branche courante'} ? En cas de conflit, la fusion reste en cours : vous pourrez les résoudre ou les confier à un agent.`, confirmLabel: 'Fusionner' });
+    if (!ok) return;
+    const res = await mergeBase({ variables: vars ?? undefined });
+    const after = (res.data as { gitMergeBase?: GitStatus } | undefined)?.gitMergeBase;
+    if (after?.changes.some((c) => c.conflicted)) await alert({ title: 'Conflits', message: `La fusion de ${baseBranch} s'est arrêtée sur des conflits : ils sont listés en tête du panneau git.` });
+  };
   const local = branchesQ.data?.gitBranches.filter((b) => !b.remote) ?? [];
   const remote = branchesQ.data?.gitBranches.filter((b) => b.remote) ?? [];
 
@@ -534,6 +579,43 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
       )}
 
       <div className="git-body">
+        {(operation || conflicts.length > 0) && (
+          <div className={`git-conflict${conflicts.length ? '' : ' done'}`} role="status">
+            <div className="git-conflict-title">
+              <i className={`bi ${conflicts.length ? 'bi-exclamation-triangle-fill' : 'bi-check-circle-fill'}`} />
+              {conflicts.length ? `${opLabel} arrêté${operation === 'merge' ? 'e' : ''} sur ${conflicts.length} conflit(s)` : `${opLabel} à terminer`}
+            </div>
+            <div className="git-conflict-hint">
+              {conflicts.length
+                ? 'Résolvez chaque fichier puis marquez-le résolu (✓), ou confiez la résolution à un agent.'
+                : operation === 'merge'
+                  ? 'Conflits résolus : validez (commit) pour terminer la fusion.'
+                  : `Conflits résolus : terminez dans un terminal (git ${operation} --continue) ou par un agent.`}
+            </div>
+            <div className="git-conflict-actions">
+              {vars?.worksessionId ? (
+                <Button size="sm" variant={conflicts.length ? 'danger' : 'outline-success'} disabled={busy} onClick={() => void resolveWithAgent()}>
+                  <i className="bi bi-robot me-1" />
+                  {resolving ? 'Envoi…' : conflicts.length ? 'Résoudre avec un agent' : 'Terminer avec un agent'}
+                </Button>
+              ) : (
+                <span className="git-conflict-hint m-0">Dossier principal : aucune session n'y travaille, résolvez dans un terminal.</span>
+              )}
+              {operation && (
+                <Button size="sm" variant="outline-secondary" disabled={busy} onClick={() => void abort()}>
+                  Abandonner
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+        {conflicts.length > 0 && (
+          <Section title="En conflit" count={conflicts.length} className="conflicts">
+            {conflicts.map((c) => (
+              <ChangeRow key={`c:${c.path}`} c={c} staged={false} onOpen={() => setDiffReq({ kind: 'file', path: c.path, staged: false })} onStage={() => stage({ variables: { ...vars, paths: [c.path] } })} />
+            ))}
+          </Section>
+        )}
         <Section
           title="Indexé"
           count={staged.length}
@@ -606,7 +688,7 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
           </div>
         </div>
 
-        {vars && hasRepo && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} />}
+        {vars && hasRepo && <BranchSection vars={vars} open={gitVisible} onOpen={setDiffReq} onMergeBase={busy || operation ? undefined : (b) => void mergeBaseInto(b)} />}
         {hasRepo && <PullRequestsSection projectId={target.projectId} worksessionId={target.worksessionId} branch={status && !status.detached ? status.branch : null} />}
 
         <Section title="Branches" count={local.length} defaultOpen={false}>

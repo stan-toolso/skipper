@@ -8,6 +8,7 @@ import { parseDefinition, TASK_ID_INPUT, taskContext, triggerEvent, triggerOf, t
 import { normalizeInputs, prepareSchedule, resolveInputs } from './inputs.js';
 import { workflowRepository, type WorkflowValues } from './repository.js';
 import type { AutomationScheduleInput, RunTrigger, Workflow, WorkflowDefinition, WorkflowInput, WorkflowIssue, WorkflowRun, WorkflowRunFilter } from './types.js';
+import { log } from '../log.js';
 
 const DEFAULT_TIMEZONE = 'UTC';
 /** Exécutions simultanées d'un même workflow (une planification n'empile jamais d'exécutions). */
@@ -83,7 +84,7 @@ export async function dispatchQueue(workflowId: string): Promise<number> {
       const workflow = await workflowRepository.findById(workflowId);
       if (!workflow) break;
       started++;
-      void executeWorkflowRun(workflow, run).catch((err) => console.error(`[workflows] exécution ${run.id}`, err));
+      void executeWorkflowRun(workflow, run).catch((err) => log.error(`[workflows] exécution ${run.id}`, err));
     }
     return started;
   })().finally(() => dispatching.delete(workflowId));
@@ -91,7 +92,7 @@ export async function dispatchQueue(workflowId: string): Promise<number> {
   return job;
 }
 
-onRunSettled((run) => void dispatchQueue(run.workflowId).catch((err) => console.error(`[workflows] file du workflow ${run.workflowId}`, err)));
+onRunSettled((run) => void dispatchQueue(run.workflowId).catch((err) => log.error(`[workflows] file du workflow ${run.workflowId}`, err)));
 
 export const workflowService = {
   list: (filter?: { projectId?: string; projectIds?: string[] }) => workflowRepository.list(filter),
@@ -140,7 +141,7 @@ export const workflowService = {
     if ((await workflowRepository.countActive(id)) >= MAX_ACTIVE_RUNS) throw new AppError(`Au plus ${MAX_ACTIVE_RUNS} exécutions de ce workflow peuvent être actives en même temps`);
     const inputs = await runInputs(workflow, opts.inputs, start.key);
     const run = await workflowRepository.createRun({ workflowId: id, projectId: workflow.projectId, ownerId: opts.ownerId, trigger: opts.trigger, triggerKey: start.key, definition: workflow.definition, inputs });
-    void executeWorkflowRun(workflow, run).catch((err) => console.error(`[workflows] exécution ${run.id}`, err));
+    void executeWorkflowRun(workflow, run).catch((err) => log.error(`[workflows] exécution ${run.id}`, err));
     return run;
   },
 

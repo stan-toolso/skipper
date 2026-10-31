@@ -22,6 +22,7 @@ import {
   type TrackedPullRequestStatus,
   type UpdateTrackedPullRequestInput,
 } from './types.js';
+import { log } from '../log.js';
 
 /**
  * Pull requests suivies : création (depuis GitHub, depuis une URL, ou en ouvrant la PR sur GitHub), mise à jour
@@ -301,8 +302,8 @@ export const trackedPullRequestService = {
     lastSync.set(projectId, Date.now());
     // GitHub d'abord (une PR fusionnée ailleurs l'est avant d'examiner sa branche), puis le travail local des branches.
     const projectRepo = parseGithubRepo(project.gitUrl);
-    if (projectRepo) await this.syncGithub(projectId, userId, projectRepo).catch((err) => console.error('[pull-requests] synchronisation GitHub', err));
-    await this.refreshPending(project).catch((err) => console.error('[pull-requests] travail local des branches', err));
+    if (projectRepo) await this.syncGithub(projectId, userId, projectRepo).catch((err) => log.error('[pull-requests] synchronisation GitHub', err));
+    await this.refreshPending(project).catch((err) => log.error('[pull-requests] travail local des branches', err));
     return current();
   },
 
@@ -316,7 +317,7 @@ export const trackedPullRequestService = {
     backgroundRunning = true;
     try {
       for (const { projectId, userId } of await pullRequestRepository.syncTargets()) {
-        await this.sync(projectId, userId).catch((err) => console.error('[pull-requests] synchronisation de fond', projectId, err));
+        await this.sync(projectId, userId).catch((err) => log.error('[pull-requests] synchronisation de fond', projectId, err));
       }
     } finally {
       backgroundRunning = false;
@@ -325,7 +326,7 @@ export const trackedPullRequestService = {
 
   startBackgroundSync(): void {
     if (backgroundTimer) return;
-    backgroundTimer = setInterval(() => void this.syncAll().catch((err) => console.error('[pull-requests] synchronisation de fond', err)), BACKGROUND_SYNC_MS);
+    backgroundTimer = setInterval(() => void this.syncAll().catch((err) => log.error('[pull-requests] synchronisation de fond', err)), BACKGROUND_SYNC_MS);
     backgroundTimer.unref();
   },
 

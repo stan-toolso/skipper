@@ -20,6 +20,8 @@ import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
 import { config } from './config.js';
 import { captureProcessWarnings, log } from './log.js';
 import { appErrorLogPlugin, maskGraphQLError, operationTimingPlugin, yogaLogger } from './graphql/logging.js';
+import { csrfPreventionPlugin, introspectionGuardPlugin } from './graphql/security.js';
+import { isAllowedOrigin } from './origin.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { resolvers } from './graphql/resolvers.js';
@@ -156,19 +158,19 @@ async function main() {
     { name: 'reprise des sessions orphelines', start: () => orphanSweep.start(), stop: () => orphanSweep.stop() },
   ];
 
-  // Origines autorisées à appeler l'API avec le cookie de session : l'application, et le poste de développement.
+  // Origines autorisées à appeler l'API avec le cookie de session : voir origin.ts (aussi appliqué aux WebSockets).
   const appOrigin = new URL(config.appUrl).origin;
-  const isAllowedOrigin = (origin: string | null) => Boolean(origin) && (origin === appOrigin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin!));
 
   const yoga = createYoga({
     schema: createSchema({ typeDefs, resolvers }),
     graphqlEndpoint: '/graphql',
     landingPage: false,
     logging: yogaLogger,
-    plugins: [appErrorLogPlugin(), operationTimingPlugin()],
+    // Prévention CSRF (requêtes « simples » d'un autre site) et introspection réservée aux utilisateurs connectés.
+    plugins: [csrfPreventionPlugin(), introspectionGuardPlugin(), appErrorLogPlugin(), operationTimingPlugin()],
     cors: (request) => {
       const origin = request.headers.get('origin');
-      return isAllowedOrigin(origin) ? { origin: origin!, credentials: true } : { origin: appOrigin, credentials: true };
+      return isAllowedOrigin(origin) ? { origin, credentials: true } : { origin: appOrigin, credentials: true };
     },
     // Utilisateur connecté, lu dans le cookie de session ; les résolveurs vérifient ses droits.
     context: async ({ request }) => createAuthContext(await authSession.resolve(readCookie(request.headers.get('cookie'), SESSION_COOKIE))),

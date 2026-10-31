@@ -7,6 +7,7 @@ import { pushPreferencesService, wantsPush } from './preferences.js';
 import { pushRepository } from './pushRepository.js';
 import { notificationRepository } from './repository.js';
 import type { Notification } from './types.js';
+import { log } from '../log.js';
 
 /**
  * Notifications Web Push : les appareils abonnés reçoivent les notifications de la cloche même quand
@@ -71,11 +72,11 @@ async function send(sub: { id: string; endpoint: string; keys: string }, payload
     const status = (err as { statusCode?: number }).statusCode;
     if (status === 404 || status === 410) {
       await pushRepository.deleteById(sub.id);
-      console.log(`[push] abonnement expiré supprimé (${status})`);
+      log.info(`[push] abonnement expiré supprimé (${status})`);
       return;
     }
     await pushRepository.recordError(sub.id, (err as Error).message);
-    console.warn(`[push] envoi impossible : ${(err as Error).message}`);
+    log.warn(`[push] envoi impossible : ${(err as Error).message}`);
   }
 }
 
@@ -126,7 +127,7 @@ export const pushService = {
         ),
       );
     } catch (err) {
-      console.error('[push] distribution impossible', err);
+      log.error('[push] distribution impossible', err);
     }
   },
 

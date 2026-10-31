@@ -51,6 +51,7 @@ import { isNoise } from './claudeNoise.js';
 import { isEmptyNotificationResult, resultError } from './claudeResult.js';
 import { liveDraftService } from '../live.js';
 import { SESSION_ENV } from '../../runners/stats.js';
+import { log } from '../../log.js';
 
 interface ClaudeConfig {
   model?: string;
@@ -258,7 +259,7 @@ export class ClaudeProvider implements SessionProvider {
     };
     const disposeAll = async () => {
       if (browserServer) liveBrowserService.unregister(ctx.session.id);
-      await browserServer?.dispose().catch((e) => console.error('[browser] arrêt du navigateur de la session', e));
+      await browserServer?.dispose().catch((e) => log.error('[browser] arrêt du navigateur de la session', e));
     };
     // Les observations (instantané, capture, console, réseau, attente) sont libres ; les actions passent par les demandes d'autorisation.
     const browserReadTools = ['mcp__playwright__browser_snapshot', 'mcp__playwright__browser_take_screenshot', 'mcp__playwright__browser_console_messages', 'mcp__playwright__browser_network_requests', 'mcp__playwright__browser_wait_for'];
@@ -360,7 +361,7 @@ export class ClaudeProvider implements SessionProvider {
           }
           if (message.type === 'assistant' || message.type === 'result') liveDraftService.clear(ctx.session.id);
           await this.handleMessage(ctx, message, run);
-          await this.trackRuleUsage(ctx, message, ruleUsage).catch((e) => console.error('[permissions] suivi des règles', e));
+          await this.trackRuleUsage(ctx, message, ruleUsage).catch((e) => log.error('[permissions] suivi des règles', e));
           if (message.type === 'assistant' && !message.parent_tool_use_id) {
             const u = (message.message as { usage?: { input_tokens?: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null } }).usage;
             if (u && typeof u.input_tokens === 'number') contextTokens = u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
@@ -548,7 +549,7 @@ export class ClaudeProvider implements SessionProvider {
       const delta = await usageService.recordTotal(ctx.session.id, ctx.project.id, ctx.session.ownerId, result.total_cost_usd ?? 0, modelTotals, previous, fallbackModel);
       if (delta > 0) await ctx.emit('usage', { deltaUsd: Number(delta.toFixed(6)), totalUsd: result.total_cost_usd });
     } catch (err) {
-      console.error('[usage] relevé impossible', err);
+      log.error('[usage] relevé impossible', err);
     }
     return modelTotals;
   }

@@ -418,6 +418,8 @@ export interface GitStatus {
   detached: boolean;
   changes: GitFileChange[];
   headCommit: GitCommit | null;
+  /** Opération git interrompue (merge, rebase, cherry-pick, revert) ; null sinon. */
+  operation: 'merge' | 'rebase' | 'cherry-pick' | 'revert' | null;
 }
 export interface GitBranch {
   name: string;
@@ -1656,6 +1658,7 @@ export const GIT_STATUS_FIELDS = gql`
       author
       date
     }
+    operation
   }
 `;
 
@@ -1737,6 +1740,17 @@ export const GIT_COMMIT = gitMutation('GitCommit', ', $message: String!, $stageA
 export const GIT_FETCH = gitMutation('GitFetch', '', 'gitFetch(projectId: $projectId, worksessionId: $worksessionId)');
 export const GIT_PULL = gitMutation('GitPull', '', 'gitPull(projectId: $projectId, worksessionId: $worksessionId)');
 export const GIT_PUSH = gitMutation('GitPush', '', 'gitPush(projectId: $projectId, worksessionId: $worksessionId)');
+export const GIT_MERGE_BASE = gitMutation('GitMergeBase', '', 'gitMergeBase(projectId: $projectId, worksessionId: $worksessionId)');
+export const GIT_ABORT_OPERATION = gitMutation('GitAbortOperation', '', 'gitAbortOperation(projectId: $projectId, worksessionId: $worksessionId)');
+export const RESOLVE_GIT_CONFLICTS = gql`
+  mutation ResolveGitConflicts($projectId: ID!, $worksessionId: ID!) {
+    resolveGitConflicts(projectId: $projectId, worksessionId: $worksessionId) {
+      id
+      name
+      status
+    }
+  }
+`;
 export const GIT_CHECKOUT = gitMutation('GitCheckout', ', $branch: String!, $create: Boolean', 'gitCheckout(projectId: $projectId, worksessionId: $worksessionId, branch: $branch, create: $create)');
 
 // ---- Pull requests GitHub -----------------------------------------------------------------------

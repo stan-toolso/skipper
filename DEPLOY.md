@@ -241,7 +241,7 @@ docker créés avant cette version n'ont pas le dossier monté : « Recréer » 
 ## Application installable
 
 Le service worker (`/sw.js`) et le manifeste sont servis avec `Cache-Control: no-cache` par nginx
-(bloc dédié dans `deploy/nginx-skipper.conf`) pour que chaque déploiement soit pris en compte à la
+(`map $uri $skipper_cache_control` du site nginx) pour que chaque déploiement soit pris en compte à la
 prochaine ouverture. L'installation exige HTTPS : c'est le cas.
 
 ## Compression et HTTP/2
@@ -256,6 +256,23 @@ sur une cellule déjà installée, reporter les directives `gzip_*` et ajouter `
 `listen … 443 ssl` de `/etc/nginx/sites-available/skipper`, puis `sudo nginx -t && sudo systemctl reload nginx`.
 Vérification : `curl -sI --http2 -H 'Accept-Encoding: gzip' https://skipper.toolso.io/assets/<index>.js` doit
 répondre `HTTP/2 200` avec `content-encoding: gzip`.
+
+## En-têtes de sécurité
+
+Le site nginx (`deploy/cellule/templates/nginx-site.conf`, `deploy/nginx-skipper.conf`) masque sa version
+(`server_tokens off`) et pose, au niveau `server`, HSTS, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Permissions-Policy` et une `Content-Security-Policy` (`default-src 'self'`, aucun script en
+ligne, `frame-ancestors 'none'` contre le clickjacking). La CSP et le `Cache-Control` dépendent du chemin par deux
+`map` en tête de fichier : les réponses du backend (`/graphql`, `/api/`, `/auth/`, WebSockets) n'en reçoivent pas de
+nginx (les pages partagées et aperçus de fichiers ont leur propre CSP `sandbox` et chargent des CDN).
+**Piège** : un `add_header` dans une `location` annule tous ceux du bloc `server` ; n'en ajouter aucun dans une
+location, passer par les `map`. Sur une cellule déjà installée, reporter les deux `map`, les lignes
+`server_tokens`/`add_header` et le retrait des `add_header`/`expires` des locations dans
+`/etc/nginx/sites-available/skipper` (sans toucher aux blocs certbot), puis `sudo nginx -t && sudo systemctl reload nginx`.
+Vérification : `curl -sI https://skipper.toolso.io/` montre `content-security-policy` et `strict-transport-security`,
+et `curl -sI https://skipper.toolso.io/assets/<index>.js` `cache-control: public, max-age=31536000, immutable`.
+Déployer le front (`theme-init.js`) avant ou en même temps que la CSP : l'ancien `index.html` a un script en ligne
+(sans effet grave s'il est bloqué : thème sombre par défaut au premier affichage).
 
 ## Image du runner Docker
 
@@ -293,11 +310,23 @@ curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 
 ## Journaux
 
-Le backend écrit une ligne par message : horodatage ISO, niveau (`DEBUG`, `INFO`, `WARN`, `ERROR`) puis
-le message avec son préfixe de module (`[sessions]`, `[graphql]`…). `info` et `debug` vont sur la
-sortie standard (`~/.pm2/logs/skipper-out.log`), `warn` et `error` sur la sortie d'erreur
-(`~/.pm2/logs/skipper-error.log`). Le niveau minimal se règle avec `LOG_LEVEL` dans le `.env`
-(défaut `info` ; `pm2 restart skipper --update-env` après modification).
+Le backend écrit une ligne par message : niveau (`DEBUG`, `INFO`, `WARN`, `ERROR`) puis le message avec
+son préfixe de module (`[sessions]`, `[graphql]`…). Tout passe par `backend/src/log.ts` (`log` ou
+`createLogger('module')`) : pas de `console.*` dans le backend, sinon la ligne sort sans niveau.
+`info` et `debug` vont sur la sortie standard (`~/.pm2/logs/skipper-out.log`), `warn` et `error` sur
+la sortie d'erreur (`~/.pm2/logs/skipper-error.log`). Le niveau minimal se règle avec `LOG_LEVEL` dans le
+`.env` (défaut `info` ; `pm2 restart skipper --update-env` après modification).
+
+**Une seule date par ligne** : pm2 date déjà chaque ligne (`2026-10-12T20:52:38: `, réglage
+`log_date_format` du processus), journald aussi (cellule skipper-1, service systemd, voir
+`deploy/cellule/README.md`). Le logger n'ajoute donc son horodatage ISO que hors de ces deux cas :
+`LOG_TIMESTAMP=auto` (défaut) l'omet quand `pm_id` est défini (pm2) ou quand la sortie d'erreur est
+raccordée à journald (`JOURNAL_STREAM`, vérifiée contre le descripteur, car la variable est héritée par
+les terminaux et sessions lancés depuis le service). On a gardé la date du gestionnaire plutôt que de
+relancer pm2 sans `log_date_format` : elle reste présente même pour ce qui n'est pas écrit par le
+logger (sortie d'un processus enfant, plantage de Node). `LOG_TIMESTAMP=on` ou `off` force le choix.
+Vers journald, chaque ligne porte aussi la priorité syslog, que journald enregistre :
+`journalctl -u skipper -p warning` ne montre que les `WARN` et `ERROR`.
 
 Une erreur métier renvoyée au client (`AppError` : refus, ressource introuvable, dépôt sans branche de
 base…) tient sur une ligne `WARN [graphql] <opération> · <champ> · <utilisateur> : <message>`. Seules les

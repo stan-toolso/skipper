@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { RunningHandle, RunResult } from './provider.js';
+import { log } from '../../log.js';
 
 export interface SpawnOptions {
   command: string;
@@ -47,7 +48,7 @@ export function spawnProcess(opts: SpawnOptions): RunningHandle {
   // Sérialise les callbacks pour préserver l'ordre des événements persistés.
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (fn: () => void | Promise<void>) => {
-    chain = chain.then(fn).catch((err) => console.error('[process] callback error', err));
+    chain = chain.then(fn).catch((err) => log.error('[process] callback error', err));
   };
 
   const stdoutDone = new Promise<void>((resolve) => {

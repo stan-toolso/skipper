@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { pool } from '../db/pool.js';
+import { log } from '../log.js';
 
 /**
  * Registre des instances du backend (table `backend_instances`). Pendant une mise à jour bleu/vert, deux instances
@@ -88,7 +89,7 @@ export const instanceRegistry = {
     await pool.query(`INSERT INTO backend_instances (id, port, pid, label, token) VALUES ($1, $2, $3, $4, $5)`, [self.id, port, process.pid, config.instanceLabel, self.token]);
     registered = true;
     setPeers(await loadLive());
-    timer = setInterval(() => void this.heartbeat().catch((err) => console.error('[instances] battement', err)), HEARTBEAT_MS);
+    timer = setInterval(() => void this.heartbeat().catch((err) => log.error('[instances] battement', err)), HEARTBEAT_MS);
     timer.unref();
   },
 

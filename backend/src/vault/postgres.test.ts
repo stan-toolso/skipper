@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { databasesSql, MAINTENANCE_DATABASE, validateDatabaseName } from './postgres.js';
+import { connectionErrorMessage, databasesSql, MAINTENANCE_DATABASE, validateDatabaseName } from './postgres.js';
 
 describe('validateDatabaseName', () => {
   it('accepte un identifiant simple, espaces retirés', () => {
@@ -26,5 +26,22 @@ describe('databasesSql', () => {
   });
   it('la base de maintenance par défaut est postgres', () => {
     expect(MAINTENANCE_DATABASE).toBe('postgres');
+  });
+});
+
+describe('connectionErrorMessage', () => {
+  const creds = { username: 'u', host: 'h', port: 5432, database: 'd', sslCa: null };
+  const tlsError = Object.assign(new Error('self-signed certificate in certificate chain'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' });
+
+  it('indique de fournir l\'autorité quand la chaîne est inconnue', () => {
+    expect(connectionErrorMessage(creds, tlsError)).toMatch(/^Connexion PostgreSQL à u@h:5432\/d impossible : self-signed.*collez le certificat de l'autorité/);
+  });
+
+  it('signale une autorité fournie qui ne valide pas la chaîne', () => {
+    expect(connectionErrorMessage({ ...creds, sslCa: '-----BEGIN CERTIFICATE-----' }, tlsError)).toMatch(/ne valide pas la chaîne/);
+  });
+
+  it('laisse les autres erreurs telles quelles', () => {
+    expect(connectionErrorMessage(creds, new Error('timeout'))).toBe('Connexion PostgreSQL à u@h:5432/d impossible : timeout');
   });
 });

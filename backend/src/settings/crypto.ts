@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { log } from '../log.js';
 
 /**
  * Chiffrement des secrets stockés en base (clé API, jeton OAuth) : AES-256-GCM.
@@ -37,7 +38,7 @@ function loadKey(): Buffer {
   mkdirSync(config.workspacesRoot, { recursive: true });
   cachedKey = randomBytes(32);
   writeFileSync(file, cachedKey.toString('hex') + '\n', { mode: 0o600 });
-  console.log(`[settings] clé de chiffrement des secrets générée dans ${file}`);
+  log.info(`[settings] clé de chiffrement des secrets générée dans ${file}`);
   return cachedKey;
 }
 

@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { pool } from './pool.js';
+import { log } from '../log.js';
 
 const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -47,11 +48,11 @@ export async function runMigrations(): Promise<string[]> {
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   runMigrations()
     .then((applied) => {
-      console.log(applied.length ? `Migrations appliquées : ${applied.join(', ')}` : 'Base déjà à jour');
+      log.info(applied.length ? `[db] migrations appliquées : ${applied.join(', ')}` : '[db] base déjà à jour');
       return pool.end();
     })
     .catch((err) => {
-      console.error(err);
+      log.error(err);
       process.exit(1);
     });
 }

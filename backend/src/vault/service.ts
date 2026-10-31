@@ -54,6 +54,7 @@ import {
   type WebsiteSettings,
 } from './types.js';
 import * as website from './website.js';
+import { log } from '../log.js';
 
 /** Un jeton applicatif obtenu par un parcours de connexion : il ne quitte jamais le serveur et ne se modifie pas à la main. */
 export const isOauthToken = (item: Pick<VaultItem, 'kind' | 'settings'>): boolean => item.kind === 'token' && (item.settings as TokenSettings).obtained === 'oauth';
@@ -200,7 +201,7 @@ export const vaultService = {
       return {};
     } catch (err) {
       if (err instanceof VaultDecryptError || /illisible/.test((err as Error).message)) {
-        console.error(`[vault] secrets de ${item.name} illisibles : ${(err as Error).message}`);
+        log.error(`[vault] secrets de ${item.name} illisibles : ${(err as Error).message}`);
         throw new AppError(`Les secrets de « ${item.name} » sont illisibles (clé de chiffrement changée ou données altérées) : saisissez-les à nouveau`, 'VAULT_DECRYPT');
       }
       throw err;
@@ -223,7 +224,7 @@ export const vaultService = {
         detail: detail ? detail.slice(0, AUDIT_DETAIL_MAX) : null,
       });
     } catch (err) {
-      console.error('[vault] entrée de journal perdue', err);
+      log.error('[vault] entrée de journal perdue', err);
     }
   },
 
@@ -1088,7 +1089,7 @@ export const vaultService = {
         }
       } catch (err) {
         failed++;
-        console.error(`[vault] reprise des secrets de ${item.name} impossible : ${(err as Error).message}`);
+        log.error(`[vault] reprise des secrets de ${item.name} impossible : ${(err as Error).message}`);
       }
     }
     const pruned = await vaultRepository.pruneAudit(AUDIT_RETENTION_DAYS);

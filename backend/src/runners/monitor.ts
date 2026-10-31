@@ -3,6 +3,7 @@ import { projectRepository } from '../projects/repository.js';
 import type { Project } from '../projects/types.js';
 import { runner } from './index.js';
 import { containerOomKilled, type ContainerStats } from './stats.js';
+import { log } from '../log.js';
 
 /**
  * Surveillance des conteneurs des projets : avertissement quand la mémoire dépasse 90 % de la limite
@@ -94,7 +95,7 @@ async function sampleProject(project: Project): Promise<void> {
       projectId: project.id,
       payload: { memoryUsedMb: stats.memoryUsedMb, memoryLimitMb: stats.memoryLimitMb, claudeProcesses: stats.claudeProcesses.length },
     });
-    console.warn(`[conteneurs] ${project.slug} : ${stats.memoryUsedMb} / ${stats.memoryLimitMb} Mo`);
+    log.warn(`[conteneurs] ${project.slug} : ${stats.memoryUsedMb} / ${stats.memoryLimitMb} Mo`);
   }
   if (recordCpuSample(project.id, stats)) {
     const pressure = Math.round(stats.cpuPressurePercent ?? 0);
@@ -106,7 +107,7 @@ async function sampleProject(project: Project): Promise<void> {
       projectId: project.id,
       payload: { cpuPressurePercent: stats.cpuPressurePercent, cpuPercent: stats.cpuPercent, cpuLimit: stats.cpuLimit, hostCpus: stats.hostCpus, claudeProcesses: stats.claudeProcesses.length },
     });
-    console.warn(`[conteneurs] ${project.slug} : pression CPU ${pressure} % (${cpuCapacity(stats)})`);
+    log.warn(`[conteneurs] ${project.slug} : pression CPU ${pressure} % (${cpuCapacity(stats)})`);
   }
 }
 
@@ -114,7 +115,7 @@ export const containerMonitor = {
   /** Mesure tous les conteneurs en marche (ceux qui ne répondent pas sont ignorés). */
   async check(): Promise<void> {
     const projects = await projectRepository.list();
-    for (const project of projects) await sampleProject(project).catch((err) => console.error(`[conteneurs] mesure de ${project.slug}`, err));
+    for (const project of projects) await sampleProject(project).catch((err) => log.error(`[conteneurs] mesure de ${project.slug}`, err));
   },
 
   /** Depuis quand la mémoire du conteneur dépasse le seuil d'avertissement (null : sous le seuil, ou pas encore mesuré). */
@@ -155,7 +156,7 @@ export const containerMonitor = {
 
   start(): void {
     if (timer) return;
-    timer = setInterval(() => void this.check().catch((err) => console.error('[conteneurs] surveillance', err)), INTERVAL_MS);
+    timer = setInterval(() => void this.check().catch((err) => log.error('[conteneurs] surveillance', err)), INTERVAL_MS);
     timer.unref();
   },
 

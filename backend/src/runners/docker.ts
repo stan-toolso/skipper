@@ -15,6 +15,7 @@ import { sessionTag, type BrowserMcpOptions, type BrowserMcpServer, type Isolate
 import { containerDrift, countZombies, cpusArgs, SPEC_LABEL, updateCpusValue, splitInspect, type ContainerSpec, type ImageInfo } from './spec.js';
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
+import { log } from '../log.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -241,7 +242,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const name = this.containerName(project);
     // Conteneur créé avec d'autres paramètres ou une image depuis reconstruite : recréé dès que rien n'y tourne.
     if (current.state !== 'absent' && current.outdated && (await this.isIdle(project))) {
-      console.log(`[runner] ${name} recréé : ${current.outdatedReasons.join(' ; ')}`);
+      log.info(`[runner] ${name} recréé : ${current.outdatedReasons.join(' ; ')}`);
       await this.remove(project);
       current = await this.status(project);
     }
@@ -263,7 +264,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     try {
       return await this.idleCheck(project);
     } catch (err) {
-      console.error('[runner] vérification d’inactivité', err);
+      log.error('[runner] vérification d’inactivité', err);
       return false;
     }
   }
@@ -274,11 +275,11 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       try {
         const current = await this.status(project);
         if (current.state === 'absent' || current.state === 'unavailable' || !current.outdated) continue;
-        console.log(`[runner] ${current.containerName} supprimé au démarrage, sera recréé à la demande : ${current.outdatedReasons.join(' ; ')}`);
+        log.info(`[runner] ${current.containerName} supprimé au démarrage, sera recréé à la demande : ${current.outdatedReasons.join(' ; ')}`);
         await this.remove(project);
         recreated.push(project.slug);
       } catch (err) {
-        console.error(`[runner] ${this.containerName(project)} : recréation au démarrage`, err);
+        log.error(`[runner] ${this.containerName(project)} : recréation au démarrage`, err);
       }
     }
     return recreated;

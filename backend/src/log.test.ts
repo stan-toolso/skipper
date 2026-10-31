@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Le niveau initial vient de LOG_LEVEL lu à l'import de config.ts : on fixe l'environnement puis on réimporte.
-async function loadLog(level?: string) {
+async function loadLog(level?: string, timestamp = 'on') {
   vi.resetModules();
   if (level === undefined) delete process.env.LOG_LEVEL;
   else process.env.LOG_LEVEL = level;
+  process.env.LOG_TIMESTAMP = timestamp;
   const mod = await import('./log.js');
+  // Les tests peuvent tourner sous journald : la priorité syslog est testée à part.
+  mod.logFormat.syslogPriority = false;
   const out: string[] = [];
   const err: string[] = [];
   mod.logOutput.stdout = (line) => void out.push(line);
@@ -18,6 +21,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z /;
 describe('journal', () => {
   afterEach(() => {
     delete process.env.LOG_LEVEL;
+    delete process.env.LOG_TIMESTAMP;
   });
 
   it('écrit une ligne horodatée avec le niveau, info sur stdout et warn/error sur stderr', async () => {
@@ -69,6 +73,37 @@ describe('journal', () => {
     expect(line).toBe('2026-10-10T08:00:00.000Z INFO  [x] { a: 1, b: { c: [ 1, 2, 3 ] } }');
   });
 
+  it('omet l’horodatage quand pm2 date déjà les lignes, ou sur demande', async () => {
+    const pmId = process.env.pm_id;
+    process.env.pm_id = '0';
+    try {
+      const auto = await loadLog(undefined, 'auto');
+      auto.log.info('[runner] prêt');
+      expect(auto.out).toEqual(['INFO  [runner] prêt']);
+      const forced = await loadLog(undefined, 'on');
+      forced.log.info('[runner] prêt');
+      expect(forced.out[0]).toMatch(ISO);
+    } finally {
+      if (pmId === undefined) delete process.env.pm_id;
+      else process.env.pm_id = pmId;
+    }
+    const off = await loadLog(undefined, 'off');
+    off.log.warn('[runner] lent');
+    expect(off.err).toEqual(['WARN  [runner] lent']);
+    await expect(loadLog(undefined, 'jamais')).rejects.toThrow(/LOG_TIMESTAMP invalide : jamais/);
+  });
+
+  it('préfixe chaque ligne de la priorité syslog vers journald', async () => {
+    const { formatLine, logFormat } = await loadLog(undefined, 'off');
+    logFormat.syslogPriority = true;
+    expect(formatLine('info', ['[x] ok'])).toBe('<6>INFO  [x] ok');
+    expect(formatLine('warn', ['[x] lent'])).toBe('<4>WARN  [x] lent');
+    const lines = formatLine('error', ['[x]', new Error('cassé')]).split('\n');
+    expect(lines[0]).toBe('<3>ERROR [x] Error : cassé');
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.every((l) => l.startsWith('<3>'))).toBe(true);
+  });
+
   it("préfixe les messages d'un journal de module", async () => {
     const { createLogger, out } = await loadLog();
     createLogger('git').info('fetch terminé', 3);
@@ -100,5 +135,24 @@ describe('avertissements Node', () => {
     expect(err).toEqual([expect.stringMatching(/WARN  \[node\] DeprecationWarning \(DEP0005\) : Buffer\(\) is deprecated$/)]);
     // Le gestionnaire par défaut de Node (trace et conseil --trace-warnings sur stderr) est remplacé.
     expect(process.listenerCount('warning')).toBe(1);
+  });
+});
+
+describe('code du backend', () => {
+  it('journalise par log.ts, jamais par console.*', async () => {
+    const { readdir, readFile } = await import('node:fs/promises');
+    const path = await import('node:path');
+    const root = path.dirname(new URL(import.meta.url).pathname);
+    const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
+    const offenders: string[] = [];
+    for (const file of files) {
+      const lines = (await readFile(path.join(root, file), 'utf8')).split('\n');
+      lines.forEach((line, i) => {
+        // Les scripts relais exécutés dans les conteneurs (chaînes RELAY, CDP_RELAY) ont leur propre console.
+        if (/^const \w*RELAY = /.test(line)) return;
+        if (/\bconsole\.(log|info|warn|error|debug)\(/.test(line)) offenders.push(`${file}:${i + 1}`);
+      });
+    }
+    expect(offenders).toEqual([]);
   });
 });

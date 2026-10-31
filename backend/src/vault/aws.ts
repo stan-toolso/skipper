@@ -9,6 +9,7 @@ import type { Project } from '../projects/types.js';
 import { runner } from '../runners/index.js';
 import type { IsolatedResult } from '../runners/types.js';
 import type { AwsCredentials } from './types.js';
+import { log } from '../log.js';
 
 // ---- Réglages ----------------------------------------------------------------------------------------
 
@@ -333,6 +334,6 @@ export async function logout(region: string, accessToken: string): Promise<void>
   try {
     await fetch(`${portalUrl(region)}/logout`, { method: 'POST', headers: { 'x-amz-sso_bearer_token': accessToken } });
   } catch (err) {
-    console.warn('[aws] déconnexion impossible :', (err as Error).message);
+    log.warn('[aws] déconnexion impossible :', (err as Error).message);
   }
 }
