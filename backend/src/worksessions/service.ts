@@ -9,6 +9,7 @@ import { ensureWorkspace, git, gitAuthFor, isGitRepository, workspacePath } from
 import { LABEL_MAX, uniqueName } from './names.js';
 import { worksessionRepository } from './repository.js';
 import { worksessionLabel, type Worksession } from './types.js';
+import { log } from '../log.js';
 
 export { namesFromText, uniqueName } from './names.js';
 
@@ -324,8 +325,8 @@ export const worksessionService = {
       await git(['worktree', 'prune'], main).catch(() => undefined);
       await mkdir(worksessionsRoot(project), { recursive: true });
       const { how, from } = await this.checkout(main, dir, wt.branch, { defaultBranch: project.gitBranch });
-      if (how === 'new') console.warn(`[worksessions] ${wt.name} : branche ${wt.branch} disparue, work session recréée depuis ${from}`);
-      else console.log(`[worksessions] dossier de ${wt.name} recréé (${how})`);
+      if (how === 'new') log.warn(`[worksessions] ${wt.name} : branche ${wt.branch} disparue, work session recréée depuis ${from}`);
+      else log.info(`[worksessions] dossier de ${wt.name} recréé (${how})`);
       return dir;
     })().finally(() => restoring.delete(wt.id));
     restoring.set(wt.id, task);

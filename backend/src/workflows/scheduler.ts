@@ -4,6 +4,7 @@ import { failStaleWorkflowRuns } from './engine.js';
 import { workflowRepository } from './repository.js';
 import { dispatchQueue, workflowService } from './service.js';
 import type { Workflow } from './types.js';
+import { log } from '../log.js';
 
 const TICK_MS = 30_000;
 /** Une échéance manquée (serveur arrêté) est encore exécutée si elle date de moins de dix minutes ; au-delà, on attend la suivante. */
@@ -48,7 +49,7 @@ async function tickKind<T extends Scheduled>(kind: string, due: T[], claim: (id:
     try {
       next = nextRun(parseCron(item.schedule.cron), now, item.schedule.timezone);
     } catch (err) {
-      console.error(`[automation] expression cron invalide (${kind} ${item.id}) : ${(err as Error).message}`);
+      log.error(`[automation] expression cron invalide (${kind} ${item.id}) : ${(err as Error).message}`);
     }
     const claimed = await claim(item.id, item.schedule.nextRunAt, next, now);
     if (!claimed) continue;
@@ -56,7 +57,7 @@ async function tickKind<T extends Scheduled>(kind: string, due: T[], claim: (id:
       await setResult(item.id, `Échéance du ${item.schedule.nextRunAt.toISOString()} manquée (serveur arrêté), non rattrapée`);
       continue;
     }
-    await run(claimed).catch((err) => console.error(`[automation] exécution planifiée (${kind} ${item.id})`, err));
+    await run(claimed).catch((err) => log.error(`[automation] exécution planifiée (${kind} ${item.id})`, err));
   }
 }
 
@@ -66,10 +67,10 @@ async function tick(): Promise<void> {
   try {
     const now = new Date();
     const lostWorkflows = await failStaleWorkflowRuns(now);
-    if (lostWorkflows) console.warn(`[automation] exécutions perdues passées en échec : ${lostWorkflows} workflow(s)`);
+    if (lostWorkflows) log.warn(`[automation] exécutions perdues passées en échec : ${lostWorkflows} workflow(s)`);
     await tickKind('workflow', await workflowRepository.listDue(now), workflowRepository.claim.bind(workflowRepository), workflowRepository.setLastResult.bind(workflowRepository), runScheduledWorkflow, now);
     // Exécutions restées en file (serveur arrêté, maintenance levée).
-    for (const workflowId of await workflowRepository.listWithQueue()) await dispatchQueue(workflowId).catch((err) => console.error(`[automation] file du workflow ${workflowId}`, err));
+    for (const workflowId of await workflowRepository.listWithQueue()) await dispatchQueue(workflowId).catch((err) => log.error(`[automation] file du workflow ${workflowId}`, err));
   } finally {
     ticking = false;
   }
@@ -91,12 +92,12 @@ export const automationScheduler = {
             await setResult(item.id, `Échéance du ${item.schedule.nextRunAt.toISOString()} manquée (serveur arrêté), non rattrapée`);
           }
         } catch (err) {
-          console.error(`[automation] expression cron invalide (${item.id}) : ${(err as Error).message}`);
+          log.error(`[automation] expression cron invalide (${item.id}) : ${(err as Error).message}`);
         }
       }
     };
     await recompute(await workflowRepository.listScheduled(), workflowRepository.setNextRunAt.bind(workflowRepository), workflowRepository.setLastResult.bind(workflowRepository));
-    timer = setInterval(() => void tick().catch((err) => console.error('[automation] ordonnanceur', err)), TICK_MS);
+    timer = setInterval(() => void tick().catch((err) => log.error('[automation] ordonnanceur', err)), TICK_MS);
     timer.unref();
     return skipped;
   },

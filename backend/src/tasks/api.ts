@@ -6,6 +6,7 @@ import { AppError } from '../errors.js';
 import { serverSettings } from '../settings/server.js';
 import { taskService } from './service.js';
 import { OPEN_STATUSES, TASK_PRIORITIES, TASK_STATUSES, type ProjectApiKey, type Task, type TaskStatus } from './types.js';
+import { log } from '../log.js';
 
 /**
  * API REST des tâches, pour les intégrations : /api/v1/tasks, authentifiée par une clé d'API du projet
@@ -153,7 +154,7 @@ export async function handleTasksApiRoute(req: IncomingMessage, res: ServerRespo
     return error(res, 405, 'Méthode non autorisée', 'METHOD_NOT_ALLOWED'), true;
   } catch (err) {
     if (err instanceof AppError) return error(res, statusOf(err), err.message, err.code === 'BAD_REQUEST' ? 'BAD_USER_INPUT' : err.code), true;
-    console.error('[api] tâches', err);
+    log.error('[api] tâches', err);
     return error(res, 500, 'Erreur interne', 'INTERNAL_SERVER_ERROR'), true;
   }
 }

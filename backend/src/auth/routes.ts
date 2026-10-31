@@ -7,6 +7,7 @@ import { userService } from '../users/service.js';
 import { vaultService } from '../vault/service.js';
 import { googleAuth } from './google.js';
 import { authSession, readCookie, SESSION_COOKIE } from './session.js';
+import { log } from '../log.js';
 
 const STATE_COOKIE = 'skipper_oauth';
 
@@ -120,7 +121,7 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse)
         const item = await googleAccountService.connect({ userId: vault.projectId ? null : user.id, projectId: vault.projectId }, code, { userId: user.id, projectId: vault.projectId }, vault.replaceId);
         redirect(res, vaultPage(vault.projectId, { google: 'connected', email: (item.settings as { email: string }).email, item: item.id }), [stateCookie(null)]);
       } catch (err) {
-        console.error('[google] rattachement refusé :', (err as Error).message);
+        log.error('[google] rattachement refusé :', (err as Error).message);
         redirect(res, vaultPage(vault.projectId, { googleError: (err as Error).message }), [stateCookie(null)]);
       }
       return true;
@@ -129,11 +130,11 @@ export async function handleAuthRoute(req: IncomingMessage, res: ServerResponse)
       const profile = await googleAuth.fetchProfile(code);
       const user = await userService.loginWithGoogle(profile);
       const token = await authSession.create(user);
-      console.log(`[auth] connexion de ${user.email}`);
+      log.info(`[auth] connexion de ${user.email}`);
       redirect(res, toApp(expected.next ?? '/'), [stateCookie(null), authSession.cookie(token)]);
     } catch (err) {
       const code = err instanceof AppError ? err.code : 'google_error';
-      console.error('[auth] connexion refusée :', (err as Error).message);
+      log.error('[auth] connexion refusée :', (err as Error).message);
       redirect(res, loginError(code.toLowerCase()), [stateCookie(null)]);
     }
     return true;

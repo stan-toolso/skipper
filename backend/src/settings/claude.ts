@@ -6,6 +6,7 @@ import type { VaultActor } from '../vault/types.js';
 import { claudeAuthModes, defaultClaudeSettings, type ClaudeAccount, type ClaudeAuthMode, type ClaudeAuthStatus, type ClaudeModel, type ClaudeSettings, type ClaudeVerification } from './types.js';
 import { usageService } from './usage.js';
 import { userSettingsStore } from './userStore.js';
+import { log } from '../log.js';
 
 const KEY_SETTINGS = 'claude';
 const KEY_VERIFICATION = 'claude.verification';
@@ -285,7 +286,7 @@ export class UserClaudeSettings {
 
   async invalidateVerification(): Promise<void> {
     this.verification = null;
-    await userSettingsStore.delete(this.userId, KEY_VERIFICATION).catch((err) => console.error('[settings] purge de la vérification', err));
+    await userSettingsStore.delete(this.userId, KEY_VERIFICATION).catch((err) => log.error('[settings] purge de la vérification', err));
   }
 
   /** Un élément référencé, si la personne peut encore l'utiliser. */

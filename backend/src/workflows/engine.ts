@@ -18,6 +18,7 @@ import { runLlmCall } from './llmCall.js';
 import { workflowRepository } from './repository.js';
 import { render } from './template.js';
 import { FALLIBLE_NODE_TYPES, type LogLevel, type Workflow, type WorkflowNode, type WorkflowNodeType, type WorkflowRun } from './types.js';
+import { log } from '../log.js';
 
 export const HEARTBEAT_MS = 30_000;
 /** Une exécution dont le battement a cet âge a été perdue avec son serveur. */
@@ -119,7 +120,7 @@ class Execution {
   }
 
   private async log(level: LogLevel, message: string, nodeKey: string | null = null, data: unknown = null): Promise<void> {
-    await workflowRepository.addLog(this.run.id, level, message, nodeKey, data).catch((err) => console.warn(`[workflows] journal de ${this.run.id} : ${(err as Error).message}`));
+    await workflowRepository.addLog(this.run.id, level, message, nodeKey, data).catch((err) => log.warn(`[workflows] journal de ${this.run.id} : ${(err as Error).message}`));
   }
 
   private async setState(key: string, state: NodeState, patch: Parameters<typeof workflowRepository.upsertNode>[3] = {}): Promise<void> {
@@ -146,7 +147,7 @@ class Execution {
       await this.loop();
     } catch (err) {
       this.fatal = this.fatal ?? (err as Error).message;
-      console.error(`[workflows] exécution ${this.run.id} plantée`, err);
+      log.error(`[workflows] exécution ${this.run.id} plantée`, err);
     } finally {
       if (this.heartbeat) clearInterval(this.heartbeat);
     }

@@ -25,6 +25,7 @@ import {
   type TaskReaction,
   type UpdateTaskInput,
 } from './types.js';
+import { log } from '../log.js';
 
 export const priorityLabels = { urgent: 'urgente', high: 'haute', medium: 'moyenne', low: 'basse' } as const;
 export const statusLabels = { todo: 'à faire', in_progress: 'en cours', done: 'terminée', cancelled: 'annulée' } as const;
@@ -181,7 +182,7 @@ function notifyChanged(change: TaskChange): void {
   for (const [name, fn] of changedListeners) {
     Promise.resolve()
       .then(() => fn(change))
-      .catch((err) => console.error(`[tasks] écouteur ${name}`, err));
+      .catch((err) => log.error(`[tasks] écouteur ${name}`, err));
   }
 }
 
@@ -250,7 +251,7 @@ export const taskService = {
     for (const [name, fn] of createdListeners) {
       Promise.resolve()
         .then(() => fn(task, actor))
-        .catch((err) => console.error(`[tasks] écouteur ${name}`, err));
+        .catch((err) => log.error(`[tasks] écouteur ${name}`, err));
     }
     return task;
   },
@@ -301,7 +302,7 @@ export const taskService = {
   async delete(id: string): Promise<boolean> {
     await this.get(id);
     const deleted = await taskRepository.delete(id);
-    if (deleted) await removeAllTaskAttachments(id).catch((err) => console.warn('[tasks] fichiers joints non supprimés', err));
+    if (deleted) await removeAllTaskAttachments(id).catch((err) => log.warn('[tasks] fichiers joints non supprimés', err));
     return deleted;
   },
 
@@ -380,7 +381,7 @@ export const taskService = {
       await taskRepository.deleteComment(comment.id).catch(() => undefined);
       throw err;
     });
-    for (const m of mentions) if (m.kind === 'session') await taskRepository.linkSession(taskId, m.id).catch((err) => console.warn('[tasks] session mentionnée non reliée', err));
+    for (const m of mentions) if (m.kind === 'session') await taskRepository.linkSession(taskId, m.id).catch((err) => log.warn('[tasks] session mentionnée non reliée', err));
     void this.notifyThread(task, comment, parent, author);
     notifyChanged({ kind: 'commented', task, comment, attachments, parent });
     return comment;

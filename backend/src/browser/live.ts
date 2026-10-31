@@ -3,6 +3,7 @@ import type { Project } from '../projects/types.js';
 import { runner } from '../runners/index.js';
 import type { BrowserMcpServer } from '../runners/types.js';
 import { CdpClient } from './cdp.js';
+import { log } from '../log.js';
 
 /**
  * Vue en direct du navigateur headless des sessions.
@@ -240,7 +241,7 @@ class LiveBrowserService {
       .start()
       .then(() => this.streams.get(sessionId) === stream && this.send(sessionId, status('live')))
       .catch((err: Error) => {
-        console.warn(`[browser] vue en direct de la session ${sessionId} : ${err.message}`);
+        log.warn(`[browser] vue en direct de la session ${sessionId} : ${err.message}`);
         fail(err);
       });
   }

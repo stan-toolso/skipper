@@ -4,6 +4,7 @@ import { resumeDigest } from './history.js';
 import { sessionRepository } from './repository.js';
 import { sessionService } from './service.js';
 import type { Session, SessionCleanup } from './types.js';
+import { log } from '../log.js';
 
 /** Délai maximal d'une compaction de conversation. */
 const COMPACT_TIMEOUT_MS = 10 * 60_000;
@@ -188,7 +189,7 @@ export const cleanupService = {
           deleted += n;
         }
       } catch (err) {
-        console.error(`[cleanup] purge de la session ${session.id}`, err);
+        log.error(`[cleanup] purge de la session ${session.id}`, err);
       }
     }
     return { sessions, deleted };

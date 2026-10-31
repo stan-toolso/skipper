@@ -1,6 +1,7 @@
 import { pool } from '../db/pool.js';
 import { vaultService } from '../vault/service.js';
 import { kindLabels as vaultKindLabels } from '../vault/types.js';
+import { log } from '../log.js';
 
 /**
  * Recherche globale (palette ⌘K) : projets, sessions, terminaux, tâches et éléments du coffre
@@ -126,7 +127,7 @@ export const searchService = {
         };
       },
     };
-    const groups = await Promise.all(wanted.map((k) => jobs[k]().catch((err) => (console.error(`[search] ${k}`, err), null))));
+    const groups = await Promise.all(wanted.map((k) => jobs[k]().catch((err) => (log.error(`[search] ${k}`, err), null))));
     return groups.filter((g): g is SearchGroup => g !== null);
   },
 };

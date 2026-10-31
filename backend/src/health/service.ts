@@ -12,6 +12,7 @@ import { serverSettings } from '../settings/server.js';
 import { terminalService } from '../terminals/service.js';
 import { readContainerStats } from '../runners/stats.js';
 import { parseClaudeProcesses, type ClaudeProcess } from './processes.js';
+import { log } from '../log.js';
 
 export { parseClaudeProcesses, type ClaudeProcess };
 
@@ -177,7 +178,7 @@ function measureWorkspaces(): Promise<void> {
       }
       workspaces = { measuredAt: new Date(), entries: entries.sort((a, b) => b.sizeMb - a.sizeMb) };
     } catch (err) {
-      console.error('[health] mesure des workspaces', err);
+      log.error('[health] mesure des workspaces', err);
     } finally {
       measuring = null;
     }
@@ -255,14 +256,14 @@ export const healthService = {
       adminsOnly: true,
       payload: { ...memory, threshold, activeSessions: active.active },
     });
-    console.warn(`[health] mémoire disponible ${memory.availableMb} Mo, sous le seuil de ${threshold} Mo`);
+    log.warn(`[health] mémoire disponible ${memory.availableMb} Mo, sous le seuil de ${threshold} Mo`);
     return true;
   },
 
   /** Surveillance périodique de la mémoire (au démarrage du serveur). */
   startMonitor(): void {
     if (monitor) return;
-    monitor = setInterval(() => void this.checkMemory().catch((err) => console.error('[health] surveillance mémoire', err)), MONITOR_INTERVAL_MS);
+    monitor = setInterval(() => void this.checkMemory().catch((err) => log.error('[health] surveillance mémoire', err)), MONITOR_INTERVAL_MS);
     monitor.unref();
   },
 

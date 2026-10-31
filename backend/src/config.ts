@@ -20,6 +20,17 @@ function logLevel(): LogLevel {
   return value as LogLevel;
 }
 
+const logTimestamps = ['auto', 'on', 'off'] as const;
+export type LogTimestamp = (typeof logTimestamps)[number];
+
+function logTimestamp(): LogTimestamp {
+  const value = (process.env.LOG_TIMESTAMP || 'auto').trim().toLowerCase();
+  if (!(logTimestamps as readonly string[]).includes(value)) {
+    throw new Error(`LOG_TIMESTAMP invalide : ${value} (attendu : ${logTimestamps.join(', ')})`);
+  }
+  return value as LogTimestamp;
+}
+
 export const config = {
   port: Number(env('PORT', '4000')),
   databaseUrl: env('DATABASE_URL', 'postgres://skipper:skipper@localhost:5432/skipper'),
@@ -41,4 +52,6 @@ export const config = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
   /** Niveau minimal du journal (debug, info, warn, error). */
   logLevel: logLevel(),
+  /** Horodatage des lignes du journal : auto (absent quand pm2 ou journald datent déjà chaque ligne), on, off. */
+  logTimestamp: logTimestamp(),
 };

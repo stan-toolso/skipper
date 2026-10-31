@@ -293,11 +293,23 @@ curl -s https://skipper.toolso.io/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 
 ## Journaux
 
-Le backend écrit une ligne par message : horodatage ISO, niveau (`DEBUG`, `INFO`, `WARN`, `ERROR`) puis
-le message avec son préfixe de module (`[sessions]`, `[graphql]`…). `info` et `debug` vont sur la
-sortie standard (`~/.pm2/logs/skipper-out.log`), `warn` et `error` sur la sortie d'erreur
-(`~/.pm2/logs/skipper-error.log`). Le niveau minimal se règle avec `LOG_LEVEL` dans le `.env`
-(défaut `info` ; `pm2 restart skipper --update-env` après modification).
+Le backend écrit une ligne par message : niveau (`DEBUG`, `INFO`, `WARN`, `ERROR`) puis le message avec
+son préfixe de module (`[sessions]`, `[graphql]`…). Tout passe par `backend/src/log.ts` (`log` ou
+`createLogger('module')`) : pas de `console.*` dans le backend, sinon la ligne sort sans niveau.
+`info` et `debug` vont sur la sortie standard (`~/.pm2/logs/skipper-out.log`), `warn` et `error` sur
+la sortie d'erreur (`~/.pm2/logs/skipper-error.log`). Le niveau minimal se règle avec `LOG_LEVEL` dans le
+`.env` (défaut `info` ; `pm2 restart skipper --update-env` après modification).
+
+**Une seule date par ligne** : pm2 date déjà chaque ligne (`2026-10-12T20:52:38: `, réglage
+`log_date_format` du processus), journald aussi (cellule skipper-1, service systemd, voir
+`deploy/cellule/README.md`). Le logger n'ajoute donc son horodatage ISO que hors de ces deux cas :
+`LOG_TIMESTAMP=auto` (défaut) l'omet quand `pm_id` est défini (pm2) ou quand la sortie d'erreur est
+raccordée à journald (`JOURNAL_STREAM`, vérifiée contre le descripteur, car la variable est héritée par
+les terminaux et sessions lancés depuis le service). On a gardé la date du gestionnaire plutôt que de
+relancer pm2 sans `log_date_format` : elle reste présente même pour ce qui n'est pas écrit par le
+logger (sortie d'un processus enfant, plantage de Node). `LOG_TIMESTAMP=on` ou `off` force le choix.
+Vers journald, chaque ligne porte aussi la priorité syslog, que journald enregistre :
+`journalctl -u skipper -p warning` ne montre que les `WARN` et `ERROR`.
 
 Une erreur métier renvoyée au client (`AppError` : refus, ressource introuvable, dépôt sans branche de
 base…) tient sur une ligne `WARN [graphql] <opération> · <champ> · <utilisateur> : <message>`. Seules les
