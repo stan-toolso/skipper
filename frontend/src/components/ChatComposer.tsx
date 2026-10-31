@@ -33,12 +33,16 @@ const write = (key: string, value: string) => {
   }
 };
 
-/** Suggestions de départ : chacune remplit la zone de saisie (la personne complète ou envoie telle quelle). */
+/**
+ * Suggestions de départ : le chat sert d'abord à créer et lancer des tâches. Chacune remplit la zone de saisie
+ * (la personne complète les « … » ou envoie telle quelle).
+ */
 const SUGGESTIONS: { label: string; prompt: string }[] = [
-  { label: 'Mes tâches ouvertes', prompt: 'Quelles sont mes tâches ouvertes, projet par projet ? Signale les urgentes et celles en retard.' },
-  { label: "Ce que mes agents ont fait aujourd'hui", prompt: "Qu'ont fait mes agents aujourd'hui ? Résume les sessions terminées et celles encore en cours, projet par projet, et dis-moi si l'une d'elles attend quelque chose de moi." },
-  { label: 'Lancer une session', prompt: 'Lance une session dans le projet « … » avec la consigne suivante, puis attends sa réponse et résume-la : …' },
-  { label: "Dernière activité d'un projet", prompt: 'Quelle est la dernière activité du projet « … » : sessions, tâches, work sessions ?' },
+  { label: 'Créer une tâche', prompt: 'Crée une tâche dans le projet « … » : …' },
+  { label: 'Créer et lancer une tâche', prompt: "Crée une tâche dans le projet « … » et lance une session d'agent pour la réaliser : …" },
+  { label: 'Découper en tâches', prompt: 'Découpe ce chantier en tâches dans le projet « … », avec une priorité pour chacune : …' },
+  { label: 'Lancer mes tâches à faire', prompt: "Liste mes tâches à faire dans le projet « … » et propose celles qu'un agent peut lancer dès maintenant." },
+  { label: 'Où en sont mes tâches', prompt: "Où en sont mes tâches en cours, projet par projet ? Signale celles qui attendent quelque chose de moi et celles dont l'agent s'est arrêté." },
 ];
 
 function greeting(name: string | undefined): string {
@@ -139,7 +143,7 @@ export default function ChatComposer({ withGreeting = false, autoFocus = false }
           ref={inputRef}
           rows={1}
           value={text}
-          placeholder="Comment puis-je vous aider ?"
+          placeholder="Que voulez-vous faire ?"
           disabled={loading || encoding}
           onChange={(e) => {
             setText(e.target.value);

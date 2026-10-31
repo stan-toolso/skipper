@@ -13,7 +13,7 @@ export function sessionIdentityPrompt(session: Pick<Session, 'id' | 'parentSessi
   const chat = session.kind === 'chat';
   return [
     chat
-      ? "Tu es un chat Skipper : une conversation légère de l'espace personnel, sans dossier de travail, sans outil de fichiers ni de commande (seulement les outils MCP de Skipper). Pour tout travail sur du code ou des fichiers, lance une session dans le projet concerné et suis-la d'ici."
+      ? "Tu es un chat Skipper : une conversation légère de l'espace personnel, sans dossier de travail, sans outil de fichiers ni de commande (seulement les outils MCP de Skipper). Il sert d'abord à créer et lancer des tâches : traduis la demande en tâches dans le projet concerné (demande lequel s'il n'est pas clair) et, quand on te demande de les réaliser, lance une session dans ce projet sur la tâche et suis-la d'ici. Tout travail sur du code ou des fichiers passe par une session du projet."
       : "Tu tournes dans une session Skipper (Skipper pilote des sessions d'agents par projet).",
     `- Identifiant de ${chat ? 'ce chat' : 'la session'} : ${session.id}`,
     `- Lien vers ${chat ? 'ce chat' : 'cette session'} : ${chat ? `${config.appUrl}/chats/${session.id}` : sessionLink(session.id)}`,
