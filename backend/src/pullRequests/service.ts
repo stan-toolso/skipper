@@ -43,7 +43,16 @@ const SYNC_INTERVAL_MS = 20_000;
 /** PR suivies absentes des 100 dernières du dépôt (ou d'un autre dépôt) : interrogées une à une, au plus ce nombre par synchronisation. */
 const MAX_INDIVIDUAL_FETCHES = 10;
 
+/**
+ * Synchronisation de fond : sans elle, une PR fusionnée sur GitHub ne l'était dans Skipper qu'une fois la page des PR
+ * du projet ouverte (le tableau de bord, la sidebar et les fiches de tâche ne font que lire la base ; constat du 31/10
+ * sur les #80 et #84, encore « à fusionner » le lendemain de leur fusion).
+ */
+const BACKGROUND_SYNC_MS = 60_000;
+
 const lastSync = new Map<string, number>();
+let backgroundTimer: NodeJS.Timeout | null = null;
+let backgroundRunning = false;
 
 /** Numéro d'une PR depuis son URL GitHub (`https://github.com/owner/repo/pull/123`), avec le dépôt. */
 export function parsePullRequestUrl(url: string): { owner: string; name: string; number: number } | null {
@@ -295,6 +304,34 @@ export const trackedPullRequestService = {
     if (projectRepo) await this.syncGithub(projectId, userId, projectRepo).catch((err) => console.error('[pull-requests] synchronisation GitHub', err));
     await this.refreshPending(project).catch((err) => console.error('[pull-requests] travail local des branches', err));
     return current();
+  },
+
+  /**
+   * Synchronise tous les projets qui ont quelque chose à suivre (PR ouverte ou en préparation, work session active),
+   * un par un, avec le compte GitHub d'un de leurs membres (`syncTargets`). Le délai de 20 s par projet s'applique :
+   * un projet dont la page est ouverte n'est pas relu deux fois. Une erreur sur un projet n'arrête pas les autres.
+   */
+  async syncAll(): Promise<void> {
+    if (backgroundRunning) return;
+    backgroundRunning = true;
+    try {
+      for (const { projectId, userId } of await pullRequestRepository.syncTargets()) {
+        await this.sync(projectId, userId).catch((err) => console.error('[pull-requests] synchronisation de fond', projectId, err));
+      }
+    } finally {
+      backgroundRunning = false;
+    }
+  },
+
+  startBackgroundSync(): void {
+    if (backgroundTimer) return;
+    backgroundTimer = setInterval(() => void this.syncAll().catch((err) => console.error('[pull-requests] synchronisation de fond', err)), BACKGROUND_SYNC_MS);
+    backgroundTimer.unref();
+  },
+
+  stopBackgroundSync(): void {
+    if (backgroundTimer) clearInterval(backgroundTimer);
+    backgroundTimer = null;
   },
 
   /** Partie GitHub de la synchronisation : rafraîchissement des PR suivies et adoption. Sans réponse de GitHub, ne fait rien. */

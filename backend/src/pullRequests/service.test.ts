@@ -17,6 +17,8 @@ const m = vi.hoisted(() => ({
   created: [] as Array<Record<string, unknown>>,
   isGithub: true,
   listFails: false,
+  /** Projets à synchroniser en fond, avec le membre dont le compte GitHub sert. */
+  targets: [] as Array<{ projectId: string; userId: string | null }>,
 }));
 
 const now = () => new Date();
@@ -108,6 +110,7 @@ vi.mock('./repository.js', () => ({
           (!f.worksessionId || r.worksessionId === f.worksessionId),
       ),
     countPending: async () => ({ open: 0, pending: 0 }),
+    syncTargets: async () => m.targets,
     update: async (id: string, input: UpdateTrackedPullRequestInput) => {
       const i = m.rows.findIndex((r) => r.id === id);
       if (i < 0) return null;
@@ -229,6 +232,7 @@ beforeEach(() => {
   m.created = [];
   m.isGithub = true;
   m.listFails = false;
+  m.targets = [];
   vi.useRealTimers();
 });
 
@@ -410,6 +414,21 @@ describe('sync', () => {
     expect((await trackedPullRequestService.sync('p2', 'u1'))[0].status).toBe('open');
     vi.setSystemTime(new Date('2026-10-30T10:00:31Z'));
     expect((await trackedPullRequestService.sync('p2', 'u1'))[0].status).toBe('merged');
+  });
+});
+
+describe('syncAll (synchronisation de fond)', () => {
+  it('relit GitHub pour chaque projet à suivre, sans que personne ait ouvert la page des PR', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-31T09:00:00Z'));
+    const a = await trackedPullRequestService.recordGithub('fa', gh(80, 'OPEN'), human);
+    const b = await trackedPullRequestService.recordGithub('fb', gh(84, 'OPEN'), human);
+    m.github.push(gh(80, 'MERGED'), gh(84, 'MERGED'));
+    m.targets = [{ projectId: 'fa', userId: 'u1' }, { projectId: 'fb', userId: 'u2' }];
+    await trackedPullRequestService.syncAll();
+    expect((await trackedPullRequestService.get(a.id)).status).toBe('merged');
+    expect((await trackedPullRequestService.get(b.id)).status).toBe('merged');
+    expect(m.notifications.map((n) => n.type)).toEqual(['pull_request.merged', 'pull_request.merged']);
   });
 });
 
