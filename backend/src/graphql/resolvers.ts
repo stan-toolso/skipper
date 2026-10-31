@@ -1289,10 +1289,10 @@ export const resolvers = {
       await runnerLifecycle.reset(project);
       return project;
     },
-    deleteProject: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+    deleteProject: async (_: unknown, args: { id: string; deleteHostedRepo?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.id, 'admin');
       await personalService.assertNotPersonal(args.id, 'Supprimer');
-      return deleteProjectCascade(args.id);
+      return deleteProjectCascade(args.id, { deleteHostedRepo: Boolean(args.deleteHostedRepo) });
     },
     createSession: async (
       _: unknown,

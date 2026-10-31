@@ -2501,8 +2501,8 @@ type Mutation {
   stopProjectRunner(id: ID!): Project!
   "Supprime le conteneur (pour repartir d'une image à jour) ; les fichiers sont conservés."
   resetProjectRunner(id: ID!): Project!
-  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, work sessions, conteneur, dossier de travail. Irréversible."
-  deleteProject(id: ID!): Boolean!
+  "Supprime le projet et tout ce qui en dépend : sessions, terminaux, work sessions, conteneur, dossier de travail. Irréversible. Dépôt hébergé (Forgejo) : supprimé avec deleteHostedRepo, sinon conservé dans Forgejo, archivé (lecture seule) et renommé."
+  deleteProject(id: ID!, deleteHostedRepo: Boolean = false): Boolean!
   createSession(input: CreateSessionInput!): Session!
   "Ouvre un chat dans l'espace personnel avec un premier message (config : permissionMode, model) et le lance aussitôt."
   createChat(text: String!, attachments: [AttachmentInput!], config: JSON): Session!

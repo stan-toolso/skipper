@@ -65,17 +65,35 @@ const terminalService = vi.hoisted(() => ({
   }),
 }));
 
+const project = vi.hoisted(() => ({ running: 0, value: { id: 'p', slug: 'p', gitHosted: true } }));
+const gitServer = vi.hoisted(() => ({
+  retire: vi.fn(async (_p: unknown, opts: { delete: boolean }) => {
+    calls.log.push(`git.retire delete=${opts.delete}`);
+    return null;
+  }),
+}));
+
 vi.mock('../config.js', () => ({ config: { workspacesRoot: '/tmp/ws' } }));
+vi.mock('../gitServer/service.js', () => ({ gitServer }));
+vi.mock('./repository.js', () => ({ projectRepository: { countRunningSessions: vi.fn(async () => project.running) } }));
 vi.mock('../context/skills.js', () => ({ contextPluginDir: () => '/tmp/plugin' }));
-vi.mock('../runners/index.js', () => ({ runner: { remove: vi.fn() } }));
+vi.mock('../runners/index.js', () => ({ runner: { remove: vi.fn(async () => undefined) } }));
 vi.mock('../sessions/repository.js', () => ({ sessionRepository }));
 vi.mock('../sessions/service.js', () => ({ sessionService }));
 vi.mock('../terminals/service.js', () => ({ terminalService }));
 vi.mock('../worksessions/service.js', () => ({ worksessionService, worksessionsRoot: () => '/tmp/ws/p.worktrees' }));
-vi.mock('./service.js', () => ({ projectService: { get: vi.fn(), delete: vi.fn() } }));
+vi.mock('./service.js', () => ({
+  projectService: {
+    get: vi.fn(async () => project.value),
+    delete: vi.fn(async () => {
+      calls.log.push('project.delete');
+      return true;
+    }),
+  },
+}));
 vi.mock('./workspace.js', () => ({ workspacePath: () => '/tmp/ws/p' }));
 
-const { archiveSessionCascade, deleteSessionCascade, deleteWorksessionCascade, removeWorksessionKeepingSessions } = await import('./cleanup.js');
+const { archiveSessionCascade, deleteProjectCascade, deleteSessionCascade, deleteWorksessionCascade, removeWorksessionKeepingSessions } = await import('./cleanup.js');
 
 beforeEach(() => {
   calls.log = [];
@@ -176,5 +194,25 @@ describe('deleteWorksessionCascade', () => {
     expect(calls.log).toEqual(['session.delete s-done', 'terminal.delete t1', 'worksession.delete w1 branch=true']);
     expect(sessionRepository.detachWorksession).not.toHaveBeenCalled();
     expect(state.sessions.map((s) => s.id)).toEqual(['s-old', 's-elsewhere']);
+  });
+});
+
+describe('deleteProjectCascade', () => {
+  it("traite le dépôt hébergé d'abord, avec l'option choisie, puis supprime le projet", async () => {
+    project.running = 0;
+    state.sessions = [];
+    await deleteProjectCascade('p', { deleteHostedRepo: true });
+    expect(calls.log[0]).toBe('git.retire delete=true');
+    expect(calls.log.at(-1)).toBe('project.delete');
+    calls.log = [];
+    await deleteProjectCascade('p');
+    expect(calls.log[0]).toBe('git.retire delete=false');
+  });
+
+  it('ne touche à rien, dépôt compris, tant que des sessions tournent', async () => {
+    project.running = 1;
+    await expect(deleteProjectCascade('p', { deleteHostedRepo: true })).rejects.toThrow(/sessions en cours/);
+    expect(calls.log).toEqual([]);
+    project.running = 0;
   });
 });

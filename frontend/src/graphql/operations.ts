@@ -804,8 +804,8 @@ export const RESET_PROJECT_RUNNER = gql`
 `;
 
 export const DELETE_PROJECT = gql`
-  mutation DeleteProject($id: ID!) {
-    deleteProject(id: $id)
+  mutation DeleteProject($id: ID!, $deleteHostedRepo: Boolean) {
+    deleteProject(id: $id, deleteHostedRepo: $deleteHostedRepo)
   }
 `;
 

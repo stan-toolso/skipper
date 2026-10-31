@@ -285,6 +285,26 @@ describe.skipIf(!BIN)('Forgejo réel', () => {
     await expect(gitServer.enable(before)).rejects.toThrow(/existe déjà/);
   });
 
+  it('à la suppression du projet, archive et renomme le dépôt par défaut, ou le supprime sur demande', async () => {
+    const kept = addProject('garde');
+    await gitServer.ensure(kept);
+    await gitServer.backup(kept);
+    const newName = await gitServer.retire(kept, { delete: false });
+    expect(newName).toMatch(/^garde-supprime-\d{4}-\d{2}-\d{2}-/);
+    const archived = await forgejoApi<{ archived: boolean }>('GET', `/repos/skipper/${newName}`);
+    expect(archived.archived).toBe(true);
+    // Forgejo redirige l'ancien nom vers le dépôt renommé : il ne compte plus comme le dépôt « garde ».
+    expect((await forgejoApi<{ name: string }>('GET', '/repos/skipper/garde')).name).toBe(newName);
+    // Un nouveau projet du même slug repart d'un dépôt neuf, sans reprendre l'ancien.
+    state.backups = state.backups.filter((b) => b.projectId !== kept.id);
+    await gitServer.ensure(kept);
+    expect((await forgejoApi<Array<{ name: string }>>('GET', '/orgs/skipper/repos')).map((r) => r.name)).toEqual(expect.arrayContaining(['garde', newName]));
+    const gone = addProject('jetable');
+    await gitServer.ensure(gone);
+    expect(await gitServer.retire(gone, { delete: true })).toBeNull();
+    await expect(forgejoApi('GET', '/repos/skipper/jetable')).rejects.toThrow(/404/);
+  });
+
   it('traduit la session Skipper en compte Forgejo pour nginx, et laisse passer git sans session', async () => {
     const call = async (headers: Record<string, string>) => {
       const res = { status: 0, headers: {} as Record<string, string>, writeHead(s: number, h: Record<string, string>) { this.status = s; this.headers = h; return this; }, end() { return this; } };
