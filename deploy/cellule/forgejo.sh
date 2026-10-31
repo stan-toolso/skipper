@@ -32,6 +32,9 @@ IMAGE="codeberg.org/forgejo/forgejo:${VERSION}-rootless"
 DATA=/var/lib/forgejo
 NAME=forgejo
 UIDGID=1000:1000
+# L'image rootless lit sa configuration dans /var/lib/gitea/custom/conf/app.ini par défaut : sans cette variable, Forgejo
+# démarrerait sans la nôtre, en mode installation et à l'écoute sur 0.0.0.0 (constat du 31/10/2026).
+APP_INI_ENV="GITEA_APP_INI=/etc/gitea/app.ini"
 DOMAIN="$(echo "$URL" | sed -E 's#^https?://([^/:]+).*#\1#')"
 log() { echo "[forgejo] $*"; }
 
@@ -69,22 +72,31 @@ fi
 
 # 3. Conteneur ---------------------------------------------------------------------
 if docker inspect "$NAME" > /dev/null 2>&1; then
-  if [[ "$(docker inspect -f '{{.Config.Image}}' "$NAME")" == "$IMAGE" && "$(docker inspect -f '{{.Image}}' "$NAME")" == "$(docker image inspect -f '{{.Id}}' "$IMAGE")" ]]; then
+  if [[ "$(docker inspect -f '{{.Config.Image}}' "$NAME")" == "$IMAGE" && "$(docker inspect -f '{{.Image}}' "$NAME")" == "$(docker image inspect -f '{{.Id}}' "$IMAGE")" ]] \
+     && docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$NAME" | grep -qx "$APP_INI_ENV"; then
     docker start "$NAME" > /dev/null
   else
-    log "nouvelle image : recréation du conteneur"
+    log "nouvelle image ou réglages changés : recréation du conteneur"
     docker rm -f "$NAME" > /dev/null
   fi
 fi
 if ! docker inspect "$NAME" > /dev/null 2>&1; then
-  docker run -d --name "$NAME" --restart unless-stopped --network host --user "$UIDGID" \
+  docker run -d --name "$NAME" --restart unless-stopped --network host --user "$UIDGID" -e "$APP_INI_ENV" \
     -v "$DATA/data:/var/lib/gitea" -v "$DATA/conf:/etc/gitea" "$IMAGE" > /dev/null
 fi
+# Garde-fou : la configuration doit avoir été lue (écoute locale, installation verrouillée).
+check_config() {
+  if ss -ltn | grep -qE '(0\.0\.0\.0|\*|\[::\]):'"$PORT"' '; then
+    docker stop "$NAME" > /dev/null; echo "Forgejo écoute sur toutes les interfaces : configuration non lue, conteneur arrêté" >&2; exit 1
+  fi
+}
 for _ in $(seq 1 60); do
   curl -sf "http://127.0.0.1:${PORT}/api/healthz" > /dev/null && break
   sleep 2
 done
 curl -sf "http://127.0.0.1:${PORT}/api/healthz" > /dev/null || { echo "Forgejo ne répond pas : docker logs $NAME" >&2; exit 1; }
+check_config
+curl -s "http://127.0.0.1:${PORT}/api/v1/version" | grep -q '"version"\|signed in' || { docker stop "$NAME" > /dev/null; echo "Forgejo en mode installation : configuration non lue, conteneur arrêté" >&2; exit 1; }
 log "Forgejo $(curl -s "http://127.0.0.1:${PORT}/api/v1/version" | sed -E 's/.*"version":"([^"]+)".*/\1/') en marche sur 127.0.0.1:${PORT}"
 
 # 4. Compte administrateur et variables de Skipper ----------------------------------
