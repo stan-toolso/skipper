@@ -4,6 +4,7 @@ import type { AttachmentInput } from '../sessions/types.js';
 import { asInstructionAttachments, fitInInstruction } from './attachments.js';
 import { describeComment, describeTaskChanges, taskService } from './service.js';
 import type { Task, TaskAttachment, TaskChange } from './types.js';
+import { log } from '../log.js';
 
 /** Message à transmettre à une session reliée à une tâche pour un changement fait par quelqu'un d'autre. */
 export interface TaskFeed {
@@ -95,7 +96,7 @@ async function deliver(feed: TaskFeed): Promise<void> {
     const files: AttachmentInput[] = feed.attachments.length ? await asInstructionAttachments(fitInInstruction(feed.attachments).kept) : [];
     await sessionService.sendMessage(session.id, feed.text, files.length ? files : null);
   } catch (err) {
-    console.warn(`[tasks] message non transmis à la session ${session.id} : ${(err as Error).message}`);
+    log.warn(`[tasks] message non transmis à la session ${session.id} : ${(err as Error).message}`);
   }
 }
 

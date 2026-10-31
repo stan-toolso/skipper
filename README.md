@@ -298,6 +298,14 @@ frontend/
   notifications) sont restreintes aux projets de l'utilisateur ; les subscriptions filtrent de même ;
   la WebSocket d'un terminal exige le cookie de session et le rôle `member`. Les notifications sont
   partagées entre les membres d'un projet (état lu / non lu commun).
+- **Défenses HTTP** : les upgrades WebSocket (`/terminals/`, `/browsers/`) dont l'en-tête `Origin` n'est pas
+  `APP_URL` (ou localhost) sont refusés en 403 (`backend/src/websockets.ts`, règle partagée avec le CORS dans
+  `backend/src/origin.ts`) : le cookie `SameSite=Lax` part aussi depuis un autre sous-domaine. GraphQL refuse les
+  POST « simples » sans en-tête `x-graphql-yoga-csrf` ou `apollo-require-preflight` (formulaire, `text/plain` :
+  prévention CSRF, le client Apollo envoie du JSON) et réserve l'introspection (`__schema`, `__type`) aux
+  utilisateurs connectés (`backend/src/graphql/security.ts`). Les en-têtes de sécurité (CSP, HSTS…) sont posés
+  par nginx (voir DEPLOY.md) ; la CSP interdit les scripts en ligne : le thème initial est dans
+  `frontend/public/theme-init.js`, pas dans `index.html`.
 - Première migration : `stan@toolso.io` est créé administrateur de l'application et de tous les
   projets existants.
 ## Coffre
@@ -751,7 +759,19 @@ avance/retard, les fichiers indexés et modifiés (clic : diff coloré ; boutons
 abandonner), une zone de commit, les branches (bascule, création) et l'historique (clic : diff du
 commit), avec fetch, pull et push. Backend : `backend/src/git/service.ts` (queries `gitStatus`,
 `gitDiff`, `gitCommitDiff`, `gitBranches`, `gitLog` ; mutations `gitStage`, `gitUnstage`,
-`gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`).
+`gitDiscard`, `gitCommit`, `gitFetch`, `gitPull`, `gitPush`, `gitCheckout`, `gitMergeBase`, `gitAbortOperation`).
+
+**Conflits git** : `gitStatus.operation` signale une fusion, un rebase, un cherry-pick ou un revert interrompu
+(marqueurs `MERGE_HEAD`, `rebase-merge`… lus par `git rev-parse --git-path`, donc aussi dans un worktree), et
+`GitFileChange.conflicted` les fichiers non fusionnés. Le panneau affiche alors un bandeau (« Fusion arrêtée sur N
+conflit(s) », ou « à terminer » quand tout est résolu) et une section « En conflit » (✓ : marquer résolu, `git add`),
+avec **Abandonner** (`gitAbortOperation`, `git <op> --abort`) et **Résoudre avec un agent** (`resolveGitConflicts`,
+`backend/src/git/conflicts.ts`) : la session active du dossier reçoit la consigne, sinon une session Claude « Conflits
+git · <branche> » est lancée dans le même dossier ; consigne : résoudre en gardant les deux côtés, typecheck et tests,
+terminer l'opération (`git commit --no-edit`, `… --continue`), **ne pas pousser** — la personne garde la main sur le
+push. Pas proposé dans le dossier principal du projet (aucune session n'y tourne). La section « Branche vs base » a un
+bouton **Fusionner la base** (`gitMergeBase` : fetch puis `git merge --no-edit <base>` ; un conflit laisse la fusion
+en cours au lieu d'échouer) ; le pull reste en avance rapide seulement.
 
 **Pull requests GitHub** (section du panneau git, `backend/src/git/pullRequests.ts`), pour un projet
 dont le dépôt est sur GitHub, avec le compte GitHub de la personne qui agit (Paramètres → GitHub ;

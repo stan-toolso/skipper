@@ -14,12 +14,14 @@ async function loadCrypto(env: { key?: string } = {}) {
   if (env.key === undefined) delete process.env.SKIPPER_SECRET_KEY;
   else process.env.SKIPPER_SECRET_KEY = env.key;
   process.env.WORKSPACES_ROOT = workspaces;
-  return import('./crypto.js');
+  const mod = await import('./crypto.js');
+  // Message « clé générée » tu (le journal est réimporté avec le module).
+  (await import('../log.js')).logOutput.stdout = () => {};
+  return mod;
 }
 
 beforeEach(async () => {
   workspaces = await mkdtemp(path.join(os.tmpdir(), 'skipper-crypto-'));
-  vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 afterEach(async () => {

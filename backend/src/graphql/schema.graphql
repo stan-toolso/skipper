@@ -924,6 +924,8 @@ type GitStatus {
   detached: Boolean!
   changes: [GitFileChange!]!
   headCommit: GitCommit
+  "Opération git interrompue (conflits à résoudre, ou à terminer) : merge, rebase, cherry-pick ou revert ; null sinon."
+  operation: String
 }
 
 type GitBranch {
@@ -2545,6 +2547,12 @@ type Mutation {
   gitFetch(projectId: ID!, worksessionId: ID): GitStatus!
   gitPull(projectId: ID!, worksessionId: ID): GitStatus!
   gitPush(projectId: ID!, worksessionId: ID): GitStatus!
+  "Fusionne la branche de base (récupérée d'abord) dans la branche courante ; un conflit laisse la fusion en cours (GitStatus.operation, fichiers conflicted)."
+  gitMergeBase(projectId: ID!, worksessionId: ID): GitStatus!
+  "Abandonne l'opération git en cours (merge, rebase, cherry-pick ou revert --abort)."
+  gitAbortOperation(projectId: ID!, worksessionId: ID): GitStatus!
+  "Confie la résolution des conflits git du dossier à un agent : la session du dossier reçoit la consigne (relancée si elle était terminée), sinon une session est lancée dans ce dossier. L'agent termine l'opération sans pousser. Renvoie la session."
+  resolveGitConflicts(projectId: ID!, worksessionId: ID!): Session!
   "Bascule sur une branche (locale ou origin/...) ; create = nouvelle branche depuis HEAD."
   gitCheckout(projectId: ID!, worksessionId: ID, branch: String!, create: Boolean = false): GitStatus!
   "Sauvegarde le dépôt hébergé en base maintenant (membres)."

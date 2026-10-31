@@ -1,6 +1,7 @@
 import type { Project } from '../projects/types.js';
 import { sessionService } from '../sessions/service.js';
 import { runner } from './index.js';
+import { log } from '../log.js';
 
 /**
  * Arrêt et recréation de l'environnement d'exécution d'un projet depuis sa page. Les processus des
@@ -19,11 +20,11 @@ export const runnerLifecycle = {
     } catch (err) {
       // Conteneur impossible à recréer (image absente, Docker en panne) : les sessions restent interrompues,
       // avec « Reprendre » sur leur page ; l'erreur remonte à la page du projet.
-      console.error(`[runner] recréation de ${runner.containerName(project)}`, err);
+      log.error(`[runner] recréation de ${runner.containerName(project)}`, err);
       throw err;
     }
     const resumed = await sessionService.resumeAfterRunner(sessions);
-    if (sessions.length) console.log(`[runner] ${runner.containerName(project)} recréé : ${resumed.length}/${sessions.length} session(s) reprise(s)`);
+    if (sessions.length) log.info(`[runner] ${runner.containerName(project)} recréé : ${resumed.length}/${sessions.length} session(s) reprise(s)`);
     return { interrupted: sessions.map((s) => s.id), resumed };
   },
 

@@ -36,6 +36,7 @@ import { startMcpBridges, type McpBridges, type McpFactory } from './opencodeBri
 import { allowedByRules, claudeQuestions, claudeTool, mcpToolOf, OPENCODE_EDIT_TOOLS, opencodeAnswers, permissionSuggestions, permissionTitle, permissionTool, toolResultData, type OpencodePermissionRequest, type ToolCall } from './opencodeEvents.js';
 import { opencodeStateRepository } from './opencodeState.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
+import { log } from '../../log.js';
 
 /** Modes d'autorisation d'une session OpenCode (les mêmes que ceux de Claude : l'exécuteur les applique aux demandes d'OpenCode). */
 const permissionModes = ['default', 'acceptEdits', 'plan', 'dontAsk', 'bypassPermissions'] as const;
@@ -473,7 +474,7 @@ class OpencodeRun {
       });
       await runner.removePath(ctx.project, file);
     } catch (err) {
-      console.warn(`[opencode] import de la session ${ctx.session.id} impossible : ${(err as Error).message}`);
+      log.warn(`[opencode] import de la session ${ctx.session.id} impossible : ${(err as Error).message}`);
     }
   }
 
@@ -574,11 +575,11 @@ class OpencodeRun {
         try {
           await this.onEvent(event);
         } catch (err) {
-          console.error(`[opencode] événement ${event.type} de la session ${this.ctx.session.id}`, err);
+          log.error(`[opencode] événement ${event.type} de la session ${this.ctx.session.id}`, err);
         }
       }
     } catch (err) {
-      if (!this.finished) console.warn(`[opencode] flux d'événements perdu pour la session ${this.ctx.session.id} : ${(err as Error).message}`);
+      if (!this.finished) log.warn(`[opencode] flux d'événements perdu pour la session ${this.ctx.session.id} : ${(err as Error).message}`);
     }
     // Le flux se termine avec le serveur : sa fin termine l'exécution (voir start()).
   }
@@ -795,7 +796,7 @@ class OpencodeRun {
       const delta = await usageService.recordTotal(ctx.session.id, ctx.project.id, this.ownerId, total, modelTotals, this.previousModelTotals, this.model);
       if (delta > 0) await ctx.emit('usage', { deltaUsd: Number(delta.toFixed(6)), totalUsd: total });
     } catch (err) {
-      console.error('[usage] relevé impossible', err);
+      log.error('[usage] relevé impossible', err);
     }
     this.previousModelTotals = modelTotals;
     if (this.contextTokens !== null) await ctx.setContextTokens?.(this.contextTokens).catch(() => undefined);
@@ -814,7 +815,7 @@ class OpencodeRun {
       const [info, messages] = await Promise.all([this.client.session.get({ sessionID: this.sessionId }), this.client.session.messages({ sessionID: this.sessionId })]);
       if (info.data && messages.data) await opencodeStateRepository.save(this.ctx.session.id, this.sessionId, { info: info.data as unknown as Record<string, unknown>, messages: messages.data as unknown as { info: Record<string, unknown>; parts: unknown[] }[] });
     } catch (err) {
-      console.warn(`[opencode] miroir de la session ${this.ctx.session.id} impossible : ${(err as Error).message}`);
+      log.warn(`[opencode] miroir de la session ${this.ctx.session.id} impossible : ${(err as Error).message}`);
     }
   }
 
@@ -824,7 +825,7 @@ class OpencodeRun {
   private async onPermission(req: PermissionRequest): Promise<void> {
     const request = req as unknown as OpencodePermissionRequest;
     const known = request.tool ? this.tools.get(request.tool.callID) : undefined;
-    const reply = (decision: 'once' | 'reject', message?: string) => this.client.permission.reply({ requestID: req.id, reply: decision, ...(message ? { message } : {}) }).catch((err) => console.warn(`[opencode] réponse impossible : ${(err as Error).message}`));
+    const reply = (decision: 'once' | 'reject', message?: string) => this.client.permission.reply({ requestID: req.id, reply: decision, ...(message ? { message } : {}) }).catch((err) => log.warn(`[opencode] réponse impossible : ${(err as Error).message}`));
     const tool = permissionTool(request, known ? { tool: known.tool, input: known.input } : null, this.mcpServerNames);
     const abort = new AbortController();
     this.asking.set(req.id, abort);
@@ -837,7 +838,7 @@ class OpencodeRun {
         if (!abort.signal.aborted) await reply('reject', 'Demande annulée (session arrêtée ou demande abandonnée)');
         return;
       }
-      console.error(`[opencode] demande d'autorisation de la session ${this.ctx.session.id}`, err);
+      log.error(`[opencode] demande d'autorisation de la session ${this.ctx.session.id}`, err);
       await reply('reject', "Erreur de Skipper pendant la demande d'autorisation");
     } finally {
       this.asking.delete(req.id);
@@ -912,7 +913,7 @@ class OpencodeRun {
       const response = (await ctx.ask({ type: 'question', title: questions.length === 1 ? questions[0].question : `${questions.length} questions de l'agent`, payload: { toolName: 'AskUserQuestion', questions } }, abort.signal)) as Partial<QuestionResponse>;
       await this.client.question.reply({ requestID: req.id, answers: opencodeAnswers(req.questions, (response.answers ?? {}) as Input) });
     } catch (err) {
-      if (!(err instanceof RequestCancelledError)) console.error(`[opencode] question de la session ${ctx.session.id}`, err);
+      if (!(err instanceof RequestCancelledError)) log.error(`[opencode] question de la session ${ctx.session.id}`, err);
       if (!abort.signal.aborted) await this.client.question.reject({ requestID: req.id }).catch(() => undefined);
     } finally {
       this.asking.delete(req.id);
@@ -942,7 +943,7 @@ class OpencodeRun {
     await this.bridges?.close().catch(() => undefined);
     if (this.browserServer) {
       liveBrowserService.unregister(this.ctx.session.id);
-      await this.browserServer.dispose().catch((e) => console.error('[browser] arrêt du navigateur de la session', e));
+      await this.browserServer.dispose().catch((e) => log.error('[browser] arrêt du navigateur de la session', e));
     }
   }
 }

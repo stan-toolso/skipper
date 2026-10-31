@@ -1,3 +1,4 @@
+import { log } from '../log.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config } from '../config.js';
@@ -53,7 +54,7 @@ export async function agentGitEnv(ownerId: string | null | undefined, repoUrl?: 
   const [auth, identity, hostedToken] = await Promise.all([
     hosted ? null : githubService.gitAuth(ownerId, repoUrl, actor).catch(() => null),
     hostIdentity(),
-    hosted && ownerId ? userService.get(ownerId).then((u) => forgejoAccounts.agentToken(u)).catch((err) => (console.warn(`[forgejo] jeton des sessions : ${(err as Error).message}`), null)) : null,
+    hosted && ownerId ? userService.get(ownerId).then((u) => forgejoAccounts.agentToken(u)).catch((err) => (log.warn(`[forgejo] jeton des sessions : ${(err as Error).message}`), null)) : null,
   ]);
   const configs: [string, string][] = [];
   if (auth) {

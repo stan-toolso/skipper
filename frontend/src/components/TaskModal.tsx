@@ -91,8 +91,14 @@ function PersonFields({ label, value, onChange, people, members }: { label: stri
 }
 
 /** Fenêtre de création / édition d'une tâche : titre, description, priorité, statut, échéance, personnes, champs libres, commentaires. */
-export default function TaskModal({ task, projectId, onClose }: { task: Task | null; projectId: string; onClose: () => void }) {
+/**
+ * Création ou modification d'une tâche. À la création, `projects` (ceux où l'on peut écrire) ajoute le choix du
+ * projet, `projectId` n'étant alors que celui proposé par défaut (tableau de bord général, liste de tous les projets).
+ */
+export default function TaskModal({ task, projectId: initialProjectId, projects, onClose }: { task: Task | null; projectId: string; projects?: { id: string; name: string }[]; onClose: () => void }) {
   const { user } = useAuth();
+  const [projectId, setProjectId] = useState(initialProjectId);
+  const chooseProject = !task && projects && projects.length > 1;
   // Une nouvelle tâche est rapportée par sa créatrice ou son créateur, et lui est assignée, sauf changement.
   const me: TaskPerson | null = user ? { name: user.name, email: user.email } : null;
   const [form, setForm] = useState<TaskForm>({
@@ -107,12 +113,12 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
     reporter: personForm(task ? task.reporter : me),
     customFields: task?.customFields.map((f) => ({ key: f.key, value: f.value })) ?? [],
   });
-  const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId } });
+  const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId }, skip: !projectId });
   const people = peopleData?.taskPeople ?? [];
-  const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId } });
+  const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId }, skip: !projectId });
   const { data: membersData } = useQuery<{ project: { members: { pending: boolean; user: { name: string | null; email: string } }[] } | null }>(TASK_PROJECT_MEMBERS, { variables: { id: projectId }, skip: !projectId });
   const members: TaskPerson[] = (membersData?.project?.members ?? []).filter((m) => !m.pending).map((m) => ({ name: m.user.name, email: m.user.email }));
-  const refetch = { refetchQueries: ['Tasks', 'TaskDetail', 'TaskPage', 'Sidebar'] };
+  const refetch = { refetchQueries: ['Tasks', 'TaskDetail', 'TaskPage', 'Sidebar', 'Dashboard'] };
   const [createTask, { loading: creating, error: createError }] = useMutation(CREATE_TASK, { ...refetch, onCompleted: onClose });
   const [updateTask, { loading: updating, error: updateError }] = useMutation(UPDATE_TASK, { ...refetch, onCompleted: onClose });
   const files = usePendingAttachments();
@@ -153,6 +159,19 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
           <Modal.Title className="h6">{task ? 'Modifier la tâche' : 'Nouvelle tâche'}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {chooseProject && (
+            <Form.Group className="mb-3">
+              <Form.Label htmlFor="task-project">Projet</Form.Label>
+              <Form.Select id="task-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} required>
+                {!projects.some((p) => p.id === projectId) && <option value="">Choisir un projet…</option>}
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+          )}
           <Form.Group className="mb-3">
             <Form.Label>Titre</Form.Label>
             <Form.Control autoFocus={canAutoFocus()} value={form.title} onChange={set('title')} required placeholder="Ex. Ajouter la page de contact" />
@@ -248,7 +267,7 @@ export default function TaskModal({ task, projectId, onClose }: { task: Task | n
           <Button variant="outline-secondary" onClick={onClose}>
             Annuler
           </Button>
-          <Button type="submit" disabled={creating || updating || encoding || !form.title.trim()}>
+          <Button type="submit" disabled={creating || updating || encoding || !form.title.trim() || !projectId}>
             {task ? 'Enregistrer' : 'Créer'}
           </Button>
         </Modal.Footer>

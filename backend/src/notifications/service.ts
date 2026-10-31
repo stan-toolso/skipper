@@ -3,6 +3,7 @@ import { pubSub } from '../pubsub.js';
 import { pushService } from './push.js';
 import { notificationRepository } from './repository.js';
 import type { Notification, NotificationScope, NotifyInput } from './types.js';
+import { log } from '../log.js';
 
 export const notificationService = {
   list: (opts?: { unreadOnly?: boolean; limit?: number } & NotificationScope) => notificationRepository.list(opts),
@@ -22,7 +23,7 @@ export const notificationService = {
       void pushService.deliver(notification);
       return notification;
     } catch (err) {
-      console.error('[notifications] création impossible', err);
+      log.error('[notifications] création impossible', err);
       return null;
     }
   },
@@ -43,7 +44,7 @@ export const notificationService = {
     try {
       await notificationRepository.markReadForRequests(requestIds);
     } catch (err) {
-      console.error('[notifications] marquage des demandes réglées impossible', err);
+      log.error('[notifications] marquage des demandes réglées impossible', err);
     }
   },
 
@@ -51,7 +52,7 @@ export const notificationService = {
     try {
       await notificationRepository.markReadForSettledRequests();
     } catch (err) {
-      console.error('[notifications] rattrapage des demandes réglées impossible', err);
+      log.error('[notifications] rattrapage des demandes réglées impossible', err);
     }
   },
 };

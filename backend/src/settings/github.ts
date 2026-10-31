@@ -2,6 +2,7 @@ import { AppError, NotFoundError } from '../errors.js';
 import { vaultService } from '../vault/service.js';
 import type { VaultActor } from '../vault/types.js';
 import { githubAccountRepository, type GithubAccountRecord } from './githubRepository.js';
+import { log } from '../log.js';
 
 /**
  * Comptes GitHub d'UNE personne (plusieurs possibles), connectés avec un code (device flow, comme
@@ -126,7 +127,7 @@ export async function readAccount(token: string): Promise<{ login: string; avata
     const orgs = await githubFetch('https://api.github.com/user/orgs?per_page=100', { token });
     if (orgs.ok) organizations = ((await orgs.json()) as Array<{ login: string }>).map((o) => o.login);
   } catch (err) {
-    console.warn(`[github] organisations illisibles pour ${user.login} : ${(err as Error).message}`);
+    log.warn(`[github] organisations illisibles pour ${user.login} : ${(err as Error).message}`);
   }
   return { login: user.login, avatarUrl: user.avatar_url ?? null, scopes, organizations };
 }
@@ -149,7 +150,7 @@ async function freshToken(a: GithubAccountRecord, actor: Omit<VaultActor, 'userI
   try {
     used = await vaultService.useToken(a.userId, a.vaultItemId, ['github'], { ...actor, userId: a.userId, purpose: `Compte GitHub ${a.login}` });
   } catch (err) {
-    console.warn(`[github] jeton inutilisable pour ${a.login} : ${(err as Error).message}`);
+    log.warn(`[github] jeton inutilisable pour ${a.login} : ${(err as Error).message}`);
     return null;
   }
   const { item, secrets } = used;
@@ -157,7 +158,7 @@ async function freshToken(a: GithubAccountRecord, actor: Omit<VaultActor, 'userI
   if (!a.tokenExpiresAt || a.tokenExpiresAt.getTime() - Date.now() > REFRESH_MARGIN_MS) return token;
   const clientId = secrets.clientId;
   if (!secrets.refreshToken || !clientId || (a.refreshTokenExpiresAt && a.refreshTokenExpiresAt.getTime() < Date.now())) {
-    console.warn(`[github] jeton expiré et non renouvelable pour ${a.login} : reconnexion nécessaire`);
+    log.warn(`[github] jeton expiré et non renouvelable pour ${a.login} : reconnexion nécessaire`);
     return a.tokenExpiresAt.getTime() > Date.now() ? token : null;
   }
   try {
@@ -167,7 +168,7 @@ async function freshToken(a: GithubAccountRecord, actor: Omit<VaultActor, 'userI
     await githubAccountRepository.updateExpiry(a.id, expiry);
     return t.access_token!;
   } catch (err) {
-    console.warn(`[github] renouvellement du jeton de ${a.login} impossible : ${(err as Error).message}`);
+    log.warn(`[github] renouvellement du jeton de ${a.login} impossible : ${(err as Error).message}`);
     return a.tokenExpiresAt.getTime() > Date.now() ? token : null;
   }
 }
@@ -195,7 +196,7 @@ export async function storeOAuthAccount(userId: string, t: TokenResponse, client
     tokenExpiresAt,
     refreshTokenExpiresAt,
   });
-  console.log(`[github] compte ${account.login} connecté (code) pour ${userId}`);
+  log.info(`[github] compte ${account.login} connecté (code) pour ${userId}`);
   return toPublic(account);
 }
 
@@ -220,7 +221,7 @@ export const githubService = {
       tokenExpiresAt: null,
       refreshTokenExpiresAt: null,
     });
-    console.log(`[github] compte ${account.login} connecté (jeton du coffre) pour ${userId}`);
+    log.info(`[github] compte ${account.login} connecté (jeton du coffre) pour ${userId}`);
     return toPublic(account);
   },
 
@@ -309,7 +310,7 @@ export const githubService = {
       for (let page = 1; page <= 3; page++) {
         const res = await githubFetch(`https://api.github.com/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member&page=${page}`, { token: cred.token });
         if (!res.ok) {
-          console.warn(`[github] dépôts indisponibles pour ${cred.login} (${res.status})`);
+          log.warn(`[github] dépôts indisponibles pour ${cred.login} (${res.status})`);
           break;
         }
         const list = (await res.json()) as Array<{ full_name: string; name: string; owner: { login: string }; description: string | null; private: boolean; default_branch: string; clone_url: string; html_url: string; pushed_at: string | null }>;

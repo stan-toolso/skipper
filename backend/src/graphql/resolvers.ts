@@ -23,6 +23,7 @@ import { fileService, type WorkspaceRef } from '../files/service.js';
 import { parseRepoFullName, pullRequestService, type MergeCleanup, type MergeMethod, type PullRequest, type PullRequestFilter } from '../git/pullRequests.js';
 import { foreignRepoOf, projectRepoName, trackedPullRequestService } from '../pullRequests/service.js';
 import { pullRequestSession, requestConflictResolution } from '../pullRequests/conflicts.js';
+import { requestGitConflictResolution } from '../git/conflicts.js';
 import { stageOf, type PullRequestStage, type TrackedPullRequest, type TrackedPullRequestStatus } from '../pullRequests/types.js';
 import { config } from '../config.js';
 import { gitService } from '../git/service.js';
@@ -82,6 +83,7 @@ import { formatRule, type PermissionRule } from '../permissions/types.js';
 import type { SessionScheduleInput } from '../schedules/types.js';
 import { userService } from '../users/service.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
+import { log } from '../log.js';
 
 type Ctx = AuthContext;
 type GqlRole = Uppercase<ProjectRole>;
@@ -214,7 +216,7 @@ function syncHostedMembers(projectId: string): void {
   void projectService
     .get(projectId)
     .then((p) => gitServer.syncMembers(p))
-    .catch((err) => console.warn(`[forgejo] collaborateurs du projet ${projectId} : ${(err as Error).message}`));
+    .catch((err) => log.warn(`[forgejo] collaborateurs du projet ${projectId} : ${(err as Error).message}`));
 }
 
 const projectOf = async (ctx: Ctx, id: string): Promise<Project> => {
@@ -983,6 +985,22 @@ export const resolvers = {
       await gitService.push(args, requireUser(ctx).id);
       return gitService.status(args);
     },
+    gitMergeBase: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.mergeBase(args, requireUser(ctx).id);
+      gitService.invalidate(args);
+      return gitService.status(args);
+    },
+    gitAbortOperation: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      await gitService.abortOperation(args);
+      gitService.invalidate(args);
+      return gitService.status(args);
+    },
+    resolveGitConflicts: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return requestGitConflictResolution(args, requireUser(ctx).id);
+    },
     gitCheckout: async (_: unknown, args: WorkspaceRef & { branch: string; create?: boolean | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
       await gitService.checkout(args, args.branch, args.create ?? false);
@@ -1000,14 +1018,14 @@ export const resolvers = {
       const user = requireUser(ctx);
       const pr = await pullRequestService.create(args, user.id, args);
       // La PR ouverte depuis l'interface est suivie (reliée à la tâche de sa branche).
-      await trackedPullRequestService.recordGithub(args.projectId, pr, { type: 'human', userId: user.id }).catch((err) => console.error('[pull-requests] suivi de la PR créée', err));
+      await trackedPullRequestService.recordGithub(args.projectId, pr, { type: 'human', userId: user.id }).catch((err) => log.error('[pull-requests] suivi de la PR créée', err));
       return pr;
     },
     mergePullRequest: async (_: unknown, args: { projectId: string; number: number; method?: MergeMethod | null; cleanup?: MergeCleanup | null; repo?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
       const user = requireUser(ctx);
       const result = await pullRequestService.merge(args.projectId, user.id, args.number, args.method ?? 'MERGE', args.cleanup ?? { deleteRemoteBranch: true, deleteWorksession: true, completeTasks: true }, repoArg(args.repo));
-      await trackedPullRequestService.markMerged(args.projectId, result.pullRequest, result.sha, { type: 'human', userId: user.id }).catch((err) => console.error('[pull-requests] suivi de la PR fusionnée', err));
+      await trackedPullRequestService.markMerged(args.projectId, result.pullRequest, result.sha, { type: 'human', userId: user.id }).catch((err) => log.error('[pull-requests] suivi de la PR fusionnée', err));
       return result;
     },
     registerPullRequest: async (_: unknown, args: { projectId: string; url?: string | null; number?: number | null; taskId?: string | null; note?: string | null }, ctx: Ctx) => {
@@ -1053,7 +1071,7 @@ export const resolvers = {
     setMaintenanceMode: (_: unknown, args: { enabled: boolean; message?: string | null }, ctx: Ctx) => {
       const user = requireAdmin(ctx);
       serverSettings.setMaintenance(args.enabled, args.message ?? null, user.id);
-      console.log(`[server] mode maintenance ${args.enabled ? 'activé' : 'levé'} par ${user.email}`);
+      log.info(`[server] mode maintenance ${args.enabled ? 'activé' : 'levé'} par ${user.email}`);
       // Fin de la maintenance : les sessions en file d'attente peuvent démarrer.
       if (!args.enabled) void sessionService.drainQueue();
       return appSettings(ctx);

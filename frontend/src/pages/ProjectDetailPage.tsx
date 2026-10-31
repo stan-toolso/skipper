@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useGitTarget } from '../workbench/GitTargetContext';
 import ProjectHeader from '../components/ProjectHeader';
+import TaskModal from '../components/TaskModal';
 
 import { CREATE_PROJECT_API_KEY, DELETE_PROJECT_API_KEY, PROJECT_API_KEYS, type ProjectApiKey } from '../graphql/tasks';
 import { apiBaseUrl } from '../apollo';
@@ -620,6 +621,7 @@ export default function ProjectDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { data, loading, error } = usePollingQuery<{ project: ProjectWithSessions | null }>(PROJECT, { variables: { id }, pollInterval: 3000 });
+  const [newTask, setNewTask] = useState(false);
   useTabTitle(data?.project?.name);
   useGitTarget(data?.project?.gitUrl ? { projectId: data.project.id, worksessionId: null, label: data.project.name } : null);
   const [prepareWorkspace, { loading: preparing, error: prepareError }] = useMutation(PREPARE_PROJECT_WORKSPACE);
@@ -645,21 +647,29 @@ export default function ProjectDetailPage() {
         project={project}
         active="overview"
         actions={
-          isAdmin && !personal && (
-            <Button
-              size="sm"
-              variant="outline-danger"
-              onClick={async () => {
-                if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
-                  deleteProject({ variables: { id } });
-                }
-              }}
-            >
-              Supprimer
-            </Button>
-          )
+          <>
+            {canWrite && (
+              <Button size="sm" variant="outline-primary" onClick={() => setNewTask(true)}>
+                <i className="bi bi-plus-lg me-1" /> Nouvelle tâche
+              </Button>
+            )}
+            {isAdmin && !personal && (
+              <Button
+                size="sm"
+                variant="outline-danger"
+                onClick={async () => {
+                  if (await confirm({ title: 'Supprimer le projet', message: `Supprimer le projet « ${project.name} » ? Ses sessions (arrêtées), terminaux, work sessions, son conteneur et son dossier de travail seront supprimés. Irréversible.`, confirmLabel: 'Supprimer définitivement', danger: true })) {
+                    deleteProject({ variables: { id } });
+                  }
+                }}
+              >
+                Supprimer
+              </Button>
+            )}
+          </>
         }
       />
+      {newTask && <TaskModal task={null} projectId={project.id} onClose={() => setNewTask(false)} />}
 
       {actionError && <Alert variant="danger">{actionError.message}</Alert>}
 
