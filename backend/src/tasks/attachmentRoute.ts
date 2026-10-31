@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createAuthContext, requireProject } from '../auth/access.js';
 import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { config } from '../config.js';
+import { isAllowedOrigin } from '../origin.js';
 import { taskAttachmentFile } from './attachments.js';
 import { taskRepository } from './repository.js';
 
@@ -11,10 +12,6 @@ const ROUTE = /^\/api\/task-attachments\/([0-9a-f-]{36})\/([0-9a-f-]{36})$/;
 /** Types servis tels quels au navigateur (aperçu) ; tout le reste est proposé en téléchargement. */
 const INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain', 'text/markdown', 'text/csv', 'application/json']);
 
-function isAllowedOrigin(origin: string | undefined): boolean {
-  if (!origin) return false;
-  return origin === new URL(config.appUrl).origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-}
 
 /**
  * GET /api/task-attachments/<tâche>/<id> : fichier joint à une tâche ou à l'un de ses commentaires (aperçu des
