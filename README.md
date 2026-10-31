@@ -1133,6 +1133,10 @@ les serveurs MCP `context`, `tasks`, `sessions`, `worksessions`, `projects`, `va
 du tableau de bord et de la recherche ; ils se listent par `chats(limit)` (page `/chats`) et s'ouvrent
 par `createChat(text, attachments, config)` (zone de chat du tableau de bord et de la page des chats :
 mode d'autorisation « demander » ou « tout autoriser », modèle, fichiers joints, suggestions de départ).
+Le chat est présenté comme le moyen de **créer et lancer des tâches** : la zone demande « Que voulez-vous
+faire ? », les suggestions de départ (`SUGGESTIONS` de `ChatComposer.tsx`) créent, découpent, lancent ou
+suivent des tâches, et le prompt système du chat (`sessions/identity.ts`) lui dit de traduire la demande
+en tâches du projet concerné puis, si on le lui demande, de lancer une session sur la tâche.
 La page d'un chat est celle d'une session (`/chats/:id`, `SessionDetailPage` en mode chat : pas de
 panneau git, d'onglet Modifications ni de planification). Dans la sidebar, sous « Mon espace », une ligne
 **Chats** ouvre la liste (et se replie) et montre les derniers chats avec leur état, un menu pour les arrêter
