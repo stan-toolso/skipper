@@ -297,6 +297,14 @@ frontend/
   notifications) sont restreintes aux projets de l'utilisateur ; les subscriptions filtrent de même ;
   la WebSocket d'un terminal exige le cookie de session et le rôle `member`. Les notifications sont
   partagées entre les membres d'un projet (état lu / non lu commun).
+- **Défenses HTTP** : les upgrades WebSocket (`/terminals/`, `/browsers/`) dont l'en-tête `Origin` n'est pas
+  `APP_URL` (ou localhost) sont refusés en 403 (`backend/src/websockets.ts`, règle partagée avec le CORS dans
+  `backend/src/origin.ts`) : le cookie `SameSite=Lax` part aussi depuis un autre sous-domaine. GraphQL refuse les
+  POST « simples » sans en-tête `x-graphql-yoga-csrf` ou `apollo-require-preflight` (formulaire, `text/plain` :
+  prévention CSRF, le client Apollo envoie du JSON) et réserve l'introspection (`__schema`, `__type`) aux
+  utilisateurs connectés (`backend/src/graphql/security.ts`). Les en-têtes de sécurité (CSP, HSTS…) sont posés
+  par nginx (voir DEPLOY.md) ; la CSP interdit les scripts en ligne : le thème initial est dans
+  `frontend/public/theme-init.js`, pas dans `index.html`.
 - Première migration : `stan@toolso.io` est créé administrateur de l'application et de tous les
   projets existants.
 ## Coffre
@@ -647,6 +655,46 @@ ou environnement d'exécution du projet recréé ou arrêté), mémorisée par l
 qu'il a lui-même interrompues ; après un redémarrage, la cause est le redémarrage. Le provider distingue
 un flux fermé par le serveur (`RunResult.closedByServer`) d'un agent qui s'est arrêté au milieu d'un
 tour (erreur).
+
+**Plusieurs instances : mises à jour sans interruption** (`backend/src/instances/`, déploiement bleu/vert de
+`deploy/cellule/deploy.sh`). Pendant une mise à jour, l'ancienne instance du backend finit les tours en cours pendant
+que nginx envoie déjà le trafic à la nouvelle.
+- **Registre** (`registry.ts`, table `backend_instances`) : chaque instance s'inscrit au démarrage, bat toutes les
+  5 s et se retire à l'arrêt ; elle est morte si son battement a plus de 30 s ou si son processus n'existe plus.
+  Une session en cours porte l'instance qui tient son processus (`sessions.instance_id`), un terminal aussi. Au
+  démarrage, une instance n'interrompt que les sessions (et n'expire que les demandes, ne ferme que les terminaux)
+  qu'aucune instance vivante ne tient ; ensuite, l'instance qui tient les tâches périodiques fait de même chaque
+  minute (instance disparue sans se retirer) et relance les sessions interrompues (reprise automatique).
+- **Tâches périodiques uniques** (`leadership.ts`) : planificateurs des sessions et des workflows, synchronisation
+  des pull requests, sauvegardes git, surveillance mémoire, reprise des sessions orphelines ne tournent que sur
+  l'instance qui tient le verrou consultatif PostgreSQL (`pg_try_advisory_lock`, connexion dédiée, nouvel essai
+  toutes les 5 s). Les échéances restent en plus réservées atomiquement : une planification ne s'exécute qu'une fois.
+- **Drainage** (SIGUSR2) : l'instance cède le verrou, ne démarre plus de session (le démarrage est transmis à
+  l'instance active), gare chaque session à la fin de son tour (`parked_at` : processus arrêté, conversation
+  enregistrée, statut `running`/`idle` conservé, l'interface ne voit rien) et sort d'elle-même (code 0) quand plus
+  aucune session ni terminal ne tourne, ou au bout de `SKIPPER_DRAIN_TIMEOUT_MINUTES` (120 par défaut : les sessions
+  encore au travail sont alors interrompues puis relancées par l'instance active, prévenue par le bus). La
+  première instruction à une session garée la relance (`--resume`) sur l'instance qui la reçoit ; une session
+  garée sans instruction est terminée après le délai d'inactivité, comme les autres.
+- **Routage** (`client.ts`, `internalRoute.ts`, `wsProxy.ts`) : une instruction, une interruption, un arrêt, une fin
+  ou un changement de configuration visant une session dont le processus tourne sur une autre instance vivante lui
+  est transmis par HTTP interne (`POST /internal/instance/<action>` sur son port, adresse locale et jeton de
+  l'instance publié dans `backend_instances` ; nginx ne proxifie pas `/internal/`). Les WebSockets des terminaux et
+  du navigateur d'une session sont relayés de la même façon.
+- **Bus** (`bus.ts`, PostgreSQL LISTEN/NOTIFY, canal `skipper_bus`) : tant qu'une autre instance vit, chaque
+  publication temps réel (`pubsub.ts` : événement et état de session, demandes, notifications) y est annoncée par
+  référence ; les autres instances relisent la ligne et la livrent à leurs subscriptions GraphQL seulement (la logique
+  serveur ne s'exécute qu'une fois, sur l'instance d'origine). Une réponse donnée sur l'instance active à une demande
+  dont l'agent tourne sur l'ancienne y arrive par là (`requestService.settleLocalWaiter`).
+- **Migrations** : la nouvelle instance applique les migrations pendant que l'ancienne tourne encore. Elles doivent
+  rester compatibles avec la version précédente (ajouter des colonnes et des tables, pas en retirer ni en renommer
+  dans la même livraison).
+- **Limites connues** : le brouillon en direct (`Session.liveDraft`) d'une session tenue par l'autre instance n'est
+  pas affiché (le message complet l'est) ; les réglages en mémoire (mode maintenance, réglages du serveur modifiés
+  pendant la fenêtre) et les connexions en cours (Claude, AWS) ne sont pas partagés ; la limite de sessions
+  simultanées est comptée par instance ; recréer le conteneur d'un projet depuis l'instance active pendant le
+  drainage n'interrompt pas proprement les sessions de l'ancienne. Une commande de fond lancée par un agent dont la
+  session est garée s'arrête avec son processus.
 
 **Paramètres → Serveur.** Le **mode maintenance** (mémoire seulement, levé par le redémarrage)
 refuse tout démarrage de session (création, relance par un message, tâche confiée à un agent ;

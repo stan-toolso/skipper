@@ -107,9 +107,17 @@ export const requestRepository = {
     return rows.map(toRequest);
   },
 
-  /** Au redémarrage : toute demande encore en attente n'a plus de processus pour la consommer. */
-  async expireAllPending(): Promise<number> {
-    const { rowCount } = await pool.query(`UPDATE requests SET status = 'expired', answered_at = now() WHERE status = 'pending'`);
+  /**
+   * Au redémarrage : une demande encore en attente n'a plus de processus pour la consommer, sauf si sa session tourne
+   * sur une autre instance vivante du backend (déploiement bleu/vert).
+   */
+  async expireAllPending(liveInstanceIds: string[] = []): Promise<number> {
+    const { rowCount } = await pool.query(
+      `UPDATE requests r SET status = 'expired', answered_at = now()
+       WHERE r.status = 'pending'
+         AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = r.session_id AND s.status = 'running' AND s.instance_id = ANY($1::uuid[]))`,
+      [liveInstanceIds],
+    );
     return rowCount ?? 0;
   },
 };

@@ -195,7 +195,8 @@ export const reviewService = {
     }
     if (Object.keys(patch).length) current = await save(current, { ...reviewOf(current)!, ...patch });
     // Le rapport est rendu : la session est terminée pour libérer sa place (un message la relance pour en discuter).
-    if (sessionService.isRunning(session.id)) await sessionService.end(session.id).catch((err) => log.warn('[reviews] fin de la session de relecture', err));
+    // Le guetteur tourne sur l'instance meneuse : `end` transmet à l'instance qui porte la session.
+    if (session.status === 'running') await sessionService.end(session.id).catch((err) => log.warn('[reviews] fin de la session de relecture', err));
   },
 
   /** Guette la fin du premier tour des sessions de relecture (événements `sessionUpdated`). Renvoie l'arrêt. */

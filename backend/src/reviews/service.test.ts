@@ -205,7 +205,6 @@ describe('reviewService.report', () => {
   it("publie le rapport dans le fil de la tâche et sur la PR, le range dans la session, puis termine la session", async () => {
     m.prs = [{ id: 'pr1', projectId: 'p', repo: 'acme/app', number: 12, url: 'u', title: 'Feature', headBranch: 'feature', baseBranch: 'main', status: 'open', taskId: 't1', worksessionId: 'ws1' }];
     m.sessions = [reviewSession({ pullRequestId: 'pr1', prNumber: 12 })];
-    m.running.add('s1');
     m.lastResult = { subtype: 'success', is_error: false, result: '✅ Rien de bloquant.\n\n- suggestion `x.ts:1`' };
     await reviewService.report('s1');
     expect(m.comments).toHaveLength(1);

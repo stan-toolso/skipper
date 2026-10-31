@@ -83,9 +83,20 @@ export const requestService = {
     void notificationService.markReadForRequests(requests.map((r) => r.id));
   },
 
-  /** Au redémarrage : expire les demandes en attente et marque lues leurs notifications. */
-  async expireAllPending(): Promise<number> {
-    const n = await requestRepository.expireAllPending();
+  /**
+   * Demande réglée sur une autre instance du backend (bus entre instances) : si l'agent qui l'attend tourne ici,
+   * il reçoit la réponse (ou l'annulation).
+   */
+  settleLocalWaiter(request: HumanRequest): void {
+    if (request.status !== 'pending') settleWaiter(request);
+  },
+
+  /**
+   * Au démarrage : expire les demandes en attente qu'aucun processus ne consommera plus (leur session n'est pas tenue
+   * par une instance vivante, `liveInstanceIds`) et marque lues leurs notifications.
+   */
+  async expireAllPending(liveInstanceIds: string[] = []): Promise<number> {
+    const n = await requestRepository.expireAllPending(liveInstanceIds);
     await notificationService.markReadForSettledRequests();
     return n;
   },
