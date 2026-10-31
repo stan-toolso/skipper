@@ -1,3 +1,5 @@
+# ANCIEN MODE (une seule instance, port 4100), remplacé par skipper@.service (bleu/vert) : gardé pour les cellules
+# installées avant (skipper-1 jusqu'à sa transition par deploy.sh) et pour migrate-from-ec2.sh.
 # Backend Skipper (une cellule = une machine). Installé par deploy/cellule/bootstrap.sh.
 # Les processus Claude Code des sessions sont des enfants du backend : un redémarrage les interrompt
 # (statut « interrompue », reprise automatique des sessions au travail), d'où deploy/cellule/deploy.sh.

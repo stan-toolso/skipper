@@ -5,6 +5,8 @@ import { projectService } from '../projects/service.js';
 import { runner } from '../runners/index.js';
 import { agentGitEnv } from '../git/agentEnv.js';
 import { worksessionService } from '../worksessions/service.js';
+import { callInstance } from '../instances/client.js';
+import { instanceRegistry } from '../instances/registry.js';
 import { TerminalHistory } from './history.js';
 import { terminalRepository } from './repository.js';
 import type { TerminalRecord } from './types.js';
@@ -52,7 +54,7 @@ export const terminalService = {
     const project = await projectService.get(projectId);
     const cwd = await worksessionService.resolveCwd(project, worksessionId);
     const label = name?.trim() || `Terminal ${(await terminalRepository.countByProject(projectId)) + 1}`;
-    const record = await terminalRepository.create(projectId, label, worksessionId ?? null, createdById);
+    const record = await terminalRepository.create(projectId, label, worksessionId ?? null, createdById, instanceRegistry.id);
 
     const history = createdById ? await TerminalHistory.prepare(project, record.id, createdById) : null;
     const spec = await runner.terminalCommand(project, cwd, history ? { rcfile: history.files.rcfile } : undefined);
@@ -109,6 +111,12 @@ export const terminalService = {
     if (!t) {
       const record = await this.get(id);
       if (record.status === 'closed') return record;
+      // Shell tenu par une autre instance du backend (déploiement bleu/vert) : fermé là-bas.
+      const holder = await instanceRegistry.holder(record.instanceId);
+      if (holder) {
+        await callInstance(holder, 'terminal.close', { id });
+        return this.get(id);
+      }
       throw new AppError("Ce terminal n'est plus actif sur ce serveur");
     }
     t.proc.kill();
@@ -118,12 +126,12 @@ export const terminalService = {
   },
 
   async delete(id: string): Promise<boolean> {
-    if (live.has(id)) await this.close(id);
+    if (live.has(id) || (await terminalRepository.findById(id))?.status === 'running') await this.close(id).catch(() => undefined);
     return terminalRepository.delete(id);
   },
 
-  /** Au démarrage : les terminaux "running" en base n'ont plus de processus. */
-  recoverAfterRestart: () => terminalRepository.closeAllRunning(),
+  /** Au démarrage : les terminaux "running" en base n'ont plus de processus, sauf ceux d'une autre instance vivante. */
+  recoverAfterRestart: (liveInstanceIds: string[] = []) => terminalRepository.closeAllRunning(liveInstanceIds),
 
   async shutdown(): Promise<void> {
     await Promise.all([...live.values()].map((t) => t.history?.flush()));

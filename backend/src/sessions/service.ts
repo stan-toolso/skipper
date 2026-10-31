@@ -18,6 +18,8 @@ import { containerMonitor } from '../runners/monitor.js';
 import { isPersonalProject, type Project } from '../projects/types.js';
 import { userService } from '../users/service.js';
 import { ROLE_RANK } from '../users/types.js';
+import { instanceRegistry } from '../instances/registry.js';
+import { callInstance } from '../instances/client.js';
 import type { Attachment, AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionFilter, SessionStatus } from './types.js';
 
 /** Texte d'une instruction sans texte : les fichiers joints sont l'instruction. */
@@ -42,6 +44,13 @@ const finishing = new Map<string, Promise<void>>();
  * fin doit alors donner une session « interrompue », pas « en erreur ».
  */
 let stopping = false;
+/**
+ * Instance en drainage (déploiement bleu/vert, SIGUSR2) : elle ne démarre plus de session (le démarrage est transmis à
+ * l'instance qui la remplace), finit les tours en cours et gare chaque session à la fin de son tour (`parking`).
+ */
+let drainingInstance = false;
+/** Sessions en train d'être garées : leur processus s'arrête, la session reste « running »/« idle » sans processus. */
+const parking = new Set<string>();
 
 /** Délai laissé aux sessions pour se clôturer à l'arrêt (pm2 tue le processus après 1,6 s par défaut). */
 const SHUTDOWN_TIMEOUT_MS = 1200;
@@ -152,6 +161,8 @@ function formatWait(ms: number): string {
 
 /** Vidage de la file d'attente en cours (un seul à la fois) ; `drainAgain` : une place s'est libérée entre-temps. */
 let draining: Promise<void> | null = null;
+/** Reprise automatique des sessions interrompues en cours (une seule à la fois). */
+let resuming: Promise<string[]> | null = null;
 let drainAgain = false;
 /** Minuterie de la file d'attente et de l'arrêt des sessions inactives. */
 let housekeeping: NodeJS.Timeout | null = null;
@@ -178,6 +189,39 @@ async function publishSession(session: Session | null): Promise<Session> {
   if (!session) throw new NotFoundError('Session introuvable');
   pubSub.publish('sessionUpdated', session);
   return session;
+}
+
+/**
+ * Session dont le processus tourne sur une autre instance vivante du backend (déploiement bleu/vert) : l'action y est
+ * transmise et la session relue est renvoyée ; null si la session tourne ici ou n'est tenue par aucune autre instance.
+ */
+async function forwardToHolder(id: string, action: string, body: Record<string, unknown> = {}): Promise<Session | null> {
+  if (running.has(id) || !instanceRegistry.hasPeers()) return null;
+  const holder = await instanceRegistry.holder((await sessionRepository.findById(id))?.instanceId);
+  if (!holder) return null;
+  await callInstance(holder, action, { id, ...body });
+  return sessionRepository.findById(id);
+}
+
+/** Fin d'une session garée (sans processus) : arrêt, fin demandée ou inactivité. null si elle n'est pas garée. */
+async function endParked(id: string, status: 'completed' | 'stopped'): Promise<Session | null> {
+  const session = await sessionRepository.findById(id);
+  if (!session?.parkedAt || session.status !== 'running') return null;
+  await emitEvent(id, 'status', { status });
+  return publishSession(await sessionRepository.update(id, { status, activity: null, parkedAt: null, instanceId: null, endedAt: new Date() }));
+}
+
+/**
+ * Gare une session de cette instance en drainage dont le tour est fini : son processus s'arrête (la conversation est
+ * enregistrée), la session reste « running »/« idle » et la prochaine instruction la relance sur l'instance qui la
+ * reçoit (voir la fin de session dans `start`).
+ */
+async function park(id: string): Promise<void> {
+  const handle = running.get(id);
+  if (!handle || parking.has(id) || stopping) return;
+  parking.add(id);
+  console.log(`[instances] session ${id} garée : tour terminé pendant le drainage`);
+  await handle.stop().catch(() => undefined);
 }
 
 /**
@@ -249,11 +293,11 @@ async function dequeue(id: string): Promise<Session> {
 
 /** Un passage sur la file d'attente : démarre les sessions qui ont une place, dans l'ordre d'arrivée. */
 async function drainOnce(): Promise<void> {
-  if (stopping || serverSettings.maintenance) return;
+  if (stopping || drainingInstance || serverSettings.maintenance) return;
   const max = serverSettings.current.maxConcurrentSessions;
   if (max > 0 && slots.size >= max) return;
   for (const session of await sessionRepository.listQueued()) {
-    if (stopping || serverSettings.maintenance) return;
+    if (stopping || drainingInstance || serverSettings.maintenance) return;
     if (max > 0 && slots.size >= max) return;
     const project = await projectService.get(session.projectId).catch(() => null);
     if (!project || slotBlocker(project)) continue;
@@ -421,14 +465,22 @@ export const sessionService = {
    * (statut « queued ») avec cette instruction et démarre dès qu'une place se libère. `fromQueue` : démarrage
    * par la file d'attente elle-même (sans place, la session y reste à son rang).
    */
-  async start(id: string, initialMessage?: string, attachments: Attachment[] = [], opts: { fromQueue?: boolean } = {}): Promise<Session> {
+  async start(id: string, initialMessage?: string, attachments: Attachment[] = [], opts: { fromQueue?: boolean; fromParked?: boolean } = {}): Promise<Session> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     assertNotArchived(session);
-    if (session.status === 'running') throw new AppError('La session est déjà en cours');
+    // `fromParked` : session garée, réservée pour cette instance par `sendMessage`, qui reprend son processus.
+    if (session.status === 'running' && !opts.fromParked) throw new AppError('La session est déjà en cours');
     if (session.status === 'queued' && !opts.fromQueue) throw queuedError();
     if (opts.fromQueue && session.status !== 'queued') return session;
     if (stopping) throw new AppError('Le serveur redémarre : réessayez dans quelques secondes', 'MAINTENANCE');
+    if (drainingInstance) {
+      // Instance en cours de remplacement : la session démarre sur celle qui la remplace.
+      const peer = await instanceRegistry.activePeer();
+      if (!peer) throw new AppError('Le serveur redémarre : réessayez dans quelques secondes', 'MAINTENANCE');
+      await callInstance(peer, 'session.start', { id, message: initialMessage ?? null, attachments });
+      return publishSession(await sessionRepository.findById(id));
+    }
     serverSettings.assertNotInMaintenance();
     if (!(initialMessage ?? session.prompt)) throw new AppError('Envoyez une première instruction pour démarrer la session');
     const provider = getProvider(session.provider);
@@ -449,7 +501,7 @@ export const sessionService = {
         await emit('system', { message: `Place libérée : la session démarre après ${formatWait(Date.now() - (session.queuedAt?.getTime() ?? Date.now()))} d'attente`, notice: true, reason: 'queue_start' });
       }
       started = await publishSession(
-        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null, resumeDigest: null }),
+        await sessionRepository.update(id, { status: 'running', activity: 'busy', startedAt: new Date(), endedAt: null, exitCode: null, error: null, queuedAt: null, queuedStart: null, resumeDigest: null, instanceId: instanceRegistry.id, parkedAt: null }),
       );
     } catch (err) {
       slots.delete(id);
@@ -485,6 +537,7 @@ export const sessionService = {
           if (activity === 'idle') idleSince.set(id, Date.now());
           else idleSince.delete(id);
           await publishSession(await sessionRepository.update(id, { activity }));
+          if (activity === 'idle' && drainingInstance) void park(id);
         },
         recordConfig: async (changes) => {
           await persistConfig(id, changes, Object.keys(changes));
@@ -513,7 +566,7 @@ export const sessionService = {
       this.drainQueue();
       const message = (err as Error).message;
       await emit('status', { status: 'failed', error: message });
-      return publishSession(await sessionRepository.update(id, { status: 'failed', activity: null, error: message, endedAt: new Date() }));
+      return publishSession(await sessionRepository.update(id, { status: 'failed', activity: null, error: message, endedAt: new Date(), instanceId: null }));
     }
 
     running.set(id, handle);
@@ -526,6 +579,11 @@ export const sessionService = {
       // La place libérée revient à la première session de la file d'attente.
       this.drainQueue();
       const current = await sessionRepository.findById(id);
+      // Garée par le drainage : ni fin ni interruption, la session attend sa prochaine instruction sans processus.
+      if (parking.delete(id) && current?.status === 'running') {
+        await publishSession(await sessionRepository.update(id, { instanceId: null, parkedAt: new Date(), activity: 'idle' }));
+        return;
+      }
       // Arrêt du serveur : la session est « interrompue », quelle que soit la façon dont son flux s'est
       // terminé (fermé par `stop()`, ou agent tué par le signal de pm2 avant). Statut peut-être déjà posé par `shutdown()`.
       if (stopping || current?.status === 'interrupted') {
@@ -547,7 +605,7 @@ export const sessionService = {
         if (oom) error = `${oom} (détail : ${error})`;
       }
       await emit('status', { status, exitCode: result.exitCode, error });
-      await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date() }));
+      await publishSession(await sessionRepository.update(id, { status, activity: null, exitCode: result.exitCode, error, endedAt: new Date(), instanceId: null }));
       // Une exécution planifiée a sa propre notification de fin (avec le coût), émise par l'ordonnanceur.
       // Une session terminée pour inactivité n'est pas notifiée : un événement l'explique dans le transcript.
       if ((status === 'completed' || status === 'failed') && !scheduledRuns.has(id) && !idleEnd) {
@@ -570,8 +628,8 @@ export const sessionService = {
    * Envoie une instruction à la session. Si elle est en cours, l'instruction est transmise à
    * l'agent ; si elle est terminée, la session est relancée avec cette instruction (reprise).
    */
-  async sendMessage(id: string, text: string, files?: AttachmentInput[] | null): Promise<Session> {
-    const trimmed = text.trim() || (files?.length ? ATTACHMENTS_ONLY_TEXT : '');
+  async sendMessage(id: string, text: string, files?: AttachmentInput[] | null, opts: { attachments?: Attachment[] } = {}): Promise<Session> {
+    const trimmed = text.trim() || (files?.length || opts.attachments?.length ? ATTACHMENTS_ONLY_TEXT : '');
     if (!trimmed) throw new AppError('Le message est vide');
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
@@ -579,7 +637,22 @@ export const sessionService = {
     if (session.status === 'queued') throw queuedError();
     const handle = running.get(id);
     if (handle && !handle.sendMessage) throw new AppError("Ce type de session n'accepte pas d'instructions en cours d'exécution");
-    const attachments = files?.length ? await storeAttachments(await projectService.get(session.projectId), id, files) : [];
+    // `opts.attachments` : fichiers déjà enregistrés par l'instance qui a reçu l'instruction et nous l'a transmise.
+    const store = async () => opts.attachments ?? (files?.length ? await storeAttachments(await projectService.get(session.projectId), id, files) : []);
+    if (!handle && instanceRegistry.hasPeers()) {
+      // Processus tenu par une autre instance (déploiement bleu/vert), ou instance en drainage qui ne relance plus
+      // rien elle-même : l'instruction est transmise.
+      const target = (await instanceRegistry.holder(session.instanceId)) ?? (drainingInstance ? await instanceRegistry.activePeer() : null);
+      if (target) {
+        await callInstance(target, 'session.message', { id, text: trimmed, attachments: await store() });
+        return publishSession(await sessionRepository.findById(id));
+      }
+    }
+    const attachments = await store();
+    // Session garée par une instance en drainage : celle-ci la réserve puis relance son processus avec l'instruction.
+    if (!handle && session.status === 'running' && session.parkedAt && (await sessionRepository.claimParked(id, instanceRegistry.id))) {
+      return this.start(id, trimmed, attachments, { fromParked: true });
+    }
     if (!handle) return this.start(id, trimmed, attachments);
     await handle.sendMessage!(trimmed, attachments);
     return publishSession(await sessionRepository.findById(id));
@@ -596,6 +669,10 @@ export const sessionService = {
   /** Fin propre : l'agent termine son tour en cours, puis la session se termine. */
   async end(id: string): Promise<Session> {
     const handle = running.get(id);
+    if (!handle) {
+      const elsewhere = (await forwardToHolder(id, 'session.end')) ?? (await endParked(id, 'completed'));
+      if (elsewhere) return elsewhere;
+    }
     if (!handle && (await sessionRepository.findById(id))?.status === 'queued') return dequeue(id);
     if (!handle) throw new AppError("La session n'est pas en cours d'exécution");
     if (!handle.end) return this.stop(id);
@@ -606,6 +683,13 @@ export const sessionService = {
   /** Interrompt le tour en cours (l'agent s'arrête et attend une nouvelle instruction). */
   async interrupt(id: string): Promise<Session> {
     const handle = running.get(id);
+    if (!handle) {
+      const forwarded = await forwardToHolder(id, 'session.interrupt');
+      if (forwarded) return forwarded;
+      // Session garée : son tour est fini, il n'y a rien à interrompre.
+      const session = await sessionRepository.findById(id);
+      if (session?.parkedAt && session.status === 'running') return session;
+    }
     if (!handle) throw new AppError("La session n'est pas en cours d'exécution");
     if (!handle.interrupt) throw new AppError("Ce type de session ne peut pas être interrompu sans être arrêté");
     await requestService.cancelAllForSession(id);
@@ -632,6 +716,8 @@ export const sessionService = {
     }
     if (!Object.keys(changes).length) return session;
     getProvider(session.provider).validateConfig?.(config);
+    const forwarded = await forwardToHolder(id, 'session.config', { patch });
+    if (forwarded) return forwarded;
     const handle = running.get(id);
     // Appliquer d'abord à la session en cours : si le provider refuse, rien n'est enregistré.
     const applied = handle?.updateConfig ? await handle.updateConfig(changes) : [];
@@ -640,6 +726,10 @@ export const sessionService = {
 
   async stop(id: string): Promise<Session> {
     const handle = running.get(id);
+    if (!handle) {
+      const elsewhere = (await forwardToHolder(id, 'session.stop')) ?? (await endParked(id, 'stopped'));
+      if (elsewhere) return elsewhere;
+    }
     if (!handle && (await sessionRepository.findById(id))?.status === 'queued') return dequeue(id);
     if (!handle) throw new AppError("La session n'est pas en cours d'exécution");
     await publishSession(await sessionRepository.update(id, { status: 'stopped', activity: null, endedAt: new Date() }));
@@ -724,6 +814,8 @@ export const sessionService = {
 
   async delete(id: string): Promise<boolean> {
     if (running.has(id)) await this.stop(id);
+    // Processus sur une autre instance, ou session garée : arrêtée là où elle est.
+    else if ((await sessionRepository.findById(id))?.status === 'running') await this.stop(id).catch(() => undefined);
     // La mise à jour finale du statut (tâche de fond) doit être terminée avant de supprimer la ligne.
     await finishing.get(id);
     const session = await sessionRepository.findById(id);
@@ -735,22 +827,44 @@ export const sessionService = {
   },
 
   /**
-   * À appeler au démarrage : les sessions "running" en base ne le sont plus réellement. Normalement
-   * `shutdown()` les a déjà clôturées ; il en reste après un arrêt brutal (SIGKILL, plantage, délai dépassé).
+   * À appeler au démarrage, puis régulièrement par l'instance qui tient les tâches périodiques : les sessions
+   * "running" en base dont aucune instance vivante (`liveInstanceIds`) ne tient le processus ne tournent plus.
+   * Normalement `shutdown()` les a déjà clôturées ; il en reste après un arrêt brutal (SIGKILL, plantage, délai
+   * dépassé). Les sessions d'une autre instance vivante (déploiement bleu/vert) et les sessions garées sont laissées.
    */
-  async recoverAfterRestart(): Promise<{ sessions: number; requests: number }> {
-    const sessions = await sessionRepository.markRunningAsInterrupted();
+  async recoverAfterRestart(liveInstanceIds: string[] = []): Promise<{ sessions: number; requests: number }> {
+    const sessions = await sessionRepository.markRunningAsInterrupted(liveInstanceIds);
     for (const session of sessions) {
-      await sessionRepository.addEvent(session.id, 'system', {
+      await emitEvent(session.id, 'system', {
         message: INTERRUPTION_NOTICES.server_crash,
         notice: true,
         reason: 'server_crash',
         activity: session.activity,
       });
-      await sessionRepository.addEvent(session.id, 'status', { status: 'interrupted', activity: session.activity });
+      await emitEvent(session.id, 'status', { status: 'interrupted', activity: session.activity });
+      pubSub.publish('sessionUpdated', session);
     }
-    const requests = await requestService.expireAllPending();
+    const requests = await requestService.expireAllPending(liveInstanceIds);
     return { sessions: sessions.length, requests };
+  },
+
+  /**
+   * Termine les sessions garées (sans processus depuis le drainage d'une instance) restées sans instruction plus
+   * longtemps que le délai d'inactivité, comme `endIdleSessions` le fait pour les sessions de l'instance.
+   */
+  async endParkedIdle(now = Date.now()): Promise<string[]> {
+    const minutes = serverSettings.current.idleSessionTimeoutMinutes;
+    if (!minutes || stopping) return [];
+    const ended: string[] = [];
+    for (const session of await sessionRepository.listParkedBefore(new Date(now - minutes * 60_000))) {
+      await emitEvent(session.id, 'system', {
+        message: `Session terminée après ${formatWait(now - (session.parkedAt?.getTime() ?? now))} sans instruction, pour libérer sa place et sa mémoire. Envoyez un message pour la reprendre.`,
+        notice: true,
+        reason: 'idle_timeout',
+      });
+      if (await endParked(session.id, 'completed')) ended.push(session.id);
+    }
+    return ended;
   },
 
   /**
@@ -823,8 +937,16 @@ export const sessionService = {
    * au milieu d'un tour par l'arrêt récent du serveur, avec une instruction qui explique la coupure.
    * Les sessions qui attendaient des instructions restent interrompues : un message suffit à les reprendre.
    */
-  async resumeInterruptedAfterRestart(): Promise<string[]> {
-    if (!serverSettings.current.autoResumeInterrupted) return [];
+  resumeInterruptedAfterRestart(): Promise<string[]> {
+    // Un seul passage à la fois (démarrage, arrêt d'une autre instance, reprise des sessions orphelines).
+    resuming ??= this.resumeInterruptedOnce().finally(() => {
+      resuming = null;
+    });
+    return resuming;
+  },
+
+  async resumeInterruptedOnce(): Promise<string[]> {
+    if (!serverSettings.current.autoResumeInterrupted || drainingInstance) return [];
     const sessions = await sessionRepository.listInterruptedMidTurn(new Date(Date.now() - AUTO_RESUME_WINDOW_MS), AUTO_RESUME_MAX);
     const resumed: string[] = [];
     for (const session of sessions) {
@@ -838,6 +960,20 @@ export const sessionService = {
       }
     }
     return resumed;
+  },
+
+  /** Places occupées sur cette instance (sessions en cours ou en train de démarrer) : le drainage attend qu'il n'y en ait plus. */
+  localCount: () => slots.size,
+
+  /**
+   * Drainage de l'instance (déploiement bleu/vert) : plus aucune session ne démarre ici (le démarrage est transmis à
+   * l'instance qui la remplace), les sessions qui attendent une instruction sont garées tout de suite, les autres à
+   * la fin de leur tour.
+   */
+  beginDrain(): void {
+    if (drainingInstance) return;
+    drainingInstance = true;
+    for (const id of running.keys()) if (idleSince.has(id)) void park(id);
   },
 
   /** Sessions actives sur ce serveur (à consulter avant un redémarrage). */
@@ -934,10 +1070,15 @@ export const sessionService = {
    */
   async shutdown(): Promise<number> {
     stopping = true;
-    const ids = [...running.keys()];
+    const all = [...running.keys()];
+    // Fin du drainage (délai dépassé) : les sessions qui attendent une instruction sont garées, pas interrompues.
+    if (drainingInstance) for (const id of all) if (idleSince.has(id)) parking.add(id);
+    const ids = all.filter((id) => !parking.has(id));
     const work = (async () => {
+      const parked = Promise.all(all.filter((id) => parking.has(id)).map((id) => running.get(id)?.stop().catch(() => undefined)));
       await Promise.all(ids.map((id) => interruptSession(id, 'server_shutdown').catch((err) => console.error(`[sessions] interruption de ${id}`, err))));
       await Promise.all(ids.map((id) => running.get(id)?.stop().catch(() => undefined)));
+      await parked;
       await Promise.all([...finishing.values()]);
     })();
     await Promise.race([work, delay(SHUTDOWN_TIMEOUT_MS)]);

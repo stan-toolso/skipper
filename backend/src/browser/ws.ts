@@ -4,6 +4,8 @@ import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { sessionService } from '../sessions/service.js';
 import { rejectUpgrade, type UpgradeHandler } from '../websockets.js';
 import { liveBrowserService } from './live.js';
+import { instanceRegistry } from '../instances/registry.js';
+import { isForwarded, proxyUpgrade } from '../instances/wsProxy.js';
 
 /**
  * WebSockets `/browsers/<session>` : vue en direct du navigateur headless d'une session (lecture seule).
@@ -21,6 +23,9 @@ export function browserUpgradeHandler(): UpgradeHandler {
       const session = await sessionService.get(id);
       if (!session) return rejectUpgrade(socket, 404, 'Not Found');
       await requireProject(createAuthContext(user), session.projectId, 'member');
+      // Navigateur de la session sur une autre instance du backend (déploiement bleu/vert) : la connexion lui est relayée.
+      const holder = isForwarded(req) ? null : await instanceRegistry.holder(session.instanceId);
+      if (holder) return proxyUpgrade(req, socket, head, holder);
       wss.handleUpgrade(req, socket, head, (ws) => liveBrowserService.attach(id, ws));
     })().catch((err) => {
       console.warn(`[browser] connexion refusée sur ${id} : ${(err as Error).message}`);

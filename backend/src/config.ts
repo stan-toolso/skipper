@@ -39,6 +39,10 @@ export const config = {
   /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+  /** Nom de l'instance dans le registre (couleur du déploiement bleu/vert), pour les journaux et le diagnostic. */
+  instanceLabel: process.env.SKIPPER_INSTANCE || '',
+  /** Drainage (SIGUSR2) : délai maximal d'attente de la fin des sessions et terminaux avant l'arrêt, en minutes. */
+  drainTimeoutMinutes: Number(process.env.SKIPPER_DRAIN_TIMEOUT_MINUTES || 120),
   /** Niveau minimal du journal (debug, info, warn, error). */
   logLevel: logLevel(),
 };

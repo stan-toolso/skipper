@@ -3,6 +3,8 @@ import { createAuthContext, requireProject } from '../auth/access.js';
 import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { rejectUpgrade, type UpgradeHandler } from '../websockets.js';
 import { terminalService } from './service.js';
+import { instanceRegistry } from '../instances/registry.js';
+import { isForwarded, proxyUpgrade } from '../instances/wsProxy.js';
 
 /**
  * WebSockets `/terminals/<id>`. La connexion est authentifiée par le cookie de session ; il faut être
@@ -18,6 +20,9 @@ export function terminalUpgradeHandler(): UpgradeHandler {
       const user = await authSession.resolve(readCookie(req.headers.cookie, SESSION_COOKIE));
       if (!user) return rejectUpgrade(socket, 401, 'Unauthorized');
       const terminal = await terminalService.get(id);
+      // Shell tenu par une autre instance du backend (déploiement bleu/vert) : la connexion lui est relayée.
+      const holder = isForwarded(req) ? null : await instanceRegistry.holder(terminal.instanceId);
+      if (holder) return proxyUpgrade(req, socket, head, holder);
       await requireProject(createAuthContext(user), terminal.projectId, 'member');
       // Le shell porte les identifiants git de son ouvreur : lui seul s'y attache.
       if (terminal.createdById && terminal.createdById !== user.id) return rejectUpgrade(socket, 403, 'Forbidden');
