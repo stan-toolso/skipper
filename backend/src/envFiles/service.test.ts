@@ -23,7 +23,7 @@ vi.mock('../vault/service.js', () => ({
     audit: async (i: VaultItem, action: string, _a: unknown, detail: string) => void h.audits.push(`${i.name} ${action} ${detail}`),
   },
 }));
-vi.mock('../worksessions/service.js', () => ({ worksessionHooks: { afterCreate: [] }, worksessionPath: () => h.dir }));
+vi.mock('../worksessions/service.js', () => ({ worksessionHooks: { onCreated: [] }, worksessionPath: () => h.dir }));
 vi.mock('../projects/workspace.js', () => ({ git: async () => { throw new Error('pas de git'); } }));
 
 const { envFileService } = await import('./service.js');

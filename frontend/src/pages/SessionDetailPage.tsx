@@ -20,6 +20,7 @@ import Transcript from '../components/Transcript';
 import { fileToolResultCount } from '../lib/sessionChanges';
 import { isImageType, toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import { confirmedPending, newPendingInstruction, withPendingInstructions, type PendingInstruction } from '../lib/pendingInstructions';
+import DictationButton from '../components/DictationButton';
 import '../components/terminal.css';
 import '../components/chat.css';
 import {
@@ -480,6 +481,19 @@ export default function SessionDetailPage() {
               }}
             />
           </label>
+          <DictationButton
+            value={text}
+            disabled={sending || encoding}
+            onChange={(t) => {
+              historyPos.current = null;
+              setText(t);
+              const el = inputRef.current;
+              if (el) {
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+              }
+            }}
+          />
           {modelField ? (
             <span className="cc-pill" title="Modèle de cette session (modifiable à tout moment)">
               <span className="cc-pill-label">{(modelField.options ?? []).find((o) => o.value === model)?.label ?? model ?? '—'}</span>

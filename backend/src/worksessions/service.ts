@@ -99,15 +99,23 @@ export interface CreateWorksessionInput {
 }
 
 /**
- * Crochets des modules qui accrochent quelque chose à une work session : `beforeRetire` est appelé avant son archivage
- * ou sa suppression (aperçus : arrêt du serveur de développement), `afterCreate` après sa création (fichiers
- * d'environnement). Les erreurs sont journalisées, jamais bloquantes.
+ * Crochets des modules qui accrochent quelque chose à une work session : `afterCreate` est lancé (sans être attendu)
+ * après la création du dossier d'un projet git (aperçus : installation des dépendances en arrière-plan) ;
+ * `beforeRetire` est appelé avant son archivage ou sa suppression (aperçus : arrêt du serveur de développement et de
+ * l'installation) ; `onCreated` est attendu après la création de toute work session, avant de la rendre (fichiers
+ * d'environnement : prêts quand l'agent démarre). Les erreurs sont journalisées, jamais bloquantes.
  */
 export const worksessionHooks = {
+  afterCreate: [] as ((project: Project, worksession: Worksession) => Promise<void>)[],
   beforeRetire: [] as ((project: Project, worksession: Worksession) => Promise<void>)[],
-  /** Après la création du dossier et de l'enregistrement (fichiers d'environnement), pour la personne qui la crée. */
-  afterCreate: [] as ((project: Project, worksession: Worksession, actorId: string | null) => Promise<void>)[],
+  /** Attendu après la création du dossier et de l'enregistrement (fichiers d'environnement), pour la personne qui la crée. */
+  onCreated: [] as ((project: Project, worksession: Worksession, actorId: string | null) => Promise<void>)[],
 };
+async function runCreateHooks(project: Project, worksession: Worksession): Promise<void> {
+  for (const hook of worksessionHooks.afterCreate) {
+    await hook(project, worksession).catch((err) => log.warn(`[worksessions] ${worksession.name} : ${(err as Error).message}`));
+  }
+}
 async function runRetireHooks(project: Project, worksession: Worksession): Promise<void> {
   for (const hook of worksessionHooks.beforeRetire) {
     await hook(project, worksession).catch((err) => log.warn(`[worksessions] ${worksession.name} : ${(err as Error).message}`));
@@ -197,9 +205,10 @@ export const worksessionService = {
       if ((err as { code?: string }).code === '23505') throw new AppError(`Une work session « ${name} » existe déjà`);
       throw err;
     }
-    for (const hook of worksessionHooks.afterCreate) {
+    for (const hook of worksessionHooks.onCreated) {
       await hook(project, created, actorId ?? null).catch((err) => log.warn(`[worksessions] ${created.name} : ${(err as Error).message}`));
     }
+    if (main) void runCreateHooks(project, created);
     return created;
   },
 

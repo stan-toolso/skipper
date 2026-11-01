@@ -269,6 +269,10 @@ nginx (les pages partagées et aperçus de fichiers ont leur propre CSP `sandbox
 location, passer par les `map`. Sur une cellule déjà installée, reporter les deux `map`, les lignes
 `server_tokens`/`add_header` et le retrait des `add_header`/`expires` des locations dans
 `/etc/nginx/sites-available/skipper` (sans toucher aux blocs certbot), puis `sudo nginx -t && sudo systemctl reload nginx`.
+**Micro (dictée vocale)** : `Permissions-Policy` autorise `microphone` pour Skipper lui-même (`self`) et pour les
+aperçus (`"https://*.apercu.<domaine>"`, cadre de l'onglet « Aperçu ») ; avec `microphone=()`, le bouton micro reste
+sans effet. Sur une cellule déjà installée, remplacer la ligne dans `/etc/nginx/sites-available/skipper` puis
+`sudo nginx -t && sudo systemctl reload nginx`.
 Vérification : `curl -sI https://skipper.toolso.io/` montre `content-security-policy` et `strict-transport-security`,
 et `curl -sI https://skipper.toolso.io/assets/<index>.js` `cache-control: public, max-age=31536000, immutable`.
 Déployer le front (`theme-init.js`) avant ou en même temps que la CSP : l'ancien `index.html` a un script en ligne

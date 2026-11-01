@@ -8,6 +8,7 @@ import { branchFromName, namesFromText, suggestWorksessionName } from '../lib/wo
 import { bypassConnectionsWarning } from '../lib/humanize';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import AttachmentChips from './AttachmentChips';
+import DictationButton from './DictationButton';
 
 export interface LaunchOptions {
   projectId?: string | null;
@@ -229,18 +230,21 @@ function LaunchModal({ initial, onClose }: LaunchModalProps) {
               )}
 
               <Form.Group className="mb-2">
-                <Form.Control
-                  as="textarea"
-                  rows={6}
-                  className="fs-6"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  autoFocus={canAutoFocus()}
-                  placeholder="Que voulez-vous faire ? Décrivez la tâche comme à un collègue."
-                  onPaste={attachments.onPaste}
-                  onDrop={attachments.onDrop}
-                  onDragOver={attachments.onDragOver}
-                />
+                <div className="dictation-field">
+                  <Form.Control
+                    as="textarea"
+                    rows={6}
+                    className="fs-6"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    autoFocus={canAutoFocus()}
+                    placeholder="Que voulez-vous faire ? Décrivez la tâche comme à un collègue."
+                    onPaste={attachments.onPaste}
+                    onDrop={attachments.onDrop}
+                    onDragOver={attachments.onDragOver}
+                  />
+                  <DictationButton value={prompt} onChange={setPrompt} disabled={busy} className="dictation-float" />
+                </div>
                 <AttachmentChips items={attachments.items} onAdd={(files) => attachments.add(files)} onRemove={attachments.remove} disabled={busy} error={attachments.error} />
               </Form.Group>
 

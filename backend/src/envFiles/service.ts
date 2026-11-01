@@ -302,7 +302,7 @@ export const envFileService = {
 };
 
 // Écriture des fichiers « à la création » dans chaque nouvelle work session, pour la personne qui la crée.
-worksessionHooks.afterCreate.push(async (project, ws, actorId) => {
+worksessionHooks.onCreated.push(async (project, ws, actorId) => {
   const result = await envFileService.apply(project, ws, actorId, { overwrite: false, onCreate: true });
   if (result.written.length) log.info(`[env] ${ws.name} : ${result.written.join(', ')} écrit(s)`);
   for (const s of [...result.skipped, ...result.problems]) log.warn(`[env] ${ws.name} : ${s}`);

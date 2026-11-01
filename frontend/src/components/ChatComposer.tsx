@@ -8,6 +8,7 @@ import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import { canAutoFocus } from '../lib/device';
 import { permissionModeLabels, permissionModeShortLabels } from '../lib/humanize';
 import AttachmentChips from './AttachmentChips';
+import DictationButton from './DictationButton';
 import Logo from './Logo';
 import './terminal.css';
 import './chat.css';
@@ -171,6 +172,14 @@ export default function ChatComposer({ withGreeting = false, autoFocus = false }
               }}
             />
           </label>
+          <DictationButton
+            value={text}
+            disabled={loading || encoding}
+            onChange={(t) => {
+              setText(t);
+              if (inputRef.current) resize(inputRef.current);
+            }}
+          />
           <span className="chat-composer-spacer" />
           <span className={`cc-pill cc-pill-mode${mode === 'bypassPermissions' ? ' warn' : ''}`} title={`Autorisations du chat : ${permissionModeLabels[mode] ?? mode}. Lancer une session ou lui parler consomme du budget : en mode « demander », le chat vous le soumet d'abord.`}>
             <i className={`bi ${mode === 'bypassPermissions' ? 'bi-exclamation-triangle' : 'bi-shield-check'}`} />

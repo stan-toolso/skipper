@@ -201,7 +201,7 @@ export default function PreviewPanel({ worksessionId, sessionId }: { worksession
       )}
 
       {running && frameSrc && (
-        <iframe key={frameKey} className="preview-frame" src={frameSrc} title="Aperçu de l'application" allow="clipboard-read; clipboard-write; fullscreen" />
+        <iframe key={frameKey} className="preview-frame" src={frameSrc} title="Aperçu de l'application" allow="clipboard-read; clipboard-write; fullscreen; microphone" />
       )}
 
       {showLog && (
@@ -212,7 +212,7 @@ export default function PreviewPanel({ worksessionId, sessionId }: { worksession
         <Modal.Header closeButton>
           <Modal.Title className="fs-6">Aperçu · {previewSummary(p)}</Modal.Title>
         </Modal.Header>
-        <Modal.Body className="p-0">{full && p.url && <iframe className="preview-frame full" src={p.url} title="Aperçu de l'application (plein écran)" />}</Modal.Body>
+        <Modal.Body className="p-0">{full && p.url && <iframe className="preview-frame full" src={p.url} allow="clipboard-read; clipboard-write; fullscreen; microphone" title="Aperçu de l'application (plein écran)" />}</Modal.Body>
       </Modal>
 
       <Modal show={qr !== null} onHide={() => setQr(null)} centered size="sm">

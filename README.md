@@ -942,6 +942,16 @@ défilement (ombres de débordement, onglet actif ramené en vue, menu listant t
 en-têtes de page passent à la ligne ; la page de session a un bouton d'envoi ; sur écran tactile les
 actions au survol de l'explorateur sont toujours visibles et les cibles sont agrandies.
 
+### Dictée vocale
+
+Un bouton **micro** dicte au lieu de taper : saisie d'une session, chat du tableau de bord, consigne de la modale de
+lancement, description d'une tâche, et commentaires de l'outil d'annotation des aperçus. Le texte s'écrit au fil de la
+parole après ce qui était déjà saisi ; un nouveau clic (ou un silence prolongé) arrête. C'est la reconnaissance de la
+parole du navigateur (Web Speech API, `frontend/src/lib/dictation.ts`, `components/DictationButton.tsx`) : Chrome,
+Edge et Safari (iPhone compris), dans la langue du navigateur ; rien ne passe par le serveur de Skipper (Chrome confie le
+son à son propre service) et le bouton n'apparaît pas là où elle manque (Firefox). Le cadre de l'onglet « Aperçu »
+autorise le micro (`allow="microphone"`).
+
 ## Application installable (PWA)
 
 Skipper s'installe sur l'écran d'accueil d'un téléphone (Android : fenêtre d'installation ou
@@ -1264,8 +1274,16 @@ modification de l'agent apparaît d'elle-même.
     (`.vite`, `.cache`) exclus, quatre instantanés gardés ;
   - une work session de même empreinte les reçoit de la même façon **dès sa création** (agents compris : typecheck sans
     installer) et au lancement de l'aperçu, qui n'installe alors rien (marqueur `node_modules/.skipper-deps`) ; avec une
-    autre empreinte, l'instantané le plus récent est lié puis l'installation ne fait que la différence (`npm install`
-    plutôt que `npm ci`, pnpm et yarn en `--frozen-lockfile --prefer-offline`) ;
+    autre empreinte, l'instantané le plus récent est lié (à la création comme au lancement de l'aperçu) puis
+    l'installation ne fait que la différence (`npm install` plutôt que `npm ci`, pnpm et yarn en
+    `--frozen-lockfile --prefer-offline`) ;
+  - sans instantané exact, la création de la work session lance aussi **l'installation en arrière-plan** dans le
+    conteneur (crochet `worksessionHooks.afterCreate`, `previewService.installInBackground`, script `INSTALL_SCRIPT` de
+    `previews/scripts.ts`), avec la commande et le dossier de l'aperçu (`"install": ""` la désactive). Elle laisse
+    `install.pid` (tant qu'elle tourne), `install.log` et `install.exit` dans `.skipper-previews/<work session>/` ; à sa
+    réussite, le backend enregistre l'instantané, que les work sessions suivantes de même lockfile reçoivent tout fait.
+    Un aperçu lancé pendant ce temps l'attend puis n'installe que si le marqueur ne correspond toujours pas ; le prompt
+    des agents leur dit de l'attendre plutôt que d'en lancer une deuxième ; l'archivage l'arrête ;
   - les caches des gestionnaires de paquets sont **persistants** : `~/.npm` et `~/.cache` du conteneur sont montés depuis
     `.runners/<projet>/cache/` (avant : dans le tmpfs de 512 Mo du dossier personnel, perdus à chaque recréation) ;
   - les liens sont partagés : un fichier de `node_modules` modifié **en place** le serait partout. npm, pnpm et yarn
@@ -1285,6 +1303,19 @@ modification de l'agent apparaît d'elle-même.
   dans `.skipper-previews/<work session>/captures/`, dix au plus). Le prompt système (`previewMcpPrompt`) décrit la
   boucle « je modifie, tu vois » : lancer, vérifier, capturer, donner le lien. Les données base64 des images renvoyées
   par un outil ne sont pas gardées dans les événements de la session (le fichier est sur disque).
+- **Annoter la page pour l'agent** (« je pointe, l'agent corrige », `previews/annotate.ts`) : le proxy ajoute à
+  chaque page HTML de l'aperçu (navigation ou cadre de l'onglet, réponse non compressée : la page est demandée en
+  `Accept-Encoding: identity`, sans validation conditionnelle) la balise `<script src="/__skipper/annoter.js">`. Le script
+  (`previews/annotate-client.js`, JavaScript sans build, servi en ASCII seulement, interface dans un shadow DOM) affiche
+  un bouton **« Annoter »** si la personne est membre du projet et qu'une session existe sur la branche
+  (`GET /__skipper/session`). On clique sur un ou plusieurs éléments de la page (le clic ne les active pas), on écrit ou
+  **dicte** ce qu'il faut changer, on ajoute une remarque générale si besoin, puis « Envoyer à l'agent » :
+  `POST /__skipper/annotations` (en-tête `X-Skipper-Annotation`, JSON, même origine) envoie le lot comme **instruction**
+  à la session la plus récente de la branche (hors relecture ; relancée si elle était terminée), avec pour chaque élément
+  un sélecteur CSS, son texte, un extrait HTML, sa position, la page et la taille de la fenêtre, et la consigne de
+  vérifier le résultat avec les outils `preview`. Un bandeau suit ensuite la session (« L'agent applique vos
+  annotations… » puis « C'est fait ») jusqu'au rechargement de la page par le serveur de développement. Les annotations
+  en attente survivent à un rechargement (`sessionStorage`).
 - **API** : `preview(worksessionId)`, `previewLog(worksessionId)`, `startPreview`, `stopPreview` (membres),
   `previewAccessUrl(worksessionId, path)`. L'interface sonde l'état toutes les 2,5 s quand l'onglet est ouvert et affiche
   le temps de lancement (« Prêt en 3,4 s · dépendances liées depuis le cache, rien à installer »).
@@ -1301,7 +1332,7 @@ modification de l'agent apparaît d'elle-même.
 
 Page « Environnement » d'un projet (`/projects/:id/env`, onglet de l'en-tête, `pages/ProjectEnvPage.tsx`) : des fichiers
 (`.env`, `backend/.env`, `config/local.json`… : tout fichier texte) dont le modèle est **écrit dans le dossier de travail de
-chaque nouvelle session** (crochet `worksessionHooks.afterCreate`, pour tous les chemins de création : interface, tâches,
+chaque nouvelle session** (crochet `worksessionHooks.onCreated`, attendu, pour tous les chemins de création : interface, tâches,
 workflows, agents, relectures). Un fichier déjà présent n'est pas remplacé (fichier suivi par git, par exemple) ; les fichiers
 écrits ont les droits 0600 et sont ajoutés à `info/exclude` du dépôt pour ne jamais être commités. L'éditeur (CodeMirror, Ctrl/Cmd+S)
 refuse d'écraser une version modifiée entre-temps par un agent ; l'option « Écrit à la création de chaque session » se décoche par

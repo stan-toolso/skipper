@@ -14,6 +14,7 @@ import { PREVIEW_CONFIG_FILE, PreviewConfigError, resolvePreviewConfig, type Pre
 import { defaultInstallCommand, depsHash, depsStoreRoot, linkSnapshot, listSnapshots, readMarker, saveSnapshot, type DepsMode } from './deps.js';
 import { freePort, newHostLabel, parsePreviewTemplate, previewOrigin, safeNext, type PreviewUrlTemplate } from './hosts.js';
 import { previewRepository, type PreviewRow } from './repository.js';
+import { INSTALL_SCRIPT, RUN_SCRIPT } from './scripts.js';
 import { deriveState, parseEvents, type PreviewStatus } from './state.js';
 
 /** Lien d'accès (iframe, QR code) : usage unique, quelques minutes pour être ouvert. */
@@ -81,36 +82,8 @@ function portOpen(host: string, port: number, timeoutMs = 400): Promise<boolean>
   });
 }
 
-/**
- * Script de lancement, exécuté dans le conteneur par `setsid` (groupe de processus à lui : l'arrêt tue tout l'arbre).
- * Paramètres par variables d'environnement ; chaque étape est notée dans `events` (voir state.ts).
- */
-const RUN_SCRIPT = `#!/bin/sh
-# Généré par Skipper : aperçu d'une work session (installation des dépendances puis serveur de développement).
-cd "$SKIPPER_STATE" || exit 1
-exec >>log 2>&1
-echo $$ > pid
-ev() { echo "$(date +%s%3N) $*" >> "$SKIPPER_STATE/events"; }
-ev begin
-if [ -n "$SKIPPER_INSTALL" ]; then
-  ev installing
-  echo "› ($SKIPPER_INSTALL_DIR) $SKIPPER_INSTALL"
-  cd "$SKIPPER_INSTALL_DIR" || { ev failed cwd; exit 1; }
-  sh -c "$SKIPPER_INSTALL"
-  code=$?
-  if [ "$code" -ne 0 ]; then ev failed install "$code"; exit 1; fi
-  # Marqueur d'empreinte écrit par renommage : le fichier peut être un lien physique vers un instantané partagé.
-  if [ -n "$SKIPPER_DEPS_HASH" ] && [ -d node_modules ]; then
-    printf '%s\\n' "$SKIPPER_DEPS_HASH" > "node_modules/.skipper-deps.$$" && mv -f "node_modules/.skipper-deps.$$" node_modules/.skipper-deps
-  fi
-  ev installed
-fi
-cd "$SKIPPER_APP_DIR" || { ev failed cwd; exit 1; }
-ev starting
-echo "› ($SKIPPER_APP_DIR) $SKIPPER_COMMAND"
-sh -c "$SKIPPER_COMMAND"
-ev exited $?
-`;
+/** Fin d'une installation en arrière-plan : elle est attendue au plus ce temps avant d'enregistrer l'instantané. */
+const INSTALL_WAIT_MS = 30 * 60_000;
 
 /**
  * Capture d'écran d'une page de l'aperçu, depuis le conteneur (le serveur de développement y écoute sur localhost) :
@@ -150,6 +123,11 @@ async function readDeps(dir: string): Promise<DepsRecord | null> {
 
 async function event(dir: string, name: string, arg = ''): Promise<void> {
   await appendFile(path.join(dir, 'events'), `${Date.now()} ${name}${arg ? ` ${arg}` : ''}\n`).catch(() => undefined);
+}
+
+/** Dossier de l'installation, relatif à la work session : `installCwd`, sinon la racine si elle a un package.json (monorepo), sinon `cwd`. */
+async function installDirOf(dir: string, cfg: PreviewConfig | null): Promise<string> {
+  return cfg?.installCwd ?? ((await exists(path.join(dir, 'package.json'))) ? '' : (cfg?.cwd ?? ''));
 }
 
 async function loadConfig(dir: string): Promise<{ config: PreviewConfig | null; error: string | null }> {
@@ -236,7 +214,7 @@ export const previewService = {
    * Après une installation réussie (marqueur à l'empreinte du lancement), enregistre les `node_modules` comme instantané :
    * la prochaine work session de même empreinte les recevra sans rien installer.
    */
-  async snapshotIfNeeded(project: Project, dir: string, deps: DepsRecord): Promise<void> {
+  async snapshotIfNeeded(project: Project, dir: string, deps: Pick<DepsRecord, 'hash' | 'installDir'>): Promise<void> {
     const hash = deps.hash;
     if (!hash || saving.has(hash)) return;
     const store = depsStoreRoot(worksessionsRoot(project));
@@ -250,6 +228,64 @@ export const previewService = {
       log.warn(`[previews] instantané des dépendances ${hash} (${project.slug}) : ${(err as Error).message}`);
     } finally {
       saving.delete(hash);
+    }
+  },
+
+  /**
+   * À la création d'une work session sans instantané exact (dépendances absentes, ou liées depuis l'instantané le plus
+   * proche) : installe les dépendances en arrière-plan dans le conteneur, puis enregistre l'instantané de cette
+   * empreinte, que les work sessions suivantes de même lockfile recevront toutes faites. Commande et dossier : ceux de
+   * l'aperçu (`.skipper/preview.json`, sinon déduits du lockfile) ; `"install": ""` désactive l'installation.
+   */
+  async installInBackground(project: Project, ws: Worksession): Promise<'started' | 'running' | 'up-to-date' | 'skipped'> {
+    const dir = worksessionPath(project, ws);
+    const state = previewStateDir(project, ws.id);
+    const hash = await depsHash(dir);
+    if (!hash) return 'skipped';
+    const { config: cfg } = await loadConfig(dir);
+    if (cfg?.install === '') return 'skipped';
+    const installRel = await installDirOf(dir, cfg);
+    const installDir = path.join(dir, installRel);
+    if ((await readMarker(installDir)) === hash) return 'up-to-date';
+    const install = cfg?.install ?? (await defaultInstallCommand(installDir, await exists(path.join(installDir, 'node_modules'))));
+    if (!install) return 'skipped';
+    if (await this.installRunning(project, state)) return 'running';
+    await mkdir(state, { recursive: true });
+    await rm(path.join(state, 'install.exit'), { force: true });
+    const script = path.join(state, 'install.sh');
+    await writeFile(script, INSTALL_SCRIPT, { mode: 0o755 });
+    await runner.execDetached(project, dir, ['setsid', 'sh', script], {
+      SKIPPER_STATE: state,
+      SKIPPER_INSTALL: install,
+      SKIPPER_INSTALL_DIR: installDir,
+      SKIPPER_DEPS_HASH: hash,
+    });
+    log.info(`[previews] ${project.slug}/${ws.name} : installation des dépendances en arrière-plan (${install})`);
+    void this.snapshotAfterInstall(project, dir, state, { hash, installDir: installRel });
+    return 'started';
+  },
+
+  /** Installation de la création en cours dans le conteneur ? (pid reconnu à sa ligne de commande : il peut être périmé) */
+  async installRunning(project: Project, state: string): Promise<boolean> {
+    const pid = (await readText(path.join(state, 'install.pid'))).trim();
+    if (!/^\d+$/.test(pid)) return false;
+    const { code } = await runner.exec(project, ['grep', '-qs', 'install.sh', `/proc/${pid}/cmdline`]).catch(() => ({ code: 1 }));
+    return code === 0;
+  },
+
+  /** Attend la fin de l'installation de la création (`install.exit`), puis enregistre l'instantané si elle a réussi. */
+  async snapshotAfterInstall(project: Project, dir: string, state: string, deps: { hash: string; installDir: string }, intervalMs = 5000): Promise<void> {
+    const deadline = Date.now() + INSTALL_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+      const exit = (await readText(path.join(state, 'install.exit'))).trim();
+      if (!exit) {
+        if (!(await exists(dir))) return;
+        continue;
+      }
+      if (exit === '0') await this.snapshotIfNeeded(project, dir, deps);
+      else log.warn(`[previews] ${project.slug}/${path.basename(dir)} : l'installation des dépendances a échoué (code ${exit}, voir install.log)`);
+      return;
     }
   },
 
@@ -279,7 +315,7 @@ export const previewService = {
     // Dépendances : instantané lié si le dossier n'en a pas, puis installation seulement si l'empreinte a changé.
     const linkStarted = Date.now();
     const hash = await depsHash(dir);
-    const installRel = cfg.installCwd ?? ((await exists(path.join(dir, 'package.json'))) ? '' : cfg.cwd);
+    const installRel = await installDirOf(dir, cfg);
     const installDir = path.join(dir, installRel);
     let mode: DepsMode = 'none';
     let from: string | null = null;
@@ -311,6 +347,7 @@ export const previewService = {
       SKIPPER_INSTALL: install ?? '',
       SKIPPER_INSTALL_DIR: installDir,
       SKIPPER_DEPS_HASH: hash ?? '',
+      SKIPPER_DEPS_WAIT: path.join(state, 'install.pid'),
       SKIPPER_APP_DIR: path.join(dir, cfg.cwd),
       SKIPPER_COMMAND: cfg.command,
     });
@@ -438,5 +475,16 @@ export const previewService = {
 // Une work session archivée ou supprimée n'a plus d'aperçu : son serveur de développement est arrêté.
 worksessionHooks.beforeRetire.push(async (project, ws) => {
   const state = previewStateDir(project, ws.id);
-  if (await exists(state)) await previewService.stopProcess(project, state).catch(() => false);
+  if (!(await exists(state))) return;
+  await previewService.stopProcess(project, state).catch(() => false);
+  // Installation de la création encore en cours : son groupe de processus est arrêté aussi.
+  if (await previewService.installRunning(project, state)) {
+    const pid = (await readText(path.join(state, 'install.pid'))).trim();
+    await runner.exec(project, ['kill', '-TERM', '--', `-${pid}`]).catch(() => undefined);
+  }
+});
+
+// Une nouvelle work session sans instantané exact de ses dépendances : installation en arrière-plan (voir installInBackground).
+worksessionHooks.afterCreate.push(async (project, ws) => {
+  await previewService.installInBackground(project, ws);
 });

@@ -238,7 +238,7 @@ export class ClaudeProvider implements SessionProvider {
         sessionsPromptSummary(ctx.project, { chat }),
         googleAccountService.promptSummary(googleAccounts),
         chat ? '' : sharedPagesPrompt(),
-        ctx.session.worksessionId && !chat ? previewPrompt(previewsEnabled()) : '',
+        ctx.session.worksessionId && !chat ? previewPrompt(previewsEnabled(), ctx.session.worksessionId) : '',
         previewWorksession ? previewMcpPrompt() : '',
         browserEnabled
           ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du coffre, clique le champ du formulaire puis appelle `browser_fill` : Skipper y saisit la valeur, que tu ne vois jamais."
