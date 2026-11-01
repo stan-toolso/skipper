@@ -1367,8 +1367,15 @@ Trois postes :
 Les tarifs (offre, prix du crédit, crédits par USD et par jour-homme, tarif et durée d'une journée de CTO, taux
 USD → EUR) sont des réglages de la cellule (`app_settings`, clé `billing`), modifiables par un super administrateur
 sur la même page. Convention pour une cellule client : Toolso y est super administrateur, le client administrateur.
-Limite connue : les coûts en USD restent affichés ailleurs dans l'interface (sessions, tableau de bord, Paramètres →
-Claude) ; leur masquage pour les comptes client est suivi à part.
+**Unité des coûts dans toute l'interface** (`backend/src/billing/display.ts`) : dès que la facturation est configurée,
+tous les coûts sortent du serveur **en crédits**, pour tout le monde : coût des sessions, tableau de bord, Paramètres →
+Claude (consommation et budgets), workflows, jauge de contexte, événements du transcript (`total_cost_usd`,
+`modelUsage.*.costUSD`, `usage`), message de plafond atteint. Les champs gardent leur nom (`costUsd`, `usd`…) mais
+portent des crédits ; `Query.costDisplay` donne l'unité, que le front lit à la connexion (`formatCost`,
+`costUnitLabel` de `lib/humanize.ts`). Les budgets saisis en crédits sont reconvertis en USD avant d'être enregistrés ;
+le budget USD par session du formulaire de lancement n'est plus proposé. Le coût en USD n'apparaît plus que dans la
+vue Toolso de la page Consommation. Sans facturation configurée (instance interne), tout reste en USD : **configurer
+la facturation à la création d'une cellule client**.
 
 ## Paramètres par personne (Claude, OpenCode, GitHub)
 

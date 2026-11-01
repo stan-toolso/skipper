@@ -30,7 +30,7 @@ import {
   type ServerState,
 } from '../graphql/settings';
 import { canAutoFocus } from '../lib/device';
-import { formatCost } from '../lib/humanize';
+import { costUnitLabel, formatCost, getCostUnit } from '../lib/humanize';
 import { resolveTheme, useThemePreference, type ThemePreference } from '../lib/theme';
 import { useTabTitle } from '../workbench/TabsContext';
 
@@ -415,12 +415,12 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
               }}
             >
               <Form.Group className="mb-3">
-                <Form.Label className="mb-1">Plafond mensuel (USD)</Form.Label>
+                <Form.Label className="mb-1">Plafond mensuel ({costUnitLabel()})</Form.Label>
                 <Form.Control size="sm" type="number" min={0} step="0.5" value={monthly} onChange={(e) => setMonthly(e.target.value)} placeholder="Aucun" />
                 <Form.Text>Atteint, plus aucune de vos sessions ne démarre ni ne reçoit d'instruction jusqu'au mois suivant (ou jusqu'à ce que vous l'augmentiez).</Form.Text>
               </Form.Group>
               <Form.Group className="mb-3">
-                <Form.Label className="mb-1">Budget par session (USD)</Form.Label>
+                <Form.Label className="mb-1">Budget par session ({costUnitLabel()})</Form.Label>
                 <Form.Control size="sm" type="number" min={0} step="0.5" value={perSession} onChange={(e) => setPerSession(e.target.value)} placeholder="Aucun" />
                 <Form.Text>Valeur par défaut, modifiable dans les options avancées de chaque session. L'agent s'arrête quand il l'atteint.</Form.Text>
               </Form.Group>
@@ -451,7 +451,10 @@ function BudgetCard({ settings }: { settings: AppSettings }) {
             </div>
             {cap ? <ProgressBar now={ratio} variant={ratio >= 100 ? 'danger' : ratio >= 80 ? 'warning' : undefined} className="mb-2" style={{ height: 8 }} /> : null}
             <div className="small text-secondary mb-3">
-              Estimation calculée par Claude Code au tarif API. Avec un abonnement Claude, rien n'est facturé en plus : c'est un indicateur d'usage. Total depuis le début : {formatCost(usage.totalUsd)}.
+              {getCostUnit() === 'CREDIT'
+                ? 'Travail des agents en crédits, l’unité facturée par la cellule (voir la page Consommation). '
+                : "Estimation calculée par Claude Code au tarif API. Avec un abonnement Claude, rien n'est facturé en plus : c'est un indicateur d'usage. "}
+              Total depuis le début : {formatCost(usage.totalUsd)}.
             </div>
             {usage.byModel.length > 0 && (
               <Table size="sm" className="mb-3">

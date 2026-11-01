@@ -19,6 +19,7 @@ import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, Postg
 import { variableName } from '../vault/website.js';
 import { billingService } from '../billing/service.js';
 import type { BillingSettings, CtoTimeEntryInput } from '../billing/types.js';
+import { applyCostConversion, costDisplay, costRate, toStoredUsd } from '../billing/display.js';
 import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
@@ -868,7 +869,16 @@ export const resolvers = {
       };
     },
     claudeLogin: (_: unknown, args: { id: string }, ctx: Ctx) => loginService.get(args.id, requireUser(ctx).id),
-    providers: (_: unknown, __: unknown, ctx: Ctx) => listProviders(requireUser(ctx).id),
+    providers: async (_: unknown, __: unknown, ctx: Ctx) => {
+      const list = await listProviders(requireUser(ctx).id);
+      // Coûts en crédits : le budget par session en USD n'est pas proposé (le budget par défaut des Paramètres l'est, converti).
+      if ((await costRate(ctx)) === null) return list;
+      return list.map((p) => ({ ...p, configFields: p.configFields.filter((f) => !/BudgetUsd$/.test(f.key)) }));
+    },
+    costDisplay: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireUser(ctx);
+      return costDisplay(ctx);
+    },
     sessions: async (_: unknown, args: { projectId?: string | null; status?: GqlStatus | null; provider?: string | null; ownerId?: string | null; kind?: 'SESSION' | 'CHAT' | null; limit?: number | null; offset?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       return sessionService.list({
@@ -1130,7 +1140,8 @@ export const resolvers = {
       return appSettings(ctx);
     },
     updateClaudeSettings: async (_: unknown, { input }: { input: ClaudeSettingsPatch }, ctx: Ctx) => {
-      await (await claudeSettings.forUser(requireUser(ctx).id)).update(input);
+      const rate = await costRate(ctx);
+      await (await claudeSettings.forUser(requireUser(ctx).id)).update({ ...input, monthlyBudgetUsd: toStoredUsd(input.monthlyBudgetUsd, rate), sessionBudgetUsd: toStoredUsd(input.sessionBudgetUsd, rate) });
       return appSettings(ctx);
     },
     setClaudeApiKeyItem: async (_: unknown, args: { itemId?: string | null }, ctx: Ctx) => {
@@ -1153,7 +1164,7 @@ export const resolvers = {
       return appSettings(ctx);
     },
     updateOpencodeSettings: async (_: unknown, { input }: { input: OpencodeSettingsPatch }, ctx: Ctx) => {
-      await (await opencodeSettings.forUser(requireUser(ctx).id)).update(input);
+      await (await opencodeSettings.forUser(requireUser(ctx).id)).update({ ...input, sessionBudgetUsd: toStoredUsd(input.sessionBudgetUsd, await costRate(ctx)) });
       return appSettings(ctx);
     },
     setOpencodeKeyItem: async (_: unknown, args: { provider: string; itemId?: string | null }, ctx: Ctx) => {
@@ -1637,3 +1648,6 @@ export const resolvers = {
     },
   },
 };
+
+// Coûts rendus dans l'unité d'affichage (crédits quand la facturation de la cellule est configurée).
+applyCostConversion(resolvers);
