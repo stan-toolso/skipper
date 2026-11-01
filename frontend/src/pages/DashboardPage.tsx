@@ -10,6 +10,7 @@ import { DASHBOARD, RESUME_SESSION, type Dashboard, type DashboardProject, type 
 import { formatCost, getCostUnit, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
+import { useAuth } from '../auth/AuthContext';
 import { useDialogs } from '../components/Dialogs';
 import ChatComposer from '../components/ChatComposer';
 import TaskModal from '../components/TaskModal';
@@ -29,6 +30,10 @@ export default function DashboardPage() {
   const { data, loading, error, refetch } = usePollingQuery<{ dashboard: Dashboard }>(DASHBOARD, { pollInterval: 10_000, fetchPolicy: 'cache-and-network' });
   const d = data?.dashboard;
   const [newTask, setNewTask] = useState(false);
+  // Sans facturation configurée, les coûts sont en dollars (tarif API) : la tuile n'est montrée qu'aux super
+  // administrateurs ; les autres ne voient de coût qu'en crédits, dans une cellule facturée.
+  const { user, costUnit } = useAuth();
+  const showCostTile = costUnit === 'CREDIT' || Boolean(user?.isSuperAdmin);
 
   if (!d && loading) {
     return (
@@ -107,7 +112,7 @@ export default function DashboardPage() {
             {plural(counts.doneTasks7d, 'terminée', 'terminées')} sur 7 jours
           </div>
         </Link>
-        <UsageTile usage={usage} />
+        {showCostTile && <UsageTile usage={usage} />}
       </div>
 
       <Row className="g-4">
