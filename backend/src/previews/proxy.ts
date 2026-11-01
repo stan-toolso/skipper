@@ -9,6 +9,7 @@ import { log } from '../log.js';
 import { projectService } from '../projects/service.js';
 import { runner } from '../runners/index.js';
 import { userRepository } from '../users/repository.js';
+import { handleAnnotateRoute, INJECT_MAX_BYTES, injectScript, wantsInjection } from './annotate.js';
 import { labelFromHost, parsePreviewTemplate, safeNext } from './hosts.js';
 import { previewRepository, type PreviewRow } from './repository.js';
 import { ACCESS_COOKIE, ACCESS_PATH, ACCESS_TTL_MS, previewService } from './service.js';
@@ -49,19 +50,19 @@ async function allowed(userId: string, projectId: string): Promise<boolean> {
   return requireProject(createAuthContext(user), projectId, 'viewer').then(() => true, () => false);
 }
 
-/** Accès du cookie à cet aperçu, ou null. */
-async function checkAccess(token: string | null, preview: PreviewRow): Promise<boolean> {
-  if (!token) return false;
+/** Personne à qui le cookie donne accès à cet aperçu, ou null. */
+async function checkAccess(token: string | null, preview: PreviewRow): Promise<string | null> {
+  if (!token) return null;
   const cached = accessCache.get(token);
-  if (cached && cached.until > Date.now()) return cached.worksessionId === preview.worksessionId;
+  if (cached && cached.until > Date.now()) return cached.worksessionId === preview.worksessionId ? cached.userId : null;
   const found = await previewRepository.findAccess(token);
   if (!found || found.worksessionId !== preview.worksessionId || !(await allowed(found.userId, preview.projectId))) {
     accessCache.delete(token);
-    return false;
+    return null;
   }
   if (accessCache.size > 5000) accessCache.clear();
   accessCache.set(token, { worksessionId: found.worksessionId, userId: found.userId, until: Math.min(Date.now() + ACCESS_RECHECK_MS, found.expiresAt.getTime()) });
-  return true;
+  return found.userId;
 }
 
 /** En-tête Cookie sans le cookie d'accès de Skipper (le code de l'application n'a pas à le voir). */
@@ -83,8 +84,15 @@ async function upstreamOf(preview: PreviewRow): Promise<{ host: string; port: nu
  * En-têtes transmis : l'hôte devient `localhost:<port>` (les serveurs de développement — Vite, webpack — refusent les
  * noms d'hôte inconnus), le nom public part dans X-Forwarded-Host.
  */
-function forwardHeaders(req: IncomingMessage, port: number): http.OutgoingHttpHeaders {
+function forwardHeaders(req: IncomingMessage, port: number, inject = false): http.OutgoingHttpHeaders {
   const headers: http.OutgoingHttpHeaders = { ...req.headers };
+  // Page où injecter le script d'annotation : demandée sans compression (et sans cache conditionnel, qui renverrait un
+  // 304 sans corps), pour pouvoir la modifier.
+  if (inject) {
+    headers['accept-encoding'] = 'identity';
+    delete headers['if-none-match'];
+    delete headers['if-modified-since'];
+  }
   headers.host = `localhost:${port}`;
   headers['x-forwarded-host'] = req.headers.host ?? '';
   headers['x-forwarded-proto'] = secure() ? 'https' : 'http';
@@ -119,7 +127,8 @@ export async function handlePreviewRoute(req: IncomingMessage, res: ServerRespon
     res.writeHead(302, { Location: safeNext(url.searchParams.get('next')), 'Set-Cookie': cookieHeader(token), 'Cache-Control': 'no-store' }).end();
     return true;
   }
-  if (!(await checkAccess(readCookie(req.headers.cookie, ACCESS_COOKIE), preview))) {
+  const userId = await checkAccess(readCookie(req.headers.cookie, ACCESS_COOKIE), preview);
+  if (!userId) {
     // Lien ouvert directement (donné par un agent, collé dans un message) : on passe par Skipper, qui reconnaît la personne
     // à son cookie de connexion et revient avec un lien d'accès. Seulement pour une navigation de premier niveau (le cookie
     // posé ensuite est alors celui du site visité) : dans un cadre, un cookie tiers refusé ferait boucler la redirection.
@@ -130,13 +139,19 @@ export async function handlePreviewRoute(req: IncomingMessage, res: ServerRespon
     page(res, 401, 'Accès réservé', "Cet aperçu est réservé aux membres du projet. Ouvrez-le depuis la session dans Skipper (onglet « Aperçu »).");
     return true;
   }
+  if (await handleAnnotateRoute(req, res, preview, userId)) return true;
   const upstream = await upstreamOf(preview);
   if (!upstream) {
     page(res, 502, 'Aperçu arrêté', NOT_RUNNING);
     return true;
   }
+  const inject = wantsInjection(req);
   await new Promise<void>((resolve) => {
-    const proxied = http.request({ host: upstream.host, port: upstream.port, method: req.method, path: req.url, headers: forwardHeaders(req, upstream.port) }, (up) => {
+    const proxied = http.request({ host: upstream.host, port: upstream.port, method: req.method, path: req.url, headers: forwardHeaders(req, upstream.port, inject) }, (up) => {
+      if (inject && isPlainHtml(up)) {
+        injectInto(up, res).catch(() => res.destroy()).finally(resolve);
+        return;
+      }
       // En-têtes bruts (liste à plat) : Set-Cookie multiples et casse préservés.
       res.writeHead(up.statusCode ?? 502, up.rawHeaders);
       up.pipe(res);
@@ -155,6 +170,49 @@ export async function handlePreviewRoute(req: IncomingMessage, res: ServerRespon
     });
   });
   return true;
+}
+
+/** Réponse HTML non compressée, où l'on peut ajouter le script d'annotation. */
+function isPlainHtml(up: IncomingMessage): boolean {
+  const encoding = String(up.headers['content-encoding'] ?? 'identity').toLowerCase();
+  const length = Number(up.headers['content-length'] ?? 0);
+  return (up.statusCode ?? 0) === 200 && String(up.headers['content-type'] ?? '').toLowerCase().startsWith('text/html') && encoding === 'identity' && length <= INJECT_MAX_BYTES;
+}
+
+/** Relaie une page HTML en y ajoutant le script d'annotation (voir annotate.ts) ; trop grosse, elle part telle quelle. */
+async function injectInto(up: IncomingMessage, res: ServerResponse): Promise<void> {
+  // En-têtes de l'application, sauf ceux que la modification du corps rend faux (longueur, empreinte).
+  const headers = (extra: string[]) => {
+    const out: string[] = [];
+    for (let i = 0; i < up.rawHeaders.length; i += 2) {
+      const name = up.rawHeaders[i].toLowerCase();
+      if (name !== 'content-length' && name !== 'etag' && name !== 'transfer-encoding') out.push(up.rawHeaders[i], up.rawHeaders[i + 1]);
+    }
+    return [...out, ...extra];
+  };
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let streaming = false;
+  for await (const chunk of up) {
+    const buf = chunk as Buffer;
+    if (streaming) {
+      res.write(buf);
+      continue;
+    }
+    chunks.push(buf);
+    size += buf.length;
+    if (size > INJECT_MAX_BYTES) {
+      streaming = true;
+      res.writeHead(up.statusCode ?? 200, headers([]));
+      res.write(Buffer.concat(chunks));
+    }
+  }
+  if (!streaming) {
+    const body = Buffer.from(injectScript(Buffer.concat(chunks).toString('utf8')), 'utf8');
+    res.writeHead(up.statusCode ?? 200, headers(['Content-Length', String(body.length)]));
+    res.write(body);
+  }
+  res.end();
 }
 
 /** Route de Skipper qui ouvre un aperçu à une personne connectée (voir `handlePreviewOpenRoute`). */

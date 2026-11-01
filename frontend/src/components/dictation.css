@@ -1,0 +1,15 @@
+/* Dictée vocale (DictationButton) : bouton micro dans la rangée d'outils d'une saisie, ou posé dans le coin d'un champ. */
+.cc-dictate { border: 0; background: none; padding: 0; }
+.cc-dictate:disabled { opacity: 0.5; cursor: default; }
+.cc-dictate.failed, .cc-dictate.failed:hover { color: var(--cc-red); }
+.cc-dictate.listening, .cc-dictate.listening:hover { color: var(--cc-red); background: rgba(var(--cc-accent-rgb), 0.12); animation: cc-dictate-pulse 1.4s ease-in-out infinite; }
+@keyframes cc-dictate-pulse { 50% { box-shadow: 0 0 0 4px rgba(var(--cc-accent-rgb), 0.25); } }
+@media (prefers-reduced-motion: reduce) { .cc-dictate.listening { animation: none; } }
+
+.dictation-field { position: relative; }
+.dictation-field textarea { padding-right: 2.6rem; }
+.dictation-float {
+  position: absolute; right: 6px; bottom: 6px; width: 30px; height: 30px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 16px; color: var(--cc-dim); cursor: pointer;
+}
+.dictation-float:hover { color: var(--cc-fg); background: var(--cc-bg-hover); }
