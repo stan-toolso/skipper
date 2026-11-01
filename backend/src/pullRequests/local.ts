@@ -37,9 +37,14 @@ async function baseRef(cwd: string, base: string): Promise<string | null> {
 
 /**
  * État local d'une work session : null si son dossier n'existe pas (archivée, supprimée, jamais créée), n'est pas un
- * dépôt git, est en HEAD détaché, ou est sur la branche de base elle-même.
+ * dépôt git, est en HEAD détaché, ou est sur la branche de base elle-même. `since` peut dépendre de la branche
+ * réellement extraite (lue ici), qui n'est pas forcément `ws.branch` : un agent peut changer de branche.
  */
-export async function localBranchWork(project: Project, ws: Worksession, opts: { since?: Date | null } = {}): Promise<LocalBranchWork | null> {
+export async function localBranchWork(
+  project: Project,
+  ws: Worksession,
+  opts: { since?: Date | null | ((branch: string) => Date | null) } = {},
+): Promise<LocalBranchWork | null> {
   const cwd = worksessionPath(project, ws);
   if (!(await exists(path.join(cwd, '.git')))) return null;
   const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd).catch(() => '');
@@ -47,7 +52,8 @@ export async function localBranchWork(project: Project, ws: Worksession, opts: {
   const baseBranch = project.gitBranch || 'main';
   if (branch === baseBranch) return null;
   const base = await baseRef(cwd, baseBranch);
-  const sinceArgs = opts.since ? [`--since=${opts.since.toISOString()}`] : [];
+  const since = typeof opts.since === 'function' ? opts.since(branch) : opts.since;
+  const sinceArgs = since ? [`--since=${since.toISOString()}`] : [];
   const commits = base ? Number((await git(['rev-list', '--count', ...sinceArgs, `${base}..HEAD`], cwd).catch(() => '0')) || 0) : 0;
   const status = await git(['status', '--porcelain', '--untracked-files=normal'], cwd).catch(() => '');
   const changes = status ? status.split('\n').filter(Boolean).length : 0;

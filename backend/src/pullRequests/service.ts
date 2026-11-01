@@ -399,20 +399,20 @@ export const trackedPullRequestService = {
     const projectRepo = projectRepoName(project);
     const pendings = tracked.filter((t) => t.status === 'pending');
     const seen = new Set<string>();
+    // PR du dépôt du projet sur une branche. On compare à la branche réellement extraite dans le dossier (`work.branch`),
+    // pas à `ws.branch` : un agent peut changer de branche dans sa work session, et sa PR ouverte puis fusionnée
+    // n'était alors pas reconnue (PR en préparation recréée à côté, #113 le 01/11/2026).
+    const onBranch = (branch: string) => tracked.filter((t) => t.status !== 'pending' && sameRepo(t.repo, projectRepo) && t.headBranch === branch);
+    const lastMergedOn = (branch: string) =>
+      onBranch(branch).map((t) => t.mergedAt).filter((d): d is Date => Boolean(d)).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
     for (const ws of worksessions) {
-      const onBranch = tracked.filter((t) => t.status !== 'pending' && sameRepo(t.repo, projectRepo) && t.headBranch === ws.branch);
       const pending = pendings.find((p) => p.worksessionId === ws.id) ?? null;
       if (pending) seen.add(pending.id);
       const drop = async () => {
         if (pending) await pullRequestRepository.delete(pending.id);
       };
-      if (onBranch.some((t) => t.status === 'open')) {
-        await drop();
-        continue;
-      }
-      const lastMerged = onBranch.map((t) => t.mergedAt).filter((d): d is Date => Boolean(d)).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
-      const work = await localBranchWork(project, ws, { since: lastMerged }).catch(() => null);
-      if (!work || (work.commits === 0 && work.changes === 0)) {
+      const work = await localBranchWork(project, ws, { since: lastMergedOn }).catch(() => null);
+      if (!work || onBranch(work.branch).some((t) => t.status === 'open') || (work.commits === 0 && work.changes === 0)) {
         await drop();
         continue;
       }
