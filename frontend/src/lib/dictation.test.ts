@@ -14,6 +14,12 @@ describe('dictée', () => {
   it('laisse le texte intact tant que rien n’est reconnu', () => {
     expect(withTranscript('abc', '   ')).toBe('abc');
   });
+  it('Chrome Android : résultats cumulés de la même phrase, sans répétition', () => {
+    const steps = ['Je', 'je veux', 'je veux juste', 'je veux juste faire', 'je veux juste faire un', 'je veux juste faire un essai', 'je veux juste faire un essai'];
+    expect(withTranscript('', joinResults(steps.map((s) => result(s))))).toBe('Je veux juste faire un essai');
+    // Phrase suivante, puis un résultat déjà contenu dans le précédent.
+    expect(joinResults([result('bonjour'), result('bonjour à tous'), result('ensuite'), result('ensuite on'), result('ensuite')])).toBe('bonjour à tous ensuite on');
+  });
   it('joint résultats définitifs et provisoires', () => {
     expect(withTranscript('', joinResults([result('mets le titre'), result(' en gras', false)]))).toBe('Mets le titre en gras');
   });

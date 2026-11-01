@@ -159,9 +159,17 @@
       r.continuous = true;
       r.interimResults = true;
       r.onresult = function (ev) {
-        var said = '';
-        for (var i = 0; i < ev.results.length; i++) said += ev.results[i][0].transcript + ' ';
-        said = said.replace(/\s+/g, ' ').trim();
+        // Chrome sur Android : un résultat par étape de la même phrase, chacun reprenant le précédent (« je »,
+        // « je veux »…) ; il remplace le précédent au lieu de s'y ajouter (même règle que frontend/src/lib/dictation.ts).
+        var parts = [];
+        for (var i = 0; i < ev.results.length; i++) {
+          var t = ev.results[i][0].transcript.replace(/\s+/g, ' ').trim();
+          if (!t) continue;
+          var last = parts.length ? parts[parts.length - 1].toLowerCase() : '';
+          if (last && t.toLowerCase().indexOf(last) === 0) parts[parts.length - 1] = t;
+          else if (!last || last.indexOf(t.toLowerCase()) !== 0) parts.push(t);
+        }
+        var said = parts.join(' ');
         if (!base && said) said = said.charAt(0).toUpperCase() + said.slice(1);
         textarea.value = base ? (/\s$/.test(base) ? base : base + ' ') + said : said;
         onText && onText(textarea.value);
