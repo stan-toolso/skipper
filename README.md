@@ -184,6 +184,7 @@ backend/
     schedules/
       cron.ts                  # expressions cron à cinq champs, fuseaux IANA, prochaine échéance
       service.ts               # planification des sessions : ordonnanceur, exécution, compte rendu et notification
+      outcome.ts               # issue d'une exécution (terminée, bloquée, en erreur…) lue dans le transcript
     settings/
       userStore.ts             # réglages par personne (table user_settings)
       claude.ts                # réglages Claude d'une personne : mode, jetons du coffre, modèles, budgets, vérification
@@ -1159,34 +1160,69 @@ sessions inactives le termine comme une session, un message le reprend.
 
 ## Sessions planifiées
 
-Une session peut être **planifiée** : bouton « Planifier » sur sa page (`frontend/src/components/ScheduleModal.tsx`).
-On choisit une fréquence simple (toutes les heures, tous les jours, du lundi au vendredi, toutes les
-semaines, tous les mois, à une heure donnée) ou une expression cron à cinq champs (alias `@hourly`,
-`@daily`, `@weekly`, `@monthly`), le fuseau horaire (celui du navigateur par défaut), et l'instruction
-envoyée à chaque exécution. La modale montre les prochaines échéances (`scheduleNextRuns`).
+Une **planification** envoie une instruction à une session à heures fixes. Chaque planification a **son nom**
+(« Revue quotidienne Curso »), distinct de celui de la session : c'est lui qu'affichent la liste, les
+notifications et le transcript. Sans nom, la planification prend celui de la session, ou le début de son
+instruction quand la session s'appelle encore « Session ».
 
-À chaque échéance, l'ordonnanceur (`backend/src/schedules/service.ts`, vérification toutes les
-trente secondes) envoie l'instruction à la session comme le ferait `sendSessionMessage` : une session
-terminée est relancée en reprenant sa conversation, une session ouverte reçoit l'instruction. Par
-défaut, la session est **terminée à la fin de chaque exécution** (option « Terminer la session à la
-fin de chaque exécution ») pour ne pas garder un processus ouvert entre deux échéances. La fin d'une
-exécution produit une notification `schedule.run` avec la durée et le coût (ou `schedule.failed`), et
-les événements `schedule` jalonnent le transcript. « Exécuter maintenant » lance l'exécution sans
-attendre l'échéance ; le compte rendu de la dernière exécution est visible dans la modale.
+**Où les retrouver** : page **Planifications** (`frontend/src/pages/SchedulesPage.tsx`), dans le menu principal
+de la sidebar (`/schedules`, tous les projets) et en onglet de chaque projet (`/projects/:id/schedules`). Une carte
+par planification : nom, fréquence en clair (`describeCron` de `lib/cron.ts` : « Du lundi au vendredi à 7 h 30 »),
+prochaine échéance, projet, propriétaire (ses comptes et son budget servent aux exécutions), les dix dernières
+exécutions en pastilles colorées, l'issue de la dernière, et l'historique dépliable. Filtres Toutes / Actives /
+En pause / **À surveiller** (dernière exécution bloquée, en erreur ou hors délai). Actions directes :
+**Exécuter** (sans attendre l'échéance), **Pause / Reprendre**, Modifier. Ailleurs, une session planifiée porte
+une alarme : sidebar (estompée en pause), liste des sessions (avec le nom de la planification), page et panneau
+de la session.
 
-Garde-fous : une échéance est **ignorée** (notification `schedule.skipped`, raison dans le compte
-rendu) si l'agent travaille encore ou si le plafond mensuel de budget est atteint. Le nombre de sessions
-déjà en cours n'est pas limité : une échéance est lancée quel que soit ce nombre. Une planification
-désactivée ne se lance pas. Les échéances manquées pendant un arrêt du serveur ne sont pas rattrapées : au
-démarrage, seule une échéance de moins de dix minutes est encore exécutée, les autres sont recalculées
-depuis maintenant. La réservation d'une échéance est atomique en base (`session_schedules.next_run_at`
-avancé sous condition), donc une seule instance du backend l'exécute. L'analyseur cron
-(`backend/src/schedules/cron.ts`) n'a pas de dépendance et gère les fuseaux IANA, changements d'heure
-compris (une heure locale inexistante est sautée).
+**Créer** : « Nouvelle planification » sur la page (ou dans le menu « + » d'un projet) crée une session dédiée,
+nommée comme la planification, dans son propre dossier de travail, sans la démarrer : la première échéance la
+lance (`createScheduledSession`). Ou bouton « Planifier » sur la page d'une session existante. La modale
+(`components/ScheduleModal.tsx`) demande le nom, l'instruction, la fréquence simple (toutes les heures, tous les
+jours, du lundi au vendredi, toutes les semaines, tous les mois) ou une expression cron à cinq champs (alias
+`@hourly`, `@daily`, `@weekly`, `@monthly`), le fuseau (celui du navigateur par défaut), et montre les prochaines
+échéances (`scheduleNextRuns`). Elle règle aussi le **mode d'autorisation** de la session pour les exécutions, en
+disant ce qu'il implique sans personne devant l'écran, et la conversation entre deux exécutions (voir plus bas).
+Pour une planification existante, elle montre les dix dernières exécutions et « Exécuter maintenant ».
 
-Modèle : `SessionSchedule` (`session_schedules`, une ligne par session au plus : `cron`, `timezone`,
-`prompt`, `enabled`, `endAfterRun`, `nextRunAt`, `lastRunAt`, `lastResult`), exposée par
-`Session.schedule` ; mutations `setSessionSchedule`, `clearSessionSchedule`, `runSessionScheduleNow`.
+À chaque échéance, l'ordonnanceur (`backend/src/schedules/service.ts`, vérification toutes les trente secondes)
+envoie l'instruction à la session comme le ferait `sendSessionMessage` : une session terminée est relancée en
+reprenant sa conversation, une session ouverte reçoit l'instruction. Par défaut, la session est **terminée à la fin
+de chaque exécution** pour ne pas garder un processus ouvert entre deux échéances.
+
+**Historique et issue** : chaque exécution est une ligne de `session_schedule_runs` (migration `051`) : déclencheur
+(échéance, ou à la main avec la personne), échéance visée, début, fin, durée, coût, message et **début de la
+dernière réponse de l'agent** (« Voir la réponse »). Issues (`schedules/outcome.ts`, testé) :
+- **Terminée** ;
+- **Bloquée** : un appel d'outil a été refusé (`permission_denials` du résultat du tour : mode « Ne jamais me
+  demander », refus d'un humain), ou une demande d'autorisation est restée **dix minutes** sans réponse (la
+  demande reste ouverte ; l'agent repart si quelqu'un y répond). L'agent a pu répondre poliment, l'exécution
+  n'est quand même pas présentée comme réussie ;
+- **En erreur**, **Délai dépassé** (toujours au travail après quatre heures) ;
+- **Ignorée** : agent encore au travail, exécution précédente en cours, file d'attente, maintenance, plafond de
+  budget ou identifiants manquants, session archivée ;
+- **Manquée** : échéance passée pendant un arrêt du serveur ; au démarrage seule une échéance de moins de dix
+  minutes est encore exécutée, les autres sont notées manquées et recalculées depuis maintenant.
+
+La fin d'une exécution produit une notification `schedule.run`, `schedule.blocked` (avec l'outil refusé),
+`schedule.failed` ou `schedule.skipped` (famille push « Planifications »), et les événements `schedule` jalonnent
+le transcript avec le nom de la planification et l'issue. Le compte rendu texte `last_result` reste tenu à jour
+pour compatibilité. Le coût est exprimé dans l'unité d'affichage (`ScheduleRun.costUsd` dans `COST_FIELDS`,
+champ `cost` des événements `schedule` converti, `describeCost` dans les messages).
+
+**Plusieurs instances** : la réservation d'une échéance est atomique en base (`session_schedules.next_run_at` avancé
+sous condition), donc une seule instance l'exécute. Le suivi d'une exécution vit dans le processus qui l'a lancée ;
+si ce processus disparaît (déploiement, arrêt), la reprise (`scheduleService.reconcile`, à chaque passage de
+l'ordonnanceur) clôt les exécutions « en cours » depuis plus de cinq minutes dont la session est au repos, avec ce
+que dit le transcript ; la clôture est atomique (`finishRun ... WHERE status = 'running'`), une seule notification.
+L'analyseur cron (`backend/src/schedules/cron.ts`) n'a pas de dépendance et gère les fuseaux IANA, changements
+d'heure compris (une heure locale inexistante est sautée).
+
+Modèle : `SessionSchedule` (`session_schedules`, une ligne par session au plus : `name`, `cron`, `timezone`,
+`prompt`, `enabled`, `endAfterRun`, `nextRunAt`, `lastRunAt`, `lastResult`), exposée par `Session.schedule`
+(chargeur groupé) et par `Query.sessionSchedules(projectId)` (sessions non archivées, avec `session`, `project`,
+`runs(limit)`) ; `ScheduleRun` ; mutations `setSessionSchedule`, `setSessionScheduleEnabled`,
+`createScheduledSession`, `clearSessionSchedule` (efface aussi l'historique), `runSessionScheduleNow`.
 
 ## Réglages et nettoyage d'une session
 
