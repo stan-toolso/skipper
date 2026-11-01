@@ -127,6 +127,20 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
         const [label, action] = verbs[op] ?? [`Dossiers de travail : ${op}`, `utiliser les dossiers de travail (${op})`];
         return { label, action };
       }
+      if (name.startsWith('mcp__env__')) {
+        const op = name.slice('mcp__env__'.length);
+        const file = str(input, 'path') ?? '';
+        const key = str(input, 'key') ?? '';
+        const verbs: Record<string, [string, string]> = {
+          list: ["Consultation des fichiers d'environnement", "consulter les fichiers d'environnement"],
+          keys: [`Lecture des clés de ${file}`, `lire les clés de ${file}`],
+          set: [`Ajout de la clé ${key} dans ${file}`, `ajouter la clé ${key} dans ${file}`],
+          unset: [`Retrait de la clé ${key} de ${file}`, `retirer la clé ${key} de ${file}`],
+          apply: ["Réécriture des fichiers d'environnement dans le dossier de travail", "réécrire les fichiers d'environnement"],
+        };
+        const [label, action] = verbs[op] ?? [`Fichiers d'environnement : ${op}`, `utiliser les fichiers d'environnement (${op})`];
+        return { label, action };
+      }
       if (name.startsWith('mcp__preview__')) {
         const op = name.slice('mcp__preview__'.length);
         const page = str(input, 'path') ?? '/';

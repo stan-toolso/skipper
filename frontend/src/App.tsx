@@ -31,6 +31,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage'));
 const FilesPage = lazy(() => import('./pages/FilesPage'));
 const VaultPage = lazy(() => import('./pages/VaultPage'));
 const ProjectVaultPage = lazy(() => import('./pages/ProjectVaultPage'));
+const ProjectEnvPage = lazy(() => import('./pages/ProjectEnvPage'));
 const SharedPagesPage = lazy(() => import('./pages/SharedPagesPage'));
 const SharedPagePage = lazy(() => import('./pages/SharedPagePage'));
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'));
@@ -55,6 +56,7 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/projects/:id/pull-requests" element={<ProjectPullRequestsPage />} />
       <Route path="/projects/:id/repo" element={<RepoPage />} />
       <Route path="/projects/:id/vault" element={<ProjectVaultPage />} />
+      <Route path="/projects/:id/env" element={<ProjectEnvPage />} />
       <Route path="/projects/:id/history" element={<SessionHistoryPage />} />
       <Route path="/projects/:id/connections" element={<RedirectToVault />} />
       <Route path="/tasks" element={<TasksPage />} />

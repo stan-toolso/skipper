@@ -177,6 +177,11 @@ backend/
       names.ts                 # noms dérivés de la consigne (libellé, dossier, branche), uniques dans le projet
       service.ts               # work sessions (dossier de travail de chaque session) : création (git worktree ou dossier), tâche, archivage, suppression, cwd
       mcp.ts                   # serveur MCP `worksessions` (list, create, delete)
+    envFiles/
+      template.ts              # modèles : références {{vault:élément.champ}}, chemins, clés dotenv (lecture, ajout, retrait), rendu
+      vaultValues.ts           # champs d'un élément du coffre utilisables dans un fichier (url, password, token, champs d'un secret…)
+      service.ts               # fichiers d'environnement d'un projet : édition, écriture confinée dans une work session (à sa création ou à la demande), journal du coffre
+      mcp.ts                   # serveur MCP `env` (list, keys, set, unset, apply)
     terminals/
       service.ts               # shells pty (node-pty) par projet, relayés en WebSocket (/terminals/<id>)
     notifications/
@@ -417,8 +422,9 @@ mémorisé par élément pour la session ou le projet.
 **Migration.** Les anciennes tables `connections` et `project_google_accounts` sont reprises dans
 `vault_items` (mêmes identifiants, même nom ; comptes Google nommés `google-<adresse>`), les règles
 `mcp__connections__*` renommées `mcp__vault__*`, les anciens secrets convertis au démarrage. Le mode
-« shell » (ssh-agent, PGSERVICEFILE, variables d'environnement) n'existe plus : rien n'atteint jamais le
-conteneur de l'agent.
+« shell » (ssh-agent, PGSERVICEFILE, variables d'environnement) n'existe plus : rien n'atteint le
+conteneur de l'agent, sauf les valeurs d'un élément explicitement ouvert aux fichiers d'environnement (voir « Fichiers
+d'environnement »).
 
 ## Serveur git hébergé (Forgejo)
 
@@ -1290,6 +1296,35 @@ modification de l'agent apparaît d'elle-même.
 - **Mise en service** : `PREVIEW_URL` (`https://*.apercu.<domaine>` ; vide = aperçus désactivés), DNS et certificat
   génériques, bloc nginx `deploy/cellule/templates/nginx-previews.conf` et `frame-src` de la CSP : voir DEPLOY.md. En
   local : `PREVIEW_URL=http://*.localhost:4000` (`*.localhost` résout vers la machine dans Chrome et Firefox).
+
+## Fichiers d'environnement
+
+Page « Environnement » d'un projet (`/projects/:id/env`, onglet de l'en-tête, `pages/ProjectEnvPage.tsx`) : des fichiers
+(`.env`, `backend/.env`, `config/local.json`… : tout fichier texte) dont le modèle est **écrit dans le dossier de travail de
+chaque nouvelle session** (crochet `worksessionHooks.afterCreate`, pour tous les chemins de création : interface, tâches,
+workflows, agents, relectures). Un fichier déjà présent n'est pas remplacé (fichier suivi par git, par exemple) ; les fichiers
+écrits ont les droits 0600 et sont ajoutés à `info/exclude` du dépôt pour ne jamais être commités. L'éditeur (CodeMirror, Ctrl/Cmd+S)
+refuse d'écraser une version modifiée entre-temps par un agent ; l'option « Écrit à la création de chaque session » se décoche par
+fichier. Le panneau de droite d'une session (onglet Session, ligne « Environnement ») **réécrit les fichiers** dans son dossier
+(valeurs du coffre à jour, fichiers présents remplacés).
+
+**Valeurs du coffre.** `{{vault:élément.champ}}` est remplacé à l'écriture par la valeur de l'élément, résolu dans la portée des
+agents de la personne qui crée la session (comme les outils `vault`). Champs : ceux d'un secret ou d'un site web (et `url`) ;
+`url` (`postgresql://…`), `host`, `port`, `user`, `password`, `database` d'une base ; `url` et `token` (ou `user`,
+`password` en Basic) d'une API ; `host`, `port`, `user`, `private_key` d'un serveur SSH ; `access_key_id`, `secret_access_key`,
+`region` d'un compte AWS à clés ; `access_key`, `secret_key`, `organization_id`, `project_id`, `region`, `zone` d'un compte
+Scaleway. Dans un fichier dotenv, une valeur faite d'une seule référence est citée si besoin. **Exception explicite à la règle « rien
+du coffre n'atteint le conteneur »** : la valeur écrite est lisible par l'agent ; un élément n'est donc utilisable que si la personne
+qui le gère a coché « Utilisable dans les fichiers d'environnement » (`vault_items.env_export`, badge « fichiers .env » dans le
+coffre). Une référence non résolue (élément absent, non autorisé, champ inconnu) est écrite vide et signalée dans la page ; chaque
+écriture est journalisée dans le journal de l'élément (`env_export`, chemin et dossier).
+
+**Agents.** Serveur MCP `env` (outils libres, sessions qui ont un dossier de travail) : `list`, `keys` (clés d'un fichier
+dotenv et leur source — valeur du modèle ou référence au coffre, jamais la valeur d'un secret ; un fichier libre est renvoyé en
+entier), `set` (ajoute ou modifie une clé pour tout le projet et dans le fichier de son dossier, sans réécrire le reste),
+`unset`, `apply` (réécrit les fichiers dans son dossier). API : `envFiles`, `envVaultChoices`, `saveEnvFile`,
+`deleteEnvFile`, `applyEnvFiles` (membres). Table `project_env_files` (migration `051_env_files.sql`) ; les modèles sont
+stockés en clair : y mettre des références au coffre plutôt que des secrets.
 
 ## Explorateur de fichiers et éditeur
 
