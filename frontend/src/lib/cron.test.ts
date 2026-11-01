@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCron, detectCronPreset } from './cron';
+import { buildCron, describeCron, detectCronPreset } from './cron';
 
 describe('buildCron / detectCronPreset', () => {
   it('construit les fréquences simples', () => {
@@ -18,5 +18,18 @@ describe('buildCron / detectCronPreset', () => {
     expect(detectCronPreset('*/10 * * * *').preset).toBe('custom');
     const d = detectCronPreset('5 6 * * *');
     expect(buildCron(d.preset, d.time, d.weekday, d.monthDay, '')).toBe('5 6 * * *');
+  });
+});
+
+describe('describeCron', () => {
+  it('dit la fréquence en clair', () => {
+    expect(describeCron('30 7 * * *')).toBe('Tous les jours à 7 h 30');
+    expect(describeCron('0 8 * * 1-5')).toBe('Du lundi au vendredi à 8 h');
+    expect(describeCron('0 18 * * 5')).toBe('Le vendredi à 18 h');
+    expect(describeCron('0 7 1 * *')).toBe('Le 1er de chaque mois à 7 h');
+    expect(describeCron('15 * * * *')).toBe('Toutes les heures à la minute 15');
+    expect(describeCron('@hourly')).toBe('Toutes les heures');
+    expect(describeCron('@daily')).toBe('Tous les jours à 0 h');
+    expect(describeCron('*/10 * * * *')).toBe('cron */10 * * * *');
   });
 });

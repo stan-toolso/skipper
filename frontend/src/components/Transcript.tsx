@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { SessionEvent, SessionLiveDraft } from '../graphql/operations';
+import { describeCron } from '../lib/cron';
 import { attachmentUrl, formatSize, isImageType, type AttachmentRef } from '../lib/attachments';
 import type { LocalAttachment } from '../lib/pendingInstructions';
 import { clockTime, dayLabel, describeTool, formatCost, formatDuration, permissionModeLabels } from '../lib/humanize';
@@ -740,20 +741,25 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
         }
         case 'schedule': {
           const action = String(p.action ?? '');
+          const named = p.name ? ` « ${String(p.name)} »` : '';
+          const status = String(p.status ?? '');
           const text =
             action === 'run'
-              ? `Exécution planifiée${p.manual ? ' (lancée à la main)' : ''}`
+              ? `Exécution planifiée${named}${p.manual ? ' (lancée à la main)' : ''}`
               : action === 'done'
-                ? `Exécution planifiée : ${String(p.outcome ?? 'terminée')}`
+                ? `Fin de l'exécution${named} : ${String(p.outcome ?? 'terminée')}${p.message && status !== 'failed' ? ` (${String(p.message)})` : ''}`
                 : action === 'skipped'
-                  ? `Exécution planifiée ignorée : ${String(p.reason ?? '')}`
+                  ? `Exécution planifiée${named} ignorée : ${String(p.reason ?? '')}`
                   : action === 'set'
-                    ? `Planification enregistrée (${String(p.cron ?? '')}, ${String(p.timezone ?? '')})`
+                    ? `Planification${named} enregistrée (${describeCron(String(p.cron ?? ''))}, ${String(p.timezone ?? '')})`
                     : action === 'disabled'
-                      ? 'Planification désactivée'
-                      : 'Planification retirée';
+                      ? `Planification${named} mise en pause`
+                      : action === 'resumed'
+                        ? `Planification${named} reprise`
+                        : 'Planification retirée';
+          const warn = action === 'skipped' || (action === 'done' && (status === 'blocked' || status === 'failed' || status === 'timeout'));
           nodes.push(
-            <div key={e.id} className={`cc-note${action === 'skipped' ? ' warn' : ''}`}>
+            <div key={e.id} className={`cc-note${warn ? ' warn' : ''}`}>
               {stamp(true)}⏰ {text}
             </div>,
           );

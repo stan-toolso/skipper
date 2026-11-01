@@ -50,6 +50,7 @@ export async function describeCost(usd: number): Promise<string> {
 export const COST_FIELDS: Record<string, string[]> = {
   Session: ['costUsd'],
   WorkflowRun: ['costUsd'],
+  ScheduleRun: ['costUsd'],
   SessionContext: ['coldTurnUsd'],
   ClaudeSettings: ['monthlyBudgetUsd', 'sessionBudgetUsd'],
   OpencodeSettings: ['sessionBudgetUsd'],
@@ -63,12 +64,14 @@ export const COST_FIELDS: Record<string, string[]> = {
 
 /**
  * Coûts contenus dans les événements du transcript : résultat d'un tour du SDK (`total_cost_usd`,
- * `modelUsage.*.costUSD`) et relevé de consommation (`usage` : `deltaUsd`, `totalUsd`).
+ * `modelUsage.*.costUSD`), relevé de consommation (`usage` : `deltaUsd`, `totalUsd`) et fin d'une exécution planifiée
+ * (`schedule` : `cost`).
  */
 export function convertEventPayload(type: string, payload: unknown, rate: number | null): unknown {
   if (rate === null || !payload || typeof payload !== 'object') return payload;
   const p = payload as Record<string, unknown>;
   if (type === 'usage') return { ...p, deltaUsd: convert(p.deltaUsd, rate), totalUsd: convert(p.totalUsd, rate) };
+  if (type === 'schedule') return 'cost' in p ? { ...p, cost: convert(p.cost, rate) } : payload;
   if (!('total_cost_usd' in p) && !('modelUsage' in p)) return payload;
   const out: Record<string, unknown> = { ...p, total_cost_usd: convert(p.total_cost_usd, rate) };
   if (p.modelUsage && typeof p.modelUsage === 'object') {

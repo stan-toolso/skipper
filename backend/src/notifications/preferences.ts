@@ -26,7 +26,7 @@ export const PUSH_CATEGORIES: readonly PushCategory[] = [
   { key: 'tasks', label: 'Tâches', description: 'Tâche créée ou terminée par un agent.', types: ['task.created', 'task.completed'], adminsOnly: false },
   { key: 'mentions', label: 'Mentions et réponses', description: 'Quelqu’un vous mentionne dans le fil d’une tâche, ou répond à l’un de vos messages.', types: ['task.mentioned', 'task.replied'], adminsOnly: false },
   { key: 'pull_requests', label: 'Pull requests', description: 'Pull request ouverte, fusionnée ou fermée.', types: ['pull_request.opened', 'pull_request.merged', 'pull_request.closed'], adminsOnly: false },
-  { key: 'schedules', label: 'Planifications', description: 'Compte rendu d’une exécution planifiée, échéance ignorée ou en erreur.', types: ['schedule.run', 'schedule.skipped', 'schedule.failed'], adminsOnly: false },
+  { key: 'schedules', label: 'Planifications', description: 'Compte rendu d’une exécution planifiée : terminée, bloquée par une autorisation refusée, ignorée ou en erreur.', types: ['schedule.run', 'schedule.blocked', 'schedule.skipped', 'schedule.failed'], adminsOnly: false },
   { key: 'workflows', label: 'Workflows', description: 'Fin d’une exécution de workflow, réussie ou en erreur.', types: ['workflow.run', 'workflow.failed'], adminsOnly: false },
   { key: 'context', label: 'Contexte', description: 'Instruction ajoutée à la bibliothèque de contexte par un agent.', types: ['context.created'], adminsOnly: false },
   { key: 'pages', label: 'Pages partagées', description: 'Une page a été partagée avec vous.', types: ['page.shared'], adminsOnly: false },

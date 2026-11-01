@@ -35,6 +35,7 @@ const ProjectEnvPage = lazy(() => import('./pages/ProjectEnvPage'));
 const SharedPagesPage = lazy(() => import('./pages/SharedPagesPage'));
 const SharedPagePage = lazy(() => import('./pages/SharedPagePage'));
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'));
+const SchedulesPage = lazy(() => import('./pages/SchedulesPage'));
 const WorkflowPage = lazy(() => import('./pages/WorkflowPage'));
 const WorkflowRunPage = lazy(() => import('./pages/WorkflowRunPage'));
 const ChatsPage = lazy(() => import('./pages/ChatsPage'));
@@ -62,6 +63,8 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/tasks/:id" element={<TaskPage />} />
       <Route path="/vault" element={<VaultPage />} />
+      <Route path="/schedules" element={<SchedulesPage />} />
+      <Route path="/projects/:id/schedules" element={<SchedulesPage />} />
       <Route path="/workflows" element={<WorkflowsPage />} />
       <Route path="/workflows/:id" element={<WorkflowPage />} />
       <Route path="/workflows/:id/runs/:runId" element={<WorkflowRunPage />} />

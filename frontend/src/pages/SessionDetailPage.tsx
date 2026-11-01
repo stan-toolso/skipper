@@ -4,6 +4,8 @@ import { Alert, Spinner } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
 import { useTabTitle } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
+import { describeCron } from '../lib/cron';
+import { timeUntil } from '../lib/schedules';
 import { useSessionEvents } from '../lib/sessionEvents';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useGitTarget } from '../workbench/GitTargetContext';
@@ -348,9 +350,9 @@ export default function SessionDetailPage() {
               <>
                 {' '}
                 ·{' '}
-                <button type="button" className="cc-link" title={`${schedule.enabled ? 'Planifiée' : 'Planification désactivée'} : ${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={actions.openSchedule}>
-                  <i className="bi bi-alarm" />{' '}
-                  {schedule.enabled ? (schedule.nextRunAt ? `prochaine exécution le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'planification désactivée'}
+                <button type="button" className="cc-link" title={`Planification « ${schedule.name} » : ${describeCron(schedule.cron)} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={actions.openSchedule}>
+                  <i className="bi bi-alarm" /> {schedule.name !== session.name ? `« ${schedule.name} » · ` : ''}
+                  {schedule.enabled ? (schedule.nextRunAt ? `prochaine exécution ${timeUntil(schedule.nextRunAt)}` : 'planifiée') : 'en pause'}
                 </button>
               </>
             )}

@@ -71,7 +71,7 @@ import { sessionRepository } from '../sessions/repository.js';
 import { healthService } from '../health/service.js';
 import type { ClaudeAuthMode } from '../settings/types.js';
 import { usageService } from '../settings/usage.js';
-import { scheduleService } from '../schedules/service.js';
+import { scheduleLabel, scheduleService } from '../schedules/service.js';
 import { cleanupService } from '../sessions/cleanup.js';
 import { CONTEXT_WARN_TOKENS, contextEstimate, contextModel } from '../sessions/context.js';
 import type { SessionCleanup } from '../sessions/types.js';
@@ -87,7 +87,7 @@ import type { AttachmentInput, CreateSessionInput, RelaunchInput, Session, Sessi
 import type { OpenItems, User } from '../users/types.js';
 import { permissionRuleService } from '../permissions/service.js';
 import { formatRule, type PermissionRule } from '../permissions/types.js';
-import type { SessionScheduleInput } from '../schedules/types.js';
+import type { ScheduleRun, SessionSchedule, SessionScheduleInput } from '../schedules/types.js';
 import { userService } from '../users/service.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
 import { log } from '../log.js';
@@ -491,6 +491,21 @@ export const resolvers = {
     createdBy: (w: Workflow, _: unknown, ctx: Ctx) => userOrNull(ctx, w.createdById),
   },
 
+  SessionSchedule: {
+    name: async (schedule: SessionSchedule, _: unknown, ctx: Ctx) => scheduleLabel(schedule, (await loadersOf(ctx).session(schedule.sessionId)) ?? { name: 'Planification' }),
+    customName: (schedule: SessionSchedule) => schedule.name,
+    session: (schedule: SessionSchedule, _: unknown, ctx: Ctx) => loadersOf(ctx).session(schedule.sessionId),
+    project: async (schedule: SessionSchedule, _: unknown, ctx: Ctx) => {
+      const session = await loadersOf(ctx).session(schedule.sessionId);
+      return session ? loadersOf(ctx).project(session.projectId) : null;
+    },
+    runs: (schedule: SessionSchedule, args: { limit?: number | null }) => scheduleService.listRuns(schedule.sessionId, args.limit ?? 20),
+  },
+  ScheduleRun: {
+    trigger: (run: ScheduleRun) => run.trigger.toUpperCase(),
+    status: (run: ScheduleRun) => run.status.toUpperCase(),
+    triggeredBy: (run: ScheduleRun, _: unknown, ctx: Ctx) => (run.triggeredBy ? loadersOf(ctx).user(run.triggeredBy) : null),
+  },
   WorkflowRun: {
     workflow: (r: WorkflowRun) => workflowService.get(r.workflowId),
     project: (r: WorkflowRun) => projectService.get(r.projectId),
@@ -643,7 +658,7 @@ export const resolvers = {
     liveDraft: (session: Session) => liveDraftService.get(session.id),
     queuePosition: (session: Session) => (session.status === 'queued' ? sessionService.queuePosition(session.id) : null),
     promptAttachments: (session: Session) => session.promptAttachments.map(publicAttachment),
-    schedule: (session: Session) => scheduleService.get(session.id),
+    schedule: async (session: Session, _: unknown, ctx: Ctx) => (await loadersOf(ctx).sessionSchedule(session.id)) ?? null,
     context: (session: Session): ContextParent => ({ session }),
     events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
       sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
@@ -934,6 +949,13 @@ export const resolvers = {
     sessionFileDiff: async (_: unknown, args: { sessionId: string; path: string; origPath?: string | null }, ctx: Ctx) => {
       await guardSession(ctx, args.sessionId, 'viewer');
       return sessionChangesService.diff(await loadSession(args.sessionId), args.path, args.origPath);
+    },
+    sessionSchedules: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
+      if (args.projectId) {
+        await requireProject(ctx, args.projectId);
+        return scheduleService.listForProjects([args.projectId]);
+      }
+      return scheduleService.listForProjects(await accessibleProjectIds(ctx));
     },
     scheduleNextRuns: (_: unknown, args: { cron: string; timezone?: string | null; count?: number | null }, ctx: Ctx) => {
       requireUser(ctx);
@@ -1423,9 +1445,17 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return scheduleService.remove(args.id);
     },
+    setSessionScheduleEnabled: async (_: unknown, args: { id: string; enabled: boolean }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      return scheduleService.setEnabled(args.id, args.enabled);
+    },
+    createScheduledSession: async (_: unknown, args: { input: Parameters<typeof scheduleService.createWithSession>[0] }, ctx: Ctx) => {
+      await requireProject(ctx, args.input.projectId, 'member');
+      return scheduleService.createWithSession(args.input, requireUser(ctx).id);
+    },
     runSessionScheduleNow: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
-      return scheduleService.runNow(args.id);
+      return scheduleService.runNow(args.id, requireUser(ctx).id);
     },
     updateSession: async (_: unknown, args: { id: string; input: { name?: string | null; cleanup?: SessionCleanup | null } }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');

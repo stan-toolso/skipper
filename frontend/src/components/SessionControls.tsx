@@ -50,7 +50,7 @@ export function useSessionActions(session: ControlledSession | null | undefined)
       </button>
       {!chat && (
         <button type="button" className="cc-btn" title={schedule ? 'Modifier la planification de cette session' : 'Relancer cette session à intervalles réguliers avec une instruction'} onClick={openSchedule}>
-          <i className="bi bi-alarm" /> {schedule ? 'Planification' : 'Planifier'}
+          <i className="bi bi-alarm" /> {schedule ? (schedule.enabled ? 'Planification' : 'Planification (en pause)') : 'Planifier'}
         </button>
       )}
       {schedule && !busy && (

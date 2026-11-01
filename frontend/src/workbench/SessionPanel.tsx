@@ -8,6 +8,7 @@ import { SessionReviewReport, type SessionReviewInfo } from '../components/CodeR
 import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import { SessionChildren, SessionParentNote, useSessionActions, type ControlledSession } from '../components/SessionControls';
 import { SESSION } from '../graphql/operations';
+import { describeCron } from '../lib/cron';
 import { formatCost, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
 import { sessionDotClass } from './WorkspaceTabs';
 import '../components/terminal.css';
@@ -156,9 +157,9 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
           <dt>Planification</dt>
           <dd>
             {schedule ? (
-              <button type="button" className="cc-link" title={`${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={actions.openSchedule}>
+              <button type="button" className="cc-link text-start" title={`${schedule.cron} (${schedule.timezone})${schedule.lastResult ? ` · dernière exécution : ${schedule.lastResult}` : ''}`} onClick={actions.openSchedule}>
                 <i className="bi bi-alarm me-1" />
-                {schedule.enabled ? (schedule.nextRunAt ? `prochaine le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'désactivée'}
+                {schedule.name} · {describeCron(schedule.cron).toLowerCase()} · {schedule.enabled ? (schedule.nextRunAt ? `prochaine le ${new Date(schedule.nextRunAt).toLocaleString()}` : 'planifiée') : 'en pause'}
               </button>
             ) : (
               <button type="button" className="cc-link" onClick={actions.openSchedule}>
