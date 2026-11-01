@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom';
 import StatusBadge from '../components/StatusBadge';
 import RateLimitGauges, { busiestWindow } from '../components/RateLimitGauges';
 import { DASHBOARD, RESUME_SESSION, type Dashboard, type DashboardProject, type DashboardUsage, type HumanRequest, type Session, type Task } from '../graphql/operations';
-import { formatCost, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
+import { formatCost, getCostUnit, requestTitle, sessionStateHint, taskPriorityLabels, taskStatusLabels, timeAgo } from '../lib/humanize';
 import { useTabTitle } from '../workbench/TabsContext';
 import { useSessionLauncher } from '../components/SessionLauncher';
 import { useDialogs } from '../components/Dialogs';
@@ -239,7 +239,7 @@ function UsageCard({ usage }: { usage: DashboardUsage }) {
     <section className="dash-section">
       <h2 className="dash-section-title">
         <span>Consommation</span>
-        <span className="text-secondary" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, fontSize: 12 }}>estimation au tarif API</span>
+        <span className="text-secondary" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, fontSize: 12 }}>{getCostUnit() === 'CREDIT' ? 'en crédits' : 'estimation au tarif API'}</span>
       </h2>
       <Card>
         <Card.Body className="pb-2">

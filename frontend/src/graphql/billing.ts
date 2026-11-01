@@ -175,3 +175,17 @@ export const DELETE_CTO_TIME_ENTRY = gql`
     deleteCtoTimeEntry(id: $id)
   }
 `;
+
+export interface CostDisplay {
+  unit: 'USD' | 'CREDIT';
+  creditPriceEur: number | null;
+}
+
+export const COST_DISPLAY = gql`
+  query CostDisplay {
+    costDisplay {
+      unit
+      creditPriceEur
+    }
+  }
+`;

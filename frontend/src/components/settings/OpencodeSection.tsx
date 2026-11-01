@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Col, Form, Row, Spinner, Table } from 'react-bootstrap';
 import { REFRESH_OPENCODE_MODELS, SET_OPENCODE_KEY_ITEM, UPDATE_OPENCODE_SETTINGS, type AppSettings } from '../../graphql/settings';
 import VaultTokenPicker from './VaultTokenPicker';
+import { costUnitLabel } from '../../lib/humanize';
 
 const fmtDate = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
@@ -48,7 +49,7 @@ function DefaultsCard({ settings }: { settings: AppSettings }) {
               <Form.Text>Format « fournisseur/modèle ». La liste des modèles vient de la dernière actualisation ci-dessous.</Form.Text>
             </Col>
             <Col md={5}>
-              <Form.Label className="small mb-1">Budget par session (USD)</Form.Label>
+              <Form.Label className="small mb-1">Budget par session ({costUnitLabel()})</Form.Label>
               <Form.Control size="sm" type="number" min={0} step="0.5" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Aucun" />
               <Form.Text>La session est interrompue au-delà (coût estimé par OpenCode).</Form.Text>
             </Col>
