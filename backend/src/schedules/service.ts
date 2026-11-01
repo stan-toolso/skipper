@@ -150,7 +150,9 @@ export const scheduleService = {
       nextRunAt: enabled ? nextRun(spec, new Date(), timezone) : null,
     });
     await emit(sessionId, 'schedule', { action: enabled ? 'set' : 'disabled', cron: schedule.cron, timezone, nextRunAt: schedule.nextRunAt, name: schedule.name });
-    pubSub.publish('sessionUpdated', session);
+    // Une session planifiée porte le nom de sa planification : c'est lui qu'on lit dans la sidebar et les onglets.
+    if (name && name !== session.name) await sessionService.rename(sessionId, name);
+    else pubSub.publish('sessionUpdated', session);
     return schedule;
   },
 
