@@ -171,9 +171,10 @@ vi.mock('../worksessions/repository.js', () => ({
   },
 }));
 vi.mock('./local.js', () => ({
-  localBranchWork: async (_project: unknown, ws: { id: string }, opts: { since?: Date | null } = {}) => {
-    m.localCalls.push([ws.id, opts.since]);
-    return m.local[ws.id] ?? null;
+  localBranchWork: async (_project: unknown, ws: { id: string }, opts: { since?: Date | null | ((branch: string) => Date | null) } = {}) => {
+    const work = m.local[ws.id] ?? null;
+    m.localCalls.push([ws.id, typeof opts.since === 'function' ? (work ? opts.since(work.branch) : undefined) : opts.since]);
+    return work;
   },
 }));
 vi.mock('../notifications/service.js', () => ({ notificationService: { notify: async (n: Record<string, unknown>) => void m.notifications.push(n) } }));
@@ -486,6 +487,20 @@ describe('PR en préparation (refreshPending)', () => {
     m.local.w1 = { branch: 'task/t1', baseBranch: 'main', commits: 1, changes: 0 };
     await trackedPullRequestService.sync('p', 'u1', { force: true });
     expect(m.rows.map((r) => r.status).sort()).toEqual(['merged', 'pending']);
+  });
+
+  it('reconnaît la PR de la branche réellement extraite quand l’agent a changé de branche dans sa work session', async () => {
+    m.worksessions.push(ws('w1', 'nom-initial'));
+    m.local.w1 = { branch: 'autre-branche', baseBranch: 'main', commits: 1, changes: 0 };
+    await trackedPullRequestService.recordGithub('p', gh(1, 'OPEN', { headRefName: 'autre-branche' }), human);
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows.map((r) => r.status)).toEqual(['open']);
+    // Fusionnée par un commit de fusion : sans fetch, le commit reste « en avance » sur origin/main, mais il précède la fusion.
+    m.github.push(gh(1, 'MERGED', { headRefName: 'autre-branche' }));
+    m.local.w1 = { branch: 'autre-branche', baseBranch: 'main', commits: 0, changes: 0 };
+    await trackedPullRequestService.sync('p', 'u1', { force: true });
+    expect(m.rows.map((r) => r.status)).toEqual(['merged']);
+    expect(m.localCalls.at(-1)).toEqual(['w1', new Date('2026-10-02T10:00:00Z')]);
   });
 
   it('rattache la tâche apparue après la création de la PR en préparation (tâche prise ensuite par la session)', async () => {
