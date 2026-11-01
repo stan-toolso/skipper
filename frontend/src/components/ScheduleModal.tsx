@@ -149,9 +149,9 @@ export default function ScheduleModal({ session, projects = [], onClose, onCreat
                 maxLength={120}
                 required={creating}
                 autoFocus={creating}
-                placeholder={creating ? 'Revue quotidienne des utilisateurs' : `${session.name} (nom de la session)`}
+                placeholder={creating ? 'Revue quotidienne des utilisateurs' : session.name}
               />
-              {!creating && <Form.Text>Pour la reconnaître dans la liste des planifications et dans les notifications.</Form.Text>}
+              {!creating && <Form.Text>C'est aussi le nom de la session : celui de la sidebar, des onglets et des notifications.</Form.Text>}
             </div>
             {creating && projects.length > 1 && (
               <div className="col-sm-5">
