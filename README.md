@@ -242,7 +242,7 @@ backend/
       gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
-    previews/                  # aperçus des branches : configuration, lancement dans le conteneur, proxy par sous-domaine, instantanés des dépendances
+    previews/                  # aperçus des branches : configuration, lancement dans le conteneur, proxy par sous-domaine, instantanés des dépendances, MCP `preview`
     sharedPages/               # pages partagées : publication, versions, membres, route de lecture en bac à sable, MCP `pages`
     search/                    # recherche globale (projets, sessions, tâches, pages, coffre)
     apiKeys/                   # clés d'API des projets
@@ -1239,7 +1239,10 @@ modification de l'agent apparaît d'elle-même.
   instances et des agents : le processus survit aux redémarrages du backend (bleu/vert), l'état est **déduit** à chaque
   lecture (`previews/state.ts` : événements, processus vivant, port ouvert). Table `previews` (migration
   `050_previews.sql`) : nom d'hôte et port stables. Une work session archivée ou supprimée arrête son aperçu
-  (`worksessionHooks.beforeRetire`) ; un conteneur recréé aussi (l'aperçu repasse « arrêté »).
+  (`worksessionHooks.beforeRetire`). Un aperçu en marche **compte comme une activité du conteneur** : un conteneur obsolète
+  n'est pas recréé sous lui, ni au démarrage du backend ni au passage (`previewService.liveWorksessions` dans la
+  vérification d'inactivité du runner) ; « Recréer le conteneur » depuis la page du projet relance les aperçus qui
+  tournaient (`runnerLifecycle.reset`).
 - **Proxy** (`previews/proxy.ts`) : toute requête dont l'hôte correspond à `PREVIEW_URL` passe avant les autres routes et
   est relayée à `IP du conteneur:port` (Host réécrit en `localhost:<port>` pour les contrôles d'hôte de Vite et webpack,
   nom public en `X-Forwarded-Host`), WebSockets compris (`attachWebSockets(…, hostHandlers)`, avant le contrôle
@@ -1261,6 +1264,20 @@ modification de l'agent apparaît d'elle-même.
     `.runners/<projet>/cache/` (avant : dans le tmpfs de 512 Mo du dossier personnel, perdus à chaque recréation) ;
   - les liens sont partagés : un fichier de `node_modules` modifié **en place** le serait partout. npm, pnpm et yarn
     remplacent les fichiers (le lien est rompu, l'original intact) ; le marqueur est écrit par renommage.
+- **Lien public** : l'adresse `https://<nom>.apercu…` s'ouvre directement pour un membre connecté à Skipper (lien donné
+  par un agent, collé dans un message) : sans cookie d'accès, une navigation de premier niveau (`Sec-Fetch-Dest:
+  document`, jamais un cadre, où un cookie tiers refusé ferait boucler) est renvoyée vers
+  `/api/previews/<work session>/open?next=…` sur Skipper (`handlePreviewOpenRoute`), qui vérifie la connexion (sinon
+  connexion Google puis retour) et les droits, puis redirige avec un lien d'accès à usage unique.
+- **Outils des agents** (serveur MCP `preview`, `previews/mcp.ts`, sessions qui ont un dossier de travail quand les
+  aperçus sont activés, outils libres comme le bouton de l'onglet) : `status` (état, commande, lien public, adresse
+  interne `http://localhost:<port>` pour le navigateur headless), `start` (lance puis attend que le serveur réponde,
+  90 s par défaut ; fin du journal en cas d'échec), `stop`, `log` (dernières lignes), `screenshot` (capture PNG
+  `desktop` 1280×800 ou `mobile` 390×844 d'un chemin de l'application, faite dans le conteneur par le
+  `chrome-headless-shell` de l'image, sans le navigateur de la session ; image renvoyée au modèle et fichier gardé
+  dans `.skipper-previews/<work session>/captures/`, dix au plus). Le prompt système (`previewMcpPrompt`) décrit la
+  boucle « je modifie, tu vois » : lancer, vérifier, capturer, donner le lien. Les données base64 des images renvoyées
+  par un outil ne sont pas gardées dans les événements de la session (le fichier est sur disque).
 - **API** : `preview(worksessionId)`, `previewLog(worksessionId)`, `startPreview`, `stopPreview` (membres),
   `previewAccessUrl(worksessionId, path)`. L'interface sonde l'état toutes les 2,5 s quand l'onglet est ouvert et affiche
   le temps de lancement (« Prêt en 3,4 s · dépendances liées depuis le cache, rien à installer »).

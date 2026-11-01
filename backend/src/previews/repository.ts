@@ -31,6 +31,11 @@ export const previewRepository = {
     const { rows } = await pool.query<Row>('SELECT * FROM previews WHERE host_label = $1', [label]);
     return rows[0] ? toPreview(rows[0]) : null;
   },
+  /** Aperçus déjà lancés au moins une fois dans ce projet (les autres n'ont pas de processus à surveiller). */
+  async startedOfProject(projectId: string): Promise<PreviewRow[]> {
+    const { rows } = await pool.query<Row>('SELECT * FROM previews WHERE project_id = $1 AND started_at IS NOT NULL', [projectId]);
+    return rows.map(toPreview);
+  },
   async portsOfProject(projectId: string): Promise<number[]> {
     const { rows } = await pool.query<{ port: number }>('SELECT port FROM previews WHERE project_id = $1', [projectId]);
     return rows.map((r) => r.port);

@@ -20,7 +20,18 @@ const docker = vi.hoisted(() => ({
   ensureReady: vi.fn(async () => void calls.push('ensureReady')),
   stop: vi.fn(async () => void calls.push('stop')),
 }));
+const previews = vi.hoisted(() => ({
+  liveWorksessions: vi.fn(async () => {
+    calls.push('previews');
+    return ['w1'];
+  }),
+  restartAll: vi.fn(async (ids: string[]) => {
+    calls.push('restartPreviews');
+    return ids;
+  }),
+}));
 vi.mock('../sessions/service.js', () => ({ sessionService: sessions }));
+vi.mock('../previews/service.js', () => ({ previewService: previews }));
 vi.mock('./index.js', () => ({ runner: docker }));
 
 const project = { id: 'p', slug: 'p', name: 'P' } as Project;
@@ -33,18 +44,18 @@ beforeEach(() => {
 });
 
 describe('runnerLifecycle', () => {
-  it('reset : interrompt, supprime, recrée, puis reprend toutes les sessions interrompues', async () => {
+  it('reset : interrompt, supprime, recrée, puis reprend toutes les sessions interrompues et relance les aperçus', async () => {
     const { runnerLifecycle } = await import('./lifecycle.js');
     const result = await runnerLifecycle.reset(project);
-    expect(calls).toEqual(['interrupt:runner_reset', 'remove', 'ensureReady', 'resume']);
-    expect(result).toEqual({ interrupted: ['s1', 's2'], resumed: ['s1', 's2'] });
+    expect(calls).toEqual(['previews', 'interrupt:runner_reset', 'remove', 'ensureReady', 'resume', 'restartPreviews']);
+    expect(result).toEqual({ interrupted: ['s1', 's2'], resumed: ['s1', 's2'], previews: ['w1'] });
   });
 
   it('reset : un conteneur impossible à recréer laisse les sessions interrompues et remonte l’erreur', async () => {
     const { runnerLifecycle } = await import('./lifecycle.js');
     docker.ensureReady.mockRejectedValueOnce(new Error('image absente'));
     await expect(runnerLifecycle.reset(project)).rejects.toThrow('image absente');
-    expect(calls).toEqual(['interrupt:runner_reset', 'remove']);
+    expect(calls).toEqual(['previews', 'interrupt:runner_reset', 'remove']);
     expect(sessions.resumeAfterRunner).not.toHaveBeenCalled();
   });
 

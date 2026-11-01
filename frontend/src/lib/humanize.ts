@@ -127,6 +127,19 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
         const [label, action] = verbs[op] ?? [`Dossiers de travail : ${op}`, `utiliser les dossiers de travail (${op})`];
         return { label, action };
       }
+      if (name.startsWith('mcp__preview__')) {
+        const op = name.slice('mcp__preview__'.length);
+        const page = str(input, 'path') ?? '/';
+        const verbs: Record<string, [string, string]> = {
+          status: ["Consultation de l'état de l'aperçu", "consulter l'état de l'aperçu"],
+          start: ["Lancement de l'aperçu de la branche", "lancer l'aperçu de la branche"],
+          stop: ["Arrêt de l'aperçu de la branche", "arrêter l'aperçu de la branche"],
+          log: ["Lecture du journal de l'aperçu", "lire le journal de l'aperçu"],
+          screenshot: [`Capture de la page ${page} de l'aperçu${input.size === 'mobile' ? ' (mobile)' : ''}`, `capturer la page ${page} de l'aperçu`],
+        };
+        const [label, action] = verbs[op] ?? [`Aperçu : ${op}`, `utiliser l'aperçu (${op})`];
+        return { label, action };
+      }
       if (name.startsWith('mcp__connections__') || name.startsWith('mcp__vault__')) {
         const op = name.replace(/^mcp__(connections|vault)__/, '');
         const conn = str(input, 'connection') ?? str(input, 'item') ?? '';
