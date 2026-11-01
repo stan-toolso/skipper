@@ -1282,6 +1282,11 @@ modification de l'agent apparaît d'elle-même.
 - **API** : `preview(worksessionId)`, `previewLog(worksessionId)`, `startPreview`, `stopPreview` (membres),
   `previewAccessUrl(worksessionId, path)`. L'interface sonde l'état toutes les 2,5 s quand l'onglet est ouvert et affiche
   le temps de lancement (« Prêt en 3,4 s · dépendances liées depuis le cache, rien à installer »).
+- **Aperçu de Skipper lui-même** (`.skipper/preview.json` du dépôt) : le frontend en dev a besoin d'une API, et on ne lance
+  jamais de second backend ; la commande démarre donc le serveur GraphQL factice du test mobile
+  (`frontend/scripts/mobile-audit/mock-server.mjs`, `MOCK_STABLE=1` pour des données stables d'un sondage à l'autre) sur
+  `$PORT + 1000`, et Vite le sert à travers son proxy (`SKIPPER_PREVIEW_API`, `VITE_GRAPHQL_URL=/graphql`) : l'aperçu
+  montre toute l'interface avec des données inventées.
 - **Mise en service** : `PREVIEW_URL` (`https://*.apercu.<domaine>` ; vide = aperçus désactivés), DNS et certificat
   génériques, bloc nginx `deploy/cellule/templates/nginx-previews.conf` et `frame-src` de la CSP : voir DEPLOY.md. En
   local : `PREVIEW_URL=http://*.localhost:4000` (`*.localhost` résout vers la machine dans Chrome et Firefox).

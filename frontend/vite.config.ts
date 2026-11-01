@@ -41,5 +41,13 @@ export default defineConfig({
   ],
   envDir: '..',
   // host: true expose le serveur de dev sur le réseau local (test depuis un autre appareil).
-  server: { port: 5173, host: true },
+  // Aperçu des branches (.skipper/preview.json) : SKIPPER_PREVIEW_API désigne l'API factice du serveur de test
+  // (scripts/mobile-audit/mock-server.mjs), servie à travers Vite pour que l'aperçu n'expose qu'un port.
+  server: {
+    port: 5173,
+    host: true,
+    proxy: process.env.SKIPPER_PREVIEW_API
+      ? Object.fromEntries(['/graphql', '/api/', '/auth/'].map((p) => [p, { target: process.env.SKIPPER_PREVIEW_API, changeOrigin: true }]))
+      : undefined,
+  },
 });

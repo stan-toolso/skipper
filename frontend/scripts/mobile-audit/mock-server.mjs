@@ -100,6 +100,8 @@ http
       res.writeHead(200, { ...cors, 'content-type': 'application/json' });
       try {
         const { query, variables } = JSON.parse(body);
+        // MOCK_STABLE=1 (aperçu de Skipper) : mêmes données d'un sondage à l'autre, sinon les listes changent toutes les secondes.
+        if (process.env.MOCK_STABLE) counter = 0;
         return res.end(JSON.stringify(await execute({ schema, document: parse(query), variableValues: variables, fieldResolver, typeResolver, rootValue: {} })));
       } catch (e) {
         return res.end(JSON.stringify({ errors: [{ message: String(e) }] }));
