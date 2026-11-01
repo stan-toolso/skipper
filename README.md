@@ -1268,8 +1268,16 @@ modification de l'agent apparaît d'elle-même.
     (`.vite`, `.cache`) exclus, quatre instantanés gardés ;
   - une work session de même empreinte les reçoit de la même façon **dès sa création** (agents compris : typecheck sans
     installer) et au lancement de l'aperçu, qui n'installe alors rien (marqueur `node_modules/.skipper-deps`) ; avec une
-    autre empreinte, l'instantané le plus récent est lié puis l'installation ne fait que la différence (`npm install`
-    plutôt que `npm ci`, pnpm et yarn en `--frozen-lockfile --prefer-offline`) ;
+    autre empreinte, l'instantané le plus récent est lié (à la création comme au lancement de l'aperçu) puis
+    l'installation ne fait que la différence (`npm install` plutôt que `npm ci`, pnpm et yarn en
+    `--frozen-lockfile --prefer-offline`) ;
+  - sans instantané exact, la création de la work session lance aussi **l'installation en arrière-plan** dans le
+    conteneur (crochet `worksessionHooks.afterCreate`, `previewService.installInBackground`, script `INSTALL_SCRIPT` de
+    `previews/scripts.ts`), avec la commande et le dossier de l'aperçu (`"install": ""` la désactive). Elle laisse
+    `install.pid` (tant qu'elle tourne), `install.log` et `install.exit` dans `.skipper-previews/<work session>/` ; à sa
+    réussite, le backend enregistre l'instantané, que les work sessions suivantes de même lockfile reçoivent tout fait.
+    Un aperçu lancé pendant ce temps l'attend puis n'installe que si le marqueur ne correspond toujours pas ; le prompt
+    des agents leur dit de l'attendre plutôt que d'en lancer une deuxième ; l'archivage l'arrête ;
   - les caches des gestionnaires de paquets sont **persistants** : `~/.npm` et `~/.cache` du conteneur sont montés depuis
     `.runners/<projet>/cache/` (avant : dans le tmpfs de 512 Mo du dossier personnel, perdus à chaque recréation) ;
   - les liens sont partagés : un fichier de `node_modules` modifié **en place** le serait partout. npm, pnpm et yarn
