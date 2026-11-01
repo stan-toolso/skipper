@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=../.env src/index.ts",
     "start": "node --env-file=../.env dist/index.js",
-    "build": "node scripts/check-schema.mjs && tsc -p tsconfig.json && mkdir -p dist/graphql dist/db/migrations && cp src/graphql/schema.graphql dist/graphql/ && cp src/db/migrations/*.sql dist/db/migrations/",
+    "build": "node scripts/check-schema.mjs && tsc -p tsconfig.json && mkdir -p dist/graphql dist/db/migrations && cp src/graphql/schema.graphql dist/graphql/ && cp src/db/migrations/*.sql dist/db/migrations/ && mkdir -p dist/previews && cp src/previews/annotate-client.js dist/previews/",
     "typecheck": "node scripts/check-schema.mjs && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",

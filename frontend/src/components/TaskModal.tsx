@@ -10,6 +10,7 @@ import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import AttachmentChips from './AttachmentChips';
 import TagsInput from './TagsInput';
 import TaskAttachments from './TaskAttachments';
+import DictationButton from './DictationButton';
 import TaskThread from './TaskThread';
 
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
@@ -178,16 +179,19 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Description</Form.Label>
-            <Form.Control
-              as="textarea"
-              rows={5}
-              value={form.description}
-              onChange={set('description')}
-              onPaste={files.onPaste}
-              onDrop={files.onDrop}
-              onDragOver={files.onDragOver}
-              placeholder="Ce qu'il faut faire, comment savoir que c'est réussi, les pistes utiles… Collez une capture d'écran ou déposez des fichiers pour les joindre."
-            />
+            <div className="dictation-field">
+              <Form.Control
+                as="textarea"
+                rows={5}
+                value={form.description}
+                onChange={set('description')}
+                onPaste={files.onPaste}
+                onDrop={files.onDrop}
+                onDragOver={files.onDragOver}
+                placeholder="Ce qu'il faut faire, comment savoir que c'est réussi, les pistes utiles… Collez une capture d'écran ou déposez des fichiers pour les joindre."
+              />
+              <DictationButton value={form.description} onChange={(description) => setForm((f) => ({ ...f, description }))} className="dictation-float" />
+            </div>
             {task && <TaskAttachments taskId={task.id} attachments={task.attachments} removed={removedFiles} onToggleRemove={(id) => setRemovedFiles((r) => (r.includes(id) ? r.filter((x) => x !== id) : [...r, id]))} />}
             <AttachmentChips items={files.items} onAdd={(f) => files.add(f)} onRemove={files.remove} error={files.error} />
             <Form.Text>Les fichiers joints sont transmis à l'agent à qui la tâche est confiée (il voit les images).</Form.Text>
