@@ -3,7 +3,7 @@ import { Button, Nav } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import { useSessionLauncher } from './SessionLauncher';
 
-export type ProjectTab = 'overview' | 'chats' | 'repo' | 'tasks' | 'pullRequests' | 'context' | 'vault' | 'workflows' | 'history';
+export type ProjectTab = 'overview' | 'chats' | 'repo' | 'tasks' | 'pullRequests' | 'context' | 'vault' | 'env' | 'workflows' | 'history';
 
 const TABS: { key: ProjectTab; label: string; path: string; icon: string; title?: string; absolute?: boolean }[] = [
   { key: 'overview', label: 'Aperçu', path: '', icon: 'bi-folder2-open' },
@@ -12,6 +12,7 @@ const TABS: { key: ProjectTab; label: string; path: string; icon: string; title?
   { key: 'pullRequests', label: 'Pull requests', path: '/pull-requests', icon: 'bi-git', title: 'Pull requests suivies : à fusionner, fusionnées' },
   { key: 'context', label: 'Contexte', path: '/context', icon: 'bi-journal-text', title: 'Bibliothèque d’instructions consultée par les agents' },
   { key: 'vault', label: 'Coffre', path: '/vault', icon: 'bi-shield-lock', title: 'Serveurs, bases, API, sites et comptes utilisables par les agents' },
+  { key: 'env', label: 'Environnement', path: '/env', icon: 'bi-file-earmark-lock', title: 'Fichiers .env (ou autres) écrits dans chaque nouvelle session, avec des valeurs du coffre' },
   { key: 'workflows', label: 'Workflows', path: '/workflows', icon: 'bi-diagram-3', title: 'Workflows : enchaînements d’appels de modèle, de sessions et de tâches' },
   { key: 'history', label: 'Historique', path: '/history', icon: 'bi-clock-history', title: 'Sessions et work sessions archivées' },
 ];
@@ -20,7 +21,7 @@ const TABS: { key: ProjectTab; label: string; path: string; icon: string; title?
 const PERSONAL_TABS: typeof TABS = [
   { key: 'overview', label: 'Aperçu', path: '', icon: 'bi-person-circle' },
   { key: 'chats', label: 'Chats', path: '/chats', icon: 'bi-chat-left-text', title: 'Conversations légères, sans dossier de travail, avec accès à tous vos projets', absolute: true },
-  ...TABS.filter((t) => t.key === 'tasks' || t.key === 'context' || t.key === 'vault' || t.key === 'history'),
+  ...TABS.filter((t) => t.key === 'tasks' || t.key === 'context' || t.key === 'vault' || t.key === 'env' || t.key === 'history'),
 ];
 
 export interface ProjectHeaderProject {

@@ -8,14 +8,16 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { useTheme } from '../lib/theme';
 import { darkAppTheme, lightAppTheme } from '../lib/codemirrorTheme';
 
-let markdownSupport: Promise<Extension> | null = null;
-/** Mode Markdown de CodeMirror, chargé une fois à la demande (comme les autres langages de l'explorateur de fichiers). */
-function loadMarkdown(): Promise<Extension> {
-  if (!markdownSupport) {
-    const desc = LanguageDescription.matchLanguageName(languages, 'markdown', true);
-    markdownSupport = desc ? desc.load() : Promise.resolve([]);
+const languageSupport = new Map<string, Promise<Extension>>();
+/** Mode de CodeMirror (Markdown par défaut), chargé une fois à la demande (comme les autres langages de l'explorateur de fichiers). */
+function loadLanguage(name: string): Promise<Extension> {
+  let support = languageSupport.get(name);
+  if (!support) {
+    const desc = LanguageDescription.matchLanguageName(languages, name, true);
+    support = desc ? desc.load() : Promise.resolve([]);
+    languageSupport.set(name, support);
   }
-  return markdownSupport;
+  return support;
 }
 
 interface Props {
@@ -26,24 +28,27 @@ interface Props {
   placeholder?: string;
   minHeight?: string;
   autoFocus?: boolean;
+  /** Langage de coloration (nom CodeMirror, ex. « properties », « json ») ; défaut : Markdown. */
+  language?: string;
 }
 
 /**
  * Éditeur de texte Markdown (CodeMirror) : coloration de la syntaxe, retour à la ligne automatique, sans gouttière,
- * accordé au thème de l'application. Sert aux instructions du contexte ; le rendu se fait avec `Markdown`.
+ * accordé au thème de l'application. Sert aux instructions du contexte (le rendu se fait avec `Markdown`) et, avec un
+ * autre langage, aux fichiers d'environnement d'un projet.
  */
-export default function MarkdownEditor({ value, onChange, onSave, placeholder, minHeight = '320px', autoFocus }: Props) {
+export default function MarkdownEditor({ value, onChange, onSave, placeholder, minHeight = '320px', autoFocus, language: languageName = 'markdown' }: Props) {
   const uiTheme = useTheme();
   const [language, setLanguage] = useState<Extension | null>(null);
   useEffect(() => {
     let cancelled = false;
-    loadMarkdown().then((ext) => {
+    loadLanguage(languageName).then((ext) => {
       if (!cancelled) setLanguage(ext);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [languageName]);
 
   const extensions = useMemo<Extension[]>(() => {
     const list: Extension[] = [uiTheme === 'light' ? lightAppTheme : darkAppTheme, EditorView.lineWrapping];

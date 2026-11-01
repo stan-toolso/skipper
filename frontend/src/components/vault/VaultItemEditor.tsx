@@ -57,6 +57,9 @@ const emptyFields = (kind: VaultItemKind): FieldRow[] =>
       : [];
 
 /** Création ou modification d'un élément du coffre ; les secrets ne sont envoyés que s'ils sont saisis. */
+/** Types dont les valeurs peuvent servir aux fichiers d'environnement (backend : ENV_EXPORT_KINDS). */
+const ENV_EXPORT_KINDS: VaultItemKind[] = ['secret', 'website', 'postgres', 'api', 'ssh', 'aws', 'scaleway'];
+
 export default function VaultItemEditor({ item, owners, initialOwner, tunnels, googleAvailable, onClose, onSaved }: Props) {
   const editing = Boolean(item);
   const [ownerKey, setOwnerKey] = useState<string>(initialOwner ?? owners[0]?.projectId ?? '');
@@ -73,6 +76,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
   const [viaItemId, setViaItemId] = useState(item?.via?.id ?? '');
   const [readOnly, setReadOnly] = useState(item?.readOnly ?? true);
   const [requireApproval, setRequireApproval] = useState(item?.requireApproval ?? true);
+  const [envExport, setEnvExport] = useState(item?.envExport ?? false);
   const [allowlist, setAllowlist] = useState(item?.commandAllowlist.join('\n') ?? '');
   const [privateKey, setPrivateKey] = useState('');
   const [showKeyImport, setShowKeyImport] = useState(false);
@@ -151,6 +155,7 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
     if (!NAME_PATTERN.test(cleanName)) return setError('Nom invalide : minuscules, chiffres, tirets et tirets bas, 40 caractères au plus (ex. « prod », « rds-prod »).');
     const input: VaultItemInput = { name: cleanName, description: description.trim(), expiresAt: expiresAt || null };
     if (!editing) input.kind = kind;
+    if (ENV_EXPORT_KINDS.includes(kind)) input.envExport = envExport;
     if (kind !== 'google') {
       if (kind === 'ssh' || kind === 'postgres' || kind === 'api' || kind === 'aws' || kind === 'scaleway') input.requireApproval = requireApproval;
     } else {
@@ -759,6 +764,21 @@ export default function VaultItemEditor({ item, owners, initialOwner, tunnels, g
                 <Form.Check type="checkbox" id="vault-approval" label="Demander votre accord avant chaque usage par un agent — sinon les outils s'exécutent sans confirmation." checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
               )}
               {(kind === 'website' || kind === 'secret') && <div className="text-secondary small">Les actions dans le navigateur passent par les demandes d'autorisation de la session ; un secret sans site est toujours soumis à votre accord.</div>}
+              {ENV_EXPORT_KINDS.includes(kind) && (
+                <Form.Check
+                  className="mt-2"
+                  type="checkbox"
+                  id="vault-env-export"
+                  label={
+                    <>
+                      Utilisable dans les fichiers d'environnement des sessions (<code>{`{{vault:${name.trim().toLowerCase() || 'nom'}.champ}}`}</code>) —{' '}
+                      <span className="text-warning">la valeur est alors écrite en clair dans le dossier de travail et lisible par l'agent.</span>
+                    </>
+                  }
+                  checked={envExport}
+                  onChange={(e) => setEnvExport(e.target.checked)}
+                />
+              )}
               {isSkipperKind(kind) && <div className="text-secondary small">Réservé à Skipper : aucun outil n'est offert aux agents, et l'élément ne peut pas être relié à un projet. Il se choisit dans vos Paramètres ou dans la configuration d'un agent à appel direct.</div>}
               <Form.Group className="mt-3" style={{ maxWidth: 260 }}>
                 <Form.Label>Rappel de rotation (optionnel)</Form.Label>

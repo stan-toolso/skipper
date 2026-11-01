@@ -167,6 +167,8 @@ export interface VaultItem {
   scaleway: VaultScalewayInfo | null;
   readOnly: boolean;
   requireApproval: boolean;
+  /** Valeurs utilisables dans les fichiers d'environnement des sessions (écrites en clair, lisibles par l'agent). */
+  envExport: boolean;
   commandAllowlist: string[];
   publicKey: string | null;
   hostFingerprint: string | null;
@@ -211,6 +213,7 @@ export interface VaultItemInput {
   viaItemId?: string | null;
   readOnly?: boolean | null;
   requireApproval?: boolean | null;
+  envExport?: boolean | null;
   commandAllowlist?: string[] | null;
   expiresAt?: string | null;
   privateKey?: string | null;
@@ -310,6 +313,7 @@ export const VAULT_ITEM_FIELDS = gql`
     }
     readOnly
     requireApproval
+    envExport
     commandAllowlist
     publicKey
     hostFingerprint
