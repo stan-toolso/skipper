@@ -1271,8 +1271,9 @@ modification de l'agent apparaît d'elle-même.
   connexion Google puis retour) et les droits, puis redirige avec un lien d'accès à usage unique.
 - **Outils des agents** (serveur MCP `preview`, `previews/mcp.ts`, sessions qui ont un dossier de travail quand les
   aperçus sont activés, outils libres comme le bouton de l'onglet) : `status` (état, commande, lien public, adresse
-  interne `http://localhost:<port>` pour le navigateur headless), `start` (lance puis attend que le serveur réponde,
-  90 s par défaut ; fin du journal en cas d'échec), `stop`, `log` (dernières lignes), `screenshot` (capture PNG
+  interne `http://localhost:<port>` pour le navigateur headless), `start` (lance puis attend que le serveur réponde, installation
+  comprise, 90 s par défaut ; fin du journal en cas d'échec ; un aperçu déjà en lancement ou prêt n'est pas relancé,
+  seulement attendu, sauf `restart: true`), `stop`, `log` (dernières lignes), `screenshot` (capture PNG
   `desktop` 1280×800 ou `mobile` 390×844 d'un chemin de l'application, faite dans le conteneur par le
   `chrome-headless-shell` de l'image, sans le navigateur de la session ; image renvoyée au modèle et fichier gardé
   dans `.skipper-previews/<work session>/captures/`, dix au plus). Le prompt système (`previewMcpPrompt`) décrit la

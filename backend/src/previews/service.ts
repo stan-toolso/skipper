@@ -320,14 +320,14 @@ export const previewService = {
   },
 
   /**
-   * Attend que l'aperçu ait fini de démarrer (prêt, échoué, arrêté) ou que le délai soit écoulé ; renvoie le dernier état lu.
+   * Attend que l'aperçu ait fini de s'installer et de démarrer (prêt, échoué, arrêté) ou que le délai soit écoulé ; renvoie le dernier état lu.
    * Sert aux agents, qui lancent puis vérifient sans sonder eux-mêmes.
    */
   async waitSettled(worksessionId: string, timeoutMs: number, intervalMs = 1500): Promise<PreviewInfo> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const info = await this.get(worksessionId);
-      if (info.status !== 'STARTING' || Date.now() >= deadline) return info;
+      if ((info.status !== 'INSTALLING' && info.status !== 'STARTING') || Date.now() >= deadline) return info;
       await new Promise((r) => setTimeout(r, Math.min(intervalMs, Math.max(0, deadline - Date.now()))));
     }
   },

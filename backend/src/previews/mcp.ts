@@ -2,12 +2,13 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@
 import { z } from 'zod';
 import { PREVIEW_CONFIG_FILE } from './config.js';
 import { CAPTURE_SIZES, previewService, type CaptureSize, type PreviewInfo } from './service.js';
+import type { PreviewStatus } from './state.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
 
-const STATUS_LABELS: Record<string, string> = {
-  IDLE: 'jamais lancé',
+const STATUS_LABELS: Record<PreviewStatus, string> = {
+  INSTALLING: 'installation des dépendances',
   STARTING: 'en cours de démarrage',
   RUNNING: 'prêt (le serveur répond)',
   FAILED: 'échec',
@@ -18,7 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
 export function previewMcpPrompt(): string {
   return [
     "Boucle « je modifie, tu vois » : après une modification visible de l'application, lance l'aperçu de ta branche avec `preview.start` (il attend que le serveur réponde et renvoie la fin du journal en cas d'échec), corrige s'il ne démarre pas (`preview.log`), puis vérifie la page avec `preview.screenshot` (capture PNG faite dans l'environnement du projet, format `desktop` ou `mobile`) ou avec le navigateur headless sur l'adresse interne donnée par `preview.status`.",
-    "Donne ensuite dans ta réponse le lien public de l'aperçu (il s'ouvre pour tout membre du projet connecté à Skipper, ordinateur ou téléphone) ; le serveur de développement recharge tout seul les modifications suivantes, inutile de le relancer sauf changement de dépendances ou de configuration.",
+    "Donne ensuite dans ta réponse le lien public de l'aperçu (il s'ouvre pour tout membre du projet connecté à Skipper, ordinateur ou téléphone) ; le serveur de développement recharge tout seul les modifications suivantes, inutile de le relancer sauf changement de dépendances ou de configuration (`preview.start` avec `restart: true` ; sans lui, rappeler `start` attend le lancement en cours sans le tuer).",
   ].join(' ');
 }
 
@@ -58,14 +59,21 @@ export function createPreviewMcpServer(ctx: PreviewMcpContext): McpSdkServerConf
       tool('status', "État de l'aperçu de ta branche : prêt ou non, commande, lien public, adresse interne, erreur.", {}, async () => run(() => status())),
       tool(
         'start',
-        "Lance (ou relance) l'aperçu de ta branche : installation des dépendances si besoin, puis serveur de développement. Attend qu'il réponde (wait_seconds) et renvoie l'état, avec la fin du journal en cas d'échec.",
-        { wait_seconds: z.number().int().min(0).max(300).optional().describe('Attente maximale du démarrage, en secondes (défaut 90 ; 0 : ne pas attendre)') },
-        async ({ wait_seconds }) =>
+        "Lance l'aperçu de ta branche : installation des dépendances si besoin, puis serveur de développement. Attend qu'il réponde (wait_seconds) et renvoie l'état, avec la fin du journal en cas d'échec. Un aperçu déjà en cours de lancement ou prêt n'est pas relancé (on attend ou on renvoie son état) : restart: true pour le relancer (dépendances ou configuration changées).",
+        {
+          wait_seconds: z.number().int().min(0).max(300).optional().describe('Attente maximale du démarrage, en secondes (défaut 90 ; 0 : ne pas attendre)'),
+          restart: z.boolean().optional().describe("Relancer même si l'aperçu est déjà en cours de lancement ou prêt (arrête le processus en cours)"),
+        },
+        async ({ wait_seconds, restart }) =>
           run(async () => {
-            await previewService.start(ctx.worksessionId, ctx.ownerId);
+            const current = restart ? null : await previewService.get(ctx.worksessionId);
+            // Rappeler start pour suivre un lancement ne doit pas le tuer : startNow arrête le processus en cours.
+            const running = current !== null && (current.status === 'INSTALLING' || current.status === 'STARTING' || current.status === 'RUNNING');
+            if (!running) await previewService.start(ctx.worksessionId, ctx.ownerId);
             const info = await previewService.waitSettled(ctx.worksessionId, (wait_seconds ?? 90) * 1000);
             const out = [await status(info)];
-            if (info.status === 'STARTING') out.push('Toujours en démarrage : rappelle `preview.status` dans un moment (ou lis `preview.log`).');
+            if (running) out.push(current.status === 'RUNNING' ? 'Déjà lancé, pas relancé (restart: true pour relancer).' : 'Lancement déjà en cours : attendu sans le relancer (restart: true pour le relancer).');
+            if (info.status === 'INSTALLING' || info.status === 'STARTING') out.push('Toujours en démarrage : rappelle `preview.status` dans un moment (ou lis `preview.log`).');
             if (info.status === 'FAILED' || info.status === 'STOPPED') out.push('', 'Fin du journal :', await previewService.logTail(ctx.worksessionId, 40));
             return out.join('\n');
           }),
