@@ -1,0 +1,3 @@
+{
+  "command": "MOCK_PORT=$((PORT + 1000)); PORT=$MOCK_PORT MOCK_STABLE=1 node frontend/scripts/mobile-audit/mock-server.mjs & SKIPPER_PREVIEW_API=http://127.0.0.1:$MOCK_PORT VITE_GRAPHQL_URL=/graphql npm run dev -w frontend -- --host 0.0.0.0 --port $PORT --strictPort"
+}
