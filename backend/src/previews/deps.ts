@@ -226,7 +226,9 @@ export async function pruneSnapshots(store: string, keep = SNAPSHOTS_KEPT): Prom
 
 /**
  * À la création d'une work session : lui donne tout de suite les `node_modules` de l'instantané de son empreinte s'il
- * existe (les agents peuvent typechecker sans installer). Ne fait rien sinon ; les erreurs sont journalisées, jamais levées.
+ * existe (`snapshot` : les agents peuvent typechecker sans installer), sinon ceux de l'instantané le plus récent
+ * (`nearest` : presque à jour, une installation ne fera que la différence ; pas de marqueur, elle reste à faire).
+ * `none` : aucun instantané. Les erreurs sont journalisées, jamais levées.
  */
 export async function seedWorksessionDeps(worksessionsRoot: string, dir: string): Promise<DepsMode> {
   try {
@@ -234,11 +236,13 @@ export async function seedWorksessionDeps(worksessionsRoot: string, dir: string)
     if (!hash) return 'none';
     const store = depsStoreRoot(worksessionsRoot);
     const started = Date.now();
-    const { mode } = await linkSnapshot(store, dir, hash);
+    const { mode, from } = await linkSnapshot(store, dir, hash, { allowNearest: true });
     if (mode === 'snapshot') {
       // Les dépendances liées correspondent à l'empreinte : le marqueur évite une réinstallation au premier aperçu.
       await writeMarker(dir, hash);
       log.info(`[deps] ${path.basename(dir)} : node_modules liés depuis l'instantané ${hash} en ${Date.now() - started} ms`);
+    } else if (mode === 'nearest') {
+      log.info(`[deps] ${path.basename(dir)} : node_modules liés depuis l'instantané le plus proche ${from} (empreinte ${hash}) en ${Date.now() - started} ms`);
     }
     return mode;
   } catch (err) {
