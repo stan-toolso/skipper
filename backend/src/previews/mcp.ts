@@ -2,12 +2,13 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@
 import { z } from 'zod';
 import { PREVIEW_CONFIG_FILE } from './config.js';
 import { CAPTURE_SIZES, previewService, type CaptureSize, type PreviewInfo } from './service.js';
+import type { PreviewStatus } from './state.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
 
-const STATUS_LABELS: Record<string, string> = {
-  IDLE: 'jamais lancé',
+const STATUS_LABELS: Record<PreviewStatus, string> = {
+  INSTALLING: 'installation des dépendances',
   STARTING: 'en cours de démarrage',
   RUNNING: 'prêt (le serveur répond)',
   FAILED: 'échec',
@@ -65,7 +66,7 @@ export function createPreviewMcpServer(ctx: PreviewMcpContext): McpSdkServerConf
             await previewService.start(ctx.worksessionId, ctx.ownerId);
             const info = await previewService.waitSettled(ctx.worksessionId, (wait_seconds ?? 90) * 1000);
             const out = [await status(info)];
-            if (info.status === 'STARTING') out.push('Toujours en démarrage : rappelle `preview.status` dans un moment (ou lis `preview.log`).');
+            if (info.status === 'INSTALLING' || info.status === 'STARTING') out.push('Toujours en démarrage : rappelle `preview.status` dans un moment (ou lis `preview.log`).');
             if (info.status === 'FAILED' || info.status === 'STOPPED') out.push('', 'Fin du journal :', await previewService.logTail(ctx.worksessionId, 40));
             return out.join('\n');
           }),

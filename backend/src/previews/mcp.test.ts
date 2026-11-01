@@ -69,6 +69,14 @@ describe('serveur MCP preview', () => {
     expect(textOf(r)).toContain('http://localhost:41000');
   });
 
+  it('start encore en installation au bout du délai : état lisible et invitation à rappeler status', async () => {
+    service.waitSettled.mockResolvedValueOnce(info({ status: 'INSTALLING' }));
+    const client = await connect();
+    const r = await client.callTool({ name: 'start', arguments: { wait_seconds: 5 } });
+    expect(textOf(r)).toContain('installation des dépendances');
+    expect(textOf(r)).toContain('preview.status');
+  });
+
   it('start joint la fin du journal en cas d’échec', async () => {
     service.waitSettled.mockResolvedValueOnce(info({ status: 'FAILED', error: "L'installation a échoué (code 1)" }));
     const client = await connect();
