@@ -2989,3 +2989,24 @@ extend type Mutation {
   addCtoTimeEntry(input: CtoTimeEntryInput!): CtoTimeEntry!
   deleteCtoTimeEntry(id: ID!): Boolean!
 }
+
+"Unité des coûts : USD (instance sans facturation) ou crédits (cellule dont la facturation est configurée)."
+enum CostUnit {
+  USD
+  CREDIT
+}
+
+"""
+Unité dans laquelle l'API rend **tous** les champs de coût (`costUsd`, `usd`, `monthUsd`, budgets, `coldTurnUsd`,
+coûts des événements du transcript) et attend les budgets saisis. Quand la facturation est configurée, ces champs
+portent des crédits malgré leur nom : le coût des modèles en USD ne sort que par `BillingStatement.operator`.
+"""
+type CostDisplay {
+  unit: CostUnit!
+  "Prix d'un crédit en euros HT (null en USD)."
+  creditPriceEur: Float
+}
+
+extend type Query {
+  costDisplay: CostDisplay!
+}

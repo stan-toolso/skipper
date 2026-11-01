@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Alert, Button, Form, Modal } from 'react-bootstrap';
 import { APPLY_SESSION_CLEANUP, UPDATE_SESSION, type Session } from '../graphql/operations';
 
-import { formatTokens } from '../lib/humanize';
+import { formatCost, formatTokens } from '../lib/humanize';
 
 type ContextAction = '' | 'compact' | 'reset' | 'fresh';
 /** Les actions qui s'appliquent au-delà d'un seuil (« fresh » n'en a pas). */
@@ -97,7 +97,7 @@ export default function SessionSettingsModal({ session, onClose }: { session: Se
             {contextAction === 'reset' && "Repartir de zéro oublie la conversation du modèle ; le transcript affiché est conservé, l'agent ne se souvient plus des tours précédents."}
             {' '}
             Contexte actuel : {session.contextTokens === null ? 'inconnu (aucun tour depuis cette version)' : `${formatTokens(session.contextTokens)} tokens`}
-            {session.context.coldTurnUsd !== null && session.context.coldTurnUsd >= 0.01 ? ` (≈ ${session.context.coldTurnUsd.toFixed(2).replace('.', ',')} $ par tour à froid)` : ''}.
+            {session.context.coldTurnUsd !== null && session.context.coldTurnUsd >= 0.01 ? ` (≈ ${formatCost(session.context.coldTurnUsd)} par tour à froid)` : ''}.
             {' '}
             {session.context.warnTokens === null
               ? "Le signalement du contexte est désactivé dans vos paramètres Claude : aucun bandeau ne proposera de nettoyage."

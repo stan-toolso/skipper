@@ -1,3 +1,4 @@
+import { describeCost } from '../billing/display.js';
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
@@ -354,7 +355,7 @@ export class UserClaudeSettings {
     const cap = this.settings.monthlyBudgetUsd;
     if (!cap) return;
     const spent = await usageService.monthTotal(this.userId);
-    if (spent >= cap) throw new AppError(`Plafond mensuel atteint (${spent.toFixed(2)} $ sur ${cap.toFixed(2)} $) : augmentez-le dans Paramètres → Claude pour continuer`, 'BUDGET_EXCEEDED');
+    if (spent >= cap) throw new AppError(`Plafond mensuel atteint (${await describeCost(spent)} sur ${await describeCost(cap)}) : augmentez-le dans Paramètres → Claude pour continuer`, 'BUDGET_EXCEEDED');
   }
 }
 

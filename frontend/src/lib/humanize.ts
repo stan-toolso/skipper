@@ -235,8 +235,42 @@ export function formatDuration(ms: number): string {
   return `${m} min ${s} s`;
 }
 
-export function formatCost(usd: number): string {
-  return `${usd.toFixed(usd < 0.1 ? 3 : 2).replace('.', ',')} $`;
+/**
+ * Unité des coûts que renvoie l'API (`Query.costDisplay`) : USD sur une instance sans facturation, crédits
+ * dans une cellule dont la facturation est configurée (le serveur a déjà converti les valeurs). Fixée par
+ * `AuthProvider` et mémorisée pour la visite suivante.
+ */
+export type CostUnit = 'USD' | 'CREDIT';
+const COST_UNIT_KEY = 'skipper.costUnit';
+let costUnit: CostUnit = (() => {
+  try {
+    return localStorage.getItem(COST_UNIT_KEY) === 'CREDIT' ? 'CREDIT' : 'USD';
+  } catch {
+    return 'USD';
+  }
+})();
+
+export function setCostUnit(unit: CostUnit): void {
+  costUnit = unit;
+  try {
+    localStorage.setItem(COST_UNIT_KEY, unit);
+  } catch {
+    // stockage indisponible : l'unité vaut pour cette visite
+  }
+}
+
+export const getCostUnit = (): CostUnit => costUnit;
+
+/** Libellé de l'unité pour un champ de saisie (« USD » ou « crédits »). */
+export const costUnitLabel = (): string => (costUnit === 'CREDIT' ? 'crédits' : 'USD');
+
+/** Coût dans l'unité de l'API : « 1,23 $ » ou « 12 crédits ». */
+export function formatCost(value: number): string {
+  if (costUnit === 'CREDIT') {
+    const digits = value < 1 ? 2 : value < 100 ? 1 : 0;
+    return `${value.toLocaleString('fr-FR', { maximumFractionDigits: digits })} crédit${value >= 2 ? 's' : ''}`;
+  }
+  return `${value.toFixed(value < 0.1 ? 3 : 2).replace('.', ',')} $`;
 }
 
 /** Nombre de tokens en milliers (« 208 k »), ou en millions au-delà (« 1,2 M »). */
