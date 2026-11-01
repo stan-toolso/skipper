@@ -46,8 +46,9 @@ import { instanceRegistry } from './instances/registry.js';
 import { instanceBus } from './instances/bus.js';
 import { leadership, type LeaderJob } from './instances/leadership.js';
 import { handleInternalRoute } from './instances/internalRoute.js';
-import { handlePreviewRoute, previewUpgrade } from './previews/proxy.js';
+import { handlePreviewOpenRoute, handlePreviewRoute, previewUpgrade } from './previews/proxy.js';
 import { previewRepository } from './previews/repository.js';
+import { previewService } from './previews/service.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const typeDefs = readFileSync(path.join(here, 'graphql/schema.graphql'), 'utf8');
@@ -121,17 +122,23 @@ async function main() {
   if (closedTerminals) log.info(`[terminals] ${closedTerminals} terminal(aux) fermé(s)`);
   // Conteneurs créés avec d'anciens paramètres (ou une image depuis reconstruite) : supprimés maintenant que rien n'y
   // tourne, recréés à la première session. Plus tard, `ensureReady` recrée un conteneur obsolète si le projet est inactif :
-  // aucun processus de session (la session qui démarre occupe sa place mais n'a encore rien lancé), aucun terminal ouvert.
-  // Les sessions et terminaux d'une autre instance (déploiement bleu/vert) occupent aussi le conteneur.
+  // aucun processus de session (la session qui démarre occupe sa place mais n'a encore rien lancé), aucun terminal ouvert,
+  // aucun aperçu en marche (son serveur de développement survit aux redémarrages du backend : il est vérifié aussi au
+  // démarrage). Les sessions et terminaux d'une autre instance (déploiement bleu/vert) occupent aussi le conteneur.
   runner.setIdleCheck(
     async (project) =>
       sessionService.runningCountByProject(project.id) === 0 &&
       sessionService.slotsOfProject(project.id) <= 1 &&
       terminalService.liveCountByProject(project.id) === 0 &&
-      (await instanceRegistry.remoteActivity(project.id)) === 0,
+      (await instanceRegistry.remoteActivity(project.id)) === 0 &&
+      (await previewService.liveWorksessions(project)).length === 0,
   );
   const unused = [];
-  for (const project of await projectService.list()) if ((await instanceRegistry.remoteActivity(project.id)) === 0) unused.push(project);
+  for (const project of await projectService.list()) {
+    if ((await instanceRegistry.remoteActivity(project.id)) !== 0) continue;
+    if ((await previewService.liveWorksessions(project).catch(() => [])).length) continue;
+    unused.push(project);
+  }
   const recreated = await runner.recreateOutdated(unused);
   if (recreated.length) log.info(`[runner] conteneur(s) obsolète(s) supprimé(s), recréé(s) à la demande : ${recreated.join(", ")}`);
   const purged = await authSession.purgeExpired();
@@ -191,6 +198,7 @@ async function main() {
       .then((handled) => handled || handleTaskAttachmentRoute(req, res))
       .then((handled) => handled || handleSharedPageRoute(req, res))
       .then((handled) => handled || handleFileViewRoute(req, res))
+      .then((handled) => handled || handlePreviewOpenRoute(req, res))
       .then((handled) => handled || handleTasksApiRoute(req, res))
       .then((handled) => handled || handleGitHttpRoute(req, res))
       .then((handled) => handled || handleInternalRoute(req, res))

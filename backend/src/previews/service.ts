@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { access, appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { config } from '../config.js';
@@ -12,7 +12,7 @@ import { worksessionHooks, worksessionPath, worksessionService, worksessionsRoot
 import type { Worksession } from '../worksessions/types.js';
 import { PREVIEW_CONFIG_FILE, PreviewConfigError, resolvePreviewConfig, type PreviewConfig } from './config.js';
 import { defaultInstallCommand, depsHash, depsStoreRoot, linkSnapshot, listSnapshots, readMarker, saveSnapshot, type DepsMode } from './deps.js';
-import { freePort, newHostLabel, parsePreviewTemplate, previewOrigin, type PreviewUrlTemplate } from './hosts.js';
+import { freePort, newHostLabel, parsePreviewTemplate, previewOrigin, safeNext, type PreviewUrlTemplate } from './hosts.js';
 import { previewRepository, type PreviewRow } from './repository.js';
 import { deriveState, parseEvents, type PreviewStatus } from './state.js';
 
@@ -111,6 +111,25 @@ echo "› ($SKIPPER_APP_DIR) $SKIPPER_COMMAND"
 sh -c "$SKIPPER_COMMAND"
 ev exited $?
 `;
+
+/**
+ * Capture d'écran d'une page de l'aperçu, depuis le conteneur (le serveur de développement y écoute sur localhost) :
+ * Chromium headless de l'image (celui du navigateur des sessions), profil jetable, 30 s au plus.
+ * Arguments : fichier PNG, largeur, hauteur, URL.
+ */
+const SCREENSHOT_SCRIPT = `set -e
+bin=$(ls -d /opt/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell 2>/dev/null | sort -V | tail -n 1)
+if [ -z "$bin" ]; then echo "Chromium introuvable dans l'image (/opt/ms-playwright) : reconstruire skipper-runner" >&2; exit 1; fi
+profile=$(mktemp -d /tmp/skipper-capture-XXXXXX)
+trap 'rm -rf "$profile"' EXIT
+timeout 30 "$bin" --headless --no-sandbox --disable-dev-shm-usage --no-first-run --disable-background-networking \\
+  --disable-component-update --disable-sync --mute-audio --hide-scrollbars --user-data-dir="$profile" \\
+  --window-size="$2,$3" --virtual-time-budget=8000 --run-all-compositor-stages-before-draw --screenshot="$1" "$4" >/dev/null 2>&1
+test -s "$1"`;
+
+/** Formats de capture proposés aux agents. */
+export const CAPTURE_SIZES = { desktop: [1280, 800], mobile: [390, 844] } as const;
+export type CaptureSize = keyof typeof CAPTURE_SIZES;
 
 /** Lancements en cours, par work session (cette instance) : deux clics ne lancent pas deux serveurs. */
 const starting = new Map<string, Promise<PreviewInfo>>();
@@ -298,6 +317,82 @@ export const previewService = {
     await previewRepository.markStarted(ws.id, userId);
     log.info(`[previews] ${project.slug}/${ws.name} lancé (port ${row.port}, dépendances : ${mode}${install ? `, installation : ${install}` : ''})`);
     return this.get(ws.id);
+  },
+
+  /**
+   * Attend que l'aperçu ait fini de démarrer (prêt, échoué, arrêté) ou que le délai soit écoulé ; renvoie le dernier état lu.
+   * Sert aux agents, qui lancent puis vérifient sans sonder eux-mêmes.
+   */
+  async waitSettled(worksessionId: string, timeoutMs: number, intervalMs = 1500): Promise<PreviewInfo> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const info = await this.get(worksessionId);
+      if (info.status !== 'STARTING' || Date.now() >= deadline) return info;
+      await new Promise((r) => setTimeout(r, Math.min(intervalMs, Math.max(0, deadline - Date.now()))));
+    }
+  },
+
+  /** Fin du journal : les `lines` dernières lignes. */
+  async logTail(worksessionId: string, lines: number): Promise<string> {
+    const text = (await this.log(worksessionId)).replace(/\n+$/, '');
+    const all = text.split('\n');
+    return all.length > lines ? `… (${all.length - lines} ligne(s) plus haut)\n${all.slice(-lines).join('\n')}` : text;
+  },
+
+  /** Adresse du serveur de développement vue de l'intérieur du conteneur (navigateur headless de la session, curl). */
+  async internalUrl(worksessionId: string): Promise<string | null> {
+    const row = await previewRepository.find(worksessionId);
+    return row ? `http://localhost:${row.port}` : null;
+  },
+
+  /**
+   * Capture d'écran PNG d'une page de l'aperçu en marche, faite dans le conteneur (adresse interne, sans accès à
+   * gérer). Le fichier est rangé dans le dossier d'état de l'aperçu (hors du dépôt) ; renvoie son chemin et son contenu.
+   */
+  async screenshot(worksessionId: string, pagePath = '/', size: CaptureSize = 'desktop'): Promise<{ file: string; png: Buffer; url: string }> {
+    const info = await this.get(worksessionId);
+    if (info.status !== 'RUNNING') throw new AppError(`L'aperçu n'est pas prêt (état : ${info.status}) : lance-le et attends qu'il réponde avant de le capturer`);
+    const { project, state } = await this.context(worksessionId);
+    const base = await this.internalUrl(worksessionId);
+    if (!base) throw new AppError("L'aperçu n'a jamais été lancé");
+    const url = `${base}${safeNext(pagePath)}`;
+    const dir = path.join(state, 'captures');
+    await mkdir(dir, { recursive: true });
+    // Les plus anciennes captures sont supprimées : dix gardées.
+    const old = (await readdir(dir).catch(() => [] as string[])).filter((f) => f.endsWith('.png')).sort();
+    await Promise.all(old.slice(0, Math.max(0, old.length - 9)).map((f) => rm(path.join(dir, f), { force: true })));
+    const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${size}.png`);
+    const [w, h] = CAPTURE_SIZES[size];
+    const { code } = await runner.exec(project, ['sh', '-c', SCREENSHOT_SCRIPT, 'sh', file, String(w), String(h), url]);
+    const png = code === 0 ? await readFile(file).catch(() => null) : null;
+    if (!png) throw new AppError(`La capture de ${url} a échoué (Chromium headless du conteneur, code ${code})`);
+    return { file, png, url };
+  },
+
+  /**
+   * Work sessions dont le serveur de développement tourne dans le conteneur du projet : une activité, comme une session
+   * ou un terminal (le conteneur obsolète n'est pas recréé sous lui). Lit seulement le pid (`docker exec kill -0`, sans
+   * démarrer le conteneur) : appelable depuis la vérification d'inactivité du runner.
+   */
+  async liveWorksessions(project: Project): Promise<string[]> {
+    const rows = await previewRepository.startedOfProject(project.id);
+    const live = await Promise.all(rows.map(async (r) => ((await this.alive(project, previewStateDir(project, r.worksessionId))) ? r.worksessionId : null)));
+    return live.filter((id): id is string => id !== null);
+  },
+
+  /** Relance les aperçus qui tournaient avant la recréation du conteneur (au mieux : une erreur n'empêche pas les autres). */
+  async restartAll(worksessionIds: string[]): Promise<string[]> {
+    const restarted: string[] = [];
+    for (const id of worksessionIds) {
+      try {
+        const row = await previewRepository.find(id);
+        await this.start(id, row?.startedBy ?? null);
+        restarted.push(id);
+      } catch (err) {
+        log.warn(`[previews] relance de l'aperçu ${id} après recréation du conteneur : ${(err as Error).message}`);
+      }
+    }
+    return restarted;
   },
 
   /** Tue le groupe de processus du lancement (TERM, puis KILL au bout de 3 s). */

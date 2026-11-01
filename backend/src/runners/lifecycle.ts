@@ -1,4 +1,5 @@
 import type { Project } from '../projects/types.js';
+import { previewService } from '../previews/service.js';
 import { sessionService } from '../sessions/service.js';
 import { runner } from './index.js';
 import { log } from '../log.js';
@@ -8,11 +9,13 @@ import { log } from '../log.js';
  * sessions tournent dans le conteneur : le supprimer les tue (code 137), ce qui passait pour un manque
  * de mémoire. On interrompt donc d'abord proprement les sessions du projet (statut « interrompue »,
  * sans erreur), puis on agit sur le conteneur, et, pour une recréation, on relance toutes les sessions
- * interrompues dès que le nouveau conteneur est prêt.
+ * interrompues dès que le nouveau conteneur est prêt. Les aperçus en marche (serveurs de développement des work sessions)
+ * meurent avec le conteneur : ils sont relancés aussi.
  */
 export const runnerLifecycle = {
   /** Supprime le conteneur, le recrée avec l'image et les limites actuelles, puis reprend les sessions interrompues. */
-  async reset(project: Project): Promise<{ interrupted: string[]; resumed: string[] }> {
+  async reset(project: Project): Promise<{ interrupted: string[]; resumed: string[]; previews: string[] }> {
+    const previews = await previewService.liveWorksessions(project).catch(() => [] as string[]);
     const sessions = await sessionService.interruptForRunner(project.id, 'runner_reset');
     await runner.remove(project);
     try {
@@ -25,7 +28,9 @@ export const runnerLifecycle = {
     }
     const resumed = await sessionService.resumeAfterRunner(sessions);
     if (sessions.length) log.info(`[runner] ${runner.containerName(project)} recréé : ${resumed.length}/${sessions.length} session(s) reprise(s)`);
-    return { interrupted: sessions.map((s) => s.id), resumed };
+    const restarted = await previewService.restartAll(previews);
+    if (previews.length) log.info(`[runner] ${runner.containerName(project)} recréé : ${restarted.length}/${previews.length} aperçu(s) relancé(s)`);
+    return { interrupted: sessions.map((s) => s.id), resumed, previews: restarted };
   },
 
   /** Arrête le conteneur après avoir interrompu les sessions du projet ; elles se reprennent à la main (bouton ou message). */

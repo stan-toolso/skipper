@@ -3,7 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import net from 'node:net';
 import type { Duplex } from 'node:stream';
 import { createAuthContext, requireProject } from '../auth/access.js';
-import { readCookie } from '../auth/session.js';
+import { authSession, readCookie, SESSION_COOKIE } from '../auth/session.js';
 import { config } from '../config.js';
 import { log } from '../log.js';
 import { projectService } from '../projects/service.js';
@@ -11,7 +11,7 @@ import { runner } from '../runners/index.js';
 import { userRepository } from '../users/repository.js';
 import { labelFromHost, parsePreviewTemplate, safeNext } from './hosts.js';
 import { previewRepository, type PreviewRow } from './repository.js';
-import { ACCESS_COOKIE, ACCESS_PATH, ACCESS_TTL_MS } from './service.js';
+import { ACCESS_COOKIE, ACCESS_PATH, ACCESS_TTL_MS, previewService } from './service.js';
 
 /**
  * Proxy des aperçus : toute requête dont l'hôte est `<nom>.<domaine des aperçus>` (PREVIEW_URL) est relayée au serveur
@@ -120,6 +120,13 @@ export async function handlePreviewRoute(req: IncomingMessage, res: ServerRespon
     return true;
   }
   if (!(await checkAccess(readCookie(req.headers.cookie, ACCESS_COOKIE), preview))) {
+    // Lien ouvert directement (donné par un agent, collé dans un message) : on passe par Skipper, qui reconnaît la personne
+    // à son cookie de connexion et revient avec un lien d'accès. Seulement pour une navigation de premier niveau (le cookie
+    // posé ensuite est alors celui du site visité) : dans un cadre, un cookie tiers refusé ferait boucler la redirection.
+    if (req.method === 'GET' && req.headers['sec-fetch-dest'] === 'document') {
+      res.writeHead(302, { Location: openUrl(preview.worksessionId, url.pathname + url.search), 'Cache-Control': 'no-store' }).end();
+      return true;
+    }
     page(res, 401, 'Accès réservé', "Cet aperçu est réservé aux membres du projet. Ouvrez-le depuis la session dans Skipper (onglet « Aperçu »).");
     return true;
   }
@@ -147,6 +154,48 @@ export async function handlePreviewRoute(req: IncomingMessage, res: ServerRespon
       resolve();
     });
   });
+  return true;
+}
+
+/** Route de Skipper qui ouvre un aperçu à une personne connectée (voir `handlePreviewOpenRoute`). */
+const OPEN_ROUTE = /^\/api\/previews\/([0-9a-f-]{36})\/open$/;
+export const openUrl = (worksessionId: string, next = '/') => {
+  const n = safeNext(next);
+  return `${config.apiUrl}/api/previews/${worksessionId}/open${n === '/' ? '' : `?next=${encodeURIComponent(n)}`}`;
+};
+
+/**
+ * GET /api/previews/<work session>/open[?next=/chemin] (domaine de Skipper) : la personne connectée et membre du projet
+ * (lecteur suffit) est renvoyée vers l'aperçu avec un lien d'accès à usage unique ; sans connexion, vers la connexion
+ * Google, qui revient ici. C'est par là que passe le lien public d'un aperçu ouvert hors de l'onglet « Aperçu ».
+ */
+export async function handlePreviewOpenRoute(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const url = new URL(req.url ?? '/', config.apiUrl);
+  const match = url.pathname.match(OPEN_ROUTE);
+  if (!match) return false;
+  if (req.method !== 'GET') {
+    res.writeHead(405).end();
+    return true;
+  }
+  const preview = await previewRepository.find(match[1]);
+  if (!preview || !previewService.enabled()) {
+    page(res, 404, 'Aperçu introuvable', "Cet aperçu n'existe pas, a été supprimé avec sa session, ou les aperçus ne sont pas activés sur ce serveur.");
+    return true;
+  }
+  const user = await authSession.resolve(readCookie(req.headers.cookie, SESSION_COOKIE));
+  if (!user) {
+    const here = `${url.pathname}${url.search}`;
+    if (new URL(config.apiUrl).origin === new URL(config.appUrl).origin) {
+      res.writeHead(302, { Location: `${config.apiUrl}/auth/google?next=${encodeURIComponent(here)}`, 'Cache-Control': 'no-store' }).end();
+    } else page(res, 401, 'Connexion requise', "Connectez-vous à Skipper, puis rouvrez ce lien (ou ouvrez l'aperçu depuis l'onglet « Aperçu » de la session).");
+    return true;
+  }
+  if (!(await allowed(user.id, preview.projectId))) {
+    page(res, 403, 'Accès réservé', 'Cet aperçu est réservé aux membres du projet.');
+    return true;
+  }
+  const location = await previewService.accessUrl(preview.worksessionId, user.id, safeNext(url.searchParams.get('next')));
+  res.writeHead(302, { Location: location, 'Cache-Control': 'no-store' }).end();
   return true;
 }
 
