@@ -1,0 +1,26 @@
+/* Page Consommation : facture estimée de la cellule (s'appuie sur les tuiles et listes du tableau de bord). */
+
+.billing-month { min-width: 140px; text-align: center; font-weight: 600; }
+.billing-total { border-color: var(--cc-accent); }
+
+.billing-table { font-size: 14px; }
+.billing-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.billing-table tfoot td { border-top: 2px solid var(--cc-border); }
+.billing-table caption { caption-side: bottom; padding-top: 4px; }
+
+.billing-chart-box { padding: 4px 12px 8px; }
+
+.billing-plan li { font-size: 13px; }
+.billing-plan .side { font-variant-numeric: tabular-nums; color: var(--cc-fg); }
+
+.billing-cto-form { display: grid; grid-template-columns: 140px 80px minmax(0, 1fr) auto; gap: 6px; }
+.billing-cto-form .wide { grid-column: 1 / -2; }
+@media (max-width: 575px) {
+  .billing-cto-form { grid-template-columns: 1fr 1fr; }
+  .billing-cto-form .wide { grid-column: 1 / -1; }
+}
+
+/* Le tableau de bord masque le sous-texte des tuiles sur mobile ; ici il porte le « à ce jour » de la facture. */
+@media (max-width: 767.98px) {
+  .billing-total .dash-tile-sub { display: block; }
+}

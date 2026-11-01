@@ -27,6 +27,7 @@ const BrowserPage = lazy(() => import('./pages/BrowserPage'));
 const TerminalPage = lazy(() => import('./pages/TerminalPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
+const BillingPage = lazy(() => import('./pages/BillingPage'));
 const FilesPage = lazy(() => import('./pages/FilesPage'));
 const VaultPage = lazy(() => import('./pages/VaultPage'));
 const ProjectVaultPage = lazy(() => import('./pages/ProjectVaultPage'));
@@ -75,6 +76,7 @@ function PageRoutes({ location, isAdmin }: { location: Location; isAdmin: boolea
       <Route path="/terminals/:id" element={<TerminalPage />} />
       <Route path="/settings" element={<SettingsPage />} />
       {isAdmin && <Route path="/users" element={<UsersPage />} />}
+      {isAdmin && <Route path="/billing" element={<BillingPage />} />}
       <Route path="/projects/:id/files" element={<FilesPage />} />
       <Route path="/projects/:id/files/*" element={<FilesPage />} />
       <Route path="/sessions/:id/files" element={<FilesPage />} />

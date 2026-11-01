@@ -164,6 +164,9 @@ backend/
     projects/
       service.ts               # création / édition, slug, préparation du workspace
       workspace.ts             # dossier du projet, clone git, infos de branche
+    billing/
+      statement.ts             # relevé mensuel de la cellule (abonnement, crédits d'agents, temps CTO), calcul pur
+      service.ts               # réglages de facturation, saisies de temps CTO, lecture du ledger
     requests/
       service.ts               # demandes d'intervention humaine : création, attente de la réponse
     personal/
@@ -1292,6 +1295,28 @@ administrateur seulement) : il administre tous les projets, membre ou non (rôle
 projets listés avec un badge « non membre », recherche étendue). Les listes de membres et les sessions
 « de tout le monde » restent fondées sur l'appartenance. La page Utilisateurs (`/users`) invite, change
 les rôles et supprime des comptes.
+
+## Consommation et facture de la cellule
+
+Page **Consommation** (`/billing`, menu du compte, administrateurs) : ce que la cellule coûtera au client à la fin
+du mois, en **euros hors taxes**, mois par mois (`backend/src/billing/`, calcul pur et testé dans `statement.ts`).
+Trois postes :
+
+- **Abonnement** : forfait de l'offre (taille de la cellule) avec N projets compris, puis un prix mensuel par projet
+  supplémentaire (projets hors espaces personnels existant à la fin du mois).
+- **Travail des agents**, en **crédits** et en **équivalent jours-homme** (indicatif) : le coût des modèles de
+  `usage_ledger` (USD au tarif API) est converti en crédits, vendus à un prix unitaire. Le client ne voit ni ce
+  coût ni le taux de conversion : la requête `billingStatement` ne les renvoie (champ `operator` : coût réel, marge
+  projetée) qu'à un super administrateur. Projection de fin de mois : le réalisé, plus les jours restants au rythme
+  des 7 derniers jours.
+- **Accompagnement CTO Toolso** : temps saisi par un super administrateur (date, heures, projet, description ;
+  table `cto_time_entries`), facturé au tarif journalier.
+
+Les tarifs (offre, prix du crédit, crédits par USD et par jour-homme, tarif et durée d'une journée de CTO, taux
+USD → EUR) sont des réglages de la cellule (`app_settings`, clé `billing`), modifiables par un super administrateur
+sur la même page. Convention pour une cellule client : Toolso y est super administrateur, le client administrateur.
+Limite connue : les coûts en USD restent affichés ailleurs dans l'interface (sessions, tableau de bord, Paramètres →
+Claude) ; leur masquage pour les comptes client est suivi à part.
 
 ## Paramètres par personne (Claude, OpenCode, GitHub)
 

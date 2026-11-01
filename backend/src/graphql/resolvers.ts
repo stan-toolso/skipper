@@ -17,6 +17,8 @@ import { isOauthToken, vaultService, type VaultItemWithPermission } from '../vau
 import { awsService } from '../vault/awsService.js';
 import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, ScalewaySettings, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
 import { variableName } from '../vault/website.js';
+import { billingService } from '../billing/service.js';
+import type { BillingSettings, CtoTimeEntryInput } from '../billing/types.js';
 import { dashboardService } from '../dashboard/service.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { fileService, type WorkspaceRef } from '../files/service.js';
@@ -923,6 +925,12 @@ export const resolvers = {
     notifications: async (_: unknown, args: { unreadOnly?: boolean | null; limit?: number | null }, ctx: Ctx) =>
       notificationService.list({ unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? undefined, projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
     unreadNotificationCount: async (_: unknown, __: unknown, ctx: Ctx) => notificationService.countUnread({ projectIds: await accessibleProjectIds(ctx), admin: requireUser(ctx).isAdmin, userId: requireUser(ctx).id }),
+    billingStatement: (_: unknown, args: { month?: string | null }, ctx: Ctx) => billingService.statement(args.month, requireAdmin(ctx).isSuperAdmin),
+    billingSettings: async (_: unknown, __: unknown, ctx: Ctx) => {
+      requireSuperAdmin(ctx);
+      const stored = await billingService.stored();
+      return { ...(stored ?? (await billingService.settings())), configured: stored !== null };
+    },
     dashboard: async (_: unknown, __: unknown, ctx: Ctx) => dashboardService.build(requireUser(ctx).id, await accessibleProjectIds(ctx), new Date(), requireUser(ctx).isAdmin),
     tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; tag?: string | null; mine?: boolean | null; limit?: number | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
@@ -1086,6 +1094,15 @@ export const resolvers = {
       // Fin de la maintenance : les sessions en file d'attente peuvent démarrer.
       if (!args.enabled) void sessionService.drainQueue();
       return appSettings(ctx);
+    },
+    updateBillingSettings: async (_: unknown, { input }: { input: Partial<BillingSettings> }, ctx: Ctx) => {
+      requireSuperAdmin(ctx);
+      return { ...(await billingService.update(input)), configured: true };
+    },
+    addCtoTimeEntry: (_: unknown, { input }: { input: CtoTimeEntryInput }, ctx: Ctx) => billingService.addCtoTime(input, requireSuperAdmin(ctx).id),
+    deleteCtoTimeEntry: (_: unknown, args: { id: string }, ctx: Ctx) => {
+      requireSuperAdmin(ctx);
+      return billingService.deleteCtoTime(args.id);
     },
     updateServerSettings: async (
       _: unknown,

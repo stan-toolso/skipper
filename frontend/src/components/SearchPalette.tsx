@@ -42,6 +42,7 @@ const PAGES: { to: string; label: string; keywords: string; icon: string }[] = [
   { to: '/requests', label: 'Demandes', keywords: 'permissions questions attente', icon: 'bi-bell' },
   { to: '/settings', label: 'Paramètres', keywords: 'claude github serveur apparence thème', icon: 'bi-gear' },
   { to: '/users', label: 'Utilisateurs', keywords: 'admin administrateurs invitations', icon: 'bi-people' },
+  { to: '/billing', label: 'Consommation', keywords: 'facture facturation abonnement crédits budget cto', icon: 'bi-receipt' },
 ];
 
 const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

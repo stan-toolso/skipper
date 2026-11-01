@@ -26,6 +26,7 @@ export type TabKind =
   | 'history'
   | 'settings'
   | 'users'
+  | 'billing'
   | 'files'
   | 'file'
   | 'workspace'
@@ -100,6 +101,7 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/shared') return { title: 'Pages', kind: 'shared-pages' };
   if (/^\/shared\/[^/]+$/.test(pathname)) return { title: 'Page', kind: 'shared-page' };
   if (pathname === '/users') return { title: 'Utilisateurs', kind: 'users' };
+  if (pathname === '/billing') return { title: 'Consommation', kind: 'billing' };
   if (/^\/projects\/[^/]+$/.test(pathname)) return { title: 'Projet', kind: 'project' };
   if (pathname === '/sessions') return { title: 'Sessions', kind: 'sessions' };
   if (pathname === '/chats') return { title: 'Chats', kind: 'chats' };
