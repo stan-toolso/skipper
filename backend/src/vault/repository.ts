@@ -20,6 +20,7 @@ interface Row {
   host_key_seen_at: Date | null;
   read_only: boolean;
   require_approval: boolean;
+  env_export: boolean;
   command_allowlist: string[];
   expires_at: Date | null;
   secret_updated_at: Date | null;
@@ -47,6 +48,7 @@ const toItem = (r: Row): VaultItem => ({
   hostKeySeenAt: r.host_key_seen_at,
   readOnly: r.read_only,
   requireApproval: r.require_approval,
+  envExport: r.env_export ?? false,
   commandAllowlist: Array.isArray(r.command_allowlist) ? r.command_allowlist : [],
   expiresAt: r.expires_at,
   secretUpdatedAt: r.secret_updated_at,
@@ -121,6 +123,8 @@ export interface VaultItemRecord {
   hostKeySeenAt?: Date | null;
   readOnly: boolean;
   requireApproval: boolean;
+  /** Valeurs utilisables dans les fichiers d'environnement des work sessions (écrites en clair, lisibles par l'agent) ; défaut : non. */
+  envExport?: boolean;
   commandAllowlist: string[];
   expiresAt: Date | null;
   createdById: string | null;
@@ -157,8 +161,8 @@ export const vaultRepository = {
   async create(input: VaultItemRecord): Promise<VaultItem> {
     const { rows } = await pool.query<Row>(
       `INSERT INTO vault_items (id, owner_user_id, owner_project_id, name, kind, description, settings, secret_ciphertext, wrapped_key, public_key, host_key, host_key_seen_at,
-                                read_only, require_approval, command_allowlist, expires_at, secret_updated_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $17) RETURNING *`,
+                                read_only, require_approval, command_allowlist, expires_at, secret_updated_at, created_by, env_export)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $17, $18) RETURNING *`,
       [
         input.id,
         input.ownerUserId,
@@ -177,6 +181,7 @@ export const vaultRepository = {
         toJson(input.commandAllowlist),
         input.expiresAt,
         input.createdById,
+        input.envExport ?? false,
       ],
     );
     return toItem(rows[0]);
@@ -201,6 +206,7 @@ export const vaultRepository = {
     if (patch.hostKeySeenAt !== undefined) set('host_key_seen_at', patch.hostKeySeenAt);
     if (patch.readOnly !== undefined) set('read_only', patch.readOnly);
     if (patch.requireApproval !== undefined) set('require_approval', patch.requireApproval);
+    if (patch.envExport !== undefined) set('env_export', patch.envExport);
     if (patch.commandAllowlist !== undefined) set('command_allowlist', toJson(patch.commandAllowlist), '::jsonb');
     if (patch.expiresAt !== undefined) set('expires_at', patch.expiresAt);
     sets.push('updated_at = now()');

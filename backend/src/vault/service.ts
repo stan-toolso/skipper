@@ -18,6 +18,7 @@ import * as llm from './llm.js';
 import { isTokenService, TOKEN_SERVICES, tokenMismatch, type TokenService } from './tokens.js';
 import {
   AGENT_KINDS,
+  ENV_EXPORT_KINDS,
   API_AUTH_SCHEMES,
   AWS_AUTHS,
   PERMISSION_RANK,
@@ -463,6 +464,7 @@ export const vaultService = {
       publicKey: built.publicKey ?? null,
       readOnly: input.readOnly ?? true,
       requireApproval: input.requireApproval ?? true,
+      envExport: Boolean(input.envExport) && ENV_EXPORT_KINDS.includes(kind),
       commandAllowlist: normalizeAllowlist(input.commandAllowlist),
       expiresAt: parseExpiry(input.expiresAt),
       createdById: actor.userId,
@@ -526,6 +528,11 @@ export const vaultService = {
     if (input.requireApproval != null && input.requireApproval !== current.requireApproval) {
       patch.requireApproval = input.requireApproval;
       changed.push(input.requireApproval ? 'approbation requise' : 'sans approbation');
+    }
+    if (input.envExport != null && input.envExport !== current.envExport) {
+      if (input.envExport && !ENV_EXPORT_KINDS.includes(current.kind)) throw new AppError(`Un élément de type « ${kindLabels[current.kind]} » ne peut pas servir aux fichiers d'environnement`);
+      patch.envExport = input.envExport;
+      changed.push(input.envExport ? "utilisable dans les fichiers d'environnement" : "retiré des fichiers d'environnement");
     }
     if (input.commandAllowlist != null) {
       patch.commandAllowlist = normalizeAllowlist(input.commandAllowlist);
@@ -701,6 +708,7 @@ export const vaultService = {
       hostKeySeenAt: source.hostKeySeenAt,
       readOnly: source.readOnly,
       requireApproval: source.requireApproval,
+      envExport: source.envExport,
       commandAllowlist: source.commandAllowlist,
       expiresAt: source.expiresAt,
       createdById: actor.userId,
@@ -746,6 +754,7 @@ export const vaultService = {
       hostKeySeenAt: source.hostKeySeenAt,
       readOnly: source.readOnly,
       requireApproval: source.requireApproval,
+      envExport: source.envExport,
       commandAllowlist: source.commandAllowlist,
       expiresAt: source.expiresAt,
       createdById: actor.userId,

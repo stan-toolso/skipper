@@ -100,10 +100,13 @@ export interface CreateWorksessionInput {
 
 /**
  * Crochets des modules qui accrochent quelque chose à une work session : `beforeRetire` est appelé avant son archivage
- * ou sa suppression (aperçus : arrêt du serveur de développement). Les erreurs sont journalisées, jamais bloquantes.
+ * ou sa suppression (aperçus : arrêt du serveur de développement), `afterCreate` après sa création (fichiers
+ * d'environnement). Les erreurs sont journalisées, jamais bloquantes.
  */
 export const worksessionHooks = {
   beforeRetire: [] as ((project: Project, worksession: Worksession) => Promise<void>)[],
+  /** Après la création du dossier et de l'enregistrement (fichiers d'environnement), pour la personne qui la crée. */
+  afterCreate: [] as ((project: Project, worksession: Worksession, actorId: string | null) => Promise<void>)[],
 };
 async function runRetireHooks(project: Project, worksession: Worksession): Promise<void> {
   for (const hook of worksessionHooks.beforeRetire) {
@@ -185,14 +188,19 @@ export const worksessionService = {
     } else {
       await mkdir(dir, { recursive: true });
     }
+    let created: Worksession;
     try {
-      return await worksessionRepository.create(projectId, name, branch, label, input.taskId ?? null);
+      created = await worksessionRepository.create(projectId, name, branch, label, input.taskId ?? null);
     } catch (err) {
       if (main) await git(['worktree', 'remove', '--force', dir], main).catch(() => undefined);
       else await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       if ((err as { code?: string }).code === '23505') throw new AppError(`Une work session « ${name} » existe déjà`);
       throw err;
     }
+    for (const hook of worksessionHooks.afterCreate) {
+      await hook(project, created, actorId ?? null).catch((err) => log.warn(`[worksessions] ${created.name} : ${(err as Error).message}`));
+    }
+    return created;
   },
 
   /**

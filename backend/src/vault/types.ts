@@ -11,6 +11,11 @@ export const VAULT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'goog
 export const AGENT_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'website', 'google', 'api', 'secret', 'aws', 'scaleway'];
 /** Types réservés à Skipper lui-même : jamais reliés à un projet, sans outil MCP ni variable de navigateur. */
 export const SKIPPER_KINDS: VaultItemKind[] = ['token', 'litellm', 'langfuse'];
+/**
+ * Types dont les valeurs peuvent être écrites dans les fichiers d'environnement des work sessions (envFiles/), si
+ * l'élément le permet (`envExport`). Ni Google (jeton OAuth), ni les types réservés à Skipper.
+ */
+export const ENV_EXPORT_KINDS: VaultItemKind[] = ['secret', 'website', 'postgres', 'api', 'ssh', 'aws', 'scaleway'];
 /** Types dotés d'outils MCP soumis à approbation (hors navigateur et Google, qui ont leur propre politique). */
 export const TOOL_KINDS: VaultItemKind[] = ['ssh', 'postgres', 'api', 'aws', 'scaleway'];
 
@@ -198,6 +203,12 @@ export interface VaultItem {
   hostKeySeenAt: Date | null;
   readOnly: boolean;
   requireApproval: boolean;
+  /**
+   * Valeurs utilisables dans les fichiers d'environnement des work sessions (envFiles/) : écrites en clair dans le
+   * dossier de travail, donc lisibles par l'agent. Exception explicite, choisie par qui gère l'élément, à la règle
+   * « rien du coffre n'atteint le conteneur ».
+   */
+  envExport: boolean;
   commandAllowlist: string[];
   expiresAt: Date | null;
   secretUpdatedAt: Date | null;
@@ -281,6 +292,7 @@ export interface VaultItemInput {
   viaItemId?: string | null;
   readOnly?: boolean | null;
   requireApproval?: boolean | null;
+  envExport?: boolean | null;
   commandAllowlist?: string[] | null;
   expiresAt?: Date | string | null;
   /** ssh : clé privée importée (sinon une paire est générée). */
