@@ -1,0 +1,52 @@
+/* Planifications : pastilles d'historique, liste des exécutions, page Planifications. Préfixe sch-. */
+
+.sch-dots { display: inline-flex; gap: 2px; align-items: center; vertical-align: middle; }
+.sch-dot { width: 8px; height: 14px; border-radius: 2px; background: var(--cc-dimmer); opacity: 0.55; }
+.sch-dot.done { background: var(--cc-green); opacity: 1; }
+.sch-dot.blocked { background: var(--cc-yellow); opacity: 1; }
+.sch-dot.failed { background: var(--cc-red); opacity: 1; }
+.sch-dot.running { background: var(--cc-blue); opacity: 1; }
+.sch-dot.empty { background: transparent; border: 1px dashed var(--cc-border); opacity: 1; }
+
+.sch-status { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sch-status.done { color: var(--cc-green); }
+.sch-status.blocked { color: var(--cc-yellow); }
+.sch-status.failed { color: var(--cc-red); }
+.sch-status.running { color: var(--cc-blue); }
+.sch-status.skipped { color: var(--cc-dim); }
+
+.sch-runs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--cc-border); border-radius: 6px; }
+.sch-run { padding: 6px 10px; border-top: 1px solid var(--cc-border); font-size: 13px; }
+.sch-run:first-child { border-top: 0; }
+.sch-run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.sch-run-when { color: var(--cc-fg); }
+.sch-run-meta { color: var(--cc-dim); font-size: 12px; }
+.sch-run-message { color: var(--cc-dim); font-size: 12px; margin-top: 2px; word-break: break-word; }
+.sch-run.problem .sch-run-message { color: var(--cc-fg); }
+.sch-run-answer { margin-top: 4px; background: var(--cc-bg); border: 1px solid var(--cc-border); border-radius: 4px; padding: 6px 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
+.sch-link { background: none; border: 0; padding: 0; color: var(--cc-accent); font-size: 12px; cursor: pointer; }
+.sch-link:hover { text-decoration: underline; }
+
+/* Page Planifications : une carte par planification. */
+.sch-list { display: flex; flex-direction: column; gap: 8px; }
+.sch-card { background: var(--cc-bg-elevated); border: 1px solid var(--cc-border); border-left: 3px solid var(--cc-border); border-radius: 8px; padding: 10px 14px; }
+.sch-card.on { border-left-color: var(--cc-green); }
+.sch-card.problem { border-left-color: var(--cc-yellow); }
+.sch-card.paused { opacity: 0.8; }
+.sch-card-head { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.sch-card-title { font-weight: 600; color: var(--cc-fg); text-decoration: none; font-size: 15px; }
+.sch-card-title:hover { color: var(--cc-accent); }
+.sch-card-main { flex: 1 1 320px; min-width: 0; }
+.sch-card-meta { font-size: 12px; color: var(--cc-dim); display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 2px; }
+.sch-card-prompt { font-size: 12px; color: var(--cc-dim); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-card-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.sch-card-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.sch-card-last { font-size: 12px; color: var(--cc-dim); text-align: right; }
+.sch-card-details { margin-top: 10px; }
+.sch-filters .btn { font-size: 12px; }
+
+@media (max-width: 640px) {
+  .sch-card-side { align-items: flex-start; width: 100%; }
+  .sch-card-actions { justify-content: flex-start; }
+  .sch-card-last { text-align: left; }
+}

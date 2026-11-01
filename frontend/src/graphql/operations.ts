@@ -41,6 +41,11 @@ export interface SessionContextInfo {
 }
 
 export interface SessionSchedule {
+  sessionId: string;
+  /** Nom affiché : celui de la planification, sinon celui de la session. */
+  name: string;
+  /** Nom saisi pour la planification (null : celui de la session). */
+  customName: string | null;
   cron: string;
   timezone: string;
   prompt: string;
@@ -50,6 +55,30 @@ export interface SessionSchedule {
   lastRunAt: string | null;
   lastResult: string | null;
   updatedAt: string;
+}
+
+export type ScheduleRunStatus = 'RUNNING' | 'DONE' | 'BLOCKED' | 'FAILED' | 'TIMEOUT' | 'SKIPPED' | 'MISSED';
+
+/** Une exécution d'une planification (historique). */
+export interface ScheduleRun {
+  id: string;
+  trigger: 'SCHEDULE' | 'MANUAL';
+  triggeredBy: { id: string; name: string } | null;
+  status: ScheduleRunStatus;
+  scheduledFor: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  costUsd: number | null;
+  message: string | null;
+  answer: string | null;
+}
+
+/** Planification telle que la liste la montre : avec sa session, son projet et ses dernières exécutions. */
+export interface ScheduleListItem extends SessionSchedule {
+  session: Session;
+  project: { id: string; name: string; myRole: 'ADMIN' | 'MEMBER' | 'VIEWER' | null; defaultPermissionMode: string };
+  runs: ScheduleRun[];
 }
 
 export interface Provider {
@@ -666,6 +695,9 @@ export const SESSION_FIELDS = gql`
       status
     }
     schedule {
+      sessionId
+      name
+      customName
       cron
       timezone
       prompt
@@ -1029,6 +1061,93 @@ export const RESET_SESSION_CONTEXT = gql`
   }
 `;
 
+export const SCHEDULE_RUN_FIELDS = gql`
+  fragment ScheduleRunFields on ScheduleRun {
+    id
+    trigger
+    triggeredBy {
+      id
+      name
+    }
+    status
+    scheduledFor
+    startedAt
+    finishedAt
+    durationMs
+    costUsd
+    message
+    answer
+  }
+`;
+
+/** Planifications d'un projet, ou de tous les projets accessibles (page Planifications). */
+export const SESSION_SCHEDULES = gql`
+  ${SCHEDULE_RUN_FIELDS}
+  ${SESSION_FIELDS}
+  query SessionSchedules($projectId: ID, $runs: Int) {
+    sessionSchedules(projectId: $projectId) {
+      sessionId
+      name
+      customName
+      cron
+      timezone
+      prompt
+      enabled
+      endAfterRun
+      nextRunAt
+      lastRunAt
+      lastResult
+      updatedAt
+      session {
+        ...SessionFields
+      }
+      project {
+        id
+        name
+        myRole
+        defaultPermissionMode
+      }
+      runs(limit: $runs) {
+        ...ScheduleRunFields
+      }
+    }
+  }
+`;
+
+/** Historique des exécutions de la planification d'une session (modale). */
+export const SESSION_SCHEDULE_RUNS = gql`
+  ${SCHEDULE_RUN_FIELDS}
+  query SessionScheduleRuns($id: ID!, $limit: Int) {
+    session(id: $id) {
+      id
+      schedule {
+        sessionId
+        runs(limit: $limit) {
+          ...ScheduleRunFields
+        }
+      }
+    }
+  }
+`;
+
+export const SET_SESSION_SCHEDULE_ENABLED = gql`
+  ${SESSION_FIELDS}
+  mutation SetSessionScheduleEnabled($id: ID!, $enabled: Boolean!) {
+    setSessionScheduleEnabled(id: $id, enabled: $enabled) {
+      ...SessionFields
+    }
+  }
+`;
+
+export const CREATE_SCHEDULED_SESSION = gql`
+  ${SESSION_FIELDS}
+  mutation CreateScheduledSession($input: CreateScheduledSessionInput!) {
+    createScheduledSession(input: $input) {
+      ...SessionFields
+    }
+  }
+`;
+
 export const SCHEDULE_NEXT_RUNS = gql`
   query ScheduleNextRuns($cron: String!, $timezone: String, $count: Int) {
     scheduleNextRuns(cron: $cron, timezone: $timezone, count: $count)
@@ -1242,6 +1361,11 @@ export const SIDEBAR = gql`
   fragment SidebarSession on Session {
     id
     name
+    schedule {
+      sessionId
+      name
+      enabled
+    }
     status
     activity
     pendingRequestCount

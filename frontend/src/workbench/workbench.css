@@ -126,6 +126,7 @@
    ligne « N sous-agents » repliable sous la parente, compteur sur la puce ou l'onglet de la parente. */
 .wb-robot { color: var(--cc-dimmer); font-size: 11px; flex: 0 0 auto; }
 .wb-row.active .wb-robot, .wb-row:hover .wb-robot, .wb-chip.active .wb-robot, .wb-ws-tab.active .wb-robot { color: var(--cc-dim); }
+.wb-schedule-paused { opacity: 0.45; }
 .wb-tree { color: var(--cc-dimmer); font-size: 11px; line-height: 1; flex: 0 0 auto; margin-right: -2px; }
 .wb-subagents { color: var(--cc-dimmer); font-size: 12px; }
 .wb-subagents .wb-row-label { flex: 0 0 auto; }

@@ -36,6 +36,8 @@ export interface SidebarSession {
   owner: { id: string; name: string; avatarUrl: string | null } | null;
   /** Session d'agent qui a lancé celle-ci (outil MCP sessions.create) ; null pour une session lancée par un humain. */
   parentSession: { id: string } | null;
+  /** Planification de la session (pictogramme d'alarme dans la sidebar). */
+  schedule?: { sessionId: string; name: string; enabled: boolean } | null;
   /** Dossier de travail ; null pour une session d'avant les work sessions (checkout principal) ou dont le dossier a été supprimé. */
   worksession?: SidebarWorksession | null;
 }

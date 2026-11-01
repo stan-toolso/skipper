@@ -123,7 +123,12 @@ export default function SessionsPage() {
                   <Link to={`/sessions/${s.id}`}>{s.name}</Link>
                   {s.worksession && <span className="text-secondary small ms-2 font-monospace" title="Branche de la session"><i className="bi bi-git" /> {s.worksession.branch}</span>}
                   {!s.worksession && s.formerWorksession && <span className="text-secondary small ms-2 font-monospace" title="Dossier de travail supprimé"><i className="bi bi-git" /> {s.formerWorksession.branch} <i className="bi bi-trash3" /></span>}
-                  {s.schedule?.enabled && <i className="bi bi-alarm ms-2 text-secondary" title={`Planifiée : ${s.schedule.cron}${s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : ''}`} />}
+                  {s.schedule && (
+                    <Link to={`/projects/${s.project.id}/schedules`} className="text-secondary small ms-2 text-decoration-none" title={`Planification « ${s.schedule.name} »${s.schedule.enabled ? (s.schedule.nextRunAt ? ` · prochaine exécution le ${new Date(s.schedule.nextRunAt).toLocaleString()}` : '') : ' · en pause'}`}>
+                      <i className={`bi bi-alarm${s.schedule.enabled ? '' : ' opacity-50'}`} />
+                      {s.schedule.name !== s.name && <> {s.schedule.name}</>}
+                    </Link>
+                  )}
                 </td>
                 <td>
                   <Link to={`/projects/${s.project.id}`}>{s.project.name}</Link>

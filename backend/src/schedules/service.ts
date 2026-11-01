@@ -51,8 +51,17 @@ async function emit(sessionId: string, type: string, payload: Record<string, unk
   return event.id;
 }
 
-/** Nom affiché d'une planification : le sien, sinon celui de la session. */
-export const scheduleLabel = (schedule: Pick<SessionSchedule, 'name'>, session: Pick<Session, 'name'>): string => schedule.name?.trim() || session.name;
+/**
+ * Nom affiché d'une planification : le sien, sinon celui de la session, sinon (session au nom par défaut
+ * « Session », cas des planifications d'avant les noms) le début de l'instruction.
+ */
+export function scheduleLabel(schedule: Pick<SessionSchedule, 'name' | 'prompt'>, session: Pick<Session, 'name'>): string {
+  const own = schedule.name?.trim();
+  if (own) return own;
+  if (session.name.trim() && session.name.trim() !== 'Session') return session.name;
+  const line = (schedule.prompt.split('\n').find((l) => l.trim()) ?? '').replace(/\s+/g, ' ').trim();
+  return line ? (line.length > 60 ? `${line.slice(0, 59).trimEnd()}…` : line) : session.name;
+}
 
 function parseOrThrow(cron: string) {
   try {

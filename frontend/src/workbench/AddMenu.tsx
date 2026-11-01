@@ -128,6 +128,9 @@ export default function AddMenu({ projectId, project, session, onClose }: { proj
       >
         <i className="bi bi-chat-dots wb-icon" /> Nouvelle session
       </button>
+      <Link to={`/projects/${projectId}/schedules?new=1`} className="wb-pop-item" onClick={onClose}>
+        <i className="bi bi-alarm wb-icon" /> Nouvelle planification
+      </Link>
       <Link to={`/projects/${projectId}/workflows?new=1`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-diagram-3 wb-icon" /> Nouveau workflow
       </Link>
@@ -140,6 +143,9 @@ export default function AddMenu({ projectId, project, session, onClose }: { proj
       </Link>
       <Link to={`/projects/${projectId}/context`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-journal-text wb-icon" /> Contexte
+      </Link>
+      <Link to={`/projects/${projectId}/schedules`} className="wb-pop-item" onClick={onClose}>
+        <i className="bi bi-alarm wb-icon" /> Planifications
       </Link>
       <Link to={`/projects/${projectId}/workflows`} className="wb-pop-item" onClick={onClose}>
         <i className="bi bi-diagram-3 wb-icon" /> Workflows

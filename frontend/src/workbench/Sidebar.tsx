@@ -129,6 +129,7 @@ const MAIN_MENU: { to: string; label: string; icon: string; title?: string }[] =
   { to: '/tasks', label: 'Tâches', icon: 'bi-check2-square' },
   { to: '/shared', label: 'Pages', icon: 'bi-file-earmark-richtext', title: 'Pages partagées' },
   { to: '/vault', label: 'Coffre', icon: 'bi-shield-lock' },
+  { to: '/schedules', label: 'Planifications', icon: 'bi-alarm', title: 'Planifications : sessions relancées à heures fixes, prochaines échéances et historique' },
   { to: '/workflows', label: 'Workflows', icon: 'bi-diagram-3', title: "Workflows : enchaînements d'appels de modèle, de sessions et de tâches" },
   { to: '/requests', label: 'Demandes', icon: 'bi-bell' },
 ];
@@ -138,6 +139,11 @@ type PullRequestRef = TrackedPullRequestSummary;
 
 /** « sous-agent de « Nom » » ou « sous-agent (lancé par un agent) » pour une session lancée par l'agent d'une autre session (sessions.create). */
 const byAgentTitle = (n: Pick<SessionNode<unknown>, 'byAgent' | 'parentName'>) => (n.byAgent ? ` · sous-agent${n.parentName ? ` de « ${n.parentName} »` : ' (lancé par un agent)'}` : '');
+
+/** Pictogramme d'une session planifiée (barré quand la planification est en pause). */
+const ScheduleIcon = ({ schedule }: { schedule: { name: string; enabled: boolean } }) => (
+  <i className={`bi ${schedule.enabled ? 'bi-alarm' : 'bi-alarm wb-schedule-paused'} wb-robot`} title={`Planification « ${schedule.name} »${schedule.enabled ? '' : ' (en pause)'}`} aria-label="Planifiée" />
+);
 
 /** Pictogramme d'un sous-agent (session lancée par un agent), devant son nom. */
 const RobotIcon = () => <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />;
@@ -250,6 +256,7 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
         {depth > 0 && <span className="wb-tree">└</span>}
         <span className={`wb-dot ${sessionDotClass(s)}`} />
         {byAgent && depth === 0 && <RobotIcon />}
+        {s.schedule && <ScheduleIcon schedule={s.schedule} />}
         <span className="wb-row-label">{s.name}</span>
         {elsewhere && !s.name.toLowerCase().startsWith(elsewhere.toLowerCase()) && (
           <span className="wb-tag" title={`Travaille dans le dossier ${elsewhere}`}>
@@ -355,6 +362,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
               <>
                 <span className={`wb-dot ${sessionDotClass(s)}`} />
                 {n.byAgent && <RobotIcon />}
+                {s.schedule && <ScheduleIcon schedule={s.schedule} />}
               </>
             ),
             extra: n.depth === 0 && children.length ? <SubagentsCount children={children.map((c) => c.session)} /> : null,

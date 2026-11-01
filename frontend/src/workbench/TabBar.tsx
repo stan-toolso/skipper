@@ -34,6 +34,7 @@ const icons: Record<TabKind, string> = {
   'shared-pages': 'bi-file-earmark-richtext',
   'shared-page': 'bi-file-earmark-richtext',
   workflows: 'bi-diagram-3',
+  schedules: 'bi-alarm',
   workflow: 'bi-diagram-3',
   'workflow-run': 'bi-play-circle',
   other: 'bi-file-earmark',

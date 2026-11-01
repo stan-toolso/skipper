@@ -56,3 +56,28 @@ export const browserTimeZone = (): string => {
     return 'UTC';
   }
 };
+
+/** Fréquence en clair : « Du lundi au vendredi à 7 h 30 », « Toutes les heures à la minute 15 », sinon l'expression. */
+export function describeCron(cron: string): string {
+  const alias: Record<string, string> = { '@hourly': '0 * * * *', '@daily': '0 0 * * *', '@midnight': '0 0 * * *', '@weekly': '0 0 * * 0', '@monthly': '0 0 1 * *' };
+  const expr = alias[cron.trim().toLowerCase()] ?? cron;
+  const d = detectCronPreset(expr);
+  const at = (t: string) => {
+    const [h, m] = t.split(':');
+    return `à ${Number(h)} h${m === '00' ? '' : ` ${m}`}`;
+  };
+  switch (d.preset) {
+    case 'hourly':
+      return Number(d.time.split(':')[1]) === 0 ? 'Toutes les heures' : `Toutes les heures à la minute ${Number(d.time.split(':')[1])}`;
+    case 'daily':
+      return `Tous les jours ${at(d.time)}`;
+    case 'weekdays':
+      return `Du lundi au vendredi ${at(d.time)}`;
+    case 'weekly':
+      return `Le ${weekdayLabels[d.weekday]} ${at(d.time)}`;
+    case 'monthly':
+      return `Le ${d.monthDay === 1 ? '1er' : d.monthDay} de chaque mois ${at(d.time)}`;
+    default:
+      return `cron ${cron.trim()}`;
+  }
+}
