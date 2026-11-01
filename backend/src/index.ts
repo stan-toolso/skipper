@@ -46,6 +46,8 @@ import { instanceRegistry } from './instances/registry.js';
 import { instanceBus } from './instances/bus.js';
 import { leadership, type LeaderJob } from './instances/leadership.js';
 import { handleInternalRoute } from './instances/internalRoute.js';
+import { handlePreviewRoute, previewUpgrade } from './previews/proxy.js';
+import { previewRepository } from './previews/repository.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const typeDefs = readFileSync(path.join(here, 'graphql/schema.graphql'), 'utf8');
@@ -134,6 +136,7 @@ async function main() {
   if (recreated.length) log.info(`[runner] conteneur(s) obsolète(s) supprimé(s), recréé(s) à la demande : ${recreated.join(", ")}`);
   const purged = await authSession.purgeExpired();
   if (purged) log.info(`[auth] ${purged} session(s) de connexion expirée(s) supprimée(s)`);
+  await previewRepository.purgeExpired().catch((err) => log.warn(`[previews] purge des accès expirés : ${(err as Error).message}`));
   log.info(googleAuth.configured ? `[auth] connexion Google active (callback ${googleAuth.redirectUri})` : '[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET absents : la connexion est impossible');
 
   // Guetteur des sessions de relecture (publication de leur rapport), tâche de l'instance meneuse.
@@ -181,7 +184,9 @@ async function main() {
   });
 
   const server = createServer((req, res) => {
-    handleAuthRoute(req, res)
+    // Aperçus des work sessions (hôte `<nom>.<domaine des aperçus>`) d'abord : tout leur chemin va au serveur de développement.
+    handlePreviewRoute(req, res)
+      .then((handled) => handled || handleAuthRoute(req, res))
       .then((handled) => handled || handleAttachmentRoute(req, res))
       .then((handled) => handled || handleTaskAttachmentRoute(req, res))
       .then((handled) => handled || handleSharedPageRoute(req, res))
@@ -198,7 +203,7 @@ async function main() {
         res.end();
       });
   });
-  attachWebSockets(server, [terminalUpgradeHandler(), browserUpgradeHandler()]);
+  attachWebSockets(server, [terminalUpgradeHandler(), browserUpgradeHandler()], [previewUpgrade]);
   server.listen(config.port, () => {
     log.info(`[http] GraphQL prêt sur http://localhost:${config.port}/graphql`);
     // Sessions restées en file d'attente avant l'arrêt d'abord (elles attendaient), puis reprise automatique

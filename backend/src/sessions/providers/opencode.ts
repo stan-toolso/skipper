@@ -22,6 +22,8 @@ import { claudeSettings } from '../../settings/claude.js';
 import { opencodeSettings, splitModel } from '../../settings/opencode.js';
 import { usageService } from '../../settings/usage.js';
 import { createSharedPagesMcpServer, sharedPagesPrompt } from '../../sharedPages/mcp.js';
+import { previewPrompt } from '../../previews/config.js';
+import { previewsEnabled } from '../../previews/hosts.js';
 import { createTasksMcpServer, TASKS_FREE_TOOLS } from '../../tasks/mcp.js';
 import { trackedPullRequestService } from '../../pullRequests/service.js';
 import { taskService } from '../../tasks/service.js';
@@ -304,6 +306,7 @@ class OpencodeRun {
       sessionsPromptSummary(ctx.project),
       googleAccountService.promptSummary(googleAccounts),
       sharedPagesPrompt(),
+      ctx.session.worksessionId ? previewPrompt(previewsEnabled()) : '',
       browserEnabled
         ? "Un navigateur headless (Chromium) est disponible via les outils `playwright_*` : navigue, lis la page (`playwright_browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du coffre, clique le champ du formulaire puis appelle `vault_browser_fill` : Skipper y saisit la valeur, que tu ne vois jamais."
         : '',

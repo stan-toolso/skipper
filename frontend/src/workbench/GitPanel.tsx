@@ -35,6 +35,7 @@ import { GIT_BRANCH_CHANGES, GIT_BRANCH_FILE_DIFF, type GitBranchChanges } from 
 import { usePollingQuery } from '../lib/usePollingQuery';
 import SessionChanges, { useSessionChanges } from '../components/SessionChanges';
 import { useGitPanel } from './GitTargetContext';
+import PreviewPanel from './PreviewPanel';
 import SessionPanel from './SessionPanel';
 import TaskPanel from './TaskPanel';
 
@@ -344,7 +345,7 @@ function PullRequestsSection({ projectId, worksessionId, branch }: { projectId: 
 }
 
 /** Onglets fixes, et un onglet `task:<id>` par tâche dont la session a la charge. */
-export type PanelTab = 'session' | 'changes' | 'git' | `task:${string}`;
+export type PanelTab = 'session' | 'changes' | 'preview' | 'git' | `task:${string}`;
 interface PanelTabDef {
   key: PanelTab;
   icon: string;
@@ -353,9 +354,10 @@ interface PanelTabDef {
 }
 
 /** Onglets fixes : icône, libellé court (onglet) et libellé complet (infobulle, rail replié). */
-const FIXED_TABS: Record<'session' | 'changes' | 'git', Omit<PanelTabDef, 'key'>> = {
+const FIXED_TABS: Record<'session' | 'changes' | 'preview' | 'git', Omit<PanelTabDef, 'key'>> = {
   session: { icon: 'bi-info-circle', label: 'Session', title: 'Session : détail et actions' },
   changes: { icon: 'bi-file-diff', label: 'Modifs', title: 'Modifications : fichiers modifiés par la session' },
+  preview: { icon: 'bi-window', label: 'Aperçu', title: "Aperçu : l'application de la branche en direct (serveur de développement)" },
   git: { icon: 'bi-git', label: 'Git', title: 'Suivi git : index, commit, branches, pull requests' },
 };
 const isTaskTab = (t: string): t is `task:${string}` => t.startsWith('task:');
@@ -363,10 +365,14 @@ const taskIdOf = (t: PanelTab) => (isTaskTab(t) ? t.slice('task:'.length) : null
 /** Libellé d'un onglet de tâche : « Tâche » seule, sinon le début du titre (le titre complet est en infobulle). */
 const shortTitle = (title: string, max = 14) => (title.length > max ? `${title.slice(0, max - 1).trimEnd()}…` : title);
 
-/** Un onglet « Tâche » par tâche en charge ; avec plusieurs tâches, chaque onglet porte le début du titre de la sienne. */
-function panelTabs(sessionId: string | null, tasks: { id: string; title: string }[]): PanelTabDef[] {
+/**
+ * Un onglet « Tâche » par tâche en charge ; avec plusieurs tâches, chaque onglet porte le début du titre de la sienne.
+ * « Aperçu » dès qu'il y a un dossier de travail (jamais pour le checkout principal, où rien ne s'exécute).
+ */
+function panelTabs(sessionId: string | null, tasks: { id: string; title: string }[], worksessionId: string | null): PanelTabDef[] {
   return [
     ...(sessionId ? (['session', 'changes'] as const).map((k) => ({ key: k, ...FIXED_TABS[k] })) : []),
+    ...(worksessionId ? [{ key: 'preview' as const, ...FIXED_TABS.preview }] : []),
     ...tasks.map((t) => ({ key: `task:${t.id}` as const, icon: 'bi-card-checklist', label: tasks.length > 1 ? shortTitle(t.title) : 'Tâche', title: `Tâche dont la session a la charge : ${t.title}` })),
     { key: 'git' as const, ...FIXED_TABS.git },
   ];
@@ -412,7 +418,8 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
   const vars = target ? { projectId: target.projectId, worksessionId: target.worksessionId } : null;
   const tasks = target?.tasks ?? [];
   const sessionId = target?.sessionId ?? null;
-  const tabs = panelTabs(sessionId, tasks);
+  const worksessionId = target?.worksessionId ?? null;
+  const tabs = panelTabs(sessionId, tasks, worksessionId);
   const available: PanelTab[] = tabs.map((t) => t.key);
   const pageKey = sessionId ?? tasks[0]?.id ?? null;
   const [tabState, setTabState] = useState<{ pageKey: string | null; tab: PanelTab } | null>(null);
@@ -556,6 +563,7 @@ export default function GitPanel({ resizer }: { resizer?: PanelResizer }) {
       {tab === 'changes' && sessionId && (
         <SessionChanges sessionId={sessionId} workspace={{ projectId: target.projectId, sessionId: target.worksessionId ? sessionId : null }} changes={changes.changes} loading={changes.loading} error={changes.error} onRefresh={changes.refresh} />
       )}
+      {tab === 'preview' && worksessionId && <PreviewPanel key={worksessionId} worksessionId={worksessionId} sessionId={sessionId} />}
       {taskId && (
         <div className="git-body">
           <TaskPanel key={taskId} taskId={taskId} />

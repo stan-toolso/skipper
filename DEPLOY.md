@@ -353,6 +353,29 @@ pm2 flush skipper                           # (optionnel) vider les journaux cou
 Le module est lui-même un processus pm2 (`pm2 list` l'affiche), sauvegardé avec `pm2 save` et relancé
 au démarrage par le service systemd.
 
+## Aperçus des branches
+
+Désactivés tant que `PREVIEW_URL` est vide (l'onglet « Aperçu » l'indique). Mise en service sur une cellule
+(exemple pour `skipper.toolso.io`) :
+
+1. **DNS** : un enregistrement générique `*.apercu.skipper.toolso.io` (A) vers l'adresse de la cellule.
+2. **Certificat générique** : Let's Encrypt ne délivre un certificat `*.apercu.skipper.toolso.io` que par défi DNS-01.
+   Avec le greffon certbot du fournisseur DNS du domaine (renouvellement automatique), sinon à la main :
+   `sudo certbot certonly --manual --preferred-challenges dns -d '*.apercu.skipper.toolso.io' --cert-name apercu.skipper.toolso.io`
+   (enregistrement TXT `_acme-challenge.apercu` à créer ; à refaire tous les 90 jours dans ce cas).
+3. **nginx** : `sed "s/__DOMAIN__/skipper.toolso.io/g" deploy/cellule/templates/nginx-previews.conf | sudo tee /etc/nginx/sites-available/skipper-previews`,
+   lien dans `sites-enabled`, et dans le site principal ajouter les aperçus aux cadres autorisés de la CSP
+   (`frame-src 'self' https://*.apercu.$host;`, déjà dans `templates/nginx-site.conf`) ; `sudo nginx -t && sudo systemctl reload nginx`.
+4. **`.env`** : `PREVIEW_URL=https://*.apercu.skipper.toolso.io`, puis déploiement (ou redémarrage) du backend.
+5. **Vérifier** : onglet « Aperçu » d'une session dont le dépôt a un `.skipper/preview.json` (ou un script `dev` Vite),
+   « Lancer l'aperçu », l'application s'affiche ; `curl -sI https://x.apercu.skipper.toolso.io` répond 404 « Aperçu
+   introuvable » (servi par le backend).
+
+Les conteneurs des projets sont recréés (quand ils sont inactifs) à la mise à jour qui introduit les aperçus : nouveaux
+montages `~/.npm` et `~/.cache` (caches persistants des gestionnaires de paquets, dans `.runners/<projet>/cache/`). Les
+instantanés de dépendances (`<projet>.worktrees/.skipper-deps/`, quatre par projet) et l'état des aperçus
+(`.skipper-previews/`) sont à côté des work sessions et partent avec le projet.
+
 ## Bon à savoir
 
 - **Mémoire** : 3,7 Go de RAM pour tout le serveur, partagés avec l'API et le job Curso (≈ 400 Mo),

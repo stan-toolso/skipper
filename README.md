@@ -242,6 +242,7 @@ backend/
       gmail.ts                 # client Gmail (recherche, lecture, téléchargement d'une pièce jointe, envoi / réponse)
       drive.ts                 # client Drive (recherche, lecture / export, téléchargement, dépôt, création de Docs)
       mcp.ts                   # serveur MCP `google` (outils selon les accès accordés)
+    previews/                  # aperçus des branches : configuration, lancement dans le conteneur, proxy par sous-domaine, instantanés des dépendances
     sharedPages/               # pages partagées : publication, versions, membres, route de lecture en bac à sable, MCP `pages`
     search/                    # recherche globale (projets, sessions, tâches, pages, coffre)
     apiKeys/                   # clés d'API des projets
@@ -1215,6 +1216,57 @@ ou « Ignorer » (jusqu'à 50 000 tokens de plus) ; rien n'est fait automatiquem
 « Nettoyer maintenant » applique les réglages sans attendre (`applySessionCleanup`) ;
 `updateSession(id, { name, cleanup })` renomme et enregistre les réglages. Les événements `cleanup` (purge,
 compaction, remise à zéro, report) apparaissent dans le transcript.
+
+## Aperçus des branches
+
+L'onglet **« Aperçu »** du panneau de droite (toute page qui a un dossier de travail, `workbench/PreviewPanel.tsx`)
+montre l'application de la branche **en direct, sans déploiement** : Skipper lance son serveur de développement dans le
+conteneur du projet et le sert sur un sous-domaine (`https://<nom>.apercu.skipper.toolso.io`), réservé aux membres du
+projet (lecteurs compris). Un clic sur « Lancer l'aperçu » ; ensuite l'application s'affiche dans le panneau, en plein
+écran, dans un nouvel onglet ou **sur un téléphone par QR code** (lien personnel à usage unique, 10 minutes, qui ouvre
+l'aperçu sans connexion à Skipper). Le rechargement à chaud du serveur de dev (WebSocket) passe aussi : chaque
+modification de l'agent apparaît d'elle-même.
+
+- **Configuration** (`previews/config.ts`) : `.skipper/preview.json` dans le dépôt (chaque branche peut avoir la sienne)
+  — `{ "command": "…", "cwd": "frontend", "install": "…", "installCwd": "…", "env": { … } }` ; la commande doit écouter sur
+  `0.0.0.0` et le port `$PORT` (attribué par Skipper, 41000–41999, un par work session). Sans fichier, un script `dev`
+  Vite, Next, Nuxt ou Astro est détecté à la racine ou dans `frontend/`, `web/`, `app/`, `apps/web/`, `client/`, avec les
+  options d'hôte et de port. Sinon, « Demander à l'agent de le configurer » envoie la consigne à la session ; le prompt
+  système des sessions décrit le fichier (`previewPrompt`).
+- **Lancement** (`previews/service.ts`) : un script `run.sh` exécuté par `docker exec -d … setsid sh` (groupe de processus
+  à lui, l'arrêt tue tout l'arbre) installe les dépendances puis lance la commande. Son état vit dans
+  `<projet>.worktrees/.skipper-previews/<work session>/` (`events`, `log`, `pid`, `deps.json`), lisible de toutes les
+  instances et des agents : le processus survit aux redémarrages du backend (bleu/vert), l'état est **déduit** à chaque
+  lecture (`previews/state.ts` : événements, processus vivant, port ouvert). Table `previews` (migration
+  `050_previews.sql`) : nom d'hôte et port stables. Une work session archivée ou supprimée arrête son aperçu
+  (`worksessionHooks.beforeRetire`) ; un conteneur recréé aussi (l'aperçu repasse « arrêté »).
+- **Proxy** (`previews/proxy.ts`) : toute requête dont l'hôte correspond à `PREVIEW_URL` passe avant les autres routes et
+  est relayée à `IP du conteneur:port` (Host réécrit en `localhost:<port>` pour les contrôles d'hôte de Vite et webpack,
+  nom public en `X-Forwarded-Host`), WebSockets compris (`attachWebSockets(…, hostHandlers)`, avant le contrôle
+  d'origine de l'API). Accès : la mutation `previewAccessUrl` donne un lien `/__skipper/acces?t=…` (table
+  `preview_access`, empreinte SHA-256, usage unique, 10 min) échangé contre le cookie `skipper_apercu` du sous-domaine
+  (12 h, `SameSite=None; Secure`, retiré des requêtes transmises à l'application) ; les droits sont revérifiés chaque minute.
+- **Dépendances rapides** (`previews/deps.ts`). Chaque work session est un dossier neuf : sans rien faire, chacune
+  réinstallait ses `node_modules` (près de 900 Mo et 41 000 fichiers pour Skipper, plusieurs minutes de `npm ci`).
+  Désormais :
+  - après une installation réussie, les `node_modules` (racine et workspaces) sont enregistrés comme **instantané par
+    liens physiques** (`cp -al`, moins d'une seconde, aucun espace disque en plus) dans
+    `<projet>.worktrees/.skipper-deps/<empreinte>/`, l'empreinte couvrant lockfiles et `package.json` ; caches d'outils
+    (`.vite`, `.cache`) exclus, quatre instantanés gardés ;
+  - une work session de même empreinte les reçoit de la même façon **dès sa création** (agents compris : typecheck sans
+    installer) et au lancement de l'aperçu, qui n'installe alors rien (marqueur `node_modules/.skipper-deps`) ; avec une
+    autre empreinte, l'instantané le plus récent est lié puis l'installation ne fait que la différence (`npm install`
+    plutôt que `npm ci`, pnpm et yarn en `--frozen-lockfile --prefer-offline`) ;
+  - les caches des gestionnaires de paquets sont **persistants** : `~/.npm` et `~/.cache` du conteneur sont montés depuis
+    `.runners/<projet>/cache/` (avant : dans le tmpfs de 512 Mo du dossier personnel, perdus à chaque recréation) ;
+  - les liens sont partagés : un fichier de `node_modules` modifié **en place** le serait partout. npm, pnpm et yarn
+    remplacent les fichiers (le lien est rompu, l'original intact) ; le marqueur est écrit par renommage.
+- **API** : `preview(worksessionId)`, `previewLog(worksessionId)`, `startPreview`, `stopPreview` (membres),
+  `previewAccessUrl(worksessionId, path)`. L'interface sonde l'état toutes les 2,5 s quand l'onglet est ouvert et affiche
+  le temps de lancement (« Prêt en 3,4 s · dépendances liées depuis le cache, rien à installer »).
+- **Mise en service** : `PREVIEW_URL` (`https://*.apercu.<domaine>` ; vide = aperçus désactivés), DNS et certificat
+  génériques, bloc nginx `deploy/cellule/templates/nginx-previews.conf` et `frame-src` de la CSP : voir DEPLOY.md. En
+  local : `PREVIEW_URL=http://*.localhost:4000` (`*.localhost` résout vers la machine dans Chrome et Firefox).
 
 ## Explorateur de fichiers et éditeur
 

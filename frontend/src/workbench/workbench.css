@@ -1047,3 +1047,25 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .session-review-links a { color: var(--cc-fg); text-decoration: none; }
 .session-review-links a:hover { color: var(--cc-accent); }
 .session-review-report { margin: 2px 10px 0; padding: 6px 8px; border: 1px solid var(--cc-border); border-radius: 6px; font-size: 12.5px; overflow-wrap: anywhere; }
+
+/* Onglet « Aperçu » du panneau de droite (workbench/PreviewPanel.tsx) : barre d'état, application dans un cadre qui
+   prend toute la hauteur, journal du lancement en bas. */
+.preview-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.preview-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px 4px 8px; border-bottom: 1px solid var(--cc-border); font-size: 12px; min-height: 30px; }
+.preview-state { flex: 1 1 140px; color: var(--cc-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-state.ok { color: var(--cc-fg); }
+.preview-state.ok .bi-circle-fill { color: var(--cc-green); font-size: 8px; vertical-align: middle; margin-right: 2px; }
+.preview-state.busy { color: var(--cc-accent); }
+.preview-state.failed { color: var(--cc-red); }
+.preview-actions { display: flex; flex-shrink: 0; margin-left: auto; }
+.preview-empty { padding: 24px 16px; text-align: center; color: var(--cc-fg); }
+.preview-empty > .bi { font-size: 28px; color: var(--cc-dim); display: block; margin-bottom: 8px; }
+.preview-empty code { word-break: break-all; }
+.preview-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--cc-bg-elevated); }
+.preview-frame.full { height: 100%; display: block; }
+.modal-fullscreen .modal-body:has(.preview-frame) { display: flex; }
+.preview-log { margin: 0; flex: 1; min-height: 80px; overflow: auto; padding: 6px 8px; font-size: 11px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--cc-dim); background: var(--cc-bg); border-top: 1px solid var(--cc-border); }
+.preview-log.docked { flex: 0 0 35%; }
+.preview-qr { width: 220px; height: 220px; max-width: 100%; }
+.preview-qr-bg { fill: var(--cc-qr-light); }
+.preview-qr-fg { fill: var(--cc-qr-dark); }

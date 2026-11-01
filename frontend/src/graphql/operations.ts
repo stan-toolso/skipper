@@ -2290,3 +2290,64 @@ export const PROJECT_CONTAINER_STATS = gql`
     }
   }
 `;
+
+// ---- Aperçus des work sessions ----------------------------------------------------------------------
+
+export const PREVIEW_FIELDS = gql`
+  fragment PreviewFields on Preview {
+    worksessionId
+    enabled
+    status
+    configured
+    configSource
+    configError
+    command
+    url
+    error
+    startedAt
+    readyAt
+    depsMode
+    installCommand
+    installMs
+    readyMs
+  }
+`;
+
+export const PREVIEW = gql`
+  ${PREVIEW_FIELDS}
+  query Preview($worksessionId: ID!) {
+    preview(worksessionId: $worksessionId) {
+      ...PreviewFields
+    }
+  }
+`;
+
+export const PREVIEW_LOG = gql`
+  query PreviewLog($worksessionId: ID!) {
+    previewLog(worksessionId: $worksessionId)
+  }
+`;
+
+export const START_PREVIEW = gql`
+  ${PREVIEW_FIELDS}
+  mutation StartPreview($worksessionId: ID!) {
+    startPreview(worksessionId: $worksessionId) {
+      ...PreviewFields
+    }
+  }
+`;
+
+export const STOP_PREVIEW = gql`
+  ${PREVIEW_FIELDS}
+  mutation StopPreview($worksessionId: ID!) {
+    stopPreview(worksessionId: $worksessionId) {
+      ...PreviewFields
+    }
+  }
+`;
+
+export const PREVIEW_ACCESS_URL = gql`
+  mutation PreviewAccessUrl($worksessionId: ID!, $path: String) {
+    previewAccessUrl(worksessionId: $worksessionId, path: $path)
+  }
+`;

@@ -47,6 +47,12 @@ export const config = {
   appUrl: env('APP_URL', 'http://localhost:5173').replace(/\/+$/, ''),
   /** URL publique de l'API (callback OAuth `${API_URL}/auth/google/callback`, attribut Secure des cookies). */
   apiUrl: env('API_URL', `http://localhost:${env('PORT', '4000')}`).replace(/\/+$/, ''),
+  /**
+   * Adresse des aperçus des work sessions, `*` à la place du nom de chaque aperçu : `https://*.apercu.skipper.toolso.io`
+   * (DNS et certificat génériques, nginx qui envoie ces noms au backend), `http://*.localhost:4000` en local. Vide :
+   * aperçus désactivés.
+   */
+  previewUrl: (process.env.PREVIEW_URL ?? '').trim().replace(/\/+$/, ''),
   /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
