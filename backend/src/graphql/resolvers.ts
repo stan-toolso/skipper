@@ -10,6 +10,8 @@ import { pushPreferencesService } from '../notifications/preferences.js';
 import { pushService, type PushSubscriptionInput } from '../notifications/push.js';
 import { searchService, type SearchKind } from '../search/service.js';
 import { sharedPageService } from '../sharedPages/service.js';
+import { envFileService } from '../envFiles/service.js';
+import type { EnvFile } from '../envFiles/types.js';
 import type { SharedPage, SharedPageMember, SharedPageVersion } from '../sharedPages/types.js';
 import { readRawFile } from '../files/service.js';
 import { fingerprint } from '../vault/ssh.js';
@@ -539,6 +541,14 @@ export const resolvers = {
     createdBy: (t: TerminalRecord, _: unknown, ctx: Ctx) => userOrNull(ctx, t.createdById),
   },
 
+  EnvFile: {
+    dotenv: (f: EnvFile) => envFileService.isDotenv(f),
+    keys: (f: EnvFile) => envFileService.keys(f).map((k) => ({ key: k.key, value: k.value, fromVault: k.refs.length > 0 })),
+    problems: (f: EnvFile, _: unknown, ctx: Ctx) => envFileService.problems(f, f.projectId, requireUser(ctx).id),
+    updatedBy: (f: EnvFile, _: unknown, ctx: Ctx) => userOrNull(ctx, f.updatedById),
+    updatedBySession: (f: EnvFile) => (f.updatedBySessionId ? sessionService.get(f.updatedBySessionId).catch(() => null) : null),
+  },
+
   Worksession: {
     project: (w: Worksession, _: unknown, ctx: Ctx) => projectOf(ctx, w.projectId),
     label: (w: Worksession) => worksessionLabel(w),
@@ -815,6 +825,24 @@ export const resolvers = {
     pushPublicKey: (_: unknown, __: unknown, ctx: Ctx) => {
       requireUser(ctx);
       return pushService.publicKey();
+    },
+    envFiles: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return envFileService.list(args.projectId);
+    },
+    envVaultChoices: async (_: unknown, args: { projectId: string }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      const userId = requireUser(ctx).id;
+      return Promise.all(
+        (await envFileService.vaultChoices(args.projectId, userId)).map(async ({ item, fields }) => ({
+          itemId: item.id,
+          name: item.name,
+          kind: item.kind,
+          envExport: item.envExport,
+          canManage: (await vaultService.permissionFor(userId, item)) === 'manage',
+          fields,
+        })),
+      );
     },
     pushPreferences: (_: unknown, __: unknown, ctx: Ctx) => {
       const user = requireUser(ctx);
@@ -1488,6 +1516,22 @@ export const resolvers = {
     createWorksession: async (_: unknown, args: { projectId: string; branch?: string | null; name?: string | null; baseRef?: string | null; label?: string | null }, ctx: Ctx) => {
       await requireProject(ctx, args.projectId, 'member');
       return worksessionService.create(args.projectId, args, requireUser(ctx).id);
+    },
+    saveEnvFile: async (_: unknown, args: { projectId: string; id?: string | null; path: string; content: string; applyOnCreate?: boolean | null; expectedUpdatedAt?: Date | null }, ctx: Ctx) => {
+      await requireProject(ctx, args.projectId, 'member');
+      return envFileService.save(args.projectId, args, { userId: requireUser(ctx).id });
+    },
+    deleteEnvFile: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await requireProject(ctx, (await envFileService.get(args.id)).projectId, 'member');
+      return envFileService.delete(args.id);
+    },
+    applyEnvFiles: async (_: unknown, args: { worksessionId: string; paths?: string[] | null }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.worksessionId, 'member');
+      const ws = await worksessionService.get(args.worksessionId);
+      const project = await projectService.get(ws.projectId);
+      const usable = await worksessionService.assertUsable(project, ws.id);
+      await worksessionService.ensureDir(project, usable);
+      return envFileService.apply(project, usable, requireUser(ctx).id, { onlyPaths: args.paths ?? null, overwrite: true });
     },
     renameWorksession: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
       await guardWorksession(ctx, args.id, 'member');

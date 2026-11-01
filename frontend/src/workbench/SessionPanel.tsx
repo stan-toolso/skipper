@@ -1,4 +1,7 @@
-import { useQuery } from '@apollo/client';
+import { useMutation, useQuery } from '@apollo/client';
+import { useState } from 'react';
+import { useDialogs } from '../components/Dialogs';
+import { APPLY_ENV_FILES, type EnvApplyResult } from '../graphql/envFiles';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { SessionReviewReport, type SessionReviewInfo } from '../components/CodeReview';
@@ -10,6 +13,36 @@ import { sessionDotClass } from './WorkspaceTabs';
 import '../components/terminal.css';
 
 const fmt = (iso: string) => new Date(iso).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
+
+/** Réécrit les fichiers d'environnement du projet dans le dossier de la session (valeurs du coffre à jour). */
+function EnvFilesAction({ projectId, worksessionId }: { projectId: string; worksessionId: string }) {
+  const { alert, showError } = useDialogs();
+  const [apply, { loading }] = useMutation<{ applyEnvFiles: EnvApplyResult }>(APPLY_ENV_FILES);
+  const [done, setDone] = useState<string | null>(null);
+  const run = async () => {
+    try {
+      const { data } = await apply({ variables: { worksessionId } });
+      const r = data?.applyEnvFiles;
+      if (!r) return;
+      const notes = [...r.skipped, ...r.problems.map((p) => `valeur vide — ${p}`)];
+      setDone(r.written.length ? `${r.written.length} fichier(s) écrit(s)` : 'aucun fichier');
+      if (notes.length) await alert({ title: "Fichiers d'environnement", message: <ul className="mb-0">{notes.map((n) => <li key={n}>{n}</li>)}</ul> });
+    } catch (err) {
+      showError(err);
+    }
+  };
+  return (
+    <>
+      <button type="button" className="cc-link" disabled={loading} title="Réécrit les fichiers d'environnement du projet dans ce dossier, en remplaçant ceux présents" onClick={() => void run()}>
+        <i className="bi bi-file-earmark-lock me-1" />
+        {loading ? 'écriture…' : 'réécrire les fichiers'}
+      </button>
+      {done && <span className="cc-dimmer"> · {done}</span>}
+      {' · '}
+      <Link to={`/projects/${projectId}/env`}>modifier</Link>
+    </>
+  );
+}
 
 /**
  * Onglet « Session » du panneau de droite, à côté d'une page de session : ce que l'en-tête de la page montrait
@@ -81,6 +114,14 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
             {session.worksession?.path ?? session.project.workspacePath}
           </dd>
         </div>
+        {session.worksession && !session.archivedAt && (
+          <div>
+            <dt>Environnement</dt>
+            <dd>
+              <EnvFilesAction projectId={session.project.id} worksessionId={session.worksession.id} />
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Personne</dt>
           <dd>{session.owner ? (session.owner.id === user?.id ? 'moi' : session.owner.name ?? session.owner.email) : <span className="cc-dimmer">—</span>}</dd>
