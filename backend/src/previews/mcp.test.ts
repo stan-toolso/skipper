@@ -31,7 +31,7 @@ const info = (over: Partial<PreviewInfo> = {}): PreviewInfo => ({
 
 beforeEach(() => {
   Object.assign(service, {
-    get: vi.fn(async () => info()),
+    get: vi.fn(async () => info({ status: 'STOPPED' })),
     start: vi.fn(async () => info({ status: 'STARTING' })),
     waitSettled: vi.fn(async () => info()),
     stop: vi.fn(async () => info({ status: 'STOPPED' })),
@@ -75,6 +75,21 @@ describe('serveur MCP preview', () => {
     const r = await client.callTool({ name: 'start', arguments: { wait_seconds: 5 } });
     expect(textOf(r)).toContain('installation des dépendances');
     expect(textOf(r)).toContain('preview.status');
+  });
+
+  it('start ne relance pas un lancement en cours ou prêt, sauf restart', async () => {
+    service.get.mockResolvedValueOnce(info({ status: 'INSTALLING' }));
+    const client = await connect();
+    const r = await client.callTool({ name: 'start', arguments: { wait_seconds: 0 } });
+    expect(service.start).not.toHaveBeenCalled();
+    expect(service.waitSettled).toHaveBeenCalledWith('w1', 0);
+    expect(textOf(r)).toContain('sans le relancer');
+    service.get.mockResolvedValueOnce(info({ status: 'RUNNING' }));
+    const ready = await client.callTool({ name: 'start', arguments: {} });
+    expect(service.start).not.toHaveBeenCalled();
+    expect(textOf(ready)).toContain('Déjà lancé');
+    await client.callTool({ name: 'start', arguments: { restart: true } });
+    expect(service.start).toHaveBeenCalledWith('w1', 'u1');
   });
 
   it('start joint la fin du journal en cas d’échec', async () => {
