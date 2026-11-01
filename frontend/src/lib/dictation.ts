@@ -43,11 +43,23 @@ export function withTranscript(base: string, transcript: string): string {
   return /\s$/.test(base) ? base + said : `${base} ${said}`;
 }
 
-/** Transcription complète d'une liste de résultats (définitifs puis provisoires), dans l'ordre. */
+/**
+ * Transcription complète d'une liste de résultats (définitifs puis provisoires), dans l'ordre. Chrome sur Android
+ * ajoute un résultat par étape de la même phrase, chacun reprenant le précédent (« je », « je veux », « je veux
+ * juste »…) : un résultat qui prolonge le précédent le remplace au lieu de s'y ajouter, un résultat déjà contenu dans
+ * le précédent est ignoré.
+ */
 export function joinResults(results: ArrayLike<RecognitionResult>): string {
-  let text = '';
-  for (let i = 0; i < results.length; i++) text += `${results[i][0].transcript} `;
-  return text;
+  const parts: string[] = [];
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  for (let i = 0; i < results.length; i++) {
+    const t = results[i][0].transcript.replace(/\s+/g, ' ').trim();
+    if (!t) continue;
+    const last = parts.length ? norm(parts[parts.length - 1]) : '';
+    if (last && norm(t).startsWith(last)) parts[parts.length - 1] = t;
+    else if (!last || !last.startsWith(norm(t))) parts.push(t);
+  }
+  return parts.join(' ');
 }
 
 const ERRORS: Record<string, string> = {

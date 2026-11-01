@@ -131,15 +131,21 @@ export async function resolvePreviewConfig(root: string): Promise<PreviewConfig 
 }
 
 /**
- * Paragraphe du prompt système des sessions qui travaillent dans un dossier de travail : l'aperçu en direct, sa
- * configuration et son journal. `enabled` : aperçus activés sur ce serveur (PREVIEW_URL).
+ * Paragraphe du prompt système des sessions qui travaillent dans un dossier de travail : les dépendances (instantanés,
+ * installation de la création) et, si `enabled` (aperçus activés sur ce serveur, PREVIEW_URL), l'aperçu en direct,
+ * sa configuration et son journal. `worksessionId` : pour donner le vrai chemin du dossier d'état.
  */
-export function previewPrompt(enabled: boolean): string {
-  if (!enabled) return '';
+export function previewPrompt(enabled: boolean, worksessionId?: string | null): string {
+  const state = `../.skipper-previews/${worksessionId ?? '<identifiant de la work session>'}`;
+  const deps = [
+    "Les dépendances sont liées depuis un cache par empreinte du lockfile (liens physiques, quelques secondes) : quand `node_modules` est déjà présent, préfère `npm install` (qui ne fait que la différence) à `npm ci` (qui repart de zéro), et ne modifie jamais un fichier de `node_modules` en place.",
+    `Quand aucun instantané ne correspondait exactement au lockfile, Skipper installe les dépendances en arrière-plan à la création du dossier de travail : elle tourne tant que le processus de \`${state}/install.pid\` existe (\`kill -0 $(cat ${state}/install.pid)\` réussit ; journal \`${state}/install.log\`, code de sortie dans \`${state}/install.exit\`) ; attends sa fin avant de lancer toi-même une installation ou un build, plutôt que d'en lancer une deuxième en parallèle.`,
+  ];
+  if (!enabled) return deps.join(' ');
   return [
     "Aperçu en direct : l'onglet « Aperçu » de la session lance le serveur de développement de ta branche dans l'environnement du projet et l'affiche aux membres du projet (ordinateur ou téléphone), sans déploiement.",
     `La commande vient de \`${PREVIEW_CONFIG_FILE}\` (\`{ "command": "…", "cwd": "sous-dossier", "install": "…", "env": {…} }\`), sinon d'un script \`dev\` Vite, Next, Nuxt ou Astro détecté ; elle doit écouter sur 0.0.0.0 et sur le port \`$PORT\`. Si on te demande de configurer l'aperçu, crée ce fichier, vérifie que la commande démarre, puis commite-le.`,
-    "Les dépendances sont liées depuis un cache par empreinte du lockfile (liens physiques, quelques secondes) : quand `node_modules` est déjà présent, préfère `npm install` (qui ne fait que la différence) à `npm ci` (qui repart de zéro), et ne modifie jamais un fichier de `node_modules` en place.",
-    "Le journal du dernier lancement (installation puis serveur) est dans `../.skipper-previews/<identifiant de la work session>/log`, à côté de ton dossier de travail.",
+    ...deps,
+    `Le journal du dernier lancement de l'aperçu (installation puis serveur) est dans \`${state}/log\`, à côté de ton dossier de travail.`,
   ].join(' ');
 }

@@ -777,6 +777,8 @@ type VaultItem {
   readOnly: Boolean!
   "Chaque usage par un agent est soumis à l'approbation d'un humain, même en mode « tout autoriser »."
   requireApproval: Boolean!
+  "Valeurs utilisables dans les fichiers d'environnement des sessions ({{vault:nom.champ}}) : écrites en clair dans le dossier de travail, lisibles par l'agent."
+  envExport: Boolean!
   "ssh, aws, scaleway : préfixes de commandes autorisés (vide = tout ; ssh : ni enchaînement ni transfert de fichiers avec une liste)."
   commandAllowlist: [String!]!
   "ssh : clé publique à ajouter dans authorized_keys du serveur."
@@ -839,6 +841,7 @@ input VaultItemInput {
   viaItemId: ID
   readOnly: Boolean
   requireApproval: Boolean
+  envExport: Boolean
   commandAllowlist: [String!]
   "Rappel de rotation ; null pour retirer."
   expiresAt: DateTime
@@ -2256,6 +2259,52 @@ type WorkflowRunLog {
   createdAt: DateTime!
 }
 
+"""
+Fichier d'environnement d'un projet (.env ou tout fichier texte) : modèle écrit à ce chemin dans chaque nouveau dossier
+de travail, chaque {{vault:élément.champ}} remplacé par la valeur du coffre (éléments qui le permettent).
+"""
+type EnvFile {
+  id: ID!
+  "Chemin relatif au dossier de travail."
+  path: String!
+  content: String!
+  "Écrit à la création de chaque session (dossier de travail)."
+  applyOnCreate: Boolean!
+  "Fichier dotenv (.env, .env.*, *.env) : ses clés se lisent et s'ajoutent une à une."
+  dotenv: Boolean!
+  keys: [EnvKey!]!
+  "Références au coffre qui ne seront pas résolues pour la personne connectée."
+  problems: [String!]!
+  updatedAt: DateTime!
+  updatedBy: User
+  "Session d'agent auteur de la dernière modification (outils env)."
+  updatedBySession: Session
+}
+
+type EnvKey {
+  key: String!
+  "Valeur du modèle : texte, ou référence au coffre non résolue."
+  value: String!
+  fromVault: Boolean!
+}
+
+type EnvVaultChoice {
+  itemId: ID!
+  name: String!
+  kind: VaultItemKind!
+  "L'élément permet l'écriture de ses valeurs dans les fichiers d'environnement."
+  envExport: Boolean!
+  "La personne connectée gère l'élément (peut cocher l'option)."
+  canManage: Boolean!
+  fields: [String!]!
+}
+
+type EnvApplyResult {
+  written: [String!]!
+  skipped: [String!]!
+  problems: [String!]!
+}
+
 type Query {
   "Utilisateur connecté (null sinon). Seule requête accessible sans session."
   me: User
@@ -2294,6 +2343,10 @@ type Query {
   pushPublicKey: String!
   "Familles de notifications de la personne connectée, avec leur état (toutes reçues par défaut)."
   pushPreferences: [PushCategory!]!
+  "Fichiers d'environnement d'un projet (membres) : modèles écrits dans chaque nouveau dossier de travail."
+  envFiles(projectId: ID!): [EnvFile!]!
+  "Éléments du coffre (portée des agents de la personne connectée) qu'un fichier d'environnement peut référencer, avec leurs champs."
+  envVaultChoices(projectId: ID!): [EnvVaultChoice!]!
   "Contenu d'un dossier du workspace du projet (ou de la work session). path vide = racine."
   workspaceEntries(projectId: ID!, worksessionId: ID, path: String = ""): [FileEntry!]!
   "Lecture d'un fichier texte (2 Mo maximum)."
@@ -2647,6 +2700,11 @@ type Mutation {
   createTerminal(projectId: ID!, name: String, worksessionId: ID!): Terminal!
   "Crée une work session. Projet git : extrait la branche si elle existe, sinon la crée depuis baseRef (défaut : la branche principale à jour sur origin). Il faut un nom, une branche ou un libellé."
   createWorksession(projectId: ID!, branch: String, name: String, baseRef: String, label: String): Worksession!
+  "Crée (sans id) ou met à jour un fichier d'environnement du projet (membres). expectedUpdatedAt : refus (FILE_CONFLICT) s'il a changé depuis."
+  saveEnvFile(projectId: ID!, id: ID, path: String!, content: String!, applyOnCreate: Boolean, expectedUpdatedAt: DateTime): EnvFile!
+  deleteEnvFile(id: ID!): Boolean!
+  "Réécrit les fichiers d'environnement du projet dans une work session (tous, ou ceux de paths), en remplaçant les fichiers présents."
+  applyEnvFiles(worksessionId: ID!, paths: [String!]): EnvApplyResult!
   "Renomme le libellé (null ou vide : la branche) et/ou le dossier (git worktree move, seulement si rien n'y tourne)."
   renameWorksession(id: ID!, label: String, name: String): Worksession!
   "Lance (ou relance) l'aperçu de la work session : dépendances liées depuis le cache ou installées, puis serveur de développement (membres)."

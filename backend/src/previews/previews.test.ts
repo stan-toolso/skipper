@@ -1,10 +1,12 @@
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { access, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { detectFromPackage, parsePreviewConfig, PreviewConfigError, resolvePreviewConfig } from './config.js';
 import { defaultInstallCommand, depsHash, linkSnapshot, listSnapshots, MARKER, pruneSnapshots, readMarker, saveSnapshot, scanTree, seedWorksessionDeps, writeMarker } from './deps.js';
 import { freePort, labelFromHost, newHostLabel, parsePreviewTemplate, previewOrigin, PREVIEW_PORT_MIN, safeNext } from './hosts.js';
+import { INSTALL_SCRIPT, RUN_SCRIPT } from './scripts.js';
 import { deriveState, parseEvents } from './state.js';
 
 describe('configuration de l’aperçu', () => {
@@ -161,14 +163,22 @@ describe('instantanés des dépendances', () => {
     expect(await readFile(path.join(c, 'node_modules/pkg/index.js'), 'utf8')).toBe('1');
   });
 
-  it('lie les dépendances à la création d’une work session quand l’instantané existe, et rien sinon', async () => {
+  it('lie les dépendances à la création d’une work session : l’instantané exact, sinon le plus proche, sinon rien', async () => {
     const a = await worktree('a');
     await write('a/node_modules/pkg/index.js', '1');
     expect(await seedWorksessionDeps(tmp, await worktree('sans-instantane'))).toBe('none');
-    await saveSnapshot(store, a, (await depsHash(a))!);
+    const hash = (await depsHash(a))!;
+    await writeMarker(a, hash);
+    await saveSnapshot(store, a, hash);
     const d = await worktree('d');
     expect(await seedWorksessionDeps(tmp, d)).toBe('snapshot');
-    expect(await readFile(path.join(d, 'node_modules', MARKER), 'utf8')).toMatch(/^[0-9a-f]{24}/);
+    expect(await readMarker(d)).toBe(hash);
+    // Autre lockfile : les dépendances les plus proches, mais le marqueur reste celui de l’instantané (installation à faire).
+    const e = await worktree('e', '{"lockfileVersion":3,"autre":true}');
+    expect(await seedWorksessionDeps(tmp, e)).toBe('nearest');
+    expect(await readFile(path.join(e, 'node_modules/pkg/index.js'), 'utf8')).toBe('1');
+    expect(await readMarker(e)).toBe(hash);
+    expect(await readMarker(e)).not.toBe(await depsHash(e));
   });
 
   it('ne garde que les instantanés les plus récents', async () => {
@@ -191,5 +201,77 @@ describe('instantanés des dépendances', () => {
     expect(await resolvePreviewConfig(a)).toMatchObject({ command: 'npm start', source: '.skipper/preview.json' });
     await write('a/.skipper/preview.json', '{');
     await expect(resolvePreviewConfig(a)).rejects.toThrow(PreviewConfigError);
+  });
+});
+
+describe('installation des dépendances à la création d’une work session', () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(path.join(os.tmpdir(), 'skipper-install-'));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const run = (script: string, env: Record<string, string>) =>
+    new Promise<number | null>((resolve) => {
+      const child = spawn('sh', [script], { cwd: tmp, env: { ...process.env, ...env }, stdio: 'ignore' });
+      child.on('close', resolve);
+    });
+
+  it('l’aperçu lancé pendant l’installation l’attend puis ne réinstalle pas ; l’installation pose marqueur et code de sortie', async () => {
+    const state = path.join(tmp, 'state');
+    const ws = path.join(tmp, 'ws');
+    await mkdir(state, { recursive: true });
+    await mkdir(ws, { recursive: true });
+    await writeFile(path.join(state, 'install.sh'), INSTALL_SCRIPT);
+    await writeFile(path.join(state, 'run.sh'), RUN_SCRIPT);
+    const common = { SKIPPER_STATE: state, SKIPPER_INSTALL_DIR: ws, SKIPPER_DEPS_HASH: 'abc123' };
+    const install = run(path.join(state, 'install.sh'), { ...common, SKIPPER_INSTALL: 'sleep 0.6 && mkdir -p node_modules/pkg' });
+    for (let i = 0; i < 50 && !(await access(path.join(state, 'install.pid')).then(() => true, () => false)); i++) await new Promise((r) => setTimeout(r, 20));
+
+    const preview = await run(path.join(state, 'run.sh'), {
+      ...common,
+      SKIPPER_INSTALL: 'echo DEUXIEME-INSTALLATION',
+      SKIPPER_DEPS_WAIT: path.join(state, 'install.pid'),
+      SKIPPER_APP_DIR: ws,
+      SKIPPER_COMMAND: 'echo servi',
+    });
+    expect(preview).toBe(0);
+    expect(await install).toBe(0);
+    const log = await readFile(path.join(state, 'log'), 'utf8');
+    expect(log).toMatch(/Attente de l'installation/);
+    expect(log).toMatch(/Dépendances à jour/);
+    expect(log).not.toMatch(/DEUXIEME-INSTALLATION/);
+    expect(log).toMatch(/servi/);
+    expect((await readFile(path.join(state, 'install.exit'), 'utf8')).trim()).toBe('0');
+    await expect(access(path.join(state, 'install.pid'))).rejects.toThrow();
+    expect((await readFile(path.join(ws, 'node_modules', MARKER), 'utf8')).trim()).toBe('abc123');
+    expect(deriveState(parseEvents(await readFile(path.join(state, 'events'), 'utf8')), false, false).error).toMatch(/code 0/);
+  });
+
+  it('un pid périmé (autre processus) n’est pas attendu, et une installation qui échoue note son code', async () => {
+    const state = path.join(tmp, 'state');
+    const ws = path.join(tmp, 'ws');
+    await mkdir(state, { recursive: true });
+    await mkdir(ws, { recursive: true });
+    await writeFile(path.join(state, 'install.sh'), INSTALL_SCRIPT);
+    await writeFile(path.join(state, 'run.sh'), RUN_SCRIPT);
+    expect(await run(path.join(state, 'install.sh'), { SKIPPER_STATE: state, SKIPPER_INSTALL_DIR: ws, SKIPPER_DEPS_HASH: 'h', SKIPPER_INSTALL: 'exit 3' })).toBe(3);
+    expect((await readFile(path.join(state, 'install.exit'), 'utf8')).trim()).toBe('3');
+    // pid du processus de test : vivant, mais pas une installation.
+    await writeFile(path.join(state, 'install.pid'), String(process.pid));
+    const preview = await run(path.join(state, 'run.sh'), {
+      SKIPPER_STATE: state,
+      SKIPPER_INSTALL_DIR: ws,
+      SKIPPER_DEPS_HASH: 'h',
+      SKIPPER_INSTALL: 'mkdir -p node_modules',
+      SKIPPER_DEPS_WAIT: path.join(state, 'install.pid'),
+      SKIPPER_APP_DIR: ws,
+      SKIPPER_COMMAND: 'true',
+    });
+    expect(preview).toBe(0);
+    expect(await readFile(path.join(state, 'log'), 'utf8')).not.toMatch(/Attente/);
+    expect((await readFile(path.join(ws, 'node_modules', MARKER), 'utf8')).trim()).toBe('h');
   });
 });

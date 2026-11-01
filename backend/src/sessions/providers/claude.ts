@@ -42,6 +42,8 @@ import { createTasksMcpServer, TASKS_FREE_TOOLS } from '../../tasks/mcp.js';
 import { trackedPullRequestService } from '../../pullRequests/service.js';
 import { taskService } from '../../tasks/service.js';
 import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
+import { createEnvMcpServer } from '../../envFiles/mcp.js';
+import { envFileService } from '../../envFiles/service.js';
 import { createSessionsMcpServer, sessionsPromptSummary } from '../mcp.js';
 import { claudeSettings, cliEnv } from '../../settings/claude.js';
 import { usageService } from '../../settings/usage.js';
@@ -232,10 +234,11 @@ export class ClaudeProvider implements SessionProvider {
         ctx.project.gitUrl && !chat ? trackedPullRequestService.promptSummary() : '',
         chat ? '' : gitServer.promptSummary(ctx.project),
         vaultService.promptSummary(vaultItems, ctx.project),
+        chat ? '' : await envFileService.promptSummary(ctx.project.id),
         sessionsPromptSummary(ctx.project, { chat }),
         googleAccountService.promptSummary(googleAccounts),
         chat ? '' : sharedPagesPrompt(),
-        ctx.session.worksessionId && !chat ? previewPrompt(previewsEnabled()) : '',
+        ctx.session.worksessionId && !chat ? previewPrompt(previewsEnabled(), ctx.session.worksessionId) : '',
         previewWorksession ? previewMcpPrompt() : '',
         browserEnabled
           ? "Un navigateur headless (Chromium) est disponible via les outils `mcp__playwright__*` : navigue, lis la page (`browser_snapshot`), clique et remplis des formulaires pour tester les interfaces web. Le serveur de développement à tester se lance dans l'environnement du projet ; ses URL en localhost y sont accessibles. Pour te connecter à un site web du coffre, clique le champ du formulaire puis appelle `browser_fill` : Skipper y saisit la valeur, que tu ne vois jamais."
@@ -287,6 +290,8 @@ export class ClaudeProvider implements SessionProvider {
         ...(vaultTools ? { vault: createVaultMcpServer(vaultContext) } : {}),
         worksessions: createWorksessionsMcpServer(ctx.project, ctx.session.id, scope),
         sessions: createSessionsMcpServer(ctx.project, ctx.session.id, scope),
+        // Fichiers d'environnement du projet : un chat n'a pas de dossier de travail où les écrire.
+        ...(chat ? {} : { env: createEnvMcpServer({ project: ctx.project, sessionId: ctx.session.id, ownerId, worksessionId: ctx.session.worksessionId ?? null }) }),
         // Espace personnel : la liste des projets de la personne (lecture seule).
         ...(scope ? { projects: createProjectsMcpServer(scope) } : {}),
         // Un chat n'a pas de dossier de travail : rien à publier.
@@ -319,8 +324,10 @@ export class ClaudeProvider implements SessionProvider {
       // Sessions : consulter, attendre et terminer ses propres sessions sont libres ; lancer une session ou lui
       // envoyer une instruction consomme du budget et passe par l'autorisation habituelle.
       // Pages partagées : lister est libre ; publier passe par l'autorisation quand la page est exposée à d'autres.
+      // Fichiers d'environnement : libres (modèles du projet en base, écriture dans le seul dossier de travail ; une valeur
+      // du coffre n'y arrive que si l'élément le permet, choix de qui le gère).
       // Aperçu : libre (le même bouton que l'onglet « Aperçu », dans le conteneur du projet, sans coût ni effet extérieur).
-      allowedTools: review ? REVIEW_ALLOWED_TOOLS : [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', ...TASKS_FREE_TOOLS, 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(previewWorksession ? ['mcp__preview'] : []), ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
+      allowedTools: review ? REVIEW_ALLOWED_TOOLS : [...allowedTools, ...projectRules.map(formatRule), 'mcp__context', ...TASKS_FREE_TOOLS, 'mcp__vault', 'mcp__worksessions__list', 'mcp__worksessions__create', 'mcp__sessions__list', 'mcp__sessions__get', 'mcp__sessions__wait', 'mcp__sessions__end', 'mcp__pages__list', 'mcp__projects', ...(chat ? [] : ['mcp__env']), ...(previewWorksession ? ['mcp__preview'] : []), ...(browserServer ? browserReadTools : []), ...(googleAccounts.length ? googleReadTools(googleAccounts) : [])],
       ...(review ? { disallowedTools: REVIEW_DISALLOWED_TOOLS } : {}),
       // Le coffre saisit des secrets dans le navigateur : les outils qui pourraient relire la valeur sont retirés à l'agent.
       ...(browserServer && vaultBrowser ? { disallowedTools: ['mcp__playwright__browser_evaluate', 'mcp__playwright__browser_run_code'] } : {}),

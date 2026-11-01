@@ -15,6 +15,7 @@ const icons: Record<TabKind, string> = {
   'project-form': 'bi-pencil',
   context: 'bi-journal-text',
   vault: 'bi-shield-lock',
+  env: 'bi-file-earmark-lock',
   session: 'bi-chat-dots-fill',
   chat: 'bi-chat-left-text-fill',
   chats: 'bi-chat-left-text',
