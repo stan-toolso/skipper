@@ -88,6 +88,7 @@ import type { SessionScheduleInput } from '../schedules/types.js';
 import { userService } from '../users/service.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
 import { log } from '../log.js';
+import { previewService } from '../previews/service.js';
 
 type Ctx = AuthContext;
 type GqlRole = Uppercase<ProjectRole>;
@@ -654,6 +655,14 @@ export const resolvers = {
   },
 
   Query: {
+    preview: async (_: unknown, args: { worksessionId: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.worksessionId, 'viewer');
+      return previewService.get(args.worksessionId);
+    },
+    previewLog: async (_: unknown, args: { worksessionId: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.worksessionId, 'viewer');
+      return previewService.log(args.worksessionId);
+    },
     gitStatus: async (_: unknown, args: WorkspaceRef, ctx: Ctx) => {
       await requireProject(ctx, args.projectId);
       return gitService.status(args);
@@ -1472,6 +1481,18 @@ export const resolvers = {
     renameWorksession: async (_: unknown, args: { id: string; label?: string | null; name?: string | null }, ctx: Ctx) => {
       await guardWorksession(ctx, args.id, 'member');
       return worksessionService.rename(args.id, args);
+    },
+    startPreview: async (_: unknown, args: { worksessionId: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.worksessionId, 'member');
+      return previewService.start(args.worksessionId, requireUser(ctx).id);
+    },
+    stopPreview: async (_: unknown, args: { worksessionId: string }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.worksessionId, 'member');
+      return previewService.stop(args.worksessionId);
+    },
+    previewAccessUrl: async (_: unknown, args: { worksessionId: string; path?: string | null }, ctx: Ctx) => {
+      await guardWorksession(ctx, args.worksessionId, 'viewer');
+      return previewService.accessUrl(args.worksessionId, requireUser(ctx).id, args.path ?? '/');
     },
     archiveWorksession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardWorksession(ctx, args.id, 'member');

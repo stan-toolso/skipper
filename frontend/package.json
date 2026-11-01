@@ -26,6 +26,7 @@
     "bootstrap": "^5.3.3",
     "bootstrap-icons": "^1.13.1",
     "graphql": "^16.9.0",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.3.0",
     "react-bootstrap": "^2.10.5",
     "react-dom": "^19.3.0",

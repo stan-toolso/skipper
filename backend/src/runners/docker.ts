@@ -48,6 +48,8 @@ function dockerWithInput(args: string[], input: string): Promise<void> {
 
 /** Durée pendant laquelle l'identifiant d'une image est gardé en mémoire (la page du projet interroge l'état toutes les 3 s). */
 const IMAGE_CACHE_MS = 30_000;
+/** Durée pendant laquelle l'adresse IP d'un conteneur est gardée en mémoire (elle change à sa recréation). */
+const ADDRESS_CACHE_MS = 10_000;
 
 /** Conteneur Docker dédié au projet, code monté aux mêmes chemins absolus que sur l'hôte. */
 export class DockerRunner implements Runner {
@@ -57,6 +59,8 @@ export class DockerRunner implements Runner {
   private readonly pending = new Map<string, Promise<RunnerStatus>>();
   private readonly images = new Map<string, { at: number; info: ImageInfo | null }>();
   private idleCheck: ((project: Project) => Promise<boolean>) | null = null;
+  /** Adresse IP des conteneurs (proxy des aperçus, à chaque requête) : gardée quelques secondes. */
+  private readonly addresses = new Map<string, { at: number; ip: string | null }>();
 
   containerName(project: Pick<Project, 'slug'>): string {
     return `skipper-${project.slug}`;
@@ -74,6 +78,19 @@ export class DockerRunner implements Runner {
   /** Script de relais donné au SDK : lance le CLI dans le conteneur, dans le même dossier, stdio relayés. */
   private relayPath(project: Project): string {
     return path.join(config.workspacesRoot, '.runners', project.slug, 'claude');
+  }
+
+  /**
+   * Caches persistants des gestionnaires de paquets (npm, pnpm, yarn, pip…) : montés sur `~/.npm` et `~/.cache` (où l'installation
+   * par défaut range aussi le magasin pnpm : `~/.local` n'est pas monté, Docker y créerait des dossiers de root), ils survivent à la recréation du conteneur et ne pèsent plus sur le tmpfs (en mémoire) du dossier
+   * personnel ; une installation déjà faite une fois dans le projet se refait sans réseau (`--prefer-offline`).
+   */
+  packageCaches(project: Pick<Project, 'slug'>, home: string): { host: string; target: string }[] {
+    const root = path.join(config.workspacesRoot, '.runners', project.slug, 'cache');
+    return [
+      { host: path.join(root, 'npm'), target: path.join(home, '.npm') },
+      { host: path.join(root, 'xdg'), target: path.join(home, '.cache') },
+    ];
   }
 
   /** Dossier `~/.claude` persistant du conteneur : conversations Claude Code du projet (reprises après recréation), sans les identifiants de l'hôte. */
@@ -142,6 +159,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     const home = os.homedir();
     const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
     const gid = typeof process.getgid === 'function' ? process.getgid() : 1000;
+    const caches = this.packageCaches(project, home);
     const mounts = [
       // ~/.claude propre au projet : ses conversations, qui survivent à la recréation. Les identifiants Claude
       // de l'hôte ne sont jamais montés : chaque session reçoit ceux de son propriétaire par variables d'environnement.
@@ -154,6 +172,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       `${worksessions}:${worksessions}`,
       `${plugin}:${plugin}`,
       `${attachments}:${attachments}`,
+      ...caches.map((c) => `${c.host}:${c.target}`),
     ];
     // Identité git de l'utilisateur système (repli quand le propriétaire de la session n'a pas de compte GitHub) ;
     // absente : l'identité des commits vient des variables d'environnement, ou reste celle du conteneur.
@@ -180,7 +199,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
       hosts: ['host.docker.internal:host-gateway'],
       command: ['sleep', 'infinity'],
     };
-    return { spec, dirs: [worksessions, plugin, attachments, claudeHome] };
+    return { spec, dirs: [worksessions, plugin, attachments, claudeHome, ...caches.map((c) => c.host)] };
   }
 
   /** Arguments de `docker run` dérivés de la configuration, label compris. */
@@ -292,6 +311,7 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   }
 
   async remove(project: Project): Promise<void> {
+    this.addresses.delete(this.containerName(project));
     await docker(['rm', '-f', this.containerName(project)], { allowFail: true });
   }
 
@@ -435,6 +455,25 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
         resolve({ stdout, stderr, exitCode: code ?? null, signal: signal ?? null, truncated, durationMs: Date.now() - started });
       });
     });
+  }
+
+  async execDetached(project: Project, cwd: string, command: string[], env: Record<string, string> = {}): Promise<void> {
+    await this.ensureReady(project);
+    await docker(['exec', '-d', '-w', cwd, ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]), this.containerName(project), ...command]);
+  }
+
+  async exec(project: Project, command: string[]): Promise<{ stdout: string; code: number }> {
+    return docker(['exec', this.containerName(project), ...command], { allowFail: true });
+  }
+
+  async containerAddress(project: Project): Promise<string | null> {
+    const name = this.containerName(project);
+    const cached = this.addresses.get(name);
+    if (cached && Date.now() - cached.at < ADDRESS_CACHE_MS) return cached.ip;
+    const { stdout, code } = await docker(['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}', name], { allowFail: true });
+    const ip = code === 0 ? stdout.trim().split(/\s+/)[0] || null : null;
+    this.addresses.set(name, { at: Date.now(), ip });
+    return ip;
   }
 
   /** `host.docker.internal` quand le conteneur le résout (Docker Desktop, ou `--add-host` sous Linux), sinon la passerelle du réseau. */

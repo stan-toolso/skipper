@@ -28,6 +28,9 @@
   --cc-dot-stopped: #7a6a2a;
   --cc-diff-add-fg: #9be09b;
   --cc-diff-del-fg: #f29a95;
+  /* QR codes : toujours sombre sur clair, quel que soit le thème (lisibles par les téléphones). */
+  --cc-qr-dark: #000000;
+  --cc-qr-light: #ffffff;
   color-scheme: dark;
 
   --bs-body-bg: var(--cc-bg);
@@ -74,6 +77,9 @@
   --cc-dot-stopped: #d9c27a;
   --cc-diff-add-fg: #116329;
   --cc-diff-del-fg: #a40e26;
+  /* QR codes : toujours sombre sur clair, quel que soit le thème (lisibles par les téléphones). */
+  --cc-qr-dark: #000000;
+  --cc-qr-light: #ffffff;
   color-scheme: light;
 
   --bs-body-bg: var(--cc-bg);

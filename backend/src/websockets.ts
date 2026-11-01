@@ -16,9 +16,13 @@ export function rejectUpgrade(socket: Duplex, status: number, reason: string): v
  * Le navigateur envoie toujours l'en-tête `Origin` avec un upgrade WebSocket, et le cookie de session part aussi
  * depuis une page d'un autre sous-domaine (SameSite=Lax) : sans ce contrôle, n'importe quel site du même domaine
  * pourrait ouvrir un terminal au nom de l'utilisateur connecté. Une origine absente ou inconnue est refusée.
+ * `hostHandlers` passent avant ce contrôle : ils ne prennent que les demandes adressées à leur propre hôte.
  */
-export function attachWebSockets(server: Server, handlers: UpgradeHandler[]): void {
+export function attachWebSockets(server: Server, handlers: UpgradeHandler[], hostHandlers: UpgradeHandler[] = []): void {
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    // Hôtes à part (aperçus des work sessions) : leur origine est le sous-domaine de l'aperçu, ils ne donnent jamais
+    // accès à l'API et font leur propre contrôle (cookie propre au sous-domaine).
+    if (hostHandlers.some((handle) => handle(req, socket, head))) return;
     if (!isAllowedOrigin(req.headers.origin)) return rejectUpgrade(socket, 403, 'Forbidden');
     if (!handlers.some((handle) => handle(req, socket, head))) socket.destroy();
   });

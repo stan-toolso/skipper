@@ -10,6 +10,7 @@ import { LABEL_MAX, uniqueName } from './names.js';
 import { worksessionRepository } from './repository.js';
 import { worksessionLabel, type Worksession } from './types.js';
 import { log } from '../log.js';
+import { seedWorksessionDeps } from '../previews/deps.js';
 
 export { namesFromText, uniqueName } from './names.js';
 
@@ -97,6 +98,19 @@ export interface CreateWorksessionInput {
   taskId?: string | null;
 }
 
+/**
+ * Crochets des modules qui accrochent quelque chose à une work session : `beforeRetire` est appelé avant son archivage
+ * ou sa suppression (aperçus : arrêt du serveur de développement). Les erreurs sont journalisées, jamais bloquantes.
+ */
+export const worksessionHooks = {
+  beforeRetire: [] as ((project: Project, worksession: Worksession) => Promise<void>)[],
+};
+async function runRetireHooks(project: Project, worksession: Worksession): Promise<void> {
+  for (const hook of worksessionHooks.beforeRetire) {
+    await hook(project, worksession).catch((err) => log.warn(`[worksessions] ${worksession.name} : ${(err as Error).message}`));
+  }
+}
+
 /** Restaurations de dossier en cours, par work session : des appels concurrents partagent la même. */
 const restoring = new Map<string, Promise<string>>();
 
@@ -166,6 +180,8 @@ export const worksessionService = {
       }
       const base = input.baseRef?.trim() ? validateBaseRef(input.baseRef.trim()) : null;
       await this.checkout(main, dir, branch, { base, defaultBranch: project.gitBranch, auth: await gitAuthFor(project, actorId) });
+      // Dépendances déjà installées une fois pour ce lockfile (instantané des aperçus) : liées tout de suite, sans installation.
+      await seedWorksessionDeps(worksessionsRoot(project), dir);
     } else {
       await mkdir(dir, { recursive: true });
     }
@@ -259,6 +275,7 @@ export const worksessionService = {
     const wt = await this.get(id);
     if ((await worksessionRepository.countRunningSessions(id)) > 0) throw new AppError('Des sessions tournent encore dans cette work session');
     const project = await projectService.get(wt.projectId);
+    await runRetireHooks(project, wt);
     const main = workspacePath(project);
     const dir = worksessionPath(project, wt);
     if (project.gitUrl && (await isGitRepository(main))) {
@@ -276,6 +293,7 @@ export const worksessionService = {
   async archive(id: string, archiveSessions: (worksessionId: string, at: Date) => Promise<void>): Promise<Worksession> {
     const wt = await this.get(id);
     if (wt.archivedAt) return wt;
+    await runRetireHooks(await projectService.get(wt.projectId), wt);
     const at = new Date();
     const archived = (await worksessionRepository.setArchived(id, at)) ?? wt;
     try {
