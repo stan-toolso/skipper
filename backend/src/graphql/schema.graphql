@@ -2785,3 +2785,154 @@ extend type Mutation {
   "Repart tout de suite d'une conversation neuve (la session en attente est d'abord terminée) ; avec `keepSummary`, les derniers échanges accompagnent la prochaine instruction. Le transcript affiché est conservé."
   resetSessionContext(id: ID!, keepSummary: Boolean = true): Session!
 }
+
+# ---- Facturation de la cellule -------------------------------------------------------------------
+
+"Offre de la cellule, telle que le client la voit (montants en euros hors taxes)."
+type BillingPlan {
+  planName: String!
+  baseMonthlyEur: Float!
+  includedProjects: Int!
+  extraProjectEur: Float!
+  creditPriceEur: Float!
+  "Crédits qui valent un jour-homme (équivalent affiché à côté des crédits)."
+  creditsPerManDay: Float!
+  ctoDailyRateEur: Float!
+  ctoHoursPerDay: Float!
+}
+
+"Réglages complets de la facturation (super administrateur) : l'offre, plus la conversion du coût des modèles en crédits."
+type BillingSettings {
+  "Faux tant qu'un super administrateur n'a rien enregistré : la page de consommation l'indique."
+  configured: Boolean!
+  planName: String!
+  baseMonthlyEur: Float!
+  includedProjects: Int!
+  extraProjectEur: Float!
+  creditPriceEur: Float!
+  "Crédits décomptés pour 1 USD de coût des modèles (jamais montré au client)."
+  creditsPerUsd: Float!
+  creditsPerManDay: Float!
+  ctoDailyRateEur: Float!
+  ctoHoursPerDay: Float!
+  "Taux USD → EUR, pour le coût réel et la marge."
+  usdToEur: Float!
+}
+
+input BillingSettingsInput {
+  planName: String
+  baseMonthlyEur: Float
+  includedProjects: Int
+  extraProjectEur: Float
+  creditPriceEur: Float
+  creditsPerUsd: Float
+  creditsPerManDay: Float
+  ctoDailyRateEur: Float
+  ctoHoursPerDay: Float
+  usdToEur: Float
+}
+
+type BillingSubscription {
+  "Projets comptés (hors espaces personnels)."
+  projects: Int!
+  extraProjects: Int!
+  baseEur: Float!
+  extraEur: Float!
+  totalEur: Float!
+}
+
+type BillingUsageProject {
+  projectId: ID
+  projectName: String
+  credits: Float!
+  eur: Float!
+  manDays: Float!
+}
+
+type BillingUsageDay {
+  "AAAA-MM-JJ."
+  day: String!
+  credits: Float!
+}
+
+"Usage des agents en crédits : le coût des modèles n'apparaît pas."
+type BillingUsage {
+  credits: Float!
+  eur: Float!
+  manDays: Float!
+  "Projection de fin de mois (extrapolation linéaire ; égale au réalisé pour un mois clos)."
+  projectedCredits: Float!
+  projectedEur: Float!
+  projectedManDays: Float!
+  byProject: [BillingUsageProject!]!
+  byDay: [BillingUsageDay!]!
+}
+
+"Temps passé par un CTO Toolso, saisi par un super administrateur."
+type CtoTimeEntry {
+  id: ID!
+  "AAAA-MM-JJ."
+  day: String!
+  hours: Float!
+  projectId: ID
+  projectName: String
+  description: String!
+  createdByName: String
+  createdAt: DateTime!
+}
+
+input CtoTimeEntryInput {
+  "AAAA-MM-JJ."
+  day: String!
+  hours: Float!
+  projectId: ID
+  description: String
+}
+
+type BillingCto {
+  hours: Float!
+  days: Float!
+  eur: Float!
+  entries: [CtoTimeEntry!]!
+}
+
+"Coût réel des modèles et marge sur l'usage (super administrateur seulement)."
+type BillingOperatorView {
+  creditsPerUsd: Float!
+  usdToEur: Float!
+  costUsd: Float!
+  costEur: Float!
+  projectedCostEur: Float!
+  projectedMarginEur: Float!
+}
+
+"Relevé mensuel de la cellule : abonnement, usage des agents, temps CTO et facture estimée (euros HT)."
+type BillingStatement {
+  "AAAA-MM."
+  month: String!
+  configured: Boolean!
+  "Mois en cours : montants provisoires, projection de fin de mois."
+  inProgress: Boolean!
+  daysInMonth: Int!
+  daysElapsed: Float!
+  plan: BillingPlan!
+  subscription: BillingSubscription!
+  usage: BillingUsage!
+  cto: BillingCto!
+  totalEur: Float!
+  projectedTotalEur: Float!
+  operator: BillingOperatorView
+}
+
+extend type Query {
+  "Relevé de consommation du mois AAAA-MM (mois courant par défaut). Administrateurs ; le détail opérateur pour les super administrateurs."
+  billingStatement(month: String): BillingStatement!
+  "Réglages de facturation (super administrateurs)."
+  billingSettings: BillingSettings!
+}
+
+extend type Mutation {
+  updateBillingSettings(input: BillingSettingsInput!): BillingSettings!
+  addCtoTimeEntry(input: CtoTimeEntryInput!): CtoTimeEntry!
+  deleteCtoTimeEntry(id: ID!): Boolean!
+}
