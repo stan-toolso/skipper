@@ -28,6 +28,7 @@ const icons: Record<string, string> = {
   'container.cpu_saturated': 'bi-speedometer2',
   'context.created': 'bi-journal-plus',
   'schedule.run': 'bi-alarm',
+  'schedule.blocked': 'bi-shield-exclamation',
   'schedule.skipped': 'bi-alarm',
   'schedule.failed': 'bi-alarm',
   'workflow.run': 'bi-diagram-3',

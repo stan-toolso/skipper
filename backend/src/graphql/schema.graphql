@@ -2732,6 +2732,14 @@ type Subscription {
 
 "Planification d'une session : à chaque échéance de l'expression cron, l'instruction est envoyée à la session (relancée si elle est terminée)."
 type SessionSchedule {
+  "Identifiant de la session planifiée (une planification par session au plus)."
+  sessionId: ID!
+  "Nom affiché de la planification : le sien, sinon celui de la session."
+  name: String!
+  "Nom saisi pour la planification (null : celui de la session)."
+  customName: String
+  session: Session!
+  project: Project!
   "Cinq champs : minute heure jour mois jour-de-semaine, ou alias (@hourly, @daily, @weekly, @monthly)."
   cron: String!
   "Fuseau IANA dans lequel l'expression est interprétée (ex. Europe/Paris)."
@@ -2745,10 +2753,52 @@ type SessionSchedule {
   lastRunAt: DateTime
   "Compte rendu de la dernière exécution : terminée (durée, coût), ignorée (raison) ou en erreur."
   lastResult: String
+  "Historique des exécutions, les plus récentes d'abord."
+  runs(limit: Int = 20): [ScheduleRun!]!
+  createdAt: DateTime!
   updatedAt: DateTime!
 }
 
+"Issue d'une exécution planifiée."
+enum ScheduleRunStatus {
+  RUNNING
+  "Terminée sans erreur ni refus."
+  DONE
+  "Un appel d'outil a été refusé (mode « Ne jamais me demander », refus d'un humain) ou une demande est restée sans réponse : le travail n'a pas pu aller au bout."
+  BLOCKED
+  FAILED
+  "Toujours au travail après le délai d'attente (4 h)."
+  TIMEOUT
+  "Échéance ignorée (agent au travail, plafond de budget, maintenance…)."
+  SKIPPED
+  "Échéance manquée pendant un arrêt du serveur, non rattrapée."
+  MISSED
+}
+
+"Une exécution d'une planification."
+type ScheduleRun {
+  id: ID!
+  "SCHEDULE : à l'échéance ; MANUAL : « Exécuter maintenant »."
+  trigger: String!
+  "Personne qui l'a lancée à la main."
+  triggeredBy: User
+  status: ScheduleRunStatus!
+  "Échéance visée (null pour une exécution lancée à la main)."
+  scheduledFor: DateTime
+  startedAt: DateTime!
+  finishedAt: DateTime
+  durationMs: Int
+  "Coût de l'exécution (dans l'unité d'affichage, voir costDisplay)."
+  costUsd: Float
+  "Raison (ignorée, manquée), erreur, outils refusés ou demande sans réponse (bloquée)."
+  message: String
+  "Début de la dernière réponse de l'agent."
+  answer: String
+}
+
 input SessionScheduleInput {
+  "Nom de la planification (absent : inchangé ; vide : déduit de l'instruction)."
+  name: String
   cron: String!
   timezone: String
   prompt: String!
@@ -2765,7 +2815,27 @@ extend type Session {
   schedule: SessionSchedule
 }
 
+"Nouvelle planification portée par une session créée pour elle (dans son propre dossier de travail, sans démarrer)."
+input CreateScheduledSessionInput {
+  projectId: ID!
+  name: String!
+  cron: String!
+  timezone: String
+  prompt: String!
+  enabled: Boolean
+  endAfterRun: Boolean
+  cleanup: SessionCleanupInput
+  "Provider de la session (défaut : claude)."
+  provider: String
+  "Réglages du provider (mode d'autorisation, modèle…) ; absent : ceux du projet."
+  config: JSON
+  "Lance une première exécution tout de suite."
+  runNow: Boolean
+}
+
 extend type Query {
+  "Planifications des sessions non archivées, d'un projet ou de tous les projets accessibles."
+  sessionSchedules(projectId: ID): [SessionSchedule!]!
   "Prochaines échéances d'une expression cron (aperçu) ; erreur si l'expression ou le fuseau est invalide."
   scheduleNextRuns(cron: String!, timezone: String, count: Int = 5): [DateTime!]!
 }
@@ -2774,6 +2844,10 @@ extend type Mutation {
   "Crée ou remplace la planification de la session."
   setSessionSchedule(id: ID!, input: SessionScheduleInput!): Session!
   clearSessionSchedule(id: ID!): Session!
+  "Met en pause (false) ou réactive (true) la planification ; l'échéance est recalculée depuis maintenant."
+  setSessionScheduleEnabled(id: ID!, enabled: Boolean!): Session!
+  "Crée une session dédiée et sa planification ; renvoie la session."
+  createScheduledSession(input: CreateScheduledSessionInput!): Session!
   "Exécute la planification maintenant, sans attendre l'échéance."
   runSessionScheduleNow(id: ID!): Session!
 }

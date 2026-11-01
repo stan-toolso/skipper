@@ -30,6 +30,7 @@ const KNOWN_TYPES = [
   'pull_request.merged',
   'pull_request.closed',
   'schedule.run',
+  'schedule.blocked',
   'schedule.skipped',
   'schedule.failed',
   'workflow.run',
