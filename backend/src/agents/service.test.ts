@@ -189,6 +189,14 @@ describe('summon', () => {
     expect(sessions.create).not.toHaveBeenCalled();
   });
 
+  it('agent qui se convoque lui-même sur une tâche : sa session appelante n’est jamais la session reliée', async () => {
+    repo.sessionIdsOnTask = vi.fn(async () => ['caller']);
+    sessionRepo.findById = vi.fn(async (id: string) => ({ id, archivedAt: null, worksessionId: 'w1', status: 'running' }));
+    await agentService.summon('a1', { taskId: 't1', text: 'Traite la tâche', excludeSessionId: 'caller' });
+    expect(sessions.sendMessage).not.toHaveBeenCalled();
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ ownerId: 'a1' }), { type: 'human' });
+  });
+
   it('avec une tâche et sans session : dans le dossier de la tâche pour un agent qui y travaille, à côté sinon', async () => {
     repo.findById = vi.fn(async (id: string) => (id === 'a2' ? agent({ id: 'a2', name: 'Max', taskFolder: true, defaults: {} }) : agent()));
     await agentService.summon('a2', { taskId: 't1', text: 'Développe', requestedById: 'u1' });

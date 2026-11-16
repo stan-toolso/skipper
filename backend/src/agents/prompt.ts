@@ -99,12 +99,17 @@ function readOnlyLine(opts: GitAccess): string {
  */
 export function agentsPromptSummary(agents: Agent[], me: Agent | null): string {
   const others = agents.filter((a) => a.enabled && !a.archivedAt && a.id !== me?.id);
-  if (!others.length) return '';
+  // Un agent peut se convoquer lui-même : une nouvelle session à son nom (par exemple une par tâche), jamais celle-ci.
+  const self = me
+    ? `Tu peux aussi te convoquer toi-même (\`agents.summon\` avec ton nom, ${me.name}) pour lancer une nouvelle session à ton nom, avec tes comptes, par exemple une session par tâche : elle reçoit le message (complet et autonome : elle ne voit pas cette conversation) dans ta session reliée à la tâche s'il y en a une autre que celle-ci, sinon dans une nouvelle.`
+    : '';
+  if (!others.length) return self;
   const lines = others.map((a) => `- ${a.name} (${AGENT_KIND_LABELS[a.kind]}${a.description ? ` : ${a.description}` : ''}, identifiant ${a.id})`);
   return [
     `Le projet a des agents, membres du projet au même titre que les personnes${me ? ' (en plus de toi)' : ''} :`,
     ...lines,
     "Pour passer la main à l'un d'eux : mentionne-le dans le fil de la tâche (« @Nom » dans `tasks.comment`), ou convoque-le avec l'outil `agents.summon` (identifiant ou nom, instruction, tâche éventuelle) : il reçoit le message dans sa session reliée à la tâche, ou dans une nouvelle. Convoquer un agent lance ou relance une session (soumis à autorisation). Ne le fais que quand une personne l'a décidé ou que tes instructions le prévoient.",
+    ...(self ? [self] : []),
   ].join('\n');
 }
 
