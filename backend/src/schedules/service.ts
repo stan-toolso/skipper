@@ -337,9 +337,13 @@ export const scheduleService = {
 
     if (scheduledRuns.has(id) || (await scheduleRepository.hasRunning(id))) return skip("l'exécution précédente n'est pas terminée");
     if (serverSettings.maintenance) return skip('le serveur est en maintenance');
-    // La session de l'exécution démarre avec les identifiants et le plafond du propriétaire de la planification.
+    // La session de l'exécution démarre avec les identifiants et le plafond du propriétaire de la planification ; pour un
+    // agent, ceux du compte Claude qu'une personne lui prête (comme le provider : agentService.accountsForOwner).
     try {
-      const owner = await claudeSettings.forSession(schedule.ownerId);
+      // Import à la demande : agents/service importe ce module (actions planifiées).
+      const { agentService } = await import('../agents/service.js');
+      const accounts = await agentService.accountsForOwner(schedule.ownerId);
+      const owner = await claudeSettings.forSession(accounts?.claudeUserId ?? null);
       owner.assertCredentials();
       await owner.assertBudgetAvailable();
       await projectBudget.assertAvailable(projectId);

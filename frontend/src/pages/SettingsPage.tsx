@@ -761,7 +761,8 @@ function AppearanceSection() {
  * Comptes d'un agent de projet (fiche de l'agent, onglet Comptes) : les mêmes sections que Paramètres (Claude, OpenCode,
  * GitHub, GitLab), rendues sous un client GraphQL qui agit pour le compte de l'agent (voir `createActAsClient`).
  */
-export function AgentAccountSettings({ agentName }: { agentName: string }) {
+/** `claudeLent` : une personne prête son compte Claude à l'agent ; ses sessions tournent avec, ses réglages propres ne servent pas. */
+export function AgentAccountSettings({ agentName, claudeLent = false }: { agentName: string; claudeLent?: boolean }) {
   const [section, setSection] = useState<'claude' | 'opencode' | 'github' | 'gitlab'>('claude');
   const { data, loading, error } = usePollingQuery<{ settings: AppSettings }>(SETTINGS, { pollInterval: 15_000 });
   if (loading && !data) return <PageLoading />;
@@ -775,7 +776,7 @@ export function AgentAccountSettings({ agentName }: { agentName: string }) {
         <Nav.Item>
           <Nav.Link eventKey="claude">
             <i className="bi bi-stars me-1" /> Claude
-            {!claudeReady ? <Badge bg="secondary" className="ms-2">à configurer</Badge> : s.claudeAuth.usesCellAccount ? <Badge bg="info" className="ms-2">crédits Skipper</Badge> : s.claudeAuth.verification?.ok === false && <Badge bg="danger" className="ms-2">à vérifier</Badge>}
+            {claudeLent ? <Badge bg="info" className="ms-2">compte prêté</Badge> : !claudeReady ? <Badge bg="secondary" className="ms-2">à configurer</Badge> : s.claudeAuth.usesCellAccount ? <Badge bg="info" className="ms-2">crédits Skipper</Badge> : s.claudeAuth.verification?.ok === false && <Badge bg="danger" className="ms-2">à vérifier</Badge>}
           </Nav.Link>
         </Nav.Item>
         <Nav.Item>
@@ -797,7 +798,7 @@ export function AgentAccountSettings({ agentName }: { agentName: string }) {
         </Nav.Item>
       </Nav>
       <div style={{ maxWidth: 1100 }}>
-        {!claudeReady && section === 'claude' && (
+        {!claudeReady && !claudeLent && section === 'claude' && (
           <Alert variant="warning" className="small py-2">
             Sans identifiants Claude, {agentName} ne peut lancer aucune session : connectez un abonnement ou une clé API ci-dessous.
           </Alert>
