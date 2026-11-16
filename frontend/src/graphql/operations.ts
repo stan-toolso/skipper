@@ -53,6 +53,10 @@ export interface SessionSchedule {
   config: Record<string, unknown>;
   /** Propriétaire des exécutions (ses comptes, son budget). */
   owner: { id: string; name: string } | null;
+  /** Agent de projet au nom duquel tournent les exécutions (null : une personne). */
+  agent?: { id: string; name: string; kind: string; avatar: { emoji: string; color: string } } | null;
+  /** Personne qui a mis la planification au nom de l'agent. */
+  requestedBy?: { id: string; name: string } | null;
   project: { id: string; name: string; myRole: 'ADMIN' | 'MEMBER' | 'VIEWER' | null; defaultPermissionMode: string; defaultModel?: string | null };
   cron: string;
   timezone: string;
@@ -1319,6 +1323,19 @@ const SCHEDULE_FIELDS = gql`
     provider
     config
     owner {
+      id
+      name
+    }
+    agent {
+      id
+      name
+      kind
+      avatar {
+        emoji
+        color
+      }
+    }
+    requestedBy {
       id
       name
     }

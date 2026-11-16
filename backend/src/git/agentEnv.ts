@@ -38,12 +38,13 @@ export type GitHostKind = 'github' | 'gitlab' | 'forge';
 /**
  * Compte qui sert un dépôt pour un propriétaire de session : la forge de Skipper (dépôt hébergé), GitLab (gitlab.com ou
  * une instance des comptes GitLab en jeu) ou GitHub, avec la personne dont le compte sert, le prêt en lecture seule et
- * le droit d'ouvrir des pull requests par `tasks.pr_open` (vrai hors lecture seule, ou par option du prêt).
+ * le droit d'ouvrir des pull requests par `tasks.pr_open` (vrai hors lecture seule, ou par option du prêt) et celui de
+ * fusionner avec ce compte sans accord d'une personne (`merge`, prêt en écriture avec fusion permise).
  */
-export async function gitAccountFor(accounts: OwnerAccounts, repoUrl: string | null | undefined): Promise<{ host: GitHostKind; userId: string; readOnly: boolean; pullRequests: boolean }> {
-  if (isHostedGitUrl(repoUrl)) return { host: 'forge', userId: accounts.forgeUserId, readOnly: false, pullRequests: true };
-  if (gitlabRepoOf(repoUrl, await gitlabService.hosts(accounts.gitlabUserId).catch(() => []))) return { host: 'gitlab', userId: accounts.gitlabUserId, readOnly: accounts.gitlabReadOnly, pullRequests: accounts.gitlabPullRequests };
-  return { host: 'github', userId: accounts.githubUserId, readOnly: accounts.githubReadOnly, pullRequests: accounts.githubPullRequests };
+export async function gitAccountFor(accounts: OwnerAccounts, repoUrl: string | null | undefined): Promise<{ host: GitHostKind; userId: string; readOnly: boolean; pullRequests: boolean; merge: boolean }> {
+  if (isHostedGitUrl(repoUrl)) return { host: 'forge', userId: accounts.forgeUserId, readOnly: false, pullRequests: true, merge: false };
+  if (gitlabRepoOf(repoUrl, await gitlabService.hosts(accounts.gitlabUserId).catch(() => []))) return { host: 'gitlab', userId: accounts.gitlabUserId, readOnly: accounts.gitlabReadOnly, pullRequests: accounts.gitlabPullRequests, merge: accounts.gitlabMerge };
+  return { host: 'github', userId: accounts.githubUserId, readOnly: accounts.githubReadOnly, pullRequests: accounts.githubPullRequests, merge: accounts.githubMerge };
 }
 
 let identityCache: { name: string | null; email: string | null } | null = null;

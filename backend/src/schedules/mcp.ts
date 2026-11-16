@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { agentService } from '../agents/service.js';
 import { auditService } from '../audit/service.js';
 import { createAuthContext, requireProject } from '../auth/access.js';
 import { describeCost } from '../billing/display.js';
@@ -19,7 +20,7 @@ export const SCHEDULES_FREE_TOOLS = ['mcp__schedules__list', 'mcp__schedules__ge
 
 /** Paragraphe du prompt système qui présente le serveur `schedules`. */
 export function schedulesPromptSummary(): string {
-  return "Planifications de sessions (serveur MCP `schedules`) : une planification du projet lance, à chaque échéance d'une expression cron (dans un fuseau), une nouvelle session indépendante qui reçoit son instruction (une session et un dossier de travail par exécution). `list` les liste, `get` en montre le détail et les prochaines échéances, `runs` l'historique de ses exécutions (issue, coût, session), `preview` vérifie une expression cron avant de l'enregistrer. `create` en crée une (nom, cron, instruction autonome et complète, fuseau, modèle, archivage des sessions d'exécution, outils pré-autorisés pour ses exécutions ; `run_now` lance la première tout de suite) : elle appartient au propriétaire de cette session (ses comptes, son budget). `update` la modifie (seuls les champs donnés changent), `pause` / `resume` la suspendent ou la reprennent, `run_now` l'exécute hors échéance, `delete` la supprime avec son historique (les sessions déjà lancées restent). Ces écritures passent par l'autorisation de la personne : ne crée ou ne modifie une planification que sur demande, et donne son identifiant et sa prochaine échéance dans ta réponse.";
+  return "Planifications de sessions (serveur MCP `schedules`) : une planification du projet lance, à chaque échéance d'une expression cron (dans un fuseau), une nouvelle session indépendante qui reçoit son instruction (une session et un dossier de travail par exécution). `list` les liste, `get` en montre le détail et les prochaines échéances, `runs` l'historique de ses exécutions (issue, coût, session), `preview` vérifie une expression cron avant de l'enregistrer. `create` en crée une (nom, cron, instruction autonome et complète, fuseau, modèle, archivage des sessions d'exécution, outils pré-autorisés pour ses exécutions ; `run_now` lance la première tout de suite) : elle appartient au propriétaire de cette session (ses comptes, son budget), ou à l'agent du projet donné par `agent` (ses exécutions tournent alors au nom de l'agent, avec ses comptes). `update` la modifie (seuls les champs donnés changent), `pause` / `resume` la suspendent ou la reprennent, `run_now` l'exécute hors échéance, `delete` la supprime avec son historique (les sessions déjà lancées restent). Ces écritures passent par l'autorisation de la personne : ne crée ou ne modifie une planification que sur demande, et donne son identifiant et sa prochaine échéance dans ta réponse.";
 }
 
 export interface SchedulesMcpContext {
@@ -157,6 +158,11 @@ export function createSchedulesMcpServer(ctx: SchedulesMcpContext): McpSdkServer
     if (!schedule || schedule.projectId !== project.id) throw new AppError(`Planification ${id} introuvable dans ce projet`);
     return schedule;
   };
+  /** Agent du projet propriétaire des exécutions ; la personne qui pilote cette session en devient la demandeuse. */
+  const agentOwner = async (ref: string) => {
+    const agent = await agentService.resolve(project.id, ref);
+    return { ownerId: agent.id, requestedById: ctx.requestedById ?? (ctx.rightsHolderId !== agent.id ? ctx.rightsHolderId : null) };
+  };
   const audit = (action: string, s: SessionSchedule, details?: Record<string, unknown>) =>
     auditService.record({ projectId: project.id, actor: { sessionId }, action, targetType: 'schedule', targetId: s.id, targetLabel: scheduleLabel(s), details });
   const upcoming = (s: SessionSchedule) => (s.enabled ? scheduleService.preview(s.cron, s.timezone, 3) : []);
@@ -208,9 +214,10 @@ export function createSchedulesMcpServer(ctx: SchedulesMcpContext): McpSdkServer
       ),
       tool(
         'create',
-        "Crée une planification du projet : à chaque échéance, une nouvelle session reçoit l'instruction. Propriétaire : le propriétaire de cette session (ses comptes, son budget).",
+        "Crée une planification du projet : à chaque échéance, une nouvelle session reçoit l'instruction. Propriétaire : le propriétaire de cette session (ses comptes, son budget), ou l'agent du projet donné par `agent`.",
         {
           ...editable,
+          agent: z.string().optional().describe("Agent du projet (nom ou identifiant) au nom duquel lancer les exécutions : ses comptes, son budget, ses règles ; absent : le propriétaire de cette session"),
           name: z.string().describe('Nom de la planification (« Revue quotidienne »)'),
           cron: editable.cron.unwrap(),
           prompt: editable.prompt.unwrap(),
@@ -222,7 +229,8 @@ export function createSchedulesMcpServer(ctx: SchedulesMcpContext): McpSdkServer
             await requireRole('member');
             if (!ctx.ownerId) throw new AppError('Session sans propriétaire : impossible de créer une planification');
             const input = { ...scheduleInput(args), name: args.name, enabled: !args.paused, projectId: project.id, provider: 'claude', runNow: args.run_now ?? false };
-            const s = await scheduleService.create(input, { ownerId: ctx.ownerId, requestedById: ctx.requestedById ?? null });
+            const owner = args.agent?.trim() ? await agentOwner(args.agent) : { ownerId: ctx.ownerId, requestedById: ctx.requestedById ?? null };
+            const s = await scheduleService.create(input, owner);
             await audit('schedule.create', s, { cron: s.cron, timezone: s.timezone, enabled: s.enabled });
             return [`Planification créée.`, scheduleDetail(s, upcoming(s))].join('\n');
           }),
@@ -230,14 +238,20 @@ export function createSchedulesMcpServer(ctx: SchedulesMcpContext): McpSdkServer
       tool(
         'update',
         "Modifie une planification : seuls les champs donnés changent (l'échéance suivante est recalculée depuis maintenant).",
-        { id: z.string().describe('Identifiant de la planification'), ...editable },
-        async ({ id, ...args }) =>
+        {
+          id: z.string().describe('Identifiant de la planification'),
+          ...editable,
+          agent: z.string().optional().describe("Lance désormais les exécutions au nom de cet agent du projet (nom ou identifiant) ; chaîne vide : au nom de la personne qui pilote cette session ; absent : propriétaire inchangé"),
+        },
+        async ({ id, agent, ...args }) =>
           run(async () => {
             await requireRole('member');
             const existing = await scheduleOf(id);
             const input = scheduleInput(args, existing);
-            const s = await scheduleService.update(id, input);
-            await audit('schedule.set', s, { fields: Object.keys(args).filter((k) => args[k as keyof typeof args] !== undefined) });
+            const person = ctx.requestedById ?? ctx.rightsHolderId;
+            const owner = agent === undefined ? undefined : agent.trim() ? await agentOwner(agent) : person ? { ownerId: person, requestedById: null } : undefined;
+            const s = await scheduleService.update(id, input, owner);
+            await audit('schedule.set', s, { fields: [...Object.keys(args).filter((k) => args[k as keyof typeof args] !== undefined), ...(owner ? ['owner'] : [])] });
             return [`Planification modifiée.`, scheduleDetail(s, upcoming(s))].join('\n');
           }),
       ),

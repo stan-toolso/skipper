@@ -186,7 +186,7 @@ export const AUDITED: Record<string, MutationAudit> = {
   setAgentEnabled: { action: 'agent.enable', lookup: ['agent', 'id'], details: (a) => ({ enabled: a.enabled }) },
   deleteAgent: { action: 'agent.delete', lookup: ['agent', 'id'] },
   setAgentManagers: { action: 'agent.managers', lookup: ['agent', 'id'], details: (a) => ({ managers: a.managers }) },
-  setAgentDelegation: { action: 'agent.delegation', lookup: ['agent', 'id'], details: (a) => ({ account: a.account, delegate: a.delegate, readOnly: a.readOnly, pullRequests: a.pullRequests }) },
+  setAgentDelegation: { action: 'agent.delegation', lookup: ['agent', 'id'], details: (a) => ({ account: a.account, delegate: a.delegate, readOnly: a.readOnly, pullRequests: a.pullRequests, merge: a.merge }) },
   summonAgent: { action: 'agent.summon', lookup: ['agent', 'id'], details: (a, r) => ({ taskId: a.taskId, sessionId: r?.id }) },
   runAgentAction: { action: 'agent.action', lookup: ['agent', 'id'], details: (a, r) => ({ key: a.key, taskId: a.taskId, sessionId: r?.id }) },
   // Workflows.

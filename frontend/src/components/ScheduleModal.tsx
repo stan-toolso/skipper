@@ -2,6 +2,8 @@ import { useLazyQuery, useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Modal } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
+import { PROJECT_AGENT_REFS, agentKindLabels, type AgentRef } from '../graphql/agents';
 import {
   CREATE_SCHEDULE,
   DELETE_SCHEDULE,
@@ -18,6 +20,7 @@ import {
 import { browserTimeZone, buildCron, cronPresetLabels as presetLabels, describeCron, detectCronPreset as detectPreset, weekdayLabels, type CronPreset as Preset } from '../lib/cron';
 import { costUnitLabel, formatCost, permissionModeShortLabels } from '../lib/humanize';
 import { modelOptions } from '../lib/models';
+import AgentAvatar from './AgentAvatar';
 import { useDialogs } from './Dialogs';
 import { RunHistory } from './ScheduleRuns';
 import ScheduleTools from './ScheduleTools';
@@ -124,6 +127,18 @@ export default function ScheduleModal({ schedule, projects = [], defaults, onClo
   const initialModel = configString(sourceConfig, 'model');
   const [model, setModel] = useState(initialModel);
   const targetProjectId = existing?.project.id ?? projectId;
+  // « Au nom de » : les exécutions peuvent tourner au nom d'un agent du projet (ses comptes, son budget, ses règles).
+  const { user } = useAuth();
+  const { data: agentsData } = useQuery<{ project: { id: string; agents: (AgentRef & { enabled: boolean })[] } | null }>(PROJECT_AGENT_REFS, { variables: { id: targetProjectId }, skip: !targetProjectId });
+  const agents = agentsData?.project?.id === targetProjectId ? agentsData.project.agents.filter((a) => a.enabled || a.id === existing?.agent?.id) : [];
+  const initialOwner = existing?.agent?.id ?? '';
+  const [ownerChoice, setOwnerChoice] = useState(initialOwner);
+  useEffect(() => {
+    if (creating) setOwnerChoice('');
+  }, [creating, targetProjectId]);
+  const asAgent = agents.find((a) => a.id === ownerChoice) ?? null;
+  // Propriétaire actuel quand c'est une autre personne : gardé tant qu'on ne choisit pas un agent.
+  const otherPerson = existing && !existing.agent && existing.owner && existing.owner.id !== user?.id ? existing.owner : null;
 
   const cron = buildCron(preset, time, weekday, monthDay, custom);
   const [loadPreview, preview] = useLazyQuery<{ scheduleNextRuns: string[] }>(SCHEDULE_NEXT_RUNS, { fetchPolicy: 'network-only' });
@@ -167,14 +182,15 @@ export default function ScheduleModal({ schedule, projects = [], defaults, onClo
       config: { permissionMode, model },
     };
     if (creating) {
-      const res = await create({ variables: { input: { ...input, name: name.trim(), projectId, provider, config: { permissionMode, ...(model ? { model } : {}) } } } }).catch(() => null);
+      const res = await create({ variables: { input: { ...input, name: name.trim(), projectId, provider, agentId: ownerChoice || null, config: { permissionMode, ...(model ? { model } : {}) } } } }).catch(() => null);
       if (res?.data) {
         onCreated?.(res.data.createSchedule);
         onClose();
       }
       return;
     }
-    const res = await save({ variables: { id: existing.id, input } }).catch(() => null);
+    // Propriétaire envoyé seulement s'il change (vide : la personne connectée).
+    const res = await save({ variables: { id: existing.id, input: ownerChoice !== initialOwner ? { ...input, agentId: ownerChoice } : input } }).catch(() => null);
     if (res?.data) onClose();
   };
 
@@ -206,6 +222,26 @@ export default function ScheduleModal({ schedule, projects = [], defaults, onClo
           <p className="text-secondary small">
             À chaque échéance, la planification lance une nouvelle session, dans son propre dossier de travail, avec les réglages ci-dessous (modèle, autorisations), et lui envoie l'instruction. Aucune session n'existe avant la première exécution ; si l'exécution précédente n'est pas finie, l'échéance est ignorée.
           </p>
+          {existing && (existing.agent || existing.owner) && (
+            <p className="small mb-3 d-flex align-items-center gap-2">
+              {existing.agent ? (
+                <>
+                  <AgentAvatar agent={existing.agent} size={20} />
+                  <span>
+                    Exécutions lancées <b>au nom de l'agent {existing.agent.name}</b>
+                    {existing.requestedBy ? ` (planification mise par ${existing.requestedBy.name})` : ''}.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <i className="bi bi-person-circle text-secondary" />
+                  <span>
+                    Exécutions lancées au nom de <b>{existing.owner!.name}</b>.
+                  </span>
+                </>
+              )}
+            </p>
+          )}
           <div className="row g-2 mb-3">
             <div className={creating && projects.length > 1 ? 'col-sm-7' : 'col-12'}>
               <Form.Label>Nom</Form.Label>
@@ -232,6 +268,29 @@ export default function ScheduleModal({ schedule, projects = [], defaults, onClo
               </div>
             )}
           </div>
+          {agents.length > 0 && (
+            <Form.Group className="mb-3">
+              <Form.Label className="mb-1">Lancer les exécutions au nom de</Form.Label>
+              <div className="d-flex align-items-center gap-2">
+                {asAgent ? <AgentAvatar agent={asAgent} size={26} /> : <i className="bi bi-person-circle text-secondary" style={{ fontSize: 22 }} />}
+                <Form.Select value={ownerChoice} onChange={(e) => setOwnerChoice(e.target.value)} aria-label="Lancer les exécutions au nom de">
+                  <option value="">{otherPerson ? `${otherPerson.name} (propriétaire actuel)` : 'Moi (mes comptes, mon budget)'}</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} · {agentKindLabels[a.kind]} (agent)
+                    </option>
+                  ))}
+                </Form.Select>
+              </div>
+              <Form.Text>
+                {asAgent
+                  ? `Chaque exécution est une session de ${asAgent.name} : ses instructions et ses règles, ses comptes (ou ceux qu'on lui prête), ses modèles autorisés ; la consommation lui est imputée. Vous êtes indiqué comme personne demandeuse.`
+                  : otherPerson
+                    ? `Les exécutions tournent avec les comptes et le budget de ${otherPerson.name}. Choisissez un agent pour les lancer à son nom.`
+                    : 'Les exécutions tournent avec vos comptes et votre budget. Choisissez un agent du projet pour les lancer à son nom.'}
+              </Form.Text>
+            </Form.Group>
+          )}
           <Form.Group className="mb-3">
             <Form.Label>Instruction envoyée à chaque exécution</Form.Label>
             <Form.Control as="textarea" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ce que l'agent doit faire à chaque échéance…" />

@@ -38,14 +38,14 @@ vi.mock('../git/pullRequests.js', () => ({
   },
 }));
 // Comptes du propriétaire (délégation d'un agent de projet) : une personne utilise les siens ; un agent en lecture seule ne pousse pas.
-const accounts = { claudeUserId: 'u1', githubUserId: 'u1', githubReadOnly: false, githubPullRequests: true, gitlabUserId: 'u1', gitlabReadOnly: false, gitlabPullRequests: true, forgeUserId: 'u1' };
+const accounts = { claudeUserId: 'u1', githubUserId: 'u1', githubReadOnly: false, githubPullRequests: true, githubMerge: false, gitlabUserId: 'u1', gitlabReadOnly: false, gitlabPullRequests: true, gitlabMerge: false, forgeUserId: 'u1' };
 vi.mock('../agents/service.js', () => ({
   agentService: {
     accountsForSession: async (s: { takenOverById: string | null }) => (s.takenOverById ? { ...accounts, githubUserId: s.takenOverById, githubReadOnly: false } : accounts),
     forUser: async () => (m.ownerKind ? { kind: m.ownerKind } : null),
   },
 }));
-vi.mock('../git/agentEnv.js', () => ({ gitAccountFor: async (a: typeof accounts) => ({ host: 'github', userId: a.githubUserId, readOnly: a.githubReadOnly, pullRequests: a.githubPullRequests }) }));
+vi.mock('../git/agentEnv.js', () => ({ gitAccountFor: async (a: typeof accounts) => ({ host: 'github', userId: a.githubUserId, readOnly: a.githubReadOnly, pullRequests: a.githubPullRequests, merge: a.githubMerge }) }));
 vi.mock('../sessions/events.js', () => ({ traceSessionEvent: async (...args: unknown[]) => void m.events.push(args) }));
 vi.mock('../worksessions/service.js', () => ({ worksessionService: { get: async (id: string) => ({ id, name: 'dossier' }) }, worksessionPath: (_p: unknown, w: { name: string }) => `/tmp/${w.name}` }));
 vi.mock('../runners/index.js', () => ({ runner: {} }));
@@ -430,6 +430,26 @@ describe('serveur MCP tasks', () => {
     expect(merge?.[4]).toEqual({ deleteRemoteBranch: true, deleteWorksession: false, completeTasks: true });
     expect(merge?.[5]).toBeNull();
     expect(m.calls.find(([n]) => n === 'markMerged')?.[1][3]).toEqual({ type: 'human', userId: 'stan' });
+  });
+
+  it('pr_merge fusionne directement avec le compte prêté en écriture, fusion permise, sans demande', async () => {
+    accounts.githubUserId = 'lender';
+    accounts.githubMerge = true;
+    try {
+      let asked = false;
+      const r = await (await connect({ approveMerge: async () => ((asked = true), 'stan') })).callTool({ name: 'pr_merge', arguments: { id: '#42' } });
+      expect(r.isError).toBeFalsy();
+      expect(asked).toBe(false);
+      expect(m.calls.find(([n]) => n === 'merge')?.[1].slice(0, 4)).toEqual(['p', 'lender', 42, 'MERGE']);
+      expect(m.calls.find(([n]) => n === 'markMerged')?.[1][3]).toEqual({ type: 'agent', sessionId: 's1' });
+      // Même sans demande possible (provider sans approveMerge), la fusion passe.
+      m.calls.length = 0;
+      const direct = await (await connect()).callTool({ name: 'pr_merge', arguments: { id: '#42' } });
+      expect(direct.isError).toBeFalsy();
+    } finally {
+      accounts.githubUserId = 'u1';
+      accounts.githubMerge = false;
+    }
   });
 
   it('pr_merge ne fusionne pas si la demande est refusée, ni sans demande possible, ni une PR qui n’est pas ouverte', async () => {

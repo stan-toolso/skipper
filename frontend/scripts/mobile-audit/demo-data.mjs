@@ -140,6 +140,8 @@ const agents = [
   agent('a-max', U.max, P.mobile, 'DEVELOPER', '🛠️', '#d97757', 'Développe les tâches prêtes, ouvre les pull requests et répond aux revues.'),
   agent('a-nora', U.nora, P.api, 'CUSTOM', '🔎', '#2f9e8f', 'Relit les pull requests : sécurité, tests manquants, cas limites.'),
 ];
+// Comptes prêtés : mon compte GitHub prêté à Chris en écriture avec fusion permise, GitLab en lecture seule.
+agents[0].delegations = { __typename: 'AgentDelegations', claude: null, github: U.me, githubReadOnly: false, githubPullRequests: true, githubMerge: true, gitlab: U.me, gitlabReadOnly: true, gitlabPullRequests: false, gitlabMerge: false, git: U.me, gitReadOnly: true };
 
 // ---- Sessions -----------------------------------------------------------------------------------------------------
 
@@ -298,10 +300,12 @@ for (const pg of sharedPagesDemo) if (pg.id === 'page-data-inscriptions' || pg.i
 
 export const schedules = [
   schedule('sch-rapport-lundi', P.data, 'Rapport du lundi', U.hugo, { allowedTools: ['Bash(npm run report *)'], lastRunAt: ago(60 * 24 * 4) }),
+  // Planification au nom d'un agent : ses comptes et son budget, mise par moi.
+  schedule('sch-tri-chris', P.site, 'Tri des nouvelles tâches', U.chris, { agent: agents[0], requestedBy: U.me, cron: '0 9 * * 1-5', prompt: 'Trie les tâches créées depuis hier : priorité, étiquettes, et passe à « prête » celles qui sont cadrées.', nextRunAt: inDays(1), lastRunAt: null }),
   schedule('sch-revue-bases', P.site, 'Revue des bases', U.me, { cron: '35 12 * * *', prompt: 'Passe en revue les bases de production : tailles, index inutilisés, requêtes lentes. Signale ce qui mérite une action.', nextRunAt: inDays(1), lastRunAt: ago(12), maxRunUsd: 2, monthlyBudgetUsd: 30, monthUsd: 11.4 }),
 ];
 schedules[0].runs = [scheduleRun('run-lundi-1', S.hebdo, 'DONE', 60 * 24 * 4)];
-schedules[1].runs = [scheduleRun('run-bases-2', S.revueBases, 'RUNNING', 12), scheduleRun('run-bases-1', S.revueBasesHier, 'DONE', 60 * 24)];
+schedules[2].runs = [scheduleRun('run-bases-2', S.revueBases, 'RUNNING', 12), scheduleRun('run-bases-1', S.revueBasesHier, 'DONE', 60 * 24)];
 for (const sc of schedules) {
   sc.activeSessions = sc.runs.map((r) => r.session).filter(Boolean);
   for (const s of sc.activeSessions) s.schedule = sc;

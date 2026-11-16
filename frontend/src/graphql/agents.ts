@@ -69,9 +69,12 @@ export interface Agent extends AgentRef {
     githubReadOnly: boolean;
     /** Pull requests permises par tasks.pr_open, même en lecture seule. */
     githubPullRequests: boolean;
+    /** Prêt en écriture, fusion permise : l'agent fusionne avec tasks.pr_merge sans demande. */
+    githubMerge: boolean;
     gitlab: { id: string; name: string } | null;
     gitlabReadOnly: boolean;
     gitlabPullRequests: boolean;
+    gitlabMerge: boolean;
   };
   triggers: AgentTriggers;
   actions: AgentAction[];
@@ -154,12 +157,14 @@ export const AGENT_FIELDS = gql`
       }
       githubReadOnly
       githubPullRequests
+      githubMerge
       gitlab {
         id
         name
       }
       gitlabReadOnly
       gitlabPullRequests
+      gitlabMerge
     }
     triggers {
       taskCreated
@@ -389,8 +394,8 @@ export const SUMMON_AGENT = gql`
 
 export const SET_AGENT_DELEGATION = gql`
   ${AGENT_FIELDS}
-  mutation SetAgentDelegation($id: ID!, $account: AgentAccountKind!, $delegate: Boolean!, $readOnly: Boolean, $pullRequests: Boolean) {
-    setAgentDelegation(id: $id, account: $account, delegate: $delegate, readOnly: $readOnly, pullRequests: $pullRequests) {
+  mutation SetAgentDelegation($id: ID!, $account: AgentAccountKind!, $delegate: Boolean!, $readOnly: Boolean, $pullRequests: Boolean, $merge: Boolean) {
+    setAgentDelegation(id: $id, account: $account, delegate: $delegate, readOnly: $readOnly, pullRequests: $pullRequests, merge: $merge) {
       ...AgentFields
     }
   }

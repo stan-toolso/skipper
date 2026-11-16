@@ -38,6 +38,17 @@ describe("agentIdentityPrompt : comptes git prêtés", () => {
     );
   });
 
+  it("écriture avec fusion permise : tasks.pr_merge fusionne sans demande", () => {
+    const text = agentIdentityPrompt(agent, { name: "Skipper" }, null, {
+      githubPullRequests: true,
+      githubMerge: true,
+    });
+    expect(text).toContain("Ton compte GitHub est prêté en écriture, fusion permise");
+    expect(text).toContain("fusionne directement avec ce compte");
+    expect(text).not.toContain("Tu ne fusionnes jamais une pull request de ta propre initiative");
+    expect(roleRulesPrompt({ kind: "developer" })).toContain("Tu ne fusionnes jamais");
+  });
+
   it("comptes en écriture : rien à signaler", () => {
     expect(
       agentIdentityPrompt(agent, { name: "Skipper" }, null, {

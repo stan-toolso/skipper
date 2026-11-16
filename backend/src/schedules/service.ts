@@ -268,7 +268,8 @@ export const scheduleService = {
   },
 
   /** Modifie une planification. L'échéance est recalculée à partir de maintenant. */
-  async update(id: string, input: SessionScheduleInput): Promise<SessionSchedule> {
+  /** `owner` : nouveau propriétaire des exécutions (personne ou agent, résolu par l'appelant) ; absent : inchangé. */
+  async update(id: string, input: SessionScheduleInput, owner?: { ownerId: string; requestedById: string | null }): Promise<SessionSchedule> {
     const existing = await this.require(id);
     const v = this.validate(input);
     // Réglages du provider : fusionnés (une valeur vide retire le réglage).
@@ -286,6 +287,7 @@ export const scheduleService = {
       config,
       maxRunUsd: v.budget.maxRunUsd,
       monthlyBudgetUsd: v.budget.monthlyBudgetUsd,
+      owner,
     });
     if (!schedule) throw new NotFoundError('Planification introuvable');
     forgetScheduleRules(null);

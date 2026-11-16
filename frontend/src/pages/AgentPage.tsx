@@ -348,67 +348,95 @@ function ProfileForm({ agent }: { agent: Agent }) {
   );
 }
 
+/** Niveaux d'accès d'un compte git prêté, du plus restreint au plus large. */
+type GitAccess = 'read' | 'read_prs' | 'write' | 'write_merge';
+const gitAccessOf = (readOnly: boolean, pullRequests: boolean, merge: boolean): GitAccess => (readOnly ? (pullRequests ? 'read_prs' : 'read') : merge ? 'write_merge' : 'write');
+const GIT_ACCESS_OPTIONS: Record<GitAccess, { readOnly: boolean; pullRequests: boolean; merge: boolean }> = {
+  read: { readOnly: true, pullRequests: false, merge: false },
+  read_prs: { readOnly: true, pullRequests: true, merge: false },
+  write: { readOnly: false, pullRequests: true, merge: false },
+  write_merge: { readOnly: false, pullRequests: true, merge: true },
+};
+function gitAccessLabels(pr: string): Record<GitAccess, { label: string; hint: string }> {
+  return {
+    read: { label: 'Lecture seule', hint: `ni push, ni ${pr}` },
+    read_prs: { label: `Lecture seule, ${pr}s permises`, hint: `Skipper pousse la branche de travail de l'agent et ouvre la ${pr} ; pas d'autre push` },
+    write: { label: `Écriture (push et ${pr}s)`, hint: `l'agent pousse et ouvre des ${pr}s ; une fusion reste soumise à l'accord d'une personne` },
+    write_merge: { label: `Écriture, fusion permise`, hint: `l'agent pousse, ouvre et fusionne les ${pr}s avec ce compte, sans demander d'accord` },
+  };
+}
+
 /**
  * Délégation de comptes : la personne connectée peut prêter son propre compte Claude, son compte GitHub et/ou son compte
- * GitLab à l'agent, chacun séparément ; GitHub et GitLab en lecture seule (ni push ni pull request) ou non. Un
- * gestionnaire peut retirer une délégation.
+ * GitLab à l'agent, chacun séparément ; GitHub et GitLab avec un niveau d'accès : lecture seule (avec ou sans pull
+ * requests), écriture, ou écriture avec fusion des pull requests sans accord. Un gestionnaire peut retirer une délégation.
  */
 function DelegationCard({ agent }: { agent: Agent }) {
   const { user } = useAuth();
   const { showError } = useDialogs();
   const [setDelegation, { loading }] = useMutation(SET_AGENT_DELEGATION, { refetchQueries: ['Agent'] });
-  const run = (account: 'CLAUDE' | 'GITHUB' | 'GITLAB', delegate: boolean, opts: { readOnly?: boolean; pullRequests?: boolean } = {}) =>
-    void setDelegation({ variables: { id: agent.id, account, delegate, readOnly: opts.readOnly ?? null, pullRequests: opts.pullRequests ?? null } }).catch(showError);
+  const run = (account: 'CLAUDE' | 'GITHUB' | 'GITLAB', delegate: boolean, opts: { readOnly?: boolean; pullRequests?: boolean; merge?: boolean } = {}) =>
+    void setDelegation({ variables: { id: agent.id, account, delegate, readOnly: opts.readOnly ?? null, pullRequests: opts.pullRequests ?? null, merge: opts.merge ?? null } }).catch(showError);
   const d = agent.delegations;
   const mine = (u: { id: string } | null) => Boolean(u && user && u.id === user.id);
   const prLabel = (account: 'GITHUB' | 'GITLAB') => (account === 'GITLAB' ? 'merge request' : 'pull request');
-  const gitRow = (account: 'GITHUB' | 'GITLAB', label: string, lent: { id: string; name: string } | null, readOnly: boolean, pullRequests: boolean) => (
-    <tr>
-      <td>
-        <strong>{label}</strong>
-      </td>
-      <td>
-        {lent ? (
-          <>
-            Compte de <b>{lent.name}</b>
-            {mine(lent) ? ' (vous)' : ''}, {readOnly ? (pullRequests ? `en lecture seule, ${prLabel(account)}s permises (pas de push en dehors de l'ouverture d'une ${prLabel(account)})` : `en lecture seule (ni push, ni ${prLabel(account)})`) : 'en lecture et écriture'}
-            {mine(lent) && <Form.Check type="switch" id={`agent-${account.toLowerCase()}-ro`} className="mt-1" checked={readOnly} disabled={loading} onChange={(e) => run(account, true, { readOnly: e.target.checked })} label="Lecture seule" />}
-            {mine(lent) && readOnly && (
-              <Form.Check
-                type="switch"
-                id={`agent-${account.toLowerCase()}-prs`}
-                checked={pullRequests}
-                disabled={loading}
-                onChange={(e) => run(account, true, { pullRequests: e.target.checked })}
-                label={`Autoriser les ${prLabel(account)}s (Skipper pousse la branche de travail de l'agent et ouvre la ${prLabel(account)})`}
-              />
-            )}
-          </>
-        ) : (
-          <span className="text-secondary">
-            Les comptes {label} propres de {agent.name} (ci-dessous)
-          </span>
-        )}
-      </td>
-      <td className="text-end">
-        {lent ? (
-          <Button size="sm" variant="outline-secondary" disabled={loading} onClick={() => run(account, false)}>
-            Retirer
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline-primary" disabled={loading} onClick={() => run(account, true, { readOnly: true })}>
-            Prêter mon compte {label} (lecture seule)
-          </Button>
-        )}
-      </td>
-    </tr>
-  );
+  const gitRow = (account: 'GITHUB' | 'GITLAB', label: string, lent: { id: string; name: string } | null, readOnly: boolean, pullRequests: boolean, merge: boolean) => {
+    const labels = gitAccessLabels(prLabel(account));
+    const access = gitAccessOf(readOnly, pullRequests, merge);
+    return (
+      <tr>
+        <td>
+          <strong>{label}</strong>
+        </td>
+        <td>
+          {lent ? (
+            <>
+              Compte de <b>{lent.name}</b>
+              {mine(lent) ? ' (vous)' : ''}, {labels[access].label.toLowerCase()} ({labels[access].hint})
+              {mine(lent) && (
+                <Form.Select
+                  size="sm"
+                  className="mt-1"
+                  style={{ maxWidth: 360 }}
+                  aria-label={`Accès du compte ${label} prêté`}
+                  value={access}
+                  disabled={loading}
+                  onChange={(e) => run(account, true, GIT_ACCESS_OPTIONS[e.target.value as GitAccess])}
+                >
+                  {(Object.keys(GIT_ACCESS_OPTIONS) as GitAccess[]).map((k) => (
+                    <option key={k} value={k}>
+                      {labels[k].label}
+                    </option>
+                  ))}
+                </Form.Select>
+              )}
+            </>
+          ) : (
+            <span className="text-secondary">
+              Les comptes {label} propres de {agent.name} (ci-dessous)
+            </span>
+          )}
+        </td>
+        <td className="text-end">
+          {lent ? (
+            <Button size="sm" variant="outline-secondary" disabled={loading} onClick={() => run(account, false)}>
+              Retirer
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline-primary" disabled={loading} title="En lecture seule d'abord : vous choisissez ensuite le niveau d'accès (écriture, fusion…)" onClick={() => run(account, true, GIT_ACCESS_OPTIONS.read)}>
+              Prêter mon compte {label}
+            </Button>
+          )}
+        </td>
+      </tr>
+    );
+  };
   return (
     <Card className="mb-3">
       <Card.Header>Comptes prêtés</Card.Header>
       <Card.Body className="small">
         <p className="text-secondary">
-          Plutôt que de régler des comptes propres à {agent.name}, vous pouvez lui prêter les vôtres, chacun séparément : ses sessions tournent alors avec votre compte Claude, votre compte GitHub et/ou votre compte GitLab (ces deux-là en lecture seule si vous le souhaitez, avec ou sans le droit d'ouvrir des pull requests). Un dépôt hébergé par Skipper utilise toujours le compte de l'agent.
+          Plutôt que de régler des comptes propres à {agent.name}, vous pouvez lui prêter les vôtres, chacun séparément : ses sessions tournent alors avec votre compte Claude, votre compte GitHub et/ou votre compte GitLab (ces deux-là avec le niveau d'accès de votre choix : lecture seule, avec ou sans pull requests, écriture, ou écriture avec fusion des pull requests sans vous demander). Un dépôt hébergé par Skipper utilise toujours le compte de l'agent.
         </p>
         <Table size="sm" className="align-middle mb-0 table-stack">
           <tbody>
@@ -429,8 +457,8 @@ function DelegationCard({ agent }: { agent: Agent }) {
                 )}
               </td>
             </tr>
-            {gitRow('GITHUB', 'GitHub', d.github, d.githubReadOnly, d.githubPullRequests)}
-            {gitRow('GITLAB', 'GitLab', d.gitlab, d.gitlabReadOnly, d.gitlabPullRequests)}
+            {gitRow('GITHUB', 'GitHub', d.github, d.githubReadOnly, d.githubPullRequests, d.githubMerge)}
+            {gitRow('GITLAB', 'GitLab', d.gitlab, d.gitlabReadOnly, d.gitlabPullRequests, d.gitlabMerge)}
           </tbody>
         </Table>
       </Card.Body>

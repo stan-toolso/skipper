@@ -486,22 +486,30 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       ),
       tool(
         'pr_merge',
-        "Fusionne une pull request suivie du projet, seulement quand une personne te l'a demandé. Pose une demande d'autorisation : la personne qui l'accepte fusionne avec son propre compte (GitHub, GitLab ou Forgejo), à son nom (en mode « Tout autoriser », la personne qui pilote la session l'accepte d'office) ; le compte prêté à cette session ne sert pas. Supprime ensuite la branche distante et passe à « terminée » les tâches de la branche ; le dossier de travail est gardé.",
+        "Fusionne une pull request suivie du projet, seulement quand une personne te l'a demandé (ou que tes instructions le prévoient, si ton compte prêté permet la fusion). Quand le compte GitHub ou GitLab prêté à cette session l'est en écriture avec fusion permise, la fusion est faite directement avec ce compte, sans demande. Sinon, pose une demande d'autorisation : la personne qui l'accepte fusionne avec son propre compte (GitHub, GitLab ou Forgejo), à son nom (en mode « Tout autoriser », la personne qui pilote la session l'accepte d'office). Supprime ensuite la branche distante et passe à « terminée » les tâches de la branche ; le dossier de travail est gardé.",
         {
           id: z.string().describe('Identifiant de la PR suivie (donné par pr_list ou get), son numéro dans le dépôt du projet (« 42 », « #42 ») ou son URL'),
           method: z.enum(['merge', 'squash', 'rebase']).optional().describe('Méthode de fusion ; défaut : merge'),
         },
         async ({ id, method }) =>
           run(async () => {
-            if (!options.approveMerge) throw new Error("Cette session ne peut pas fusionner de pull request : demande à une personne de la fusionner depuis l'onglet Pull requests du projet");
+            const s = await sessionContext();
+            const accounts = await agentService.accountsForSession(s);
+            // Compte prêté en écriture avec fusion permise : la session fusionne elle-même, sans demande.
+            const lent = accounts ? await gitAccountFor(accounts, project.gitUrl) : null;
+            const direct = lent?.merge ? lent : null;
+            if (!direct && !options.approveMerge) throw new Error("Cette session ne peut pas fusionner de pull request : demande à une personne de la fusionner depuis l'onglet Pull requests du projet");
             const pr = await trackedPullRequestService.resolve(project.id, id);
             if (pr.number == null) throw new Error("Cette PR est en préparation (pas encore ouverte) : ouvre-la d'abord avec pr_open");
             if (pr.status !== 'open') throw new Error(`La PR ${pullRequestRef(pr, projectRepo)} n'est pas ouverte (statut : ${pr.status})`);
             const m = (method ?? 'merge').toUpperCase() as MergeMethod;
             const ref = pullRequestRef(pr, projectRepo);
-            const userId = await options.approveMerge({ projectId: project.id, ref, title: pr.title, url: pr.url, method: m, input: { id, method: m.toLowerCase(), pr: ref, title: pr.title, url: pr.url } });
+            const userId = direct ? direct.userId : await options.approveMerge!({ projectId: project.id, ref, title: pr.title, url: pr.url, method: m, input: { id, method: m.toLowerCase(), pr: ref, title: pr.title, url: pr.url } });
             const result = await pullRequestService.merge(project.id, userId, pr.number, m, { deleteRemoteBranch: true, deleteWorksession: false, completeTasks: true }, foreignRepoOf(pr, projectRepo));
-            const merged = await trackedPullRequestService.markMerged(project.id, result.pullRequest, result.sha, { type: 'human', userId });
+            const merged = await trackedPullRequestService.markMerged(project.id, result.pullRequest, result.sha, direct ? prActor : { type: 'human', userId });
+            if (direct) {
+              await auditService.record({ projectId: project.id, actor: { sessionId }, action: 'pull_request.merge', targetType: 'pull_request', targetId: String(pr.number), targetLabel: `#${pr.number} ${pr.title}`, details: { url: pr.url, method: m, lentAccountOf: direct.userId } });
+            }
             return [`Pull request fusionnée${result.sha ? ` (${result.sha.slice(0, 7)})` : ''} :`, describePullRequest(merged, projectRepo), ...result.warnings.map((w) => `Attention : ${w}`)].join('\n');
           }),
       ),

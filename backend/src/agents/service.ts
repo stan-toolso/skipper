@@ -292,9 +292,11 @@ export const agentService = {
       githubUserId: agent.githubDelegateId ?? agent.id,
       githubReadOnly: Boolean(agent.githubDelegateId && agent.githubDelegateReadOnly),
       githubPullRequests: !(agent.githubDelegateId && agent.githubDelegateReadOnly) || agent.githubDelegatePullRequests,
+      githubMerge: Boolean(agent.githubDelegateId && !agent.githubDelegateReadOnly && agent.githubDelegateMerge),
       gitlabUserId: agent.gitlabDelegateId ?? agent.id,
       gitlabReadOnly: Boolean(agent.gitlabDelegateId && agent.gitlabDelegateReadOnly),
       gitlabPullRequests: !(agent.gitlabDelegateId && agent.gitlabDelegateReadOnly) || agent.gitlabDelegatePullRequests,
+      gitlabMerge: Boolean(agent.gitlabDelegateId && !agent.gitlabDelegateReadOnly && agent.gitlabDelegateMerge),
       forgeUserId: agent.id,
     };
   },
@@ -358,9 +360,11 @@ export const agentService = {
    * Prête (ou reprend) un compte à l'agent : `delegateId` est la personne qui prête — elle ne peut prêter que son propre
    * compte, et doit être membre du projet ; null retire la délégation. Les comptes GitHub et GitLab se prêtent chacun à
    * part, en lecture seule par défaut ; `pullRequests` permet, en lecture seule, d'ouvrir des pull requests (merge
-   * requests) par `tasks.pr_open`. Une option absente garde sa valeur tant que le prêt reste à la même personne.
+   * requests) par `tasks.pr_open` ; `merge` permet, en écriture, de fusionner les pull requests avec ce compte par
+   * `tasks.pr_merge` sans demander l'accord d'une personne (sans effet, et remis à faux, en lecture seule). Une option
+   * absente garde sa valeur tant que le prêt reste à la même personne.
    */
-  async setDelegation(agentId: string, account: AgentAccountKind, delegateId: string | null, opts: { readOnly?: boolean | null; pullRequests?: boolean | null } = {}): Promise<Agent> {
+  async setDelegation(agentId: string, account: AgentAccountKind, delegateId: string | null, opts: { readOnly?: boolean | null; pullRequests?: boolean | null; merge?: boolean | null } = {}): Promise<Agent> {
     const agent = await this.get(agentId);
     if (delegateId) {
       const user = await userRepository.findById(delegateId);
@@ -370,17 +374,18 @@ export const agentService = {
     }
     const current =
       account === 'github'
-        ? { id: agent.githubDelegateId, readOnly: agent.githubDelegateReadOnly, pullRequests: agent.githubDelegatePullRequests }
-        : { id: agent.gitlabDelegateId, readOnly: agent.gitlabDelegateReadOnly, pullRequests: agent.gitlabDelegatePullRequests };
+        ? { id: agent.githubDelegateId, readOnly: agent.githubDelegateReadOnly, pullRequests: agent.githubDelegatePullRequests, merge: agent.githubDelegateMerge }
+        : { id: agent.gitlabDelegateId, readOnly: agent.gitlabDelegateReadOnly, pullRequests: agent.gitlabDelegatePullRequests, merge: agent.gitlabDelegateMerge };
     const same = delegateId != null && delegateId === current.id;
     const readOnly = delegateId ? (opts.readOnly ?? (same ? current.readOnly : true)) : true;
     const pullRequests = delegateId ? (opts.pullRequests ?? (same ? current.pullRequests : false)) : false;
+    const merge = delegateId && !readOnly ? (opts.merge ?? (same ? current.merge : false)) : false;
     const patch =
       account === 'claude'
         ? { claudeDelegateId: delegateId }
         : account === 'github'
-          ? { githubDelegateId: delegateId, githubDelegateReadOnly: readOnly, githubDelegatePullRequests: pullRequests }
-          : { gitlabDelegateId: delegateId, gitlabDelegateReadOnly: readOnly, gitlabDelegatePullRequests: pullRequests };
+          ? { githubDelegateId: delegateId, githubDelegateReadOnly: readOnly, githubDelegatePullRequests: pullRequests, githubDelegateMerge: merge }
+          : { gitlabDelegateId: delegateId, gitlabDelegateReadOnly: readOnly, gitlabDelegatePullRequests: pullRequests, gitlabDelegateMerge: merge };
     const updated = await agentRepository.update(agentId, patch);
     if (!updated) throw new NotFoundError('Agent introuvable');
     return updated;

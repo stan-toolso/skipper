@@ -16,9 +16,11 @@ interface Row {
   github_delegate_id: string | null;
   github_delegate_read_only: boolean;
   github_delegate_pull_requests: boolean;
+  github_delegate_merge: boolean;
   gitlab_delegate_id: string | null;
   gitlab_delegate_read_only: boolean;
   gitlab_delegate_pull_requests: boolean;
+  gitlab_delegate_merge: boolean;
   allowed_models: string[] | null;
   triggers: Partial<AgentTriggers> | null;
   actions: AgentAction[] | null;
@@ -66,9 +68,11 @@ const toAgent = (r: Row): Agent => ({
   githubDelegateId: r.github_delegate_id ?? null,
   githubDelegateReadOnly: r.github_delegate_read_only ?? true,
   githubDelegatePullRequests: r.github_delegate_pull_requests ?? false,
+  githubDelegateMerge: r.github_delegate_merge ?? false,
   gitlabDelegateId: r.gitlab_delegate_id ?? null,
   gitlabDelegateReadOnly: r.gitlab_delegate_read_only ?? true,
   gitlabDelegatePullRequests: r.gitlab_delegate_pull_requests ?? false,
+  gitlabDelegateMerge: r.gitlab_delegate_merge ?? false,
   triggers: normalizeTriggers(r.triggers),
   actions: (r.actions ?? []).map(normalizeAction),
   enabled: Boolean(r.enabled),
@@ -95,9 +99,11 @@ export interface AgentProfilePatch {
   githubDelegateId?: string | null;
   githubDelegateReadOnly?: boolean;
   githubDelegatePullRequests?: boolean;
+  githubDelegateMerge?: boolean;
   gitlabDelegateId?: string | null;
   gitlabDelegateReadOnly?: boolean;
   gitlabDelegatePullRequests?: boolean;
+  gitlabDelegateMerge?: boolean;
   triggers?: AgentTriggers;
   actions?: AgentAction[];
   enabled?: boolean;
@@ -117,9 +123,11 @@ const patchColumns: Record<keyof AgentProfilePatch, string> = {
   githubDelegateId: 'github_delegate_id',
   githubDelegateReadOnly: 'github_delegate_read_only',
   githubDelegatePullRequests: 'github_delegate_pull_requests',
+  githubDelegateMerge: 'github_delegate_merge',
   gitlabDelegateId: 'gitlab_delegate_id',
   gitlabDelegateReadOnly: 'gitlab_delegate_read_only',
   gitlabDelegatePullRequests: 'gitlab_delegate_pull_requests',
+  gitlabDelegateMerge: 'gitlab_delegate_merge',
   triggers: 'triggers',
   actions: 'actions',
   enabled: 'enabled',
