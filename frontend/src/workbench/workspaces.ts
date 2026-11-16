@@ -367,7 +367,8 @@ export interface OwnerGroup<T> {
 
 /**
  * Sépare les dossiers d'un projet : ceux auxquels la personne participe (et le checkout principal) restent à plat,
- * ceux des autres sont rangés par propriétaire, une personne ou un agent par groupe, pour ne pas noyer les siens sous
+ * ceux des autres sont rangés par propriétaire, une personne ou un agent par groupe (les sessions d'un agent toujours,
+ * même demandées par la personne), pour ne pas noyer les siens sous
  * le travail des autres. Les groupes qui attendent une réponse ou travaillent passent devant, puis par nom.
  */
 export function ownerGroups<T extends { session: Pick<SidebarSession, 'owner' | 'requestedBy' | 'agent' | 'status' | 'activity' | 'pendingRequestCount'> | null }>(
@@ -378,7 +379,9 @@ export function ownerGroups<T extends { session: Pick<SidebarSession, 'owner' | 
   const byOwner = new Map<string, OwnerGroup<T>>();
   for (const item of items) {
     const s = item.session;
-    if (!s || !s.owner || participates(s, userId)) {
+    // Les sessions d'un agent se rangent toujours sous lui, même lancées à la demande de la personne : sinon le travail
+    // d'un agent très sollicité noierait les dossiers de la personne (comme les exécutions d'une planification).
+    if (!s || !s.owner || (!s.agent && participates(s, userId))) {
       mine.push(item);
       continue;
     }

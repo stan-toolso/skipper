@@ -1077,9 +1077,12 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                 const { rest: plainCards, groups: runGroups } = scheduleGroups(cards);
                 const { mine: mineCards, groups } = ownerGroups(plainCards, userId);
                 const othersVisible = !(filter === 'mine' && !showOthers);
-                const shownGroups = othersVisible ? groups : groups.filter((g) => g.items.some(isShown));
+                // Avec « les miennes », un groupe ne garde que les sessions de la personne (celles d'un agent qu'elle a
+                // demandées) et celle de la page affichée.
+                const shownGroups = othersVisible ? groups : groups.map((g) => ({ ...g, items: g.items.filter((ws) => participates(ws.session!, userId) || isShown(ws)) })).filter((g) => g.items.length > 0);
+                const shownCount = new Map(shownGroups.map((g) => [g.key, g.items.length]));
                 const shownRuns = othersVisible ? runGroups : runGroups.filter((g) => g.items.some((ws) => participates(ws.session!, userId) || isShown(ws)));
-                const hiddenOthers = [...groups.filter((g) => !shownGroups.includes(g)), ...runGroups.filter((g) => !shownRuns.includes(g))].reduce((n, g) => n + g.items.length, 0);
+                const hiddenOthers = groups.reduce((n, g) => n + g.items.length - (shownCount.get(g.key) ?? 0), 0) + runGroups.filter((g) => !shownRuns.includes(g)).reduce((n, g) => n + g.items.length, 0);
                 const card = (ws: Workspace, label?: string) => (
                   <WorkspaceCard
                     key={ws.key}
@@ -1109,12 +1112,14 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                     })}
                     {shownGroups.map((g) => {
                       const groupKey = `owner:${p.id}:${g.key}`;
-                      const defaultOpen = g.items.some((ws) => isShown(ws) || ws.session!.pendingRequestCount > 0);
+                      // Déplié d'office quand il contient une session de la personne (agent qu'elle a sollicité), celle de
+                      // la page affichée ou une demande en attente.
+                      const defaultOpen = g.items.some((ws) => isShown(ws) || ws.session!.pendingRequestCount > 0 || participates(ws.session!, userId));
                       const groupOpen = expanded[groupKey] ?? defaultOpen;
                       return (
                         <div key={groupKey} className="wb-owner-block">
                           <OwnerGroupRow group={g} expanded={groupOpen} onToggle={() => toggle(groupKey, defaultOpen)} />
-                          {groupOpen && g.items.map((ws) => card(ws))}
+                          {groupOpen && g.items.map((ws) => card(ws, g.agent ? runLabel(ws.name, g.agent.name) : undefined))}
                         </div>
                       );
                     })}
