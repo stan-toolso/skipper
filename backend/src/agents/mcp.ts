@@ -83,8 +83,8 @@ export function createAgentsMcpServer(project: Project, sessionId: string, scope
       tool(
         'summon',
         scope
-          ? "Convoque un agent d'un de tes projets : lui transmet le message dans sa session reliée à la tâche (relancée au besoin), sinon ouvre une session pour lui dans son projet, sur la tâche ou libre. Renvoie la session : sessions.wait avec son id donne sa réponse. Le message doit être complet : l'agent ne connaît pas ta conversation."
-          : "Convoque un agent du projet : lui transmet le message dans sa session reliée à la tâche (relancée au besoin), sinon ouvre une session pour lui sur la tâche (ou une session libre sans tâche). Renvoie la session. Le message doit être complet : l'agent ne connaît pas ta conversation.",
+          ? "Convoque un agent d'un de tes projets : lui transmet le message dans sa session reliée à la tâche (relancée au besoin), sinon ouvre une session pour lui dans son projet, sur la tâche ou libre. Un agent peut se convoquer lui-même : nouvelle session à son nom (jamais la session appelante). Renvoie la session : sessions.wait avec son id donne sa réponse. Le message doit être complet : l'agent ne connaît pas ta conversation."
+          : "Convoque un agent du projet : lui transmet le message dans sa session reliée à la tâche (relancée au besoin), sinon ouvre une session pour lui sur la tâche (ou une session libre sans tâche). Un agent peut se convoquer lui-même pour lancer une nouvelle session à son nom, par exemple une par tâche (jamais la session appelante). Renvoie la session. Le message doit être complet : l'agent ne connaît pas ta conversation.",
         withProjectParam(
           {
             agent: z.string().describe("Identifiant ou nom de l'agent"),
@@ -103,7 +103,6 @@ export function createAgentsMcpServer(project: Project, sessionId: string, scope
             } else {
               target = await agentService.resolve(project.id, ref);
             }
-            if (target.id === caller?.id) throw new Error("C'est toi : écris plutôt dans le fil de la tâche");
             const created = await agentService.summon(target.id, {
               taskId: task_id ?? null,
               text: body,
@@ -112,9 +111,12 @@ export function createAgentsMcpServer(project: Project, sessionId: string, scope
               actor: { type: 'human' },
               // Convoqué par une session, pas par une personne : sa session se range seule à la fin de son tour.
               autoArchive: true,
+              // Un agent qui se convoque lui-même ouvre une autre session : jamais la session appelante.
+              excludeSessionId: sessionId,
             });
             await auditService.record({ projectId: target.projectId, actor: { sessionId }, action: 'agent.summon', targetType: 'agent', targetId: target.id, targetLabel: target.name, details: { taskId: task_id, sessionId: created.id } });
             const follow = scope ? 'Utilise sessions.wait avec cet id pour obtenir sa réponse.' : "Il répondra dans le fil de la tâche s'il y en a une ; sinon consulte la session.";
+            if (target.id === caller?.id) return `Nouvelle session à ton nom${task_id ? ` sur la tâche ${task_id}` : ''} : ${created.id} (« ${created.name} »). Elle travaille seule ; sessions.get avec cet id donne son état.`;
             return `${target.name} convoqué${task_id ? ` sur la tâche ${task_id}` : ''} : session ${created.id} (« ${created.name} »). ${follow}`;
           }),
       ),

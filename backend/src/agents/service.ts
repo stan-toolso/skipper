@@ -58,6 +58,11 @@ export interface SummonOptions {
    * archivée d'office à la fin de chaque tour (sessions/autoArchive.ts). Sans effet sur une session existante.
    */
   autoArchive?: boolean;
+  /**
+   * Session qui convoque (agent qui se convoque lui-même) : jamais choisie comme « session reliée » de l'agent, pour
+   * qu'il ouvre bien une autre session au lieu de s'envoyer le message.
+   */
+  excludeSessionId?: string | null;
 }
 
 function actionKey(input: AgentActionInput, taken: Set<string>): string {
@@ -399,8 +404,9 @@ export const agentService = {
   // ---- Convocation ------------------------------------------------------------------------------
 
   /** Session non archivée de l'agent reliée à la tâche, la plus récente, pourvu que son dossier existe encore. */
-  async sessionOnTask(agent: Agent, taskId: string): Promise<Session | null> {
+  async sessionOnTask(agent: Agent, taskId: string, excludeSessionId?: string | null): Promise<Session | null> {
     for (const id of await agentRepository.sessionIdsOnTask(agent.id, taskId)) {
+      if (id === excludeSessionId) continue;
       const s = await sessionRepository.findById(id);
       if (!s || s.archivedAt) continue;
       if (!s.worksessionId) continue;
@@ -464,7 +470,7 @@ export const agentService = {
     if (opts.taskId) {
       const task = await taskService.get(opts.taskId);
       if (task.projectId !== agent.projectId) throw new AppError(`La tâche n'appartient pas au projet de ${agent.name}`);
-      const existing = await this.sessionOnTask(agent, task.id);
+      const existing = await this.sessionOnTask(agent, task.id, opts.excludeSessionId);
       if (existing && existing.status !== 'queued') {
         return sessionService.sendMessage(existing.id, text, opts.attachments ?? null, { author: await summonAuthor(opts, actor) });
       }
@@ -482,8 +488,8 @@ export const agentService = {
     if (opts.thread) {
       const conversation = await conversationService.get(opts.thread.conversationId);
       if (conversation.projectId !== agent.projectId) throw new AppError(`Le canal n'appartient pas au projet de ${agent.name}`);
-      const existing = (await this.sessionOnThread(agent, opts.thread.rootMessageId)) ?? (await this.restoreOnThread(agent, opts.thread.rootMessageId));
-      if (existing && existing.status !== 'queued') {
+      const existing = (await this.sessionOnThread(agent, opts.thread.rootMessageId, opts.excludeSessionId)) ?? (await this.restoreOnThread(agent, opts.thread.rootMessageId));
+      if (existing && existing.status !== 'queued' && existing.id !== opts.excludeSessionId) {
         return sessionService.sendMessage(existing.id, text, opts.attachments ?? null, { author: await summonAuthor(opts, actor) });
       }
       return this.sessionOnChannelThread(agent, conversation, opts.thread.rootMessageId, text, opts, actor);
@@ -505,8 +511,9 @@ export const agentService = {
   },
 
   /** Session non archivée de l'agent reliée à un fil de canal, la plus récente, pourvu que son dossier existe encore. */
-  async sessionOnThread(agent: Agent, rootMessageId: string): Promise<Session | null> {
+  async sessionOnThread(agent: Agent, rootMessageId: string, excludeSessionId?: string | null): Promise<Session | null> {
     for (const id of await conversationService.agentSessionIdsOnThread(agent.id, rootMessageId)) {
+      if (id === excludeSessionId) continue;
       const s = await sessionRepository.findById(id);
       if (!s || s.archivedAt || !s.worksessionId) continue;
       return s;

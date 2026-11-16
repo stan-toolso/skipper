@@ -57,12 +57,12 @@ describe('serveur MCP agents', () => {
     expect(text).toContain('Max convoqué sur la tâche t1 : session new');
   });
 
-  it('summon refuse de se convoquer soi-même', async () => {
+  it("summon accepte que l'agent se convoque lui-même : nouvelle session à son nom, jamais la session appelante", async () => {
     const client = await connect();
-    const res = await client.callTool({ name: 'summon', arguments: { agent: 'Léa', text: 'bonjour' } });
-    expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("C'est toi");
-    expect(service.summon).not.toHaveBeenCalled();
+    const res = await client.callTool({ name: 'summon', arguments: { agent: 'Léa', text: 'Traite la tâche t3', task_id: 't3' } });
+    expect(res.isError).toBeFalsy();
+    expect(service.summon).toHaveBeenCalledWith('a1', expect.objectContaining({ taskId: 't3', text: 'Traite la tâche t3', requestedById: 'u9', excludeSessionId: 's1', autoArchive: true }));
+    expect(textOf(res)).toContain('Nouvelle session à ton nom sur la tâche t3 : new');
   });
 });
 
