@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
-import { CLOSE_TERMINAL, INBOX_COUNTS, SIDEBAR, SIDEBAR_PULL_REQUESTS, STOP_SESSION } from '../graphql/operations';
+import { CLOSE_TERMINAL, INBOX_COUNTS, RUN_SCHEDULE_NOW, SIDEBAR, SIDEBAR_PULL_REQUESTS, STOP_SESSION } from '../graphql/operations';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { formatCost, sessionStateHint, taskChipOf } from '../lib/humanize';
 import Logo from '../components/Logo';
@@ -437,14 +437,24 @@ function OwnerGroupRow({ group, expanded, onToggle }: { group: OwnerGroup<Worksp
 
 /**
  * Ligne d'une planification : les sessions de ses exécutions s'affichent dessous (dépliée par défaut). Un clic replie
- * ou déplie ; le menu ouvre la planification (réglages, historique, « Exécuter maintenant »).
+ * ou déplie ; le menu lance une exécution tout de suite (« Exécuter maintenant », nouvelle session ouverte) ou ouvre
+ * la planification (réglages, historique).
  */
-function ScheduleGroupRow({ group, projectId, expanded, onToggle }: { group: ScheduleGroup<Workspace>; projectId: string; expanded: boolean; onToggle: () => void }) {
+function ScheduleGroupRow({ group, projectId, canRun, expanded, onToggle }: { group: ScheduleGroup<Workspace>; projectId: string; canRun: boolean; expanded: boolean; onToggle: () => void }) {
   const [menu, setMenu] = useState(false);
+  const navigate = useNavigate();
+  const { showError } = useDialogs();
+  const [runNow] = useMutation<{ runScheduleNow: { id: string } | null }>(RUN_SCHEDULE_NOW, { refetchQueries: ['Sidebar', 'SessionSchedules'] });
+  const launch = async () => {
+    const res = await runNow({ variables: { id: group.schedule.id } }).catch((err: Error) => (showError(err), null));
+    const sessionId = res?.data?.runScheduleNow?.id;
+    if (sessionId) navigate(`/sessions/${sessionId}`);
+  };
   const sessions = group.items.map((ws) => ws.session!);
   const sum = subagentsSummary(sessions);
   const count = `${sessions.length} exécution${sessions.length > 1 ? 's' : ''}`;
   const items: MenuItem[] = [
+    ...(canRun ? [{ label: 'Exécuter maintenant', icon: 'bi-play-circle', onClick: () => void launch() }] : []),
     { label: 'Modifier la planification', icon: 'bi-pencil', to: `/projects/${projectId}/schedules?edit=${group.schedule.id}` },
     { label: 'Planifications du projet', icon: 'bi-alarm', to: `/projects/${projectId}/schedules` },
   ];
@@ -1092,7 +1102,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                       const groupOpen = expanded[groupKey] ?? true;
                       return (
                         <div key={groupKey} className="wb-schedule-block">
-                          <ScheduleGroupRow group={g} projectId={p.id} expanded={groupOpen} onToggle={() => toggle(groupKey, true)} />
+                          <ScheduleGroupRow group={g} projectId={p.id} canRun={p.myRole === 'ADMIN' || p.myRole === 'MEMBER'} expanded={groupOpen} onToggle={() => toggle(groupKey, true)} />
                           {groupOpen && g.items.map((ws) => card(ws, runLabel(ws.name, g.schedule.name)))}
                         </div>
                       );
