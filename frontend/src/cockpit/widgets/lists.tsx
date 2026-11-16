@@ -31,8 +31,8 @@ export function ListTodoWidget(p: WidgetProps) {
         {d.pendingRequests.map((r) => <RequestRow key={r.id} request={r} showProject={!inProject} />)}
         {failed.map((s) => <SessionRow key={s.id} session={s} hint={s.error ? shorten(s.error, 80) : 'en erreur'} icon="bi-x-octagon bad" showProject={!inProject} refetch={ctx.refetch} />)}
         {interrupted.map((s) => <SessionRow key={s.id} session={s} hint="interrompue en plein travail par un redémarrage" icon="bi-pause-circle warn" showProject={!inProject} refetch={ctx.refetch} />)}
-        {stale.map((t) => <TaskRow key={t.id} task={t} showProject={!inProject} hint={stalledHint(t)} icon="bi-person-x bad" />)}
-        {toValidate.map((t) => <TaskRow key={t.id} task={t} showProject={false} hint="à valider : quelque chose à essayer" icon="bi-eye" />)}
+        {stale.map((t) => <TaskRow key={t.id} task={t} showProject={!inProject} hint={stalledHint(t)} icon="bi-person-x bad" toSession />)}
+        {toValidate.map((t) => <TaskRow key={t.id} task={t} showProject={false} hint="à valider : quelque chose à essayer" icon="bi-eye" toSession />)}
         {prs.map((pr) => <PullRequestRow key={pr.id} pr={pr} showProject={false} />)}
         {total === 0 && <li className="empty">Rien à traiter : les agents n’ont besoin de rien pour l’instant.</li>}
       </ul>

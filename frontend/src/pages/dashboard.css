@@ -60,6 +60,9 @@ a.dash-tile:hover { border-color: var(--cc-dimmer); color: inherit; }
 .dash-list .main { flex: 1; min-width: 0; }
 .dash-list .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-fg); font-weight: 500; text-decoration: none; }
 .dash-list a.title:hover { color: var(--cc-accent); }
+.dash-list span.title > a { color: inherit; text-decoration: none; }
+.dash-list span.title > a.text-secondary { color: var(--cc-dim); }
+.dash-list span.title > a:hover { color: var(--cc-accent); }
 .dash-list .meta { font-size: 12px; color: var(--cc-dim); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-list .side { flex: none; font-size: 12px; color: var(--cc-dim); text-align: right; }
 

@@ -110,19 +110,24 @@ export const stalledHint = (t: Pick<Task, 'stalledSince'> & Partial<Pick<Task, '
     ? `en cours, réveil passé (${timeAgo(t.wakeAt)})${t.wakeNote ? ` : ${t.wakeNote.slice(0, 120)}` : ''}`
     : `en cours, mais l'agent s'est arrêté${t.stalledSince ? ` ${timeAgo(t.stalledSince)}` : ''} sans la terminer`;
 
-export function TaskRow({ task, showProject = true, hint, icon }: { task: Task; showProject?: boolean; hint?: string; icon?: string }) {
+/**
+ * `toSession` (listes « À traiter ») : le titre mène à la session de la tâche, là où l'on agit, et la tâche passe en lien
+ * secondaire ; sans session, il mène à la tâche.
+ */
+export function TaskRow({ task, showProject = true, hint, icon, toSession = false }: { task: Task; showProject?: boolean; hint?: string; icon?: string; toSession?: boolean }) {
+  const viaSession = toSession && task.session != null;
   const overdue = task.dueDate && task.dueDate < new Date().toISOString().slice(0, 10);
   const prio = taskPriorityLabels[task.priority];
   return (
     <li>
       <i className={`bi ${icon ?? 'bi-check2-square'} icon${overdue ? ' bad' : task.priority === 'URGENT' ? ' warn' : ''}`} />
       <div className="main">
-        <Link to={`/tasks/${task.id}`} className="title">{task.title}</Link>
+        <Link to={viaSession ? `/sessions/${task.session!.id}` : `/tasks/${task.id}`} className="title" title={viaSession ? `Ouvrir la session « ${task.session!.name} »` : undefined}>{task.title}</Link>
         <div className="meta">
           {showProject && `${task.project.name} · `}
           {hint ?? taskStatusLabels[task.status]}
           {task.statusTag && ` · ${task.statusTag}`}
-          {task.session && <> · <Link to={`/sessions/${task.session.id}`}>{task.session.name}</Link></>}
+          {viaSession ? <> · <Link to={`/tasks/${task.id}`}>tâche</Link></> : task.session && <> · <Link to={`/sessions/${task.session.id}`}>{task.session.name}</Link></>}
         </div>
       </div>
       <div className="side">
@@ -133,19 +138,33 @@ export function TaskRow({ task, showProject = true, hint, icon }: { task: Task; 
   );
 }
 
-/** Une pull request suivie qui attend une action : relecture et fusion. */
+/** Session à ouvrir pour agir sur une PR : celle qui la suit (dossier de la branche), sinon celle qui l'a ouverte. */
+export const prSession = (pr: Pick<TrackedPullRequest, 'session' | 'createdBySession'>) => pr.session ?? pr.createdBySession;
+
+/**
+ * Une pull request suivie qui attend une action : relecture et fusion. Le titre mène à la session qui la suit (on lui
+ * demande de fusionner, corriger, résoudre) ; le numéro, et le titre faute de session, ouvrent la forge.
+ */
 export function PullRequestRow({ pr, showProject = true }: { pr: TrackedPullRequest; showProject?: boolean }) {
+  const session = prSession(pr);
   return (
     <li>
       <i className="bi bi-git icon" />
       <div className="main">
-        <a href={pr.url} target="_blank" rel="noreferrer" className="title" title={`Ouvrir sur ${forgeOfUrl(pr.url)}`}>
-          <span className="text-secondary">{prRef(pr)}</span> {pr.title}
-        </a>
+        {session ? (
+          <span className="title">
+            <a href={pr.url} target="_blank" rel="noreferrer" className="text-secondary" title={`Ouvrir sur ${forgeOfUrl(pr.url)}`}>{prRef(pr)}</a>{' '}
+            <Link to={`/sessions/${session.id}`} title={`Ouvrir la session « ${session.name} »`}>{pr.title}</Link>
+          </span>
+        ) : (
+          <a href={pr.url} target="_blank" rel="noreferrer" className="title" title={`Ouvrir sur ${forgeOfUrl(pr.url)}`}>
+            <span className="text-secondary">{prRef(pr)}</span> {pr.title}
+          </a>
+        )}
         <div className="meta">
           {showProject && <Link to={`/projects/${pr.project.id}/pull-requests`}>{pr.project.name}</Link>}
           {pr.task && <>{showProject && ' · '}<Link to={`/tasks/${pr.task.id}`}>{pr.task.title}</Link></>}
-          {pr.createdBySession && <> · <Link to={`/sessions/${pr.createdBySession.id}`}>{pr.createdBySession.name}</Link></>}
+          {session && <> · <Link to={`/sessions/${session.id}`}>{session.name}</Link></>}
           {pr.note && <> · {pr.note}</>}
         </div>
       </div>

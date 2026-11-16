@@ -4,6 +4,8 @@ import { Alert, Badge, Button, Form, Spinner } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import RequestCard from '../components/RequestCard';
 import { TrackedPullRequestChip } from '../components/TrackedPullRequests';
+import { prSession } from '../components/DashboardRows';
+import { prRef } from '../graphql/pullRequests';
 import { useDialogs } from '../components/Dialogs';
 import { INBOX, RESUME_SESSION, UPDATE_TASK, type Inbox, type Task } from '../graphql/operations';
 import { waitingText } from '../components/TaskBadges';
@@ -99,10 +101,10 @@ function WaitingTasks({ tasks }: { tasks: Task[] }) {
           <div key={task.id} className="inbox-item">
             <i className="bi bi-hourglass-split icon text-secondary" />
             <div className="main">
-              <Link to={`/tasks/${task.id}`} className="title">{task.title}</Link>
+              <Link to={task.session ? `/sessions/${task.session.id}` : `/tasks/${task.id}`} className="title" title={task.session ? `Ouvrir la session « ${task.session.name} »` : undefined}>{task.title}</Link>
               <div className="meta">
                 {task.project.name} · {waitingText(task)}
-                {task.session && <> · <Link to={`/sessions/${task.session.id}`}>{task.session.name}</Link></>}
+                {task.session && <> · <Link to={`/tasks/${task.id}`}>tâche</Link> · {task.session.name}</>}
               </div>
             </div>
           </div>
@@ -160,10 +162,10 @@ function StalledTaskItem({ item }: { item: Extract<InboxItem, { kind: 'task' }> 
     <div className="inbox-item">
       <i className="bi bi-person-x bad icon" />
       <div className="main">
-        <Link to={`/tasks/${task.id}`} className="title">{task.title}</Link>
+        <Link to={task.session ? `/sessions/${task.session.id}` : `/tasks/${task.id}`} className="title" title={task.session ? `Ouvrir la session « ${task.session.name} »` : undefined}>{task.title}</Link>
         <div className="meta">
           {task.project.name} · {task.wakeAt && new Date(task.wakeAt) <= new Date() ? `réveil passé (${timeAgo(task.wakeAt)})${task.wakeNote ? ` : ${task.wakeNote.slice(0, 160)}` : ''}` : 'en cours, mais l’agent s’est arrêté sans la terminer'}
-          {task.session && <> · <Link to={`/sessions/${task.session.id}`}>{task.session.name}</Link></>}
+          {task.session ? <> · <Link to={`/tasks/${task.id}`}>tâche</Link> · {task.session.name}</> : null}
           {' · '}{timeAgo(item.at)}
         </div>
       </div>
@@ -181,13 +183,19 @@ function StalledTaskItem({ item }: { item: Extract<InboxItem, { kind: 'task' }> 
 
 function PullRequestItem({ item }: { item: Extract<InboxItem, { kind: 'pullRequest' }> }) {
   const { pr } = item;
+  const session = prSession(pr);
   return (
     <div className="inbox-item">
       <i className="bi bi-git icon" />
       <div className="main">
-        <a href={pr.url} target="_blank" rel="noreferrer" className="title" title="Ouvrir sur la forge">{pr.title}</a>
+        {session ? (
+          <Link to={`/sessions/${session.id}`} className="title" title={`Ouvrir la session « ${session.name} »`}>{pr.title}</Link>
+        ) : (
+          <a href={pr.url} target="_blank" rel="noreferrer" className="title" title="Ouvrir sur la forge">{pr.title}</a>
+        )}
         <div className="meta">
           {pr.project.name}
+          {session && <> · <a href={pr.url} target="_blank" rel="noreferrer" title="Ouvrir sur la forge">{prRef(pr)}</a> · {session.name}</>}
           {pr.task && <> · <Link to={`/tasks/${pr.task.id}`}>{pr.task.title}</Link></>}
           {' · '}{timeAgo(pr.openedAt)}
         </div>
