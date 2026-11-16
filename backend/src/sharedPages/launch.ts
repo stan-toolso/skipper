@@ -21,7 +21,9 @@ export async function launchArtifactSession(page: Pick<SharedPage, 'id' | 'title
   const { projectBudget } = await import('../projects/budget.js');
   const { systemAuthor } = await import('../sessions/instructionAuthor.js');
   const agent = opts.agent ? await agentService.resolve(project.id, opts.agent) : null;
-  const settings = await claudeSettings.forSession(agent ? agent.id : page.ownerId);
+  // Comptes de qui joue la session : pour un agent (ou une page d'agent), le compte Claude qu'une personne lui prête.
+  const accounts = await agentService.accountsForOwner(agent ? agent.id : page.ownerId);
+  const settings = await claudeSettings.forSession(accounts?.claudeUserId ?? null);
   settings.assertCredentials();
   await settings.assertBudgetAvailable();
   await projectBudget.assertAvailable(project.id);

@@ -657,7 +657,7 @@ export default function AgentPage() {
               <Alert variant="light" className="border small">
                 Comptes propres de <b>{agent.name}</b>{agent.delegations.claude || agent.delegations.github || agent.delegations.gitlab ? ' (utilisés là où aucun compte n’est prêté)' : ''} : ses sessions tournent avec, sa consommation lui est imputée, ses commits et pull requests sont signés de lui. Ils se règlent comme les vôtres dans Paramètres ; les éléments de coffre créés ici lui appartiennent.
               </Alert>
-              <AgentAccountSettings agentName={agent.name} />
+              <AgentAccountSettings agentName={agent.name} claudeLent={Boolean(agent.delegations.claude)} />
             </ApolloProvider>
           </>
         ) : (

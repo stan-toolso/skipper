@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   sent: [] as string[],
   sessions: {} as Record<string, { status: string; activity: string | null; archivedAt: Date | null }>,
   evaluated: [] as string[][],
+  claudeChecked: [] as (string | null)[],
 }));
 
 vi.mock('./dataRepository.js', () => ({
@@ -43,10 +44,12 @@ vi.mock('../sessions/service.js', () => ({
 vi.mock('../agents/service.js', () => ({
   agentService: {
     resolve: async (_p: string, ref: string) => ({ id: `agent-${ref}` }),
+    // Un agent joue avec le compte Claude qu'une personne lui prête.
+    accountsForOwner: async (id: string) => ({ claudeUserId: id.startsWith('agent-') ? `lender-of-${id}` : id }),
     summon: async (agentId: string, opts: { text: string }) => (state.summoned.push({ agentId, text: opts.text }), { id: 'agent-session' }),
   },
 }));
-vi.mock('../settings/claude.js', () => ({ claudeSettings: { forSession: async () => ({ assertCredentials: () => undefined, assertBudgetAvailable: async () => undefined }) } }));
+vi.mock('../settings/claude.js', () => ({ claudeSettings: { forSession: async (id: string | null) => (state.claudeChecked.push(id), { assertCredentials: () => undefined, assertBudgetAvailable: async () => undefined }) } }));
 vi.mock('../projects/budget.js', () => ({ projectBudget: { assertAvailable: async () => undefined } }));
 vi.mock('./repository.js', () => ({ sharedPageRepository: { snapshotLatest: async () => undefined, version: async () => null, markDataRefreshed: async () => void state.marked++, update: async (_id: string, patch: unknown) => ({ ...page(), ...(patch as object) }), dueForRefresh: async () => [] } }));
 vi.mock('./service.js', () => ({ sharedPageService: { get: async () => page(), getManaged: async () => page() } }));
@@ -96,6 +99,7 @@ beforeEach(() => {
   state.sent = [];
   state.sessions = {};
   state.evaluated = [];
+  state.claudeChecked = [];
 });
 
 describe('artifactDataService.refresh', () => {
@@ -190,6 +194,8 @@ describe('sources agent', () => {
     await artifactDataService.refresh(page(), 'auto', { agents: true });
     expect(state.summoned[0].agentId).toBe('agent-Chris');
     expect(state.running).toEqual([{ id: 'sa', sessionId: 'agent-session' }]);
+    // Identifiants vérifiés : ceux du compte prêté à l'agent, pas les réglages propres de l'agent.
+    expect(state.claudeChecked).toEqual(['lender-of-agent-Chris']);
   });
 
   it('ne double pas une session encore au travail ; relance après une session terminée', async () => {
