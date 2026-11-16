@@ -17,6 +17,14 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../users/repository.js', () => ({ userRepository: { findById: async (id: string) => ({ id, name: id, isSuperAdmin: false }) } }));
 vi.mock('../users/service.js', () => ({ userService: { memberRoleFor: async () => h.role, isPersonalProject: async () => false } }));
+vi.mock('../agents/service.js', () => ({
+  agentService: {
+    resolve: async (_projectId: string, ref: string) => {
+      if (ref !== 'Ben' && ref !== 'ben-id') throw new Error(`Aucun agent « ${ref} » dans ce projet`);
+      return { id: 'ben-id', name: 'Ben', projectId: 'p1' };
+    },
+  },
+}));
 vi.mock('../audit/service.js', () => ({ auditService: { record: async (e: Record<string, unknown>) => void h.audit.push(e) } }));
 vi.mock('../billing/display.js', () => ({ describeCost: async (usd: number) => `${usd.toFixed(2)} $` }));
 vi.mock('./service.js', () => ({
@@ -32,8 +40,8 @@ vi.mock('./service.js', () => ({
       h.created.push([input, owner]);
       return schedule({ id: 'new', name: input.name as string, cron: input.cron as string, prompt: input.prompt as string });
     },
-    update: async (id: string, input: Record<string, unknown>) => {
-      h.updated.push([id, input]);
+    update: async (id: string, input: Record<string, unknown>, owner?: unknown) => {
+      h.updated.push(owner === undefined ? [id, input] : [id, input, owner]);
       return { ...(h.schedules.get(id) as SessionSchedule), ...input };
     },
     setEnabled: async (id: string, enabled: boolean) => {
@@ -120,6 +128,24 @@ describe('serveur MCP schedules', () => {
     expect(other.text).toContain('introuvable dans ce projet');
     const runs = await call('runs', { id: 's1' });
     expect(runs.text).toContain('Terminée · 0.50 $ · 60 s · session sess1');
+  });
+
+  it('crée ou passe une planification au nom d’un agent du projet, la personne de la session en devenant la demandeuse', async () => {
+    h.schedules.set('s1', schedule({ projectId: 'p' }));
+    const { call } = await connect({ ownerId: 'stan' });
+    const created = await call('create', { name: 'Tri', cron: '0 8 * * *', prompt: 'Trie les tâches', agent: 'Ben' });
+    expect(created.isError).toBe(false);
+    expect(h.created[0][1]).toEqual({ ownerId: 'ben-id', requestedById: 'stan' });
+    const unknown = await call('create', { name: 'Tri', cron: '0 8 * * *', prompt: 'Trie', agent: 'Personne' });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.text).toContain('Aucun agent');
+    await call('update', { id: 's1', agent: 'ben-id' });
+    expect(h.updated[0][2]).toEqual({ ownerId: 'ben-id', requestedById: 'stan' });
+    await call('update', { id: 's1', agent: '' });
+    expect(h.updated[1][2]).toEqual({ ownerId: 'stan', requestedById: null });
+    await call('update', { id: 's1', name: 'Autre' });
+    expect(h.updated[2]).toHaveLength(2);
+    expect(h.audit.at(1)?.details).toEqual({ fields: ['owner'] });
   });
 
   it('crée une planification au nom du propriétaire de la session, avec le demandeur d’un agent, et l’inscrit au journal', async () => {

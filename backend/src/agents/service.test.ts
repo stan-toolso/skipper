@@ -264,29 +264,38 @@ describe('syncActionSchedules', () => {
 
 describe('comptes et délégation', () => {
   it('accounts : les comptes propres de l’agent, ou ceux prêtés (GitHub et GitLab séparément, lecture seule par défaut)', async () => {
-    const own = { claudeUserId: 'a1', githubUserId: 'a1', githubReadOnly: false, githubPullRequests: true, gitlabUserId: 'a1', gitlabReadOnly: false, gitlabPullRequests: true, forgeUserId: 'a1' };
+    const own = { claudeUserId: 'a1', githubUserId: 'a1', githubReadOnly: false, githubPullRequests: true, githubMerge: false, gitlabUserId: 'a1', gitlabReadOnly: false, gitlabPullRequests: true, gitlabMerge: false, forgeUserId: 'a1' };
     expect(agentService.accounts(agent())).toEqual(own);
     expect(agentService.accounts(agent({ claudeDelegateId: 'u1', githubDelegateId: 'u2', githubDelegateReadOnly: true }))).toEqual({ ...own, claudeUserId: 'u1', githubUserId: 'u2', githubReadOnly: true, githubPullRequests: false });
     // Lecture seule avec pull requests permises : toujours pas de push, mais pr_open passe.
     expect(agentService.accounts(agent({ githubDelegateId: 'u2', githubDelegateReadOnly: true, githubDelegatePullRequests: true }))).toEqual({ ...own, githubUserId: 'u2', githubReadOnly: true, githubPullRequests: true });
     expect(agentService.accounts(agent({ gitlabDelegateId: 'u3', gitlabDelegateReadOnly: false }))).toEqual({ ...own, gitlabUserId: 'u3' });
+    // Écriture avec fusion permise : pr_merge fusionne avec le compte prêté ; sans effet en lecture seule ni sans prêt.
+    expect(agentService.accounts(agent({ githubDelegateId: 'u2', githubDelegateReadOnly: false, githubDelegateMerge: true }))).toEqual({ ...own, githubUserId: 'u2', githubMerge: true });
+    expect(agentService.accounts(agent({ githubDelegateId: 'u2', githubDelegateReadOnly: true, githubDelegateMerge: true })).githubMerge).toBe(false);
+    expect(agentService.accounts(agent({ githubDelegateMerge: true })).githubMerge).toBe(false);
     // La forge de Skipper sert toujours avec le compte de l’agent lui-même.
     expect(agentService.accounts(agent({ githubDelegateId: 'u2', gitlabDelegateId: 'u3' })).forgeUserId).toBe('a1');
-    expect(await agentService.accountsForOwner('u1')).toEqual({ claudeUserId: 'u1', githubUserId: 'u1', githubReadOnly: false, githubPullRequests: true, gitlabUserId: 'u1', gitlabReadOnly: false, gitlabPullRequests: true, forgeUserId: 'u1' });
+    expect(await agentService.accountsForOwner('u1')).toEqual({ claudeUserId: 'u1', githubUserId: 'u1', githubReadOnly: false, githubPullRequests: true, githubMerge: false, gitlabUserId: 'u1', gitlabReadOnly: false, gitlabPullRequests: true, gitlabMerge: false, forgeUserId: 'u1' });
     expect(await agentService.accountsForOwner(null)).toBeNull();
   });
 
   it('setDelegation : seule une personne membre du projet prête son compte ; null retire la délégation', async () => {
     await agentService.setDelegation('a1', 'github', 'u1', { readOnly: false });
-    expect(repo.update).toHaveBeenLastCalledWith('a1', { githubDelegateId: 'u1', githubDelegateReadOnly: false, githubDelegatePullRequests: false });
+    expect(repo.update).toHaveBeenLastCalledWith('a1', { githubDelegateId: 'u1', githubDelegateReadOnly: false, githubDelegatePullRequests: false, githubDelegateMerge: false });
+    await agentService.setDelegation('a1', 'github', 'u1', { readOnly: false, merge: true });
+    expect(repo.update).toHaveBeenLastCalledWith('a1', { githubDelegateId: 'u1', githubDelegateReadOnly: false, githubDelegatePullRequests: false, githubDelegateMerge: true });
+    // En lecture seule, la fusion n'est jamais permise.
+    await agentService.setDelegation('a1', 'github', 'u1', { readOnly: true, merge: true });
+    expect(repo.update).toHaveBeenLastCalledWith('a1', { githubDelegateId: 'u1', githubDelegateReadOnly: true, githubDelegatePullRequests: false, githubDelegateMerge: false });
     await agentService.setDelegation('a1', 'gitlab', 'u1');
-    expect(repo.update).toHaveBeenLastCalledWith('a1', { gitlabDelegateId: 'u1', gitlabDelegateReadOnly: true, gitlabDelegatePullRequests: false });
+    expect(repo.update).toHaveBeenLastCalledWith('a1', { gitlabDelegateId: 'u1', gitlabDelegateReadOnly: true, gitlabDelegatePullRequests: false, gitlabDelegateMerge: false });
     await agentService.setDelegation('a1', 'gitlab', 'u1', { pullRequests: true });
-    expect(repo.update).toHaveBeenLastCalledWith('a1', { gitlabDelegateId: 'u1', gitlabDelegateReadOnly: true, gitlabDelegatePullRequests: true });
+    expect(repo.update).toHaveBeenLastCalledWith('a1', { gitlabDelegateId: 'u1', gitlabDelegateReadOnly: true, gitlabDelegatePullRequests: true, gitlabDelegateMerge: false });
     await agentService.setDelegation('a1', 'claude', 'u1');
     expect(repo.update).toHaveBeenLastCalledWith('a1', { claudeDelegateId: 'u1' });
     await agentService.setDelegation('a1', 'github', null);
-    expect(repo.update).toHaveBeenLastCalledWith('a1', { githubDelegateId: null, githubDelegateReadOnly: true, githubDelegatePullRequests: false });
+    expect(repo.update).toHaveBeenLastCalledWith('a1', { githubDelegateId: null, githubDelegateReadOnly: true, githubDelegatePullRequests: false, githubDelegateMerge: false });
     users.findById = vi.fn(async (id: string) => ({ id, name: 'Léa', kind: 'agent' }));
     await expect(agentService.setDelegation('a1', 'gitlab', 'a2')).rejects.toThrow('Seule une personne');
     users.findById = vi.fn(async (id: string) => ({ id, name: 'Alice', kind: 'person' }));

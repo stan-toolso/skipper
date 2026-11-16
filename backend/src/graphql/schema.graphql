@@ -3904,6 +3904,8 @@ input SessionScheduleInput {
   maxRunUsd: Float
   "Budget mensuel de la planification, dans l'unité d'affichage (absent : inchangé ; null ou 0 : retiré)."
   monthlyBudgetUsd: Float
+  "Lance désormais les exécutions au nom de cet agent du projet (ses comptes, son budget ; la personne connectée devient la demandeuse) ; chaîne vide : au nom de la personne connectée. Absent : propriétaire inchangé."
+  agentId: ID
 }
 
 extend type Session {
@@ -4426,12 +4428,16 @@ type AgentDelegations {
   githubReadOnly: Boolean!
   "L'agent peut ouvrir des pull requests GitHub (tasks.pr_open pousse sa branche de travail), même en lecture seule."
   githubPullRequests: Boolean!
+  "Compte GitHub prêté en écriture, fusion permise : l'agent fusionne les pull requests avec ce compte (tasks.pr_merge) sans demander d'accord."
+  githubMerge: Boolean!
   "Personne qui prête son compte GitLab (null : les comptes GitLab propres de l'agent)."
   gitlab: User
   "Compte GitLab prêté en lecture seule : ni push, ni merge request (sauf gitlabPullRequests)."
   gitlabReadOnly: Boolean!
   "L'agent peut ouvrir des merge requests GitLab (tasks.pr_open pousse sa branche de travail), même en lecture seule."
   gitlabPullRequests: Boolean!
+  "Compte GitLab prêté en écriture, fusion permise (merge requests)."
+  gitlabMerge: Boolean!
   git: User @deprecated(reason: "Utiliser github et gitlab")
   gitReadOnly: Boolean! @deprecated(reason: "Utiliser githubReadOnly et gitlabReadOnly")
 }
@@ -4453,8 +4459,8 @@ extend type Mutation {
   setAgentManagers(id: ID!, managers: [AgentManagerInput!]!): Agent!
   "Convoque l'agent avec un message : dans sa session reliée à la tâche, sinon dans une nouvelle session (sur la tâche ou libre). Renvoie la session."
   summonAgent(id: ID!, text: String!, taskId: ID, attachments: [AttachmentInput!]): Session!
-  "Prête son propre compte à l'agent (delegate: true) ou retire la délégation (false) ; pour les comptes git, readOnly (défaut : vrai) et pullRequests (en lecture seule, l'agent peut quand même ouvrir des pull requests ; défaut : faux). Une option absente garde sa valeur quand le prêt ne change pas de personne."
-  setAgentDelegation(id: ID!, account: AgentAccountKind!, delegate: Boolean!, readOnly: Boolean, pullRequests: Boolean): Agent!
+  "Prête son propre compte à l'agent (delegate: true) ou retire la délégation (false) ; pour les comptes git, readOnly (défaut : vrai) et pullRequests (en lecture seule, l'agent peut quand même ouvrir des pull requests ; défaut : faux), merge (en écriture, l'agent fusionne les pull requests avec ce compte sans demander d'accord ; défaut : faux, toujours faux en lecture seule). Une option absente garde sa valeur quand le prêt ne change pas de personne."
+  setAgentDelegation(id: ID!, account: AgentAccountKind!, delegate: Boolean!, readOnly: Boolean, pullRequests: Boolean, merge: Boolean): Agent!
   "Joue une action nommée de l'agent, éventuellement sur une tâche."
   runAgentAction(id: ID!, key: String!, taskId: ID): Session!
   "Prend la main sur la session d'un agent : elle continue (même conversation, au nom de l'agent) avec les comptes et les droits de la personne connectée (Claude, GitHub, GitLab, coffre). Demandeur de la session, gestionnaire de l'agent ou administrateur du projet. En cours, appliqué après la fin du tour."

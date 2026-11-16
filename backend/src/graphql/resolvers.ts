@@ -1082,7 +1082,7 @@ export const resolvers = {
       const acc = agentService.accounts(a);
       const github = await userOrNull(ctx, a.githubDelegateId);
       const gitlab = await userOrNull(ctx, a.gitlabDelegateId);
-      return { claude: await userOrNull(ctx, a.claudeDelegateId), github, githubReadOnly: acc.githubReadOnly, githubPullRequests: acc.githubPullRequests, gitlab, gitlabReadOnly: acc.gitlabReadOnly, gitlabPullRequests: acc.gitlabPullRequests, git: github ?? gitlab, gitReadOnly: acc.githubReadOnly || acc.gitlabReadOnly };
+      return { claude: await userOrNull(ctx, a.claudeDelegateId), github, githubReadOnly: acc.githubReadOnly, githubPullRequests: acc.githubPullRequests, githubMerge: acc.githubMerge, gitlab, gitlabReadOnly: acc.gitlabReadOnly, gitlabPullRequests: acc.gitlabPullRequests, gitlabMerge: acc.gitlabMerge, git: github ?? gitlab, gitReadOnly: acc.githubReadOnly || acc.gitlabReadOnly };
     },
     managers: (a: Agent) => agentService.managers(a.id),
     canManage: (a: Agent, _: unknown, ctx: Ctx) => agentService.canManage(requireUser(ctx).id, a),
@@ -1619,13 +1619,13 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return agentService.handBack(args.id, requireUser(ctx));
     },
-    setAgentDelegation: async (_: unknown, args: { id: string; account: string; delegate: boolean; readOnly?: boolean | null; pullRequests?: boolean | null }, ctx: Ctx) => {
+    setAgentDelegation: async (_: unknown, args: { id: string; account: string; delegate: boolean; readOnly?: boolean | null; pullRequests?: boolean | null; merge?: boolean | null }, ctx: Ctx) => {
       const agent = await guardAgentManager(ctx, args.id);
       // On ne prête que son propre compte : la personne connectée est la délégante ; retirer une délégation est ouvert aux gestionnaires.
       const delegateId = args.delegate ? requireUser(ctx).id : null;
       const kinds: AgentAccountKind[] = args.account === 'GIT' ? ['github', 'gitlab'] : [args.account.toLowerCase() as AgentAccountKind];
       let updated = agent;
-      for (const kind of kinds) updated = await agentService.setDelegation(agent.id, kind, delegateId, { readOnly: args.readOnly ?? null, pullRequests: args.pullRequests ?? null });
+      for (const kind of kinds) updated = await agentService.setDelegation(agent.id, kind, delegateId, { readOnly: args.readOnly ?? null, pullRequests: args.pullRequests ?? null, merge: args.merge ?? null });
       return updated;
     },
     runAgentAction: async (_: unknown, args: { id: string; key: string; taskId?: string | null }, ctx: Ctx) => {
@@ -2165,9 +2165,13 @@ export const resolvers = {
       const owner = await sessionOwnerFor(ctx, agentId, input.projectId);
       return scheduleService.create(await scheduleBudgetInUsd(input, ctx), owner);
     },
-    updateSchedule: async (_: unknown, args: { id: string; input: SessionScheduleInput }, ctx: Ctx) => {
-      await requireProject(ctx, (await scheduleService.require(args.id)).projectId, 'member');
-      return scheduleService.update(args.id, await scheduleBudgetInUsd(args.input, ctx));
+    updateSchedule: async (_: unknown, args: { id: string; input: SessionScheduleInput & { agentId?: string | null } }, ctx: Ctx) => {
+      const existing = await scheduleService.require(args.id);
+      await requireProject(ctx, existing.projectId, 'member');
+      const { agentId, ...input } = args.input;
+      // agentId absent : propriétaire inchangé ; vide : la personne connectée ; sinon un agent du projet.
+      const owner = agentId === undefined || agentId === null ? undefined : await sessionOwnerFor(ctx, agentId || null, existing.projectId);
+      return scheduleService.update(args.id, await scheduleBudgetInUsd(input, ctx), owner);
     },
     deleteSchedule: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await requireProject(ctx, (await scheduleService.require(args.id)).projectId, 'member');

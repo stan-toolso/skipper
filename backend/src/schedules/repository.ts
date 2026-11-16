@@ -107,6 +107,8 @@ export interface ScheduleValues {
   /** Plafonds de coût en USD : undefined inchangé, null retiré. */
   maxRunUsd?: number | null;
   monthlyBudgetUsd?: number | null;
+  /** Nouveau propriétaire des exécutions (personne ou agent) et sa personne demandeuse ; absent : inchangés. */
+  owner?: { ownerId: string; requestedById: string | null };
 }
 
 export const scheduleRepository = {
@@ -192,6 +194,8 @@ export const scheduleRepository = {
          config = COALESCE($13::jsonb, config),
          max_run_usd = CASE WHEN $14 THEN $15::numeric ELSE max_run_usd END,
          monthly_budget_usd = CASE WHEN $16 THEN $17::numeric ELSE monthly_budget_usd END,
+         owner_id = COALESCE($18::uuid, owner_id),
+         requested_by_id = CASE WHEN $18::uuid IS NULL THEN requested_by_id ELSE $19::uuid END,
          updated_at = now()
        WHERE id = $1 RETURNING ${RETURNING}`,
       [
@@ -212,6 +216,8 @@ export const scheduleRepository = {
         values.maxRunUsd ?? null,
         values.monthlyBudgetUsd !== undefined,
         values.monthlyBudgetUsd ?? null,
+        values.owner?.ownerId ?? null,
+        values.owner?.requestedById ?? null,
       ],
     );
     return rows[0] ? toSchedule(rows[0]) : null;

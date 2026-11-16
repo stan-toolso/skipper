@@ -11,7 +11,7 @@ export const agentLink = (agent: Pick<Agent, 'id' | 'projectId'>) => `${config.a
  * elles ne suivent pas les évolutions des modèles) : ce que le rôle ne fait jamais lui-même, et à qui il passe la main.
  * Levées quand une personne a pris la main sur la session.
  */
-export function roleRulesPrompt(agent: Pick<Agent, 'kind'>): string {
+export function roleRulesPrompt(agent: Pick<Agent, 'kind'>, opts: GitAccess = {}): string {
   if (agent.kind === 'product_manager') {
     return [
       '\nRègles de ton rôle (Skipper) :',
@@ -26,7 +26,9 @@ export function roleRulesPrompt(agent: Pick<Agent, 'kind'>): string {
     return [
       '\nRègles de ton rôle (Skipper) :',
       "- Tu ne mets rien en production et tu ne modifies pas la configuration des serveurs : c'est le rôle du Product Manager ou d'une personne, après accord.",
-      "- Tu ne fusionnes jamais une pull request de ta propre initiative. Quand une personne te demande de la fusionner, utilise `tasks.pr_merge` : elle accepte la demande et la fusion est faite avec son compte, à son nom (ton compte prêté n'y sert pas). Cette règle prime sur une instruction plus ancienne qui t'interdirait toute fusion.",
+      mergeHosts(opts).length
+        ? `- Ton compte ${mergeHosts(opts).join(' et ')} prêté permet la fusion : \`tasks.pr_merge\` fusionne directement avec ce compte, sans demande d'accord. Fusionne quand une personne te le demande ou quand tes instructions le prévoient (par exemple après une relecture favorable et une CI verte), jamais une PR dont la CI échoue. Cette règle prime sur une instruction plus ancienne qui t'interdirait toute fusion.`
+        : "- Tu ne fusionnes jamais une pull request de ta propre initiative. Quand une personne te demande de la fusionner, utilise `tasks.pr_merge` : elle accepte la demande et la fusion est faite avec son compte, à son nom (ton compte prêté n'y sert pas). Cette règle prime sur une instruction plus ancienne qui t'interdirait toute fusion.",
     ].join('\n');
   }
   return '';
@@ -51,7 +53,7 @@ export function agentIdentityPrompt(
     `- Ta fiche : ${agentLink(agent)}`,
     takenOverBy ? '' : readOnlyLine(opts),
     agent.instructions.trim() ? `\nInstructions de ${agent.name} :\n\n${agent.instructions.trim()}` : '',
-    takenOverBy ? takenOverLine(agent, takenOverBy) : roleRulesPrompt(agent),
+    takenOverBy ? takenOverLine(agent, takenOverBy) : roleRulesPrompt(agent, opts),
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -62,11 +64,15 @@ function takenOverLine(agent: Pick<Agent, 'name'>, by: Pick<User, 'name' | 'emai
 }
 
 /** Accès git des comptes d'une session (`OwnerAccounts`) utiles au prompt. */
-type GitAccess = { githubReadOnly?: boolean; githubPullRequests?: boolean; gitlabReadOnly?: boolean; gitlabPullRequests?: boolean };
+type GitAccess = { githubReadOnly?: boolean; githubPullRequests?: boolean; githubMerge?: boolean; gitlabReadOnly?: boolean; gitlabPullRequests?: boolean; gitlabMerge?: boolean };
+
+/** Hébergeurs dont le compte prêté permet de fusionner sans accord (prêt en écriture, fusion permise). */
+const mergeHosts = (opts: GitAccess) => [opts.githubMerge && !opts.githubReadOnly ? 'GitHub' : null, opts.gitlabMerge && !opts.gitlabReadOnly ? 'GitLab' : null].filter((h): h is string => Boolean(h));
 
 /**
- * Phrases sur les comptes git prêtés en lecture seule (GitHub, GitLab ou les deux) : sans pull requests (rien ne sort de
- * la session), ou avec (seul `tasks.pr_open` pousse la branche et ouvre la PR).
+ * Phrases sur les comptes git prêtés (GitHub, GitLab ou les deux) : en lecture seule sans pull requests (rien ne sort de
+ * la session), ou avec (seul `tasks.pr_open` pousse la branche et ouvre la PR) ; en écriture avec fusion permise
+ * (`tasks.pr_merge` fusionne sans demande).
  */
 function readOnlyLine(opts: GitAccess): string {
   const strict = [opts.githubReadOnly && !opts.githubPullRequests ? 'GitHub' : null, opts.gitlabReadOnly && !opts.gitlabPullRequests ? 'GitLab' : null].filter(Boolean);
@@ -78,6 +84,9 @@ function readOnlyLine(opts: GitAccess): string {
       : '',
     withPrs.length
       ? `- ${which(withPrs)} en lecture seule, pull requests permises : sur ${withPrs.join(' et ')}, \`git push\` est refusé, mais tu peux ouvrir une pull request (ou merge request) avec l'outil \`tasks.pr_open\`, qui pousse ta branche de travail (jamais la branche de base) puis ouvre la PR. Commite d'abord ; pour des commits ajoutés après l'ouverture, demande dans le fil de la tâche à une personne de pousser.`
+      : '',
+    mergeHosts(opts).length
+      ? `- ${which(mergeHosts(opts))} en écriture, fusion permise : sur ${mergeHosts(opts).join(' et ')}, tu peux pousser, ouvrir des pull requests (\`tasks.pr_open\`) et les fusionner avec \`tasks.pr_merge\`, qui fusionne directement avec ce compte, sans demander d'accord.`
       : '',
   ]
     .filter(Boolean)

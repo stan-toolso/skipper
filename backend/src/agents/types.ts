@@ -79,12 +79,16 @@ export interface AgentProfile {
   githubDelegateReadOnly: boolean;
   /** Compte GitHub prêté en lecture seule, mais l'agent peut ouvrir des pull requests (`tasks.pr_open`). */
   githubDelegatePullRequests: boolean;
+  /** Compte GitHub prêté en écriture, fusion permise : l'agent fusionne les pull requests avec ce compte (`tasks.pr_merge`) sans demander d'accord. */
+  githubDelegateMerge: boolean;
   /** Personne qui prête son compte GitLab à l'agent (null : les comptes GitLab propres de l'agent). */
   gitlabDelegateId: string | null;
   /** Compte GitLab prêté en lecture seule : ni push, ni merge request (sauf `gitlabDelegatePullRequests`). */
   gitlabDelegateReadOnly: boolean;
   /** Compte GitLab prêté en lecture seule, mais l'agent peut ouvrir des merge requests (`tasks.pr_open`). */
   gitlabDelegatePullRequests: boolean;
+  /** Compte GitLab prêté en écriture, fusion permise (merge requests). */
+  gitlabDelegateMerge: boolean;
   triggers: AgentTriggers;
   actions: AgentAction[];
   enabled: boolean;
@@ -144,18 +148,22 @@ export interface OwnerAccounts {
   githubReadOnly: boolean;
   /** La session peut ouvrir des pull requests GitHub par `tasks.pr_open` (Skipper pousse sa branche), même en lecture seule. */
   githubPullRequests: boolean;
+  /** La session fusionne les pull requests GitHub avec ce compte (`tasks.pr_merge`) sans demander l'accord d'une personne (prêt en écriture, fusion permise). */
+  githubMerge: boolean;
   /** Dont les comptes GitLab servent les dépôts GitLab. */
   gitlabUserId: string;
   /** Compte GitLab prêté en lecture seule. */
   gitlabReadOnly: boolean;
   /** La session peut ouvrir des merge requests GitLab par `tasks.pr_open`, même en lecture seule. */
   gitlabPullRequests: boolean;
+  /** La session fusionne les merge requests GitLab avec ce compte sans demander d'accord. */
+  gitlabMerge: boolean;
   /** Dont le compte de la forge de Skipper (dépôt hébergé) sert le dépôt : toujours le propriétaire lui-même. */
   forgeUserId: string;
 }
 
-/** Comptes d'une personne : les siens partout, en écriture. */
-export const ownAccounts = (userId: string): OwnerAccounts => ({ claudeUserId: userId, githubUserId: userId, githubReadOnly: false, githubPullRequests: true, gitlabUserId: userId, gitlabReadOnly: false, gitlabPullRequests: true, forgeUserId: userId });
+/** Comptes d'une personne : les siens partout, en écriture ; la fusion par `tasks.pr_merge` reste soumise à l'accord d'une personne. */
+export const ownAccounts = (userId: string): OwnerAccounts => ({ claudeUserId: userId, githubUserId: userId, githubReadOnly: false, githubPullRequests: true, githubMerge: false, gitlabUserId: userId, gitlabReadOnly: false, gitlabPullRequests: true, gitlabMerge: false, forgeUserId: userId });
 
 /** Ce qu'un agent peut emprunter : le compte Claude, le compte GitHub ou le compte GitLab d'une personne. */
 export type AgentAccountKind = 'claude' | 'github' | 'gitlab';

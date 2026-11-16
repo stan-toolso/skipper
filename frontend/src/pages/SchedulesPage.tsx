@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, ButtonGroup, Form } from 'react-bootstrap';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import AgentAvatar from '../components/AgentAvatar';
 import { useDialogs } from '../components/Dialogs';
 import PageLoading from '../components/PageLoading';
 import ProjectHeader from '../components/ProjectHeader';
@@ -82,7 +83,19 @@ function ScheduleCard({ item, showProject, onEdit }: { item: ScheduleListItem; s
                 {item.project.name}
               </Link>
             )}
-            {item.owner && <span title="Les exécutions utilisent les comptes et le budget de ce propriétaire">{item.owner.name}</span>}
+            {item.agent ? (
+              <span className="d-inline-flex align-items-center gap-1" title={`Chaque exécution est une session de l'agent ${item.agent.name} : ses comptes, son budget, ses règles${item.requestedBy ? ` ; planification mise par ${item.requestedBy.name}` : ''}`}>
+                <AgentAvatar agent={item.agent} size={16} />
+                au nom de {item.agent.name}
+              </span>
+            ) : (
+              item.owner && (
+                <span title="Les exécutions utilisent les comptes et le budget de ce propriétaire">
+                  <i className="bi bi-person me-1" />
+                  au nom de {item.owner.name}
+                </span>
+              )
+            )}
           </div>
           <div className="sch-card-prompt" title={item.prompt}>
             {item.prompt}
