@@ -167,11 +167,11 @@ describe('ownerGroups', () => {
     session: { owner: owner ? { id: owner, name: owner === 'a1' ? 'Chris' : `Personne ${owner}`, avatarUrl: null } : null, requestedBy: null, agent: owner === 'a1' ? { id: 'a1', name: 'Chris', avatar: { emoji: null, color: null } } : null, status: 'COMPLETED' as const, activity: null, pendingRequestCount: 0, ...over },
   });
 
-  it('garde à plat les dossiers de la personne et range les autres par propriétaire', () => {
+  it('garde à plat les dossiers de la personne et range les autres par propriétaire, les agents toujours', () => {
     const { mine, groups } = ownerGroups([ws('m1', 'me'), ws('x1', 'u2'), ws('c1', 'a1'), ws('c2', 'a1'), ws('legacy', null), ws('asked', 'a1', { requestedBy: { id: 'me' } })], 'me');
-    expect(mine.map((w) => w.key)).toEqual(['m1', 'legacy', 'asked']);
+    expect(mine.map((w) => w.key)).toEqual(['m1', 'legacy']);
     expect(groups.map((g) => [g.key, g.agent?.name ?? null, g.items.map((w) => w.key)])).toEqual([
-      ['a1', 'Chris', ['c1', 'c2']],
+      ['a1', 'Chris', ['c1', 'c2', 'asked']],
       ['u2', null, ['x1']],
     ]);
   });
