@@ -68,6 +68,7 @@ import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
 import { BackgroundHold, describeBackgroundTasks } from './backgroundTasks.js';
+import { SubagentRecorder, SubagentTracker, type TaskMessageLike } from './subagents.js';
 import { assistantText, selfTurnNotice, wakeTrigger } from './selfTurn.js';
 import { conversationJournalPath, missedMessages, readJournal, readSubagentEntries } from './cliJournal.js';
 import { isEmptyNotificationResult, isLastResultEcho, resultError } from './claudeResult.js';
@@ -525,6 +526,13 @@ export class ClaudeProvider implements SessionProvider {
       },
       { onError: (err) => log.error("[sessions] fin d'attente des sous-agents", err) },
     );
+    // Sous-agents en cours (premier plan comme arrière-plan), enregistrés sur la session pour la sidebar (subagents.ts).
+    const subagents = new SubagentTracker();
+    const subagentRecorder = new SubagentRecorder(subagents, async (list) => ctx.setSubagents?.(list), {
+      onError: (err) => log.error('[sessions] enregistrement des sous-agents', err),
+    });
+    // Une exécution précédente arrêtée net a pu laisser une liste : elle repart vide.
+    void subagentRecorder.flush();
 
     let stream: ReturnType<typeof query>;
     try {
@@ -569,6 +577,7 @@ export class ClaudeProvider implements SessionProvider {
           }
           if (!turnInProgress && message.type === 'system' && message.subtype === 'task_notification') pendingWake = wakeTrigger(message);
           if (message.type === 'system' && message.subtype === 'background_tasks_changed') hold.setTasks(message.tasks);
+          if (message.type === 'system') subagentRecorder.changed(subagents.apply(message as TaskMessageLike));
           if (message.type === 'stream_event') {
             liveDraftService.apply(ctx.session.id, message.event, message.parent_tool_use_id);
             continue;
@@ -601,6 +610,7 @@ export class ClaudeProvider implements SessionProvider {
             // Tour clos, sous-agents encore au travail : la session n'est pas inactive (pas de garage pendant un drainage,
             // de fin d'exécution planifiée, d'archivage ni de fin pour inactivité).
             const held = hold.turnEnded();
+            subagentRecorder.changed(subagents.turnEnded());
             // Fin d'un tour que l'agent a repris de lui-même : personne ne l'attendait, Skipper prévient (selfTurn.ts).
             const woke = selfTurn;
             selfTurn = null;
@@ -624,6 +634,7 @@ export class ClaudeProvider implements SessionProvider {
         return { exitCode: 1, error: (err as Error).message };
       } finally {
         hold.dispose();
+        await subagentRecorder.dispose();
         liveDraftService.clear(ctx.session.id);
         await disposeAll();
       }

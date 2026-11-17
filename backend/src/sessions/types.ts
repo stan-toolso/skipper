@@ -1,3 +1,4 @@
+import type { SessionSubagent } from './providers/subagents.js';
 export type SessionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
 /**
  * Session d'agent ordinaire, ou « chat » : session légère d'un espace personnel, sans work session ni
@@ -88,6 +89,8 @@ export interface Session {
   cleanup: SessionCleanup;
   /** Taille du contexte de l'agent au dernier tour (tokens), null si inconnue. */
   contextTokens: number | null;
+  /** Sous-agents du CLI en cours (providers/subagents.ts) ; à ignorer hors d'une session qui tourne. */
+  subagents: SessionSubagent[];
   /**
    * Après une remise à zéro « en gardant un résumé » : derniers échanges de la conversation précédente, transmis
    * au modèle avec la première instruction de la conversation neuve (hors transcript), puis effacés.

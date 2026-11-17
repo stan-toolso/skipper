@@ -1040,6 +1040,8 @@ export const resolvers = {
       requestService.list({ sessionId: session.id, status: fromGqlRequestStatus(args.status) }),
     pendingRequestCount: async (session: Session, _: unknown, ctx: Ctx) => (await loadersOf(ctx).pendingRequestCount(session.id)) ?? 0,
     browserActive: (session: Session) => liveBrowserService.isActive(session.id),
+    // La liste n'est vidée qu'en fin d'exécution du CLI : un processus tué net (redémarrage) peut en laisser une.
+    subagents: (session: Session) => (session.status === 'running' && !session.parkedAt ? session.subagents ?? [] : []),
     // Pages publiées depuis la session, réduites à celles que la personne voit : les autres gardent /shared/<id>.
     pages: async (session: Session, _: unknown, ctx: Ctx) => (ctx.user ? ((await loadersOf(ctx).sessionPages({ sessionId: session.id, viewerId: ctx.user.id })) ?? []) : []),
     liveDraft: (session: Session) => liveDraftService.get(session.id),

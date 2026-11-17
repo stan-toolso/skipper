@@ -180,6 +180,7 @@ function session(id, p, name, opts = {}) {
     startedAt: ago(opts.age ?? 90),
     endedAt: opts.status && opts.status !== 'RUNNING' ? ago(opts.updated ?? 30) : null,
     browserActive: false,
+    subagents: opts.subagents ?? [],
     pages: [],
     liveDraft: null,
     queuedAt: null,
@@ -219,7 +220,14 @@ const sessionsOf = (projectId, args = {}) =>
     .slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100));
 
 const S = {
-  tarifs: session('s-page-tarifs', P.site, 'Refonte de la page tarifs', { activity: 'BUSY', age: 70, updated: 0, cost: 1.86, tokens: 64_000, prompt: 'Refonds la page /tarifs : trois offres en cartes, un comparatif détaillé dessous et une FAQ. Garde le style du site.' }),
+  tarifs: session('s-page-tarifs', P.site, 'Refonte de la page tarifs', { activity: 'BUSY', age: 70, updated: 0, cost: 1.86, tokens: 64_000,
+    // Sous-agents du CLI en cours (outil Agent) : puce sur la carte repliée, une ligne chacun dépliée.
+    subagents: [
+      { __typename: 'SessionSubagent', id: 'task-cards', description: 'Cartes des trois offres', agentType: 'fork', background: true, startedAt: ago(14), toolUses: 23, lastTool: 'Edit', summary: null },
+      { __typename: 'SessionSubagent', id: 'task-compare', description: 'Tableau comparatif détaillé', agentType: 'fork', background: true, startedAt: ago(9), toolUses: 11, lastTool: 'Read', summary: null },
+      { __typename: 'SessionSubagent', id: 'task-explore', description: 'Explore les styles du site', agentType: 'Explore', background: false, startedAt: ago(2), toolUses: 4, lastTool: 'Grep', summary: null },
+    ],
+    prompt: 'Refonds la page /tarifs : trois offres en cartes, un comparatif détaillé dessous et une FAQ. Garde le style du site.' }),
   // Sous-agent lancé par l'agent de la session « page tarifs » (sessions.create) : son propre dossier, rangé sous sa parente.
   tarifsFaq: session('s-tarifs-faq', P.site, 'Rédiger la FAQ des tarifs', { activity: 'BUSY', age: 20, updated: 0, cost: 0.38, model: 'claude-sonnet-5-5', prompt: 'Rédige la FAQ de la page /tarifs (8 questions).' }),
   contact: session('s-formulaire-contact', P.site, 'Formulaire de contact sur mobile', { model: 'claude-sonnet-5-5', age: 60 * 5, updated: 25, cost: 0.74 }),

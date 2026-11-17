@@ -160,6 +160,13 @@
 .wb-chip-sub.busy { color: var(--cc-accent); }
 .wb-chip-sub.ask { color: var(--cc-yellow); }
 .wb-chip-sub.idle { color: var(--cc-green); }
+/* Sous-agents du CLI (outil Agent) en cours : puce de la carte repliée et une ligne chacun, dépliée. */
+.wb-cli-chip { gap: 3px; }
+.wb-cli-subagent { font-size: 12px; }
+.wb-cli-subagent .wb-dot { width: 6px; height: 6px; }
+.wb-cli-subagent .wb-row-label { color: var(--cc-dim); }
+.wb-cli-subagent .wb-state { flex: 0 0 auto; font-family: var(--cc-font-mono); font-size: 10.5px; }
+.wb-ws-meta > .wb-meta-sub.wb-meta-cli { flex-shrink: 0; }
 /* Sous-agent lancé dans un autre dossier : étiquette du dossier, qui se tronque pour laisser le nom lisible. */
 .wb-session-row .wb-tag { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-session-row .wb-tag .bi { font-size: 9px; }

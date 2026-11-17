@@ -1694,6 +1694,16 @@ export const SIDEBAR = gql`
     activity
     pendingRequestCount
     browserActive
+    subagents {
+      id
+      description
+      agentType
+      background
+      startedAt
+      toolUses
+      lastTool
+      summary
+    }
     pages {
       id
       title

@@ -1,5 +1,6 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
+import type { SessionSubagent } from './providers/subagents.js';
 import type { FormerWorksession, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionKind, SessionStatus } from './types.js';
 
 interface SessionRow {
@@ -27,6 +28,7 @@ interface SessionRow {
   error: string | null;
   cleanup: SessionCleanup | null;
   context_tokens: number | null;
+  subagents?: SessionSubagent[] | null;
   resume_digest: string | null;
   cost_usd: string | number | null;
   billed_cost_usd?: string | number | null;
@@ -75,6 +77,7 @@ function toSession(row: SessionRow): Session {
     error: row.error,
     cleanup: row.cleanup ?? {},
     contextTokens: row.context_tokens,
+    subagents: row.subagents ?? [],
     resumeDigest: row.resume_digest ?? null,
     // Coût affiché : les seuls tours comptés (billing/billable.ts) ; cost_usd reste le total du SDK, base des deltas.
     costUsd: Number(row.billed_cost_usd ?? row.cost_usd ?? 0),
@@ -109,6 +112,7 @@ export interface SessionPatch {
   takenOverAt?: Date | null;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
+  subagents?: SessionSubagent[];
   resumeDigest?: string | null;
   baseCommit?: string | null;
   promptAttachments?: Attachment[];
@@ -134,6 +138,7 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   takenOverAt: 'taken_over_at',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
+  subagents: 'subagents',
   resumeDigest: 'resume_digest',
   baseCommit: 'base_commit',
   promptAttachments: 'prompt_attachments',
@@ -273,7 +278,7 @@ export const sessionRepository = {
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
         // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL) ; toJson retire les \u0000.
-        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' || key === 'queuedStart' ? (patch[key] === null ? null : toJson(patch[key])) : patch[key]);
+        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' || key === 'queuedStart' || key === 'subagents' ? (patch[key] === null ? null : toJson(patch[key])) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }

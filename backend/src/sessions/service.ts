@@ -696,6 +696,9 @@ export const sessionService = {
         setContextTokens: async (contextTokens) => {
           await publishSession(await sessionRepository.update(id, { contextTokens }));
         },
+        setSubagents: async (subagents) => {
+          await publishSession(await sessionRepository.update(id, { subagents }));
+        },
         setActivity: async (activity) => {
           if (activity === 'idle') idleSince.set(id, Date.now());
           else idleSince.delete(id);
