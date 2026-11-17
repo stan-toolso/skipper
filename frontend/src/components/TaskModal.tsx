@@ -14,10 +14,14 @@ import TaskAttachments from './TaskAttachments';
 import DictationButton from './DictationButton';
 import TaskThread from './TaskThread';
 
+/** Longueur maximale du résumé (comme le serveur, tasks/service.ts). */
+const SUMMARY_MAX = 500;
+
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 
 interface TaskForm {
   title: string;
+  summary: string;
   description: string;
   priority: TaskPriority;
   status: TaskStatus;
@@ -177,6 +181,7 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
   const me: TaskPerson | null = user ? { name: user.name, email: user.email } : null;
   const [form, setForm] = useState<TaskForm>({
     title: task?.title ?? '',
+    summary: task?.summary ?? '',
     description: task?.description ?? '',
     priority: task?.priority ?? 'MEDIUM',
     status: task?.status ?? 'TODO',
@@ -213,6 +218,7 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
     }
     const input = {
       title: form.title,
+      summary: form.summary.trim() || null,
       description: form.description,
       priority: form.priority,
       status: form.status,
@@ -259,6 +265,19 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
           <Form.Group className="mb-3">
             <Form.Label>Titre</Form.Label>
             <Form.Control autoFocus={canAutoFocus()} value={form.title} onChange={set('title')} required placeholder="Ex. Ajouter la page de contact" />
+          </Form.Group>
+          <Form.Group className="mb-3">
+            <Form.Label htmlFor="task-summary">Résumé</Form.Label>
+            <Form.Control
+              id="task-summary"
+              as="textarea"
+              rows={2}
+              maxLength={SUMMARY_MAX}
+              value={form.summary}
+              onChange={set('summary')}
+              placeholder="L'objet de la tâche en une ou deux phrases : ce qu'il faut obtenir et pourquoi."
+            />
+            <Form.Text>Affiché avant la description, pour comprendre la tâche d'un coup d'œil.</Form.Text>
           </Form.Group>
           <Form.Group className="mb-3">
             <Form.Label>Description</Form.Label>

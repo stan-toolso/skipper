@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskAttachments from '../components/TaskAttachments';
 import { isOverdue, Linkified, TaskPriorityBadge, TaskRefList, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
+import TaskSummary from '../components/TaskSummary';
 import TaskThread from '../components/TaskThread';
 import TaskModal from '../components/TaskModal';
 import type { Task } from '../graphql/operations';
@@ -38,6 +39,7 @@ export default function TaskPanel({ taskId }: { taskId: string }) {
           <TaskTags tags={task.tags} />
         </div>
       )}
+      <TaskSummary summary={task.summary} />
       <div className="git-subhead">Description</div>
       <div className="task-panel-text">
         {task.description ? <Linkified text={task.description} /> : <span className="text-secondary fst-italic">Pas de description.</span>}

@@ -271,6 +271,7 @@ const fromGqlTaskStatuses = (s?: GqlTaskStatus[] | null) => (s?.length ? s.map((
 const fromGqlTaskPriority = (p?: GqlTaskPriority | null) => (p ? (p.toLowerCase() as TaskPriority) : undefined);
 interface GqlTaskInput {
   title?: string | null;
+  summary?: string | null;
   description?: string | null;
   priority?: GqlTaskPriority | null;
   status?: GqlTaskStatus | null;
@@ -291,6 +292,7 @@ interface GqlTaskInput {
 }
 const toTaskInput = (i: GqlTaskInput) => ({
   title: i.title ?? undefined,
+  summary: i.summary,
   description: i.description ?? undefined,
   priority: fromGqlTaskPriority(i.priority),
   status: fromGqlTaskStatus(i.status),

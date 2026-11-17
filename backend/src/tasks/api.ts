@@ -24,6 +24,8 @@ const fieldSchema = z.object({ key: z.string(), value: z.string() }).strict();
 export const createSchema = z
   .object({
     title: z.string(),
+    /** Une ou deux phrases sur l'objet de la tâche, montrées avant la description ; vide ou null : retiré. */
+    summary: z.string().nullable().optional(),
     description: z.string().optional(),
     status: statusSchema.optional(),
     priority: prioritySchema.optional(),
@@ -55,6 +57,7 @@ function publicTask(t: Task) {
     id: t.id,
     projectId: t.projectId,
     title: t.title,
+    summary: t.summary,
     description: t.description,
     status: t.status,
     statusTag: t.statusTag,

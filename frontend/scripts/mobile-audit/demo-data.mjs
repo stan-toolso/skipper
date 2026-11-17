@@ -407,6 +407,7 @@ function task(p, title, status, priority, opts = {}) {
     id: `t-${++taskSeq}`,
     project: p,
     title,
+    summary: opts.summary ?? null,
     description: opts.description ?? `${title}.\n\nCritères d’acceptation : le comportement est couvert par un test et la documentation est à jour.`,
     status,
     statusTag: opts.statusTag ?? null,
@@ -459,8 +460,8 @@ function task(p, title, status, priority, opts = {}) {
   return t;
 }
 const T = {
-  tarifs: task(P.site, 'Refondre la page tarifs (offres, comparatif, FAQ)', 'IN_PROGRESS', 'HIGH', { sessions: [S.tarifs], assignee: U.me, tags: ['site', 'design'], due: day(3), statusTag: 'en revue' }),
-  contact: task(P.site, 'Le formulaire de contact déborde sur iPhone SE', 'IN_PROGRESS', 'MEDIUM', { sessions: [S.contact], assignee: U.me, tags: ['mobile', 'bug'] }),
+  tarifs: task(P.site, 'Refondre la page tarifs (offres, comparatif, FAQ)', 'IN_PROGRESS', 'HIGH', { sessions: [S.tarifs], assignee: U.me, tags: ['site', 'design'], due: day(3), statusTag: 'en revue', summary: 'Rendre la page tarifs lisible en un coup d’œil : trois offres en cartes, un comparatif détaillé et une FAQ, pour réduire les questions au support avant achat.' }),
+  contact: task(P.site, 'Le formulaire de contact déborde sur iPhone SE', 'IN_PROGRESS', 'MEDIUM', { sessions: [S.contact], assignee: U.me, tags: ['mobile', 'bug'], summary: 'Sur les petits écrans (iPhone SE), le formulaire de contact sort de la page : le ramener dans la largeur de l’écran.' }),
   seo: task(P.site, 'Balises Open Graph pour les articles du blog', 'TODO', 'LOW', { tags: ['seo'], byAgent: true, reporter: U.chris }),
   cas: task(P.site, 'Page « Cas clients » avec trois témoignages', 'TODO', 'MEDIUM', { tags: ['contenu'], assignee: U.lea, due: day(10) }),
   perf: task(P.site, 'Score Lighthouse mobile au-dessus de 90', 'DONE', 'MEDIUM', { tags: ['perf'], updated: 60 * 24 * 2 }),
