@@ -125,6 +125,11 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
     this.waiter?.();
   }
 
+  /** File fermée : plus aucune instruction n'est acceptée. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   close(): void {
     this.closed = true;
     this.waiter?.();
@@ -673,7 +678,10 @@ export class ClaudeProvider implements SessionProvider {
         stream.close();
         await done;
       },
+      acceptsMessages: () => !stopped && !queue.isClosed,
       sendMessage: async (text, attachments = [], author = null) => {
+        // Vérifié avant `instruction()`, qui journalise l'instruction : une instruction refusée ne doit pas paraître remise.
+        if (stopped || queue.isClosed) throw new AppError("La session n'accepte plus d'instructions");
         await (await claudeSettings.forSession(accounts?.claudeUserId ?? null)).assertBudgetAvailable();
         await projectBudget.assertAvailable(ctx.project.id);
         queue.push(await this.instruction(ctx, text, attachments, null, takeNotes(), author));

@@ -114,6 +114,12 @@ export interface RunningHandle {
   notify?(text: string): Promise<void>;
   /** Fin propre : plus d'instructions, l'agent termine son tour puis la session se termine. */
   end?(): Promise<void>;
+  /**
+   * Le processus accepte encore des instructions. Faux après `end()` ou `stop()` alors que le processus vit encore (le CLI
+   * attend la fin d'une commande de fond avant de sortir, par exemple) : `sendMessage` refuserait l'instruction, et le
+   * service relance la session avec elle plutôt que de la perdre. Absent : toujours vrai tant que la poignée existe.
+   */
+  acceptsMessages?(): boolean;
   /** Interrompt le tour en cours sans terminer la session. */
   interrupt?(): Promise<void>;
   /**
