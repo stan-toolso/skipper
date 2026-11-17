@@ -73,6 +73,9 @@
 .cc-line { margin: 0; }
 .cc-dim { color: var(--cc-dim); }
 .cc-dimmer { color: var(--cc-dimmer); }
+.cc-subagent-live { color: var(--cc-green); }
+.cc-subagent-link { margin-left: 6px; color: var(--cc-dim); font-size: 12px; }
+.cc-subagent-link:hover { color: var(--cc-accent); }
 .cc-red { color: var(--cc-red); }
 .cc-yellow { color: var(--cc-yellow); }
 .cc-green { color: var(--cc-green); }

@@ -447,7 +447,7 @@ export const openPullRequestRefusal = (pr: Pick<TrackedPullRequest, 'number'>) =
 export const sessionService = {
   list: (filter?: SessionFilter) => sessionRepository.list(filter),
   get: (id: string) => sessionRepository.findById(id),
-  events: (sessionId: string, opts?: { after?: string; limit?: number }) => sessionRepository.listEvents(sessionId, opts),
+  events: (sessionId: string, opts?: { after?: string; limit?: number; toolUseId?: string }) => sessionRepository.listEvents(sessionId, opts),
   isRunning: (id: string) => running.has(id),
   /** Sessions du projet dont le processus tourne sur ce serveur. */
   runningCountByProject: (projectId: string) => [...running.keys()].filter((id) => slots.get(id) === projectId).length,
@@ -695,6 +695,9 @@ export const sessionService = {
         },
         setContextTokens: async (contextTokens) => {
           await publishSession(await sessionRepository.update(id, { contextTokens }));
+        },
+        setSubagents: async (subagents) => {
+          await publishSession(await sessionRepository.update(id, { subagents }));
         },
         setActivity: async (activity) => {
           if (activity === 'idle') idleSince.set(id, Date.now());

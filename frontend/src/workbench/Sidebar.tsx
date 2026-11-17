@@ -23,7 +23,7 @@ import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
 import { SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
-import { attachedElsewhere, mineFirst, openItemsOf, ownerGroups, participates, runLabel, scheduleGroups, sessionGroups, subagentsSummary, workspaceState, type ScheduleGroup, type SessionNode, type SidebarProject, type SidebarSession, type OwnerGroup, type SidebarTerminal, type Workspace } from './workspaces';
+import { attachedElsewhere, cliSubagentDetail, cliSubagentsLabel, mineFirst, openItemsOf, ownerGroups, participates, runLabel, scheduleGroups, sessionGroups, subagentsSummary, workspaceState, type CliSubagent, type ScheduleGroup, type SessionNode, type SidebarProject, type SidebarSession, type OwnerGroup, type SidebarTerminal, type Workspace } from './workspaces';
 import { leaveProjectWindow, openFullSkipper, projectWindowId } from '../lib/projectWindow';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
@@ -285,6 +285,41 @@ function SubagentsRow({ children, indent, expanded, onToggle }: { children: Side
   );
 }
 
+/**
+ * Sous-agents du CLI en cours dans une session (outil Agent, premier plan ou arrière-plan) : une ligne chacun, reliée
+ * par └, avec sa description et depuis quand il tourne. Ce ne sont pas des sessions Skipper : un clic ouvre son fil
+ * (pages/SubagentPage.tsx, /sessions/<id>/subagents/<toolUseId>), tiré des événements de la session.
+ */
+function CliSubagentRows({ sessionId, subagents, indent }: { sessionId: string; subagents: readonly CliSubagent[]; indent: number }) {
+  const location = useLocation();
+  const now = Date.now();
+  return (
+    <>
+      {subagents.map((a) => {
+        const d = cliSubagentDetail(a, now);
+        const to = a.toolUseId ? `/sessions/${sessionId}/subagents/${encodeURIComponent(a.toolUseId)}` : `/sessions/${sessionId}`;
+        return (
+          <Link key={a.id} to={to} className={`wb-row wb-session-row wb-cli-subagent${location.pathname === to ? ' active' : ''}`} style={{ paddingLeft: indent }} title={`${d.title} · cliquer pour suivre son fil`}>
+            <span className="wb-tree">└</span>
+            <span className="wb-dot busy" />
+            <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />
+            <span className="wb-row-label">{a.description}</span>
+            <span className="wb-state busy">{d.short}</span>
+          </Link>
+        );
+      })}
+    </>
+  );
+}
+
+/** Puce « 🤖 N » des sous-agents du CLI au travail, sur la ligne de méta d'une carte repliée. */
+const CliSubagentsChip = ({ subagents }: { subagents: readonly CliSubagent[] }) => (
+  <span className="wb-chip-sub busy wb-cli-chip">
+    <i className="bi bi-robot" />
+    {subagents.length}
+  </span>
+);
+
 function statusTitle(s: SidebarSession): string {
   if (s.status === 'RUNNING') return s.activity === 'BUSY' ? "L'agent travaille" : "L'agent attend vos instructions";
   if (s.status === 'QUEUED') return "En file d'attente : démarrera dès qu'une place se libère";
@@ -405,6 +440,7 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
           <span className="wb-row-label">Navigateur</span>
         </Link>
       )}
+      {(s.subagents?.length ?? 0) > 0 && <CliSubagentRows sessionId={s.id} subagents={s.subagents!} indent={left + CHILD_INDENT} />}
       {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
       {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'dossier supprimé' : c.session.wsBranch ?? c.session.wsName) : null} />)}
     </>
@@ -559,6 +595,8 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
   const session = ws.session;
   const self = groups.find((g) => g.root.session.id === session?.id) ?? null;
   const children = self?.children ?? [];
+  // Sous-agents du CLI de la session du dossier (outil Agent) : puce sur la carte repliée, une ligne chacun dépliée.
+  const cli = (!ws.primary && session?.subagents) || [];
   const state = workspaceState([...ws.sessions, ...children.map((c) => c.session)]);
   const taskChip = ws.task ? taskChipOf(ws.task, session ?? null) : null;
   const pending = [...ws.sessions, ...children.map((c) => c.session)].reduce((n, s) => n + s.pendingRequestCount, 0);
@@ -621,12 +659,13 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
     : `${session ? `${statusTitle(session)}${session.owner ? ` · ${session.owner.name}` : ''}${session.model ? ` · modèle ${session.model}` : ''} · ` : ''}${ws.task ? `Tâche : ${ws.task.title} · ${ws.task.status.toLowerCase()}${ws.task.statusTag ? ` · ${ws.task.statusTag}` : ''} · ` : ''}${icon.title}`;
   // Modèle de la session du dossier : signalé sur la carte quand ce n'est pas Opus (planification ou tâche sur Sonnet…).
   const cheapModel = !ws.primary && session?.model && !isOpus(session.model) ? session.model : null;
-  const hasRows = ws.primary ? visibleSessions.length > 0 || ws.terminals.length > 0 || hiddenOthers > 0 || elsewhereSubs.length > 0 : children.length > 0 || ws.terminals.length > 0 || Boolean(session?.browserActive);
+  const hasRows = ws.primary ? visibleSessions.length > 0 || ws.terminals.length > 0 || hiddenOthers > 0 || elsewhereSubs.length > 0 : children.length > 0 || cli.length > 0 || ws.terminals.length > 0 || Boolean(session?.browserActive);
   // Ligne de méta (deuxième ligne, jamais plus) : ce qui appelle l'attention, la PR, la tâche, puis ce qui est ouvert
   // dans le dossier. Sans rien de tout cela, la carte tient sur une ligne (le modèle passe alors sur la tête).
   const prPill = pr && PR_PILL[prState(pr)] ? PR_PILL[prState(pr)] : null;
   const subagentsChip = !ws.primary && children.length > 0 && !expanded;
-  const hasMeta = !ws.primary && Boolean(hint || (ws.task && taskChip) || prPill || subagentsChip || shown.length > 0);
+  const cliChip = cli.length > 0 && !expanded;
+  const hasMeta = !ws.primary && Boolean(hint || (ws.task && taskChip) || prPill || subagentsChip || cliChip || shown.length > 0);
   // L'étape de la PR s'écrit toujours en toutes lettres (« #87 à fusionner », « #87 brouillon », « en préparation ») :
   // c'est ce qu'on cherche d'un coup d'œil dans la sidebar ; la pastille colorée la détache du reste de la ligne.
   const prText = pr && prPill ? (pr.number == null ? prPill : `${prLabel(pr)} ${prPill}`) : '';
@@ -695,6 +734,11 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
           }}
         >
           {hint && session && <span className={`wb-meta-state ${sessionDotClass(session)}`}>{hint}</span>}
+          {cliChip && (
+            <button type="button" className="wb-meta-sub wb-meta-cli" title={`${cliSubagentsLabel(cli)} : ${cli.map((a) => `« ${a.description} »`).join(', ')} · cliquer pour détailler`} onClick={onToggle}>
+              <CliSubagentsChip subagents={cli} />
+            </button>
+          )}
           {pr && prPill && (
             <button type="button" className={`wb-meta-pr wt-pr-${prState(pr)}`} title={`${icon.title} · ${prPill} · ${pr.number == null ? 'créer la pull request' : 'voir la pull request'}`} disabled={!prWindow} onClick={() => setPrOpen(true)}>
               <i className="bi bi-git" />
@@ -767,6 +811,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
                     <span className="wb-row-label">Navigateur</span>
                   </Link>
                 )}
+                {cli.length > 0 && <CliSubagentRows sessionId={session.id} subagents={cli} indent={16} />}
                 {/* La carte dépliée liste directement les sous-agents : pas de ligne « N sous-agents » intermédiaire, la carte se replie déjà. */}
                 {children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={16} depth={c.depth} byAgent parentName={c.parentName} elsewhere={null} />)}
               </>

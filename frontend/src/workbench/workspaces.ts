@@ -42,6 +42,8 @@ export interface SidebarSession {
   activity: SessionActivity | null;
   pendingRequestCount: number;
   browserActive: boolean;
+  /** Sous-agents du CLI en cours (outil Agent, dans le processus de la session) ; absent : pas encore chargé. */
+  subagents?: CliSubagent[];
   /** Pages partagées publiées depuis la session et visibles de la personne (absent : pas encore chargé). */
   pages?: SidebarPage[];
   /** Coût cumulé de la session (unité d'affichage), montré dans l'infobulle de sa ligne. */
@@ -61,6 +63,52 @@ export interface SidebarSession {
   schedule?: { id: string; name: string; enabled: boolean } | null;
   /** Dossier de travail ; null pour une session d'avant les work sessions (checkout principal) ou dont le dossier a été supprimé. */
   worksession?: SidebarWorksession | null;
+}
+
+/** Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI) : pas une session Skipper. */
+export interface CliSubagent {
+  id: string;
+  /** Appel de l'outil Agent qui l'a lancé : son fil s'ouvre sur /sessions/<id>/subagents/<toolUseId>. */
+  toolUseId: string | null;
+  description: string;
+  agentType: string | null;
+  background: boolean;
+  startedAt: string;
+  toolUses: number;
+  lastTool: string | null;
+  summary: string | null;
+}
+
+/** « 5 sous-agents au travail » : libellé de la ligne et de la puce des sous-agents du CLI. */
+export function cliSubagentsLabel(list: readonly CliSubagent[]): string {
+  const n = list.length;
+  return `${n} sous-agent${n > 1 ? 's' : ''} au travail`;
+}
+
+/** Durée écoulée depuis un instant, en toutes lettres courtes : « 40 s », « 12 min », « 1 h 05 ». */
+export function elapsedSince(iso: string, now: number = Date.now()): string {
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
+}
+
+/** Détail d'un sous-agent du CLI : « 12 min » (la ligne, étroite), et son infobulle complète. */
+export function cliSubagentDetail(a: CliSubagent, now: number = Date.now()): { short: string; title: string } {
+  const short = elapsedSince(a.startedAt, now);
+  const title = [
+    `Sous-agent « ${a.description} »`,
+    a.agentType ? `type ${a.agentType}` : null,
+    a.background ? 'en arrière-plan' : 'au premier plan (l\'agent attend sa fin)',
+    `depuis ${elapsedSince(a.startedAt, now)}`,
+    a.toolUses ? `${a.toolUses} appel${a.toolUses > 1 ? 's' : ''} d'outils` : null,
+    a.lastTool ? `dernier outil : ${a.lastTool}` : null,
+    a.summary,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return { short, title };
 }
 
 export interface SidebarTerminal {
@@ -331,11 +379,11 @@ export class WorkspaceIndex {
     return [...this.byKey.values()];
   }
 
-  /** Clé du dossier auquel appartient un chemin (fichiers, session, navigateur, page publiée, terminal), ou null. */
+  /** Clé du dossier auquel appartient un chemin (fichiers, session, navigateur, page publiée, fil d'un sous-agent, terminal), ou null. */
   keyOf(pathname: string): string | null {
     const files = pathname.match(/^(\/projects\/[^/]+\/files)(?:\/|$)/);
     if (files) return this.byKey.has(files[1]) ? files[1] : null;
-    const session = pathname.match(/^(\/sessions\/[^/]+)(?:\/browser|\/pages\/[^/]+|\/files(?:\/.*)?)?$/);
+    const session = pathname.match(/^(\/sessions\/[^/]+)(?:\/browser|\/pages\/[^/]+|\/subagents\/[^/]+|\/files(?:\/.*)?)?$/);
     if (session) return this.owners.get(session[1]) ?? null;
     const terminal = pathname.match(/^(\/terminals\/[^/]+)$/);
     if (terminal) return this.owners.get(terminal[1]) ?? null;

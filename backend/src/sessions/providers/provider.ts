@@ -1,3 +1,4 @@
+import type { SessionSubagent } from './subagents.js';
 import type { Project } from '../../projects/types.js';
 import type { CreateRequestInput } from '../../requests/types.js';
 import type { UserClaudeSettings } from '../../settings/claude.js';
@@ -65,6 +66,8 @@ export interface RunContext {
   setExternalId(externalId: string): Promise<void>;
   /** Enregistre la taille du contexte de l'agent (tokens d'entrée du dernier appel au modèle), null si inconnue. */
   setContextTokens?(tokens: number | null): Promise<void>;
+  /** Enregistre les sous-agents du CLI en cours (providers/subagents.ts), montrés dans la sidebar ; [] quand il n'y en a plus. */
+  setSubagents?(subagents: SessionSubagent[]): Promise<void>;
   /**
    * Soumet une demande à l'humain (autorisation, question...) et attend sa réponse.
    * Rejette avec RequestCancelledError si la demande est annulée ou `signal` déclenché.
