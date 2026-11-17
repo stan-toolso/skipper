@@ -287,17 +287,19 @@ function SubagentsRow({ children, indent, expanded, onToggle }: { children: Side
 
 /**
  * Sous-agents du CLI en cours dans une session (outil Agent, premier plan ou arrière-plan) : une ligne chacun, reliée
- * par └, avec sa description, depuis quand il tourne et combien d'outils il a utilisés. Ce ne sont pas des sessions
- * Skipper : un clic ouvre la session qui les a lancés, où leur appel d'outil figure dans le transcript.
+ * par └, avec sa description et depuis quand il tourne. Ce ne sont pas des sessions Skipper : un clic ouvre son fil
+ * (pages/SubagentPage.tsx, /sessions/<id>/subagents/<toolUseId>), tiré des événements de la session.
  */
 function CliSubagentRows({ sessionId, subagents, indent }: { sessionId: string; subagents: readonly CliSubagent[]; indent: number }) {
+  const location = useLocation();
   const now = Date.now();
   return (
     <>
       {subagents.map((a) => {
         const d = cliSubagentDetail(a, now);
+        const to = a.toolUseId ? `/sessions/${sessionId}/subagents/${encodeURIComponent(a.toolUseId)}` : `/sessions/${sessionId}`;
         return (
-          <Link key={a.id} to={`/sessions/${sessionId}`} className="wb-row wb-session-row wb-cli-subagent" style={{ paddingLeft: indent }} title={d.title}>
+          <Link key={a.id} to={to} className={`wb-row wb-session-row wb-cli-subagent${location.pathname === to ? ' active' : ''}`} style={{ paddingLeft: indent }} title={`${d.title} · cliquer pour suivre son fil`}>
             <span className="wb-tree">└</span>
             <span className="wb-dot busy" />
             <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />

@@ -68,6 +68,8 @@ export interface SidebarSession {
 /** Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI) : pas une session Skipper. */
 export interface CliSubagent {
   id: string;
+  /** Appel de l'outil Agent qui l'a lancé : son fil s'ouvre sur /sessions/<id>/subagents/<toolUseId>. */
+  toolUseId: string | null;
   description: string;
   agentType: string | null;
   background: boolean;
@@ -377,11 +379,11 @@ export class WorkspaceIndex {
     return [...this.byKey.values()];
   }
 
-  /** Clé du dossier auquel appartient un chemin (fichiers, session, navigateur, page publiée, terminal), ou null. */
+  /** Clé du dossier auquel appartient un chemin (fichiers, session, navigateur, page publiée, fil d'un sous-agent, terminal), ou null. */
   keyOf(pathname: string): string | null {
     const files = pathname.match(/^(\/projects\/[^/]+\/files)(?:\/|$)/);
     if (files) return this.byKey.has(files[1]) ? files[1] : null;
-    const session = pathname.match(/^(\/sessions\/[^/]+)(?:\/browser|\/pages\/[^/]+|\/files(?:\/.*)?)?$/);
+    const session = pathname.match(/^(\/sessions\/[^/]+)(?:\/browser|\/pages\/[^/]+|\/subagents\/[^/]+|\/files(?:\/.*)?)?$/);
     if (session) return this.owners.get(session[1]) ?? null;
     const terminal = pathname.match(/^(\/terminals\/[^/]+)$/);
     if (terminal) return this.owners.get(terminal[1]) ?? null;

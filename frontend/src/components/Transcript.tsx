@@ -507,7 +507,7 @@ function DontAskDenial({ name, input }: { name: string; input: Input }) {
   );
 }
 
-function ToolCall({ name, input, result, subCalls, rel }: { name: string; input: Input; result?: ToolResult; subCalls: number; rel: (path: string) => string }) {
+function ToolCall({ name, input, result, subCalls, rel, subagentHref }: { name: string; input: Input; result?: ToolResult; subCalls: number; rel: (path: string) => string; /** Appel de l'outil Agent : lien vers le fil du sous-agent. */ subagentHref?: string }) {
   const [expanded, setExpanded] = useState(false);
   const header = name === 'AskUserQuestion' ? { name: result && !result.isError ? "Réponses aux questions de l'agent" : "Question de l'agent", args: '' } : toolHeader(name, input, rel);
   // Entête repliée : deux lignes de commande au plus.
@@ -535,6 +535,11 @@ function ToolCall({ name, input, result, subCalls, rel }: { name: string; input:
         <span>
           <span className="cc-name">{header.name}</span>
           {args && <span className="cc-args">({SESSIONS_TOOL.test(name) ? linkSessionIds(args) : args})</span>}
+          {subagentHref && (
+            <Link to={subagentHref} className="cc-subagent-link" title="Voir le fil du sous-agent : sa consigne, ses messages et ses appels d'outils" onClick={(e) => e.stopPropagation()}>
+              <i className="bi bi-robot" /> voir le fil
+            </Link>
+          )}
         </span>
       </div>
       {body && (
@@ -745,8 +750,9 @@ const STICK_MARGIN = 80;
  * montre chaque étape ; sinon les étapes d'un tour sont repliées en une ligne (`WorkGroup`).
  * `draft` : réponse en cours d'écriture (streaming), affichée en bas avec un curseur jusqu'au message complet.
  * `busy` : l'agent travaille (sans attendre de réponse) ; en conversation, une simple ligne « réfléchit… » le dit.
+ * `subagentLinks` : les appels de l'outil Agent mènent au fil de leur sous-agent (pages/SubagentPage.tsx).
  */
-export default function Transcript({ events, draft = null, autoScroll = true, technical = false, loading = false, participants = null, busy = false }: { events: SessionEvent[]; draft?: SessionLiveDraft | null; autoScroll?: boolean; technical?: boolean; loading?: boolean; participants?: ChatParticipants | null; busy?: boolean }) {
+export default function Transcript({ events, draft = null, autoScroll = true, technical = false, loading = false, participants = null, busy = false, subagentLinks = false }: { events: SessionEvent[]; draft?: SessionLiveDraft | null; autoScroll?: boolean; technical?: boolean; loading?: boolean; participants?: ChatParticipants | null; busy?: boolean; /** Lien « voir le fil » sur les appels de l'outil Agent (pas sur une page publique : la page du sous-agent est dans l'application). */ subagentLinks?: boolean }) {
   // Sans le détail technique et avec ses interlocuteurs, la session se lit comme une conversation (`ChatRow`).
   const chat = !technical && participants ? participants : null;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -905,7 +911,8 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
               const name = block.name ?? 'outil';
               const input = block.input ?? {};
               const result = block.id ? results.get(block.id) : undefined;
-              const node = <ToolCall key={key} name={name} input={input} result={result} subCalls={block.id ? (subCalls.get(block.id) ?? 0) : 0} rel={rel} />;
+              const subagentHref = subagentLinks && block.id && (name === 'Agent' || name === 'Task') ? `/sessions/${e.sessionId}/subagents/${encodeURIComponent(block.id)}` : undefined;
+              const node = <ToolCall key={key} name={name} input={input} result={result} subCalls={block.id ? (subCalls.get(block.id) ?? 0) : 0} rel={rel} subagentHref={subagentHref} />;
               item = { key, node, pinned: name === 'AskUserQuestion', tool: { ...toolHeader(name, input, rel), severity: toolSeverity(name, result) }, at: e.createdAt };
             } else if (block.type === 'thinking' && block.thinking?.trim()) {
               item = { key, node: <Thinking key={key} text={block.thinking} />, pinned: false, at: e.createdAt };
@@ -1195,7 +1202,7 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
     const tail = flushWork(true);
     nodes.push(...tail);
     return { nodes, tailAgent: Boolean(chat && tail.length) };
-  }, [events, technical, chat, results, subCalls, cwd]);
+  }, [events, technical, chat, results, subCalls, cwd, subagentLinks]);
   // Ce que l'agent écrit en ce moment : le texte grandit à chaque relevé, puis le message journalisé le remplace.
   // En conversation, elle prolonge le message de l'agent du tour en cours, ou en ouvre un.
   // Tant que l'agent travaille sans écrire, la conversation montre seulement qu'il réfléchit.

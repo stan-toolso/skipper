@@ -196,7 +196,9 @@ function session(id, p, name, opts = {}) {
     requests: (args = {}) => requests.filter((r) => r.session === s && (!args.status || r.status === args.status)),
     pendingRequestCount: () => requests.filter((r) => r.session === s && r.status === 'PENDING').length,
     events: (args = {}) => {
-      const all = (eventsBySession[id] ?? defaultEvents)(s);
+      const every = (eventsBySession[id] ?? defaultEvents)(s);
+      // toolUseId : le fil d'un sous-agent du CLI (ses messages et l'appel qui l'a lancé), comme le serveur.
+      const all = args.toolUseId ? every.filter((e) => e.payload.parent_tool_use_id === args.toolUseId || (Array.isArray(e.payload.message?.content) && e.payload.message.content.some((b) => b.id === args.toolUseId))) : every;
       const start = args.after ? all.findIndex((e) => e.id === args.after) + 1 : 0;
       return start <= 0 && args.after ? [] : all.slice(start, args.limit ? start + args.limit : undefined);
     },
@@ -223,9 +225,9 @@ const S = {
   tarifs: session('s-page-tarifs', P.site, 'Refonte de la page tarifs', { activity: 'BUSY', age: 70, updated: 0, cost: 1.86, tokens: 64_000,
     // Sous-agents du CLI en cours (outil Agent) : puce sur la carte repliée, une ligne chacun dépliée.
     subagents: [
-      { __typename: 'SessionSubagent', id: 'task-cards', description: 'Cartes des trois offres', agentType: 'fork', background: true, startedAt: ago(14), toolUses: 23, lastTool: 'Edit', summary: null },
-      { __typename: 'SessionSubagent', id: 'task-compare', description: 'Tableau comparatif détaillé', agentType: 'fork', background: true, startedAt: ago(9), toolUses: 11, lastTool: 'Read', summary: null },
-      { __typename: 'SessionSubagent', id: 'task-explore', description: 'Explore les styles du site', agentType: 'Explore', background: false, startedAt: ago(2), toolUses: 4, lastTool: 'Grep', summary: null },
+      { __typename: 'SessionSubagent', id: 'task-cards', toolUseId: 'tu-cards', description: 'Cartes des trois offres', agentType: 'fork', background: true, startedAt: ago(14), toolUses: 23, lastTool: 'Edit', summary: null },
+      { __typename: 'SessionSubagent', id: 'task-compare', toolUseId: 'tu-compare', description: 'Tableau comparatif détaillé', agentType: 'fork', background: true, startedAt: ago(9), toolUses: 11, lastTool: 'Read', summary: null },
+      { __typename: 'SessionSubagent', id: 'task-explore', toolUseId: 'tu-explore', description: 'Explore les styles du site', agentType: 'Explore', background: false, startedAt: ago(2), toolUses: 4, lastTool: 'Grep', summary: null },
     ],
     prompt: 'Refonds la page /tarifs : trois offres en cartes, un comparatif détaillé dessous et une FAQ. Garde le style du site.' }),
   // Sous-agent lancé par l'agent de la session « page tarifs » (sessions.create) : son propre dossier, rangé sous sa parente.
@@ -365,6 +367,14 @@ const eventsBySession = {
     ev(s, 8, 'task', { action: 'created', taskId: 't-3', projectId: 'p-site', title: 'Traduire la page tarifs en anglais', status: 'todo', priority: 'low' }),
     ...tool(s, 7, 't9', 'mcp__context__write', { path: 'conventions/tarifs', content: '…' }, 'Mise à jour : conventions/tarifs (version 2)'),
     ev(s, 7, 'context', { action: 'updated', projectId: 'p-site', instructionId: 'i-tarifs', path: 'conventions/tarifs', description: 'Prix annuels = prix mensuels −20 %, arrondis à l’euro', version: 2, agentId: null, library: null, changeNote: 'Remise annuelle' }),
+    // Sous-agents du CLI (outil Agent) : l'appel dans le fil de la session, leurs messages marqués parent_tool_use_id.
+    ev(s, 14, 'claude.assistant', { message: { content: [{ type: 'tool_use', id: 'tu-cards', name: 'Agent', input: { description: 'Cartes des trois offres', subagent_type: 'fork', run_in_background: true, prompt: 'Peaufine le composant PricingCard : badge « recommandé » sur l’offre Équipe, alignement des listes de fonctionnalités, rendu mobile en une colonne.' } }] } }),
+    ev(s, 9, 'claude.assistant', { message: { content: [{ type: 'tool_use', id: 'tu-compare', name: 'Agent', input: { description: 'Tableau comparatif détaillé', subagent_type: 'fork', run_in_background: true, prompt: 'Construis le tableau comparatif des trois offres sous les cartes.' } }] } }),
+    ev(s, 2, 'claude.assistant', { message: { content: [{ type: 'tool_use', id: 'tu-explore', name: 'Agent', input: { description: 'Explore les styles du site', subagent_type: 'Explore', prompt: 'Liste les variables CSS et composants de mise en forme réutilisables.' } }] } }),
+    ev(s, 13, 'claude.assistant', { parent_tool_use_id: 'tu-cards', message: { content: [{ type: 'text', text: 'Je relis le composant actuel avant de le modifier.' }] } }),
+    ...tool(s, 13, 'tc1', 'Read', { file_path: '/workspace/src/components/PricingCard.astro' }, '---\nconst { name, price, features, highlighted } = Astro.props;\n---').map((e) => ({ ...e, payload: { ...e.payload, parent_tool_use_id: 'tu-cards' } })),
+    ...tool(s, 11, 'tc2', 'Edit', { file_path: '/workspace/src/components/PricingCard.astro', old_string: '<article', new_string: '{highlighted && <span class="badge">Recommandé</span>}\n<article' }, 'The file has been updated.').map((e) => ({ ...e, payload: { ...e.payload, parent_tool_use_id: 'tu-cards' } })),
+    ev(s, 10, 'claude.assistant', { parent_tool_use_id: 'tu-cards', message: { content: [{ type: 'text', text: 'Badge ajouté. Je passe au rendu mobile : une colonne sous 640 px.' }] } }),
     said(s, 1, 'Il me reste à relancer le build et à pousser la branche : j’ai besoin de ton accord pour la commande.'),
   ]),
 };

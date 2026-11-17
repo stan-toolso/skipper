@@ -42,10 +42,13 @@ export function nextEventsState(prev: SessionEventsState, page: SessionEvent[], 
  * `refresh` déclenche un relevé sans attendre le prochain : après l'envoi d'une instruction, l'événement
  * qui la journalise est affiché dès que le serveur l'a écrit plutôt qu'au relevé suivant.
  */
-export function useSessionEvents(sessionId: string): { events: SessionEvent[]; loaded: boolean; draft: SessionLiveDraft | null; refresh: () => void } {
+export function useSessionEvents(sessionId: string, opts: { /** Fil d'un sous-agent du CLI seulement (appel de l'outil Agent qui l'a lancé). */ toolUseId?: string } = {}): { events: SessionEvent[]; loaded: boolean; draft: SessionLiveDraft | null; refresh: () => void } {
   const client = useApolloClient();
-  const [state, setState] = useState<SessionEventsState>({ sessionId, events: [], loaded: false, draft: null });
-  const cursor = useRef<{ sessionId: string; after: string | null }>({ sessionId, after: null });
+  const toolUseId = opts.toolUseId ?? null;
+  // Clé du fil suivi : la session, ou le fil d'un de ses sous-agents.
+  const key = toolUseId ? `${sessionId}#${toolUseId}` : sessionId;
+  const [state, setState] = useState<SessionEventsState>({ sessionId: key, events: [], loaded: false, draft: null });
+  const cursor = useRef<{ sessionId: string; after: string | null }>({ sessionId: key, after: null });
   const refreshRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
@@ -53,9 +56,9 @@ export function useSessionEvents(sessionId: string): { events: SessionEvent[]; l
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
     let again = false;
-    if (cursor.current.sessionId !== sessionId) {
-      cursor.current = { sessionId, after: null };
-      setState({ sessionId, events: [], loaded: false, draft: null });
+    if (cursor.current.sessionId !== key) {
+      cursor.current = { sessionId: key, after: null };
+      setState({ sessionId: key, events: [], loaded: false, draft: null });
     }
 
     const tick = async () => {
@@ -70,14 +73,15 @@ export function useSessionEvents(sessionId: string): { events: SessionEvent[]; l
       try {
         const { data } = await client.query<{ session: { events: SessionEvent[]; liveDraft: SessionLiveDraft | null } | null }>({
           query: SESSION_EVENTS,
-          variables: { id: sessionId, after: cursor.current.after, limit: PAGE_SIZE },
+          variables: { id: sessionId, after: cursor.current.after, limit: PAGE_SIZE, toolUseId },
           fetchPolicy: 'no-cache',
         });
         if (cancelled) return;
         const page = data.session?.events ?? [];
         full = page.length >= PAGE_SIZE;
         if (page.length) cursor.current.after = page[page.length - 1].id;
-        const draft = data.session?.liveDraft ?? null;
+        // Le brouillon en direct est celui de l'agent principal : sans objet dans le fil d'un sous-agent.
+        const draft = toolUseId ? null : data.session?.liveDraft ?? null;
         live = draft !== null;
         setState((prev) => nextEventsState(prev, page, draft, full));
       } catch {
@@ -103,9 +107,9 @@ export function useSessionEvents(sessionId: string): { events: SessionEvent[]; l
       clearTimeout(timer);
       refreshRef.current = () => undefined;
     };
-  }, [client, sessionId]);
+  }, [client, sessionId, toolUseId, key]);
   const refresh = useCallback(() => refreshRef.current(), []);
 
   // Au changement de session, l'état de la précédente ne doit pas s'afficher le temps d'un rendu.
-  return state.sessionId === sessionId ? { events: state.events, loaded: state.loaded, draft: state.draft, refresh } : { events: [], loaded: false, draft: null, refresh };
+  return state.sessionId === key ? { events: state.events, loaded: state.loaded, draft: state.draft, refresh } : { events: [], loaded: false, draft: null, refresh };
 }

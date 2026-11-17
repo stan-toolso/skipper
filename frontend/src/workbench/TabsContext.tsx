@@ -139,6 +139,7 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/me') return { title: 'Mon espace', kind: 'project' };
   if (/^\/sessions\/[^/]+$/.test(pathname)) return { title: 'Session', kind: 'session' };
   if (/^\/sessions\/[^/]+\/browser$/.test(pathname)) return { title: 'Navigateur', kind: 'browser' };
+  if (/^\/sessions\/[^/]+\/subagents\/[^/]+$/.test(pathname)) return { title: 'Sous-agent', kind: 'session' };
   if (/^\/sessions\/[^/]+\/pages\/[^/]+$/.test(pathname)) return { title: 'Page', kind: 'shared-page' };
   if (pathname === '/requests') return { title: 'Demandes', kind: 'requests' };
   if (pathname === '/inbox') return { title: 'À traiter', kind: 'inbox' };

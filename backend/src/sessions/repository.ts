@@ -441,9 +441,18 @@ export const sessionRepository = {
     return rows[0] ? toEvent(rows[0]) : null;
   },
 
-  async listEvents(sessionId: string, opts: { after?: string; limit?: number } = {}): Promise<SessionEvent[]> {
+  /**
+   * Événements d'une session, dans l'ordre. `toolUseId` : seulement ceux d'un sous-agent du CLI (outil Agent), à
+   * savoir ses propres messages (`parent_tool_use_id`) et l'appel qui l'a lancé (avec sa consigne).
+   */
+  async listEvents(sessionId: string, opts: { after?: string; limit?: number; toolUseId?: string } = {}): Promise<SessionEvent[]> {
     const params: unknown[] = [sessionId];
     let where = 'session_id = $1';
+    if (opts.toolUseId) {
+      params.push(opts.toolUseId);
+      const n = params.length;
+      where += ` AND (payload->>'parent_tool_use_id' = $${n} OR (type = 'claude.assistant' AND jsonb_typeof(payload->'message'->'content') = 'array' AND payload->'message'->'content' @> jsonb_build_array(jsonb_build_object('id', $${n}::text))))`;
+    }
     if (opts.after) {
       params.push(opts.after);
       where += ` AND id > $${params.length}`;

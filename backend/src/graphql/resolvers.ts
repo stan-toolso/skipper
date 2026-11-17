@@ -1055,8 +1055,8 @@ export const resolvers = {
     },
     schedule: async (session: Session, _: unknown, ctx: Ctx) => (await loadersOf(ctx).sessionSchedule(session.id)) ?? null,
     context: (session: Session): ContextParent => ({ session }),
-    events: (session: Session, args: { after?: string | null; limit?: number | null }) =>
-      sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined }),
+    events: (session: Session, args: { after?: string | null; limit?: number | null; toolUseId?: string | null }) =>
+      sessionService.events(session.id, { after: args.after ?? undefined, limit: args.limit ?? undefined, toolUseId: args.toolUseId ?? undefined }),
   },
 
   SessionChanges: {

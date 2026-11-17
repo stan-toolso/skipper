@@ -1865,8 +1865,8 @@ type Session {
   updatedAt: DateTime!
   startedAt: DateTime
   endedAt: DateTime
-  "Événements journalisés, dans l'ordre chronologique. `after` = id du dernier événement déjà reçu."
-  events(after: ID, limit: Int): [SessionEvent!]!
+  "Événements journalisés, dans l'ordre chronologique. `after` = id du dernier événement déjà reçu. `toolUseId` : seulement ceux du sous-agent du CLI lancé par cet appel de l'outil Agent (ses messages et l'appel lui-même)."
+  events(after: ID, limit: Int, toolUseId: ID): [SessionEvent!]!
   requests(status: RequestStatus): [Request!]!
   "Nombre de demandes en attente d'une réponse humaine."
   pendingRequestCount: Int!
@@ -1941,6 +1941,8 @@ type Attachment {
 "Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI), pas une session Skipper."
 type SessionSubagent {
   id: ID!
+  "Appel de l'outil Agent qui l'a lancé : Session.events(toolUseId:) donne son fil."
+  toolUseId: ID
   "Description donnée par l'agent."
   description: String!
   "Type de sous-agent (general-purpose, Explore, fork…) ou nom du workflow."

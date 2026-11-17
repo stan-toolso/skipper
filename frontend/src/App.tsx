@@ -7,6 +7,7 @@ import { DialogProvider } from './components/Dialogs';
 import TabPages from './workbench/TabPages';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
+const SubagentPage = lazy(() => import('./pages/SubagentPage'));
 const ProjectSettingsPage = lazy(() => import('./pages/ProjectSettingsPage'));
 const ProjectMembersPage = lazy(() => import('./pages/ProjectMembersPage'));
 const ProjectCustomPage = lazy(() => import('./pages/ProjectCustomPage'));
@@ -121,6 +122,7 @@ function PageRoutes({ location, isAdmin, restricted }: { location: Location; isA
       <Route path="/chats/:id" element={<SessionDetailPage />} />
       <Route path="/me" element={<PersonalSpaceRedirect />} />
       <Route path="/sessions/:id/browser" element={<BrowserPage />} />
+      <Route path="/sessions/:id/subagents/:toolUseId" element={<SubagentPage />} />
       {/* Page publiée par la session, ouverte dans son dossier ; /shared/:id reste la page à part entière (lien partagé, sans session). */}
       <Route path="/sessions/:sessionId/pages/:id" element={<SharedPagePage />} />
       <Route path="/inbox" element={<InboxPage />} />

@@ -1121,10 +1121,10 @@ export const SESSION = gql`
 
 /** Une page d'événements d'une session, dans l'ordre, après l'événement `after` (voir useSessionEvents). */
 export const SESSION_EVENTS = gql`
-  query SessionEvents($id: ID!, $after: ID, $limit: Int) {
+  query SessionEvents($id: ID!, $after: ID, $limit: Int, $toolUseId: ID) {
     session(id: $id) {
       id
-      events(after: $after, limit: $limit) {
+      events(after: $after, limit: $limit, toolUseId: $toolUseId) {
         id
         sessionId
         type
@@ -1696,6 +1696,7 @@ export const SIDEBAR = gql`
     browserActive
     subagents {
       id
+      toolUseId
       description
       agentType
       background
