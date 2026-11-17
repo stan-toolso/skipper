@@ -73,6 +73,8 @@ export interface ExportedComment {
 export interface ExportedTask {
   ref: string;
   title: string;
+  /** Absent des archives d'avant le résumé des tâches. */
+  summary?: string | null;
   description: string;
   status: 'todo' | 'in_progress' | 'done' | 'cancelled';
   statusTag: string | null;
@@ -183,6 +185,7 @@ function tasksMarkdown(tasks: ExportedTask[]): string {
   const lines = ['# Tâches', ''];
   for (const t of tasks) {
     lines.push(`## ${t.title}`, '', `- Statut : ${statusLabels[t.status] ?? t.status}${t.statusTag ? ` (${t.statusTag})` : ''} · priorité ${t.priority}${t.tags.length ? ` · ${t.tags.join(', ')}` : ''}`, `- Créée le ${t.createdAt.slice(0, 10)}${t.assignee ? ` · responsable : ${t.assignee.name ?? t.assignee.email}` : ''}`, '');
+    if (t.summary?.trim()) lines.push(`> ${t.summary.trim().replace(/\n/g, '\n> ')}`, '');
     if (t.description.trim()) lines.push(t.description.trim(), '');
     for (const c of t.comments) lines.push(`${c.parentRef ? '  ' : ''}- **${c.authorName}** (${c.createdAt.slice(0, 16).replace('T', ' ')}) : ${c.body.replace(/\n/g, ' ')}`);
     if (t.comments.length) lines.push('');

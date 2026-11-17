@@ -413,6 +413,8 @@ export interface Task {
   /** Coût attribué à la tâche (unité d'affichage). */
   costUsd: number;
   title: string;
+  /** Une ou deux phrases sur l'objet de la tâche, montrées avant la description ; null : aucun. */
+  summary: string | null;
   description: string;
   status: TaskStatus;
   /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…). */
@@ -1847,6 +1849,7 @@ export const TASK_FIELDS = gql`
   fragment TaskFields on Task {
     id
     title
+    summary
     description
     status
     statusTag

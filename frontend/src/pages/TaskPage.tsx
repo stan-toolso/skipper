@@ -10,6 +10,7 @@ import { forgeOfUrl, prRef, PULL_REQUESTS, type TrackedPullRequest } from '../gr
 import StatusBadge from '../components/StatusBadge';
 import TaskActions from '../components/TaskActions';
 import { isOverdue, Linkified, TaskBlockedBadge, TaskStalledBadge, TaskWaitingBadge, TaskPriorityBadge, TaskRefList, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
+import TaskSummary from '../components/TaskSummary';
 import TaskThread from '../components/TaskThread';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 import TaskModal from '../components/TaskModal';
@@ -117,6 +118,7 @@ export default function TaskPage() {
 
       <Row className="g-3 mt-1">
         <Col lg={8}>
+          <TaskSummary summary={task.summary} className="mb-3" />
           <Card className="task-conversation">
             <Card.Header className="d-flex align-items-center justify-content-between">
               <span>

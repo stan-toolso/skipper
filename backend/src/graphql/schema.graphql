@@ -379,6 +379,8 @@ type Task {
   id: ID!
   project: Project!
   title: String!
+  "Une ou deux phrases qui disent l'objet de la tâche, montrées avant la description pour être lues et comprises rapidement ; null : pas de résumé."
+  summary: String
   description: String!
   status: TaskStatus!
   "Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté ; posé par les personnes ou par la session en charge (outil MCP `tasks.update`)."
@@ -459,6 +461,8 @@ type Task {
 input CreateTaskInput {
   projectId: ID!
   title: String!
+  "Résumé de l'objet de la tâche (500 caractères au plus)."
+  summary: String
   description: String
   priority: TaskPriority
   status: TaskStatus
@@ -478,6 +482,8 @@ input CreateTaskInput {
 
 input UpdateTaskInput {
   title: String
+  "Absent : inchangé ; null ou vide : retiré."
+  summary: String
   description: String
   priority: TaskPriority
   status: TaskStatus

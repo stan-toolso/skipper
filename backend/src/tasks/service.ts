@@ -186,7 +186,11 @@ function validate(input: CreateTaskInput | UpdateTaskInput): void {
   if (input.priority != null && !TASK_PRIORITIES.includes(input.priority)) throw new AppError(`Priorité invalide : ${input.priority}`);
   if (input.status != null && !TASK_STATUSES.includes(input.status)) throw new AppError(`Statut invalide : ${input.status}`);
   if (input.dueDate != null && input.dueDate !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new AppError('Échéance attendue au format AAAA-MM-JJ');
+  if (input.summary != null && input.summary.trim().length > SUMMARY_MAX) throw new AppError(`Le résumé doit rester court (${SUMMARY_MAX} caractères au plus) : le détail va dans la description`);
 }
+
+/** Longueur maximale du résumé d'une tâche : une ou deux phrases, le détail va dans la description. */
+export const SUMMARY_MAX = 500;
 
 /** Entrée prête pour le dépôt : personnes et champs normalisés (une clé absente reste absente = inchangée). */
 function prepare<T extends CreateTaskInput | UpdateTaskInput>(input: T): T & { assignee?: TaskPerson | null; reporter?: TaskPerson | null } {
@@ -198,6 +202,7 @@ function prepare<T extends CreateTaskInput | UpdateTaskInput>(input: T): T & { a
   if (input.reporter !== undefined) out.reporter = normalizePerson(input.reporter, 'rapporteur');
   if (input.customFields != null) out.customFields = normalizeFields(input.customFields);
   if (input.title != null) out.title = input.title.trim();
+  if (input.summary !== undefined) out.summary = input.summary?.trim() || null;
   if (input.dueDate === '') out.dueDate = null;
   if (input.statusTag !== undefined) out.statusTag = normalizeStatusTag(input.statusTag);
   if (input.tags != null) out.tags = normalizeTags(input.tags);
@@ -230,6 +235,7 @@ export function describeTaskChanges(before: Task, after: Task, addedAttachments:
   if ((before.wakeAt?.getTime() ?? null) !== (after.wakeAt?.getTime() ?? null)) lines.push(`- Réveil : ${before.wakeAt ? formatWakeAt(before.wakeAt) : 'aucun'} → ${after.wakeAt ? formatWakeAt(after.wakeAt) : 'aucun'}`);
   if (before.wakeNote !== after.wakeNote && after.wakeNote) lines.push(`- À vérifier au réveil : ${after.wakeNote}`);
   if (before.autoStartWhenUnblocked !== after.autoStartWhenUnblocked) lines.push(`- Lancement automatique quand débloquée : ${after.autoStartWhenUnblocked ? 'activé' : 'désactivé'}`);
+  if (before.summary !== after.summary) lines.push(after.summary ? `- Résumé, nouveau texte : ${after.summary}` : '- Résumé retiré');
   if (before.description !== after.description) lines.push(`- Description, nouveau texte :\n${after.description.split('\n').map((l) => `  ${l}`).join('\n')}`);
   const { kept, leftOut } = fitInInstruction(addedAttachments);
   if (kept.length) lines.push(`- Fichiers ajoutés (joints à ce message) : ${kept.map(describeAttachment).join(', ')}`);
@@ -608,6 +614,7 @@ export const taskService = {
       '',
       `# ${task.title}`,
       '',
+      ...(task.summary ? [`Résumé : ${task.summary}`, ''] : []),
       task.description || '(pas de description)',
     ];
     if (own.length) parts.push('', ...describeAttachments(own, attached));

@@ -4,6 +4,7 @@ import { TASK_THREAD_OPENING } from '../graphql/conversations';
 import { taskStatusLabels } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { Linkified } from './TaskBadges';
+import TaskSummary from './TaskSummary';
 import TaskThread from './TaskThread';
 
 interface Data {
@@ -11,6 +12,7 @@ interface Data {
     id: string;
     title: string;
     status: string;
+    summary: string | null;
     description: string;
     createdAt: string;
     createdByType: string;
@@ -44,6 +46,7 @@ export default function ConversationTaskThread({ taskId, canWrite }: { taskId: s
         <div className="ch-head-topic">Fil de la tâche : les sessions reliées à la tâche reçoivent chaque message.</div>
       </div>
       <div className="ch-body ch-scroll">
+        <TaskSummary summary={task.summary} className="m-2" />
         <TaskThread
           key={task.id}
           taskId={task.id}
