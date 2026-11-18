@@ -416,7 +416,8 @@ function task(p, title, status, priority, opts = {}) {
     sessionIds: opts.sessions?.map((s) => s.id) ?? [],
     session: () => opts.sessions?.[0] ?? null,
     sessionsInCharge: () => (status === 'IN_PROGRESS' ? opts.sessions ?? [] : []),
-    resumableSession: null,
+    // La conversation que « Reprendre » relance : la première session de la tâche, s'il y en a une.
+    resumableSession: () => opts.sessions?.[0] ?? null,
     sessions: () => opts.sessions ?? [],
     costUsd: (opts.sessions ?? []).reduce((n, s) => n + s.costUsd, 0),
     sessionCosts: () => (opts.sessions ?? []).map((s) => ({ __typename: 'TaskSessionCost', session: s, usd: s.costUsd })),
@@ -479,6 +480,9 @@ const T = {
 // Une dépendance : le mode hors ligne attend le paiement en trois fois (groupe « Bloquées » de la liste).
 T.hors.dependsOn = T.hors.blockedBy = [T.cotis];
 T.cotis.dependents = [T.hors];
+// Une tâche « agent arrêté » bloquée (dans À traiter) : « Reprendre » ouvre la modale avec l'avis « En attente d'une autre tâche ».
+T.relances.dependsOn = T.relances.blockedBy = [T.tva];
+T.tva.dependents = [T.relances];
 
 let commentSeq = 0;
 const comments = [];
