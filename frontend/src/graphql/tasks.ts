@@ -373,6 +373,12 @@ export const TASK_LAUNCH_INFO = gql`
         label
         archivedAt
       }
+      blockedBy {
+        id
+        title
+        status
+      }
+      autoStartWhenUnblocked
     }
   }
 `;
