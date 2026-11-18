@@ -1243,6 +1243,10 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .task-grid-cell > a { display: inline; }
 .task-grid-actions { overflow: visible; }
 .task-actions-compact { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Modale « Confier à un agent » / « Reprendre » d'une tâche en attente de ses dépendances : un avis, pas une erreur. */
+.task-launch-blocked { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--cc-border); border-left: 3px solid var(--cc-yellow); border-radius: var(--cc-radius-sm); background: var(--cc-yellow-soft); color: var(--cc-fg); font-size: 0.875rem; }
+.task-launch-blocked ul li + li { margin-top: 2px; }
+.task-launch-blocked-status { font-family: var(--cc-font-mono); font-size: 0.75rem; color: var(--cc-dim); white-space: nowrap; }
 /* Première colonne figée au défilement horizontal (titre, d'ordinaire). */
 .task-grid-table th:first-child, .task-grid-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--cc-bg); }
 .task-grid-table thead th:first-child { z-index: 4; background: var(--cc-bg-elevated); }

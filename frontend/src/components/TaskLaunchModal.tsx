@@ -2,11 +2,11 @@ import { useMutation, useQuery } from '@apollo/client';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Button, Collapse, Form, Modal } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
-import { PROVIDERS, RESUME_TASK_SESSION, START_TASK_SESSION, type ConfigField, type Provider, type SessionStatus, type Task, type TaskModels, type TaskPriority } from '../graphql/operations';
+import { PROVIDERS, RESUME_TASK_SESSION, START_TASK_SESSION, type ConfigField, type Provider, type SessionStatus, type Task, type TaskModels, type TaskPriority, type TaskRef } from '../graphql/operations';
 import { TASK_LAUNCH_INFO, TASK_PROMPT } from '../graphql/tasks';
 import { PROJECT_AGENT_REFS, agentKindLabels, type AgentRef } from '../graphql/agents';
 import AgentAvatar from './AgentAvatar';
-import { bypassConnectionsWarning } from '../lib/humanize';
+import { bypassConnectionsWarning, taskStatusLabels } from '../lib/humanize';
 import { agentConfigFields, agentConfigValues, agentProvider } from '../lib/agentSessions';
 import { projectModelForTask } from '../lib/models';
 import { buildConfig, FieldGroup } from './SessionLauncher';
@@ -65,7 +65,49 @@ interface LaunchInfo {
     session: { id: string; name: string; archivedAt: string | null } | null;
     resumableSession: ResumableSession | null;
     worksession: { id: string; name: string; branch: string; label: string; archivedAt: string | null } | null;
+    blockedBy: TaskRef[];
+    autoStartWhenUnblocked: boolean;
   } | null;
+}
+
+/**
+ * Tâche en attente d'autres tâches (dépendances pas terminées) : le serveur refuse de la confier à un agent. On le dit
+ * d'emblée, sans ton d'erreur, avec un lien vers chaque tâche qui la bloque et vers la tâche elle-même (pour retirer
+ * la dépendance), au lieu de laisser cliquer puis d'afficher le refus en rouge.
+ */
+function BlockedNotice({ taskId, blockers, autoStart, onNavigate }: { taskId: string; blockers: TaskRef[]; autoStart: boolean; onNavigate: () => void }) {
+  const many = blockers.length > 1;
+  return (
+    <div className="task-launch-blocked">
+      <div className="fw-semibold mb-1">
+        <i className="bi bi-hourglass-split me-1" />
+        {many ? 'En attente d’autres tâches' : 'En attente d’une autre tâche'}
+      </div>
+      <p className="mb-2">
+        Cette tâche dépend de {many ? 'tâches qui ne sont pas encore terminées' : 'une tâche qui n’est pas encore terminée'}. Elle pourra être reprise dès{' '}
+        {many ? 'qu’elles le seront' : 'qu’elle le sera'}
+        {autoStart ? ' : elle repartira alors toute seule.' : '.'}
+      </p>
+      <ul className="list-unstyled mb-2">
+        {blockers.map((b) => (
+          <li key={b.id} className="d-flex align-items-baseline gap-2">
+            <i className="bi bi-arrow-return-right text-secondary" />
+            <Link to={`/tasks/${b.id}`} onClick={onNavigate}>
+              {b.title}
+            </Link>
+            <span className="task-launch-blocked-status">{taskStatusLabels[b.status] ?? b.status}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="small text-secondary">
+        Si {many ? 'ces dépendances n’ont' : 'cette dépendance n’a'} plus lieu d’être,{' '}
+        <Link to={`/tasks/${taskId}`} onClick={onNavigate}>
+          retirez-la depuis la tâche
+        </Link>
+        .
+      </div>
+    </div>
+  );
 }
 
 /** Message proposé pour reprendre la conversation, modifiable. */
@@ -88,8 +130,10 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
         <Modal.Body className="small text-secondary">Chargement…</Modal.Body>
       </Modal>
     );
-  if (resumable && !fresh) return <TaskResumeModal task={task} session={resumable} onFresh={() => setFresh(true)} onClose={onClose} />;
-  return <TaskNewSessionModal task={task} target={target} info={data} onClose={onClose} />;
+  const blockers = data.task?.blockedBy ?? [];
+  const blocked = blockers.length > 0 ? <BlockedNotice taskId={task.id} blockers={blockers} autoStart={Boolean(data.task?.autoStartWhenUnblocked)} onNavigate={onClose} /> : null;
+  if (resumable && !fresh) return <TaskResumeModal task={task} session={resumable} blocked={blocked} onFresh={() => setFresh(true)} onClose={onClose} />;
+  return <TaskNewSessionModal task={task} target={target} info={data} blocked={blocked} onClose={onClose} />;
 }
 
 /**
@@ -97,7 +141,7 @@ export default function TaskLaunchModal({ task, target, onClose }: { task: Task;
  * l'agent s'il tourne, sinon la session repart avec, historique compris) ; la session est restaurée si elle était
  * archivée et la tâche repasse en cours. On reste sur la page.
  */
-function TaskResumeModal({ task, session, onFresh, onClose }: { task: Task; session: ResumableSession; onFresh: () => void; onClose: () => void }) {
+function TaskResumeModal({ task, session, blocked, onFresh, onClose }: { task: Task; session: ResumableSession; blocked: ReactNode; onFresh: () => void; onClose: () => void }) {
   const [text, setText] = useState(RESUME_MESSAGE);
   const [resume, { loading, error }] = useMutation<{ resumeTaskSession: { id: string } }>(RESUME_TASK_SESSION, {
     refetchQueries: ['Tasks', 'TaskPage', 'TaskDetail', 'Sidebar'],
@@ -105,7 +149,7 @@ function TaskResumeModal({ task, session, onFresh, onClose }: { task: Task; sess
   });
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (text.trim()) void resume({ variables: { id: task.id, text } }).catch(() => undefined);
+    if (text.trim() && !blocked) void resume({ variables: { id: task.id, text } }).catch(() => undefined);
   };
   const state = session.archivedAt
     ? 'Elle est archivée : elle sera restaurée avec son dossier.'
@@ -121,6 +165,7 @@ function TaskResumeModal({ task, session, onFresh, onClose }: { task: Task; sess
           <Modal.Title className="h6">Reprendre · {task.title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {blocked}
           <p className="small text-secondary">
             <i className="bi bi-chat-left-text me-1" />
             Le message est envoyé dans la conversation de la session{' '}
@@ -133,7 +178,7 @@ function TaskResumeModal({ task, session, onFresh, onClose }: { task: Task; sess
             <Form.Label>Message</Form.Label>
             <Form.Control as="textarea" rows={5} value={text} autoFocus onChange={(e) => setText(e.target.value)} />
           </Form.Group>
-          <button type="button" className="btn btn-link btn-sm p-0" disabled={loading} onClick={onFresh}>
+          <button type="button" className="btn btn-link btn-sm p-0" disabled={loading || Boolean(blocked)} onClick={onFresh}>
             Lancer plutôt une nouvelle session (consigne complète de la tâche, « {session.name} » archivée)
           </button>
           {error && <Alert variant="danger" className="mt-2 mb-0 py-2">{error.message}</Alert>}
@@ -142,7 +187,7 @@ function TaskResumeModal({ task, session, onFresh, onClose }: { task: Task; sess
           <Button variant="outline-secondary" onClick={onClose} disabled={loading}>
             Annuler
           </Button>
-          <Button type="submit" disabled={loading || !text.trim() || session.status === 'QUEUED'}>
+          <Button type="submit" disabled={loading || Boolean(blocked) || !text.trim() || session.status === 'QUEUED'}>
             {loading ? 'Envoi…' : 'Reprendre la conversation'}
           </Button>
         </Modal.Footer>
@@ -157,7 +202,7 @@ function TaskResumeModal({ task, session, onFresh, onClose }: { task: Task; sess
  * précédente de la tâche, s'il y en a une d'active, est archivée. Une fois la session lancée, on reste sur la page
  * (liste, kanban, tâche) : la session apparaît sur la tâche et dans la sidebar, sans y être emmené.
  */
-function TaskNewSessionModal({ task, target, info: infoData, onClose }: { task: Task; target: LaunchTarget | undefined; info: LaunchInfo; onClose: () => void }) {
+function TaskNewSessionModal({ task, target, info: infoData, blocked, onClose }: { task: Task; target: LaunchTarget | undefined; info: LaunchInfo; blocked: ReactNode; onClose: () => void }) {
   const { data: promptData, loading: promptLoading } = useQuery<{ taskPrompt: string }>(TASK_PROMPT, { variables: { id: task.id }, fetchPolicy: 'network-only' });
   const { data: providersData } = useQuery<{ providers: Provider[] }>(PROVIDERS);
   const providers = providersData?.providers ?? [];
@@ -218,7 +263,7 @@ function TaskNewSessionModal({ task, target, info: infoData, onClose }: { task: 
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!provider || !text.trim()) return;
+    if (!provider || !text.trim() || blocked) return;
     start({
       variables: {
         id: task.id,
@@ -237,6 +282,7 @@ function TaskNewSessionModal({ task, target, info: infoData, onClose }: { task: 
           <Modal.Title className="h6">Confier à un agent · {task.title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {blocked}
           <Form.Group className="mb-3">
             <Form.Label className="d-flex justify-content-between">
               Consigne
@@ -320,7 +366,7 @@ function TaskNewSessionModal({ task, target, info: infoData, onClose }: { task: 
           <Button variant="outline-secondary" onClick={onClose} disabled={loading}>
             Annuler
           </Button>
-          <Button type="submit" disabled={loading || !provider || promptLoading || !text.trim()}>
+          <Button type="submit" disabled={loading || Boolean(blocked) || !provider || promptLoading || !text.trim()}>
             {loading ? 'Lancement…' : 'Lancer la session'}
           </Button>
         </Modal.Footer>
