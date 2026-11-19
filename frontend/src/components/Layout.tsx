@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
+import { useMemo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
+import { useApolloClient } from '@apollo/client';
 import { useLocation } from 'react-router-dom';
+import { sessionPrefetchHandlers } from '../lib/sessionPrefetch';
 import Sidebar from '../workbench/Sidebar';
 import TabBar from '../workbench/TabBar';
 import WorkspaceTabs from '../workbench/WorkspaceTabs';
@@ -110,6 +112,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const sidebar = usePanelWidth(rootRef, SIDEBAR);
   const panel = usePanelWidth(rootRef, PANEL);
+  // Une session survolée (sidebar, onglets, liens des pages) est préchargée : elle s'ouvre déjà remplie.
+  const client = useApolloClient();
+  const prefetch = useMemo(() => sessionPrefetchHandlers(client), [client]);
   const flush = /^\/sessions\/[^/]+(?:\/browser|\/pages\/[^/]+)?$/.test(pathname) || /^\/chats\/[^/]+$/.test(pathname) || /^\/terminals\/[^/]+$/.test(pathname) || /^\/(?:projects|sessions)\/[^/]+\/files(?:\/|$)/.test(pathname) || /^\/shared\/[^/]+$/.test(pathname);
   return (
     <TabsProvider>
@@ -123,6 +128,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                   ref={rootRef}
                   className={`wb${sidebarOpen ? ' sidebar-open' : ''}${collapsed ? ' sidebar-collapsed' : ''}${sidebar.dragging || panel.dragging ? ' resizing' : ''}`}
                   style={{ '--wb-sidebar-w': `${sidebar.width}px`, '--wb-panel-w': `${panel.width}px` } as CSSProperties}
+                  {...prefetch}
                 >
                   <Sidebar onCollapse={() => setCollapsed(true)} />
                   <div

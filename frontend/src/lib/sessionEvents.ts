@@ -1,9 +1,10 @@
 import { useApolloClient } from '@apollo/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SESSION_EVENTS, type SessionEvent, type SessionLiveDraft } from '../graphql/operations';
+import { EVENTS_PAGE_SIZE, takePrefetchedEvents } from './sessionPrefetch';
 
 /** Taille d'une page d'événements (le serveur plafonne à 2000). */
-const PAGE_SIZE = 500;
+const PAGE_SIZE = EVENTS_PAGE_SIZE;
 /** Délai entre deux relevés une fois l'historique rattrapé. */
 const POLL_MS = 1500;
 /** Délai resserré tant que l'agent écrit (brouillon en direct) : la réponse s'affiche au fil de l'eau. */
@@ -71,11 +72,18 @@ export function useSessionEvents(sessionId: string, opts: { /** Fil d'un sous-ag
       let full = false;
       let live = false;
       try {
-        const { data } = await client.query<{ session: { events: SessionEvent[]; liveDraft: SessionLiveDraft | null } | null }>({
-          query: SESSION_EVENTS,
-          variables: { id: sessionId, after: cursor.current.after, limit: PAGE_SIZE, toolUseId },
-          fetchPolicy: 'no-cache',
-        });
+        const fetchPage = async () =>
+          (
+            await client.query<{ session: { events: SessionEvent[]; liveDraft: SessionLiveDraft | null } | null }>({
+              query: SESSION_EVENTS,
+              variables: { id: sessionId, after: cursor.current.after, limit: PAGE_SIZE, toolUseId },
+              fetchPolicy: 'no-cache',
+            })
+          ).data;
+        // Premier relevé d'une session préchargée au survol de son lien : sa première page est déjà en route
+        // (en cas d'échec du préchargement, on la redemande aussitôt).
+        const prefetched = !toolUseId && cursor.current.after === null ? takePrefetchedEvents(sessionId) : null;
+        const data = prefetched ? await prefetched.catch(fetchPage) : await fetchPage();
         if (cancelled) return;
         const page = data.session?.events ?? [];
         full = page.length >= PAGE_SIZE;

@@ -5,7 +5,7 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Spinner } from 'react-bootstrap';
 import { Link, useParams } from 'react-router-dom';
-import { useTabTitle } from '../workbench/TabsContext';
+import { useTabTitle, useTabs } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { describeCron } from '../lib/cron';
 import { timeUntil } from '../lib/schedules';
@@ -186,6 +186,11 @@ export default function SessionDetailPage() {
   const busy = running && session?.activity === 'BUSY';
   const pending = session?.requests ?? [];
   const changesKey = `${toolResults}:${session?.status}:${session?.activity}`;
+  // Avant le chargement, le panneau de droite suit déjà le dossier de la session tel que la sidebar le connaît :
+  // il ne surgit pas (en rétrécissant la colonne centrale) une fois la page chargée. Les chats, sans panneau, ne sont
+  // pas dans cet index.
+  const { workspaces } = useTabs();
+  const knownWs = useMemo(() => (session ? null : workspaces.all().find((w) => w.sessions.some((s) => s.id === id)) ?? null), [session, workspaces, id]);
   useGitTarget(
     session && !chat
       ? {
@@ -196,7 +201,9 @@ export default function SessionDetailPage() {
           sessionId: session.id,
           changesKey,
         }
-      : null,
+      : knownWs
+        ? { projectId: knownWs.projectId, worksessionId: knownWs.worksessionId, label: knownWs.worksessionId ? `${knownWs.projectName} · ${knownWs.branch}` : knownWs.projectName, sessionId: id, changesKey }
+        : null,
   );
   const actions = useSessionActions(session);
   // Lecteur du projet : transcript seul, sans saisie, réponses aux demandes ni actions (le serveur les refuse aussi).
@@ -290,18 +297,25 @@ export default function SessionDetailPage() {
     }
   };
 
-  // Pendant le chargement : l'en-tête avec le nom déjà connu (sidebar), plutôt qu'une page vide.
+  // Pendant le chargement : la page garde sa forme (en-tête avec le nom déjà connu de la sidebar, fil, zone de
+  // saisie) pour que la navigation ne ressemble pas à un rechargement complet. Une session survolée dans la
+  // sidebar est préchargée (lib/sessionPrefetch.ts) : le plus souvent, cet état ne s'affiche pas.
   if (loading && !data)
     return (
       <div className="cc">
         <div className="cc-header">
-          <div>
+          <div className="cc-header-main">
             <span className="cc-title">✻ {cachedName ?? 'Session'}</span>
             <span className="cc-meta">
               {' '}
               · <Spinner animation="border" size="sm" /> chargement…
             </span>
           </div>
+        </div>
+        <div className="cc-transcript cc-chat" aria-busy="true" />
+        <div className="cc-status" />
+        <div className="cc-input">
+          <textarea rows={1} readOnly placeholder="Chargement de la session…" aria-label="Zone de saisie (chargement)" />
         </div>
       </div>
     );
