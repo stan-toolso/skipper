@@ -17,7 +17,9 @@ export default function TabPages({ render }: { render: (location: Location) => R
   }, [activeKey]);
 
   const open = useMemo(() => new Set(tabs.map((t) => t.key)), [tabs]);
-  const kept = visited.filter((k) => open.has(k) || k === activeKey);
+  // La page active est rendue dès le rendu de la navigation, sans attendre l'effet qui la note visitée : sinon la
+  // zone centrale resterait vide le temps d'un rendu (l'ancienne page déjà cachée, la nouvelle pas encore montée).
+  const kept = [...visited.filter((k) => open.has(k) || k === activeKey), ...(visited.includes(activeKey) ? [] : [activeKey])];
   const urlOf = (key: string) => tabs.find((t) => t.key === key)?.url ?? key;
   const locationFor = (key: string): Location => {
     const url = urlOf(key);
