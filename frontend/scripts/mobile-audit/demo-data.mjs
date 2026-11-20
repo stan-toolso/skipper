@@ -225,14 +225,16 @@ const S = {
   tarifs: session('s-page-tarifs', P.site, 'Refonte de la page tarifs', { activity: 'BUSY', age: 70, updated: 0, cost: 1.86, tokens: 64_000,
     // Sous-agents du CLI en cours (outil Agent) : puce sur la carte repliée, une ligne chacun dépliée.
     subagents: [
-      { __typename: 'SessionSubagent', id: 'task-cards', toolUseId: 'tu-cards', description: 'Cartes des trois offres', agentType: 'fork', background: true, startedAt: ago(14), toolUses: 23, lastTool: 'Edit', summary: null },
-      { __typename: 'SessionSubagent', id: 'task-compare', toolUseId: 'tu-compare', description: 'Tableau comparatif détaillé', agentType: 'fork', background: true, startedAt: ago(9), toolUses: 11, lastTool: 'Read', summary: null },
-      { __typename: 'SessionSubagent', id: 'task-explore', toolUseId: 'tu-explore', description: 'Explore les styles du site', agentType: 'Explore', background: false, startedAt: ago(2), toolUses: 4, lastTool: 'Grep', summary: null },
+      { __typename: 'SessionSubagent', kind: 'agent', id: 'task-cards', toolUseId: 'tu-cards', description: 'Cartes des trois offres', agentType: 'fork', background: true, startedAt: ago(14), toolUses: 23, lastTool: 'Edit', summary: null },
+      { __typename: 'SessionSubagent', kind: 'agent', id: 'task-compare', toolUseId: 'tu-compare', description: 'Tableau comparatif détaillé', agentType: 'fork', background: true, startedAt: ago(9), toolUses: 11, lastTool: 'Read', summary: null },
+      { __typename: 'SessionSubagent', kind: 'agent', id: 'task-explore', toolUseId: 'tu-explore', description: 'Explore les styles du site', agentType: 'Explore', background: false, startedAt: ago(2), toolUses: 4, lastTool: 'Grep', summary: null },
     ],
     prompt: 'Refonds la page /tarifs : trois offres en cartes, un comparatif détaillé dessous et une FAQ. Garde le style du site.' }),
   // Sous-agent lancé par l'agent de la session « page tarifs » (sessions.create) : son propre dossier, rangé sous sa parente.
   tarifsFaq: session('s-tarifs-faq', P.site, 'Rédiger la FAQ des tarifs', { activity: 'BUSY', age: 20, updated: 0, cost: 0.38, model: 'claude-sonnet-5-5', prompt: 'Rédige la FAQ de la page /tarifs (8 questions).' }),
-  contact: session('s-formulaire-contact', P.site, 'Formulaire de contact sur mobile', { model: 'claude-sonnet-5-5', age: 60 * 5, updated: 25, cost: 0.74 }),
+  contact: session('s-formulaire-contact', P.site, 'Formulaire de contact sur mobile', { model: 'claude-sonnet-5-5', age: 60 * 5, updated: 25, cost: 0.74,
+    // Tour clos sur une commande de fond (outil Bash, run_in_background) : l'agent attend sa fin pour reprendre.
+    subagents: [{ __typename: 'SessionSubagent', kind: 'command', id: 'bash-e2e', toolUseId: 'tu-e2e', description: 'npm run test:e2e -- contact', agentType: null, background: true, startedAt: ago(6), toolUses: 0, lastTool: null, summary: null }] }),
   blog: session('s-chris-tri-blog', P.site, 'Tri des demandes du blog', { owner: U.chris, requestedBy: U.me, age: 60 * 3, updated: 40, cost: 0.31, branch: null }),
   pdf: session('s-export-pdf', P.api, 'Export des factures en PDF', { owner: U.hugo, activity: 'BUSY', age: 50, updated: 1, cost: 1.12 }),
   revuePdf: session('s-nora-revue-118', P.api, 'Revue de la PR #118', { model: 'claude-haiku-5-5', owner: U.nora, requestedBy: U.hugo, age: 25, updated: 4, cost: 0.22, branch: null }),

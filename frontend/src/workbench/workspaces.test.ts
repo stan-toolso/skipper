@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkspaceIndex, attachedElsewhere, ownerGroups, runLabel, scheduleGroups, sessionGroups, sessionTree, subagentsSummary } from './workspaces';
+import { WorkspaceIndex, attachedElsewhere, cliSubagentsLabel, ownerGroups, runLabel, scheduleGroups, sessionGroups, sessionTree, subagentsSummary, waitingCommandsHint } from './workspaces';
 
 const s = (id: string, parent: string | null = null) => ({ id, name: `Session ${id}`, parentSession: parent ? { id: parent } : null });
 
@@ -199,5 +199,22 @@ describe('scheduleGroups', () => {
     expect(runLabel('Revue des bases · 07/11 12:35', 'Revue des bases')).toBe('07/11 12:35');
     expect(runLabel('Renommée à la main', 'Revue des bases')).toBe('Renommée à la main');
     expect(runLabel('Revue des bases · ', 'Revue des bases')).toBe('Revue des bases · ');
+  });
+});
+
+describe('commandes de fond', () => {
+  const cmd = { id: 'b', kind: 'command', toolUseId: null, description: './test.sh ci', agentType: null, background: true, startedAt: new Date().toISOString(), toolUses: 0, lastTool: null, summary: null };
+  const agent = { ...cmd, id: 'a', kind: 'agent', description: 'Explore' };
+  it('libellé des sous-agents et des commandes', () => {
+    expect(cliSubagentsLabel([agent, agent])).toBe('2 sous-agents au travail');
+    expect(cliSubagentsLabel([agent, cmd])).toBe('1 sous-agent au travail, 1 commande en arrière-plan');
+    expect(cliSubagentsLabel([{ ...agent, kind: undefined }])).toBe('1 sous-agent au travail');
+  });
+  it('session au repos qui attend une commande de fond', () => {
+    expect(waitingCommandsHint({ status: 'RUNNING', activity: 'IDLE', subagents: [cmd] })).toBe('attend une commande en arrière-plan');
+    expect(waitingCommandsHint({ status: 'RUNNING', activity: 'IDLE', subagents: [cmd, cmd] })).toBe('attend 2 commandes en arrière-plan');
+    expect(waitingCommandsHint({ status: 'RUNNING', activity: 'BUSY', subagents: [cmd] })).toBeNull();
+    expect(waitingCommandsHint({ status: 'RUNNING', activity: 'IDLE', subagents: [agent] })).toBeNull();
+    expect(waitingCommandsHint({ status: 'COMPLETED', activity: 'IDLE', subagents: [cmd] })).toBeNull();
   });
 });

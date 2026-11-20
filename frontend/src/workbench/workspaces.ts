@@ -68,6 +68,8 @@ export interface SidebarSession {
 /** Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI) : pas une session Skipper. */
 export interface CliSubagent {
   id: string;
+  /** `agent` : sous-agent ou workflow ; `command` : commande Bash de fond, que l'agent attend pour reprendre de lui-même. */
+  kind?: 'agent' | 'command' | string;
   /** Appel de l'outil Agent qui l'a lancé : son fil s'ouvre sur /sessions/<id>/subagents/<toolUseId>. */
   toolUseId: string | null;
   description: string;
@@ -79,10 +81,29 @@ export interface CliSubagent {
   summary: string | null;
 }
 
-/** « 5 sous-agents au travail » : libellé de la ligne et de la puce des sous-agents du CLI. */
+/** Commandes de fond d'une liste (le reste : sous-agents et workflows). */
+export const isBackgroundCommand = (a: Pick<CliSubagent, 'kind'>): boolean => a.kind === 'command';
+
+/** « 5 sous-agents au travail », « 1 commande en arrière-plan », ou les deux : libellé de la ligne et de la puce. */
 export function cliSubagentsLabel(list: readonly CliSubagent[]): string {
-  const n = list.length;
-  return `${n} sous-agent${n > 1 ? 's' : ''} au travail`;
+  const commands = list.filter(isBackgroundCommand).length;
+  const agents = list.length - commands;
+  return [
+    agents ? `${agents} sous-agent${agents > 1 ? 's' : ''} au travail` : null,
+    commands ? `${commands} commande${commands > 1 ? 's' : ''} en arrière-plan` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/**
+ * Session au repos dont l'agent attend des commandes de fond : il sera réveillé à leur fin. « attend une commande en
+ * arrière-plan », ou null.
+ */
+export function waitingCommandsHint(session: { status: string; activity: string | null; subagents?: readonly Pick<CliSubagent, 'kind'>[] | null }): string | null {
+  if (session.status !== 'RUNNING' || session.activity === 'BUSY') return null;
+  const n = (session.subagents ?? []).filter(isBackgroundCommand).length;
+  return n ? `attend ${n > 1 ? `${n} commandes` : 'une commande'} en arrière-plan` : null;
 }
 
 /** Durée écoulée depuis un instant, en toutes lettres courtes : « 40 s », « 12 min », « 1 h 05 ». */
@@ -97,6 +118,9 @@ export function elapsedSince(iso: string, now: number = Date.now()): string {
 /** Détail d'un sous-agent du CLI : « 12 min » (la ligne, étroite), et son infobulle complète. */
 export function cliSubagentDetail(a: CliSubagent, now: number = Date.now()): { short: string; title: string } {
   const short = elapsedSince(a.startedAt, now);
+  if (isBackgroundCommand(a)) {
+    return { short, title: `Commande en arrière-plan « ${a.description} » · depuis ${elapsedSince(a.startedAt, now)} · l'agent reprendra de lui-même à sa fin` };
+  }
   const title = [
     `Sous-agent « ${a.description} »`,
     a.agentType ? `type ${a.agentType}` : null,

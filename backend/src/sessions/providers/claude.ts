@@ -68,7 +68,7 @@ import type { Attachment } from '../types.js';
 import type { DescribeContext, ProviderDescription, RunContext, RunningHandle, RunResult, SessionProvider } from './provider.js';
 import { isNoise } from './claudeNoise.js';
 import { BackgroundHold, describeBackgroundTasks } from './backgroundTasks.js';
-import { SubagentRecorder, SubagentTracker, type TaskMessageLike } from './subagents.js';
+import { SubagentRecorder, SubagentTracker, backgroundCommands, describeBackgroundCommands, type TaskMessageLike } from './subagents.js';
 import { assistantText, selfTurnNotice, wakeTrigger } from './selfTurn.js';
 import { conversationJournalPath, missedMessages, readJournal, readSubagentEntries } from './cliJournal.js';
 import { isEmptyNotificationResult, isLastResultEcho, resultError } from './claudeResult.js';
@@ -623,6 +623,12 @@ export class ClaudeProvider implements SessionProvider {
             if (held.hold) {
               if (held.first) await ctx.emit('system', { notice: true, message: `Tour terminé, ${describeBackgroundTasks(hold.live)} : la session reste au travail jusqu'à leur compte rendu.` });
               continue;
+            }
+            // Tour clos sur des commandes de fond (tests, build lancés avec run_in_background) : la session ne travaille
+            // plus, mais l'agent sera réveillé à leur fin ; le dire, sinon rien ne montre qu'elle attend quelque chose.
+            const commands = backgroundCommands(subagents.list);
+            if (commands.length) {
+              await ctx.emit('system', { notice: true, backgroundCommands: commands.length, message: `Tour terminé, ${describeBackgroundCommands(commands)} : l'agent reprendra de lui-même à ${commands.length > 1 ? 'leur' : 'sa'} fin. Vous pouvez aussi lui écrire.` });
             }
             await ctx.setActivity('idle');
           }

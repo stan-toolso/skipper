@@ -11,6 +11,7 @@ import { SESSION_PAGES, type SessionPage } from '../graphql/misc';
 import { SESSION } from '../graphql/operations';
 import { describeCron } from '../lib/cron';
 import { formatCost, permissionModeLabels, sessionStateHint, sessionStatusLabels } from '../lib/humanize';
+import { waitingCommandsHint, type CliSubagent } from './workspaces';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { sessionDotClass } from './WorkspaceTabs';
 import { sessionPagePath } from './workspaces';
@@ -151,7 +152,11 @@ export default function SessionPanel({ sessionId }: { sessionId: string }) {
   const session = data?.session ?? null;
   const actions = useSessionActions(session);
   if (!session) return <div className="git-empty p-2">Chargement de la session…</div>;
-  const hint = sessionStateHint(session.status, session.activity, session.pendingRequestCount) ?? (session.archivedAt ? 'archivée' : sessionStatusLabels[session.status]?.toLowerCase());
+  // Au repos, l'agent peut attendre des commandes de fond (tests, build) : il reprendra de lui-même à leur fin.
+  const hint =
+    (session.pendingRequestCount ? null : waitingCommandsHint(session as ControlledSession & { subagents?: Pick<CliSubagent, 'kind'>[] })) ??
+    sessionStateHint(session.status, session.activity, session.pendingRequestCount) ??
+    (session.archivedAt ? 'archivée' : sessionStatusLabels[session.status]?.toLowerCase());
   const schedule = session.schedule;
   const model = typeof session.config.model === 'string' ? session.config.model : null;
   const permissionMode = typeof session.config.permissionMode === 'string' ? session.config.permissionMode : 'default';

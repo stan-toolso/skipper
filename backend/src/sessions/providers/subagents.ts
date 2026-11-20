@@ -9,18 +9,34 @@
  * (`sessions.subagents`) : la sidebar la lit comme le reste de la session, quelle que soit l'instance qui répond
  * (bleu/vert : une session tenue par ses sous-agents pendant un drainage tourne sur l'ancienne instance).
  *
- * Seuls comptent les types qui rendent un compte rendu (sous-agents, workflows : `REPORTING_TASK` de
- * backgroundTasks.ts), hors tâches `ambient` ou `skip_transcript` ; pas les commandes Bash de fond.
+ * Comptent les types qui rendent un compte rendu (sous-agents, workflows : `REPORTING_TASK` de backgroundTasks.ts),
+ * hors tâches `ambient` ou `skip_transcript`. Les commandes de fond (Bash `run_in_background`) figurent aussi dans la
+ * liste, avec `kind: 'command'`, tant que `background_tasks_changed` les dit vivantes : l'agent qui clôt son tour sur
+ * « j'attends la fin des tests » est réveillé par le CLI à leur fin, et sans elles rien ne montrait que la session
+ * attendait quelque chose (session 707e72c1, 20/11/2026). Elles ne tiennent pas la session « au travail »
+ * (BackgroundHold : un serveur de développement peut tourner sans fin).
  * `background_tasks_changed` (liste complète des tâches de fond vivantes) sert de filet : une tâche de fond absente de
  * cette liste est finie, même si sa notification de fin s'est perdue.
  */
 
 import { reportingBackgroundTasks, type BackgroundTaskLike } from './backgroundTasks.js';
 
+/** Commandes de fond d'une liste (`kind: 'command'`). */
+export const backgroundCommands = <T extends Pick<SessionSubagent, 'kind'>>(list: readonly T[] | null | undefined): T[] => (list ?? []).filter((s) => s.kind === 'command');
+
+/** « 1 commande en arrière-plan (« ./test.sh ci ») » : libellé des commandes de fond, pour les notices. */
+export function describeBackgroundCommands(list: readonly Pick<SessionSubagent, 'description'>[]): string {
+  const n = list.length;
+  const names = list.slice(0, 3).map((c) => `« ${c.description.length > 60 ? `${c.description.slice(0, 59)}…` : c.description} »`);
+  return `${n} commande${n > 1 ? 's' : ''} en arrière-plan${names.length ? ` (${names.join(', ')}${n > names.length ? ', …' : ''})` : ''}`;
+}
+
 /** Sous-agent en cours, tel qu'enregistré sur la session (jsonb `sessions.subagents`). */
 export interface SessionSubagent {
   /** Identifiant de la tâche du CLI. */
   id: string;
+  /** Sous-agent ou workflow (`agent`, défaut des listes enregistrées avant), ou commande de fond (`command`). */
+  kind?: 'agent' | 'command';
   /** Appel de l'outil Agent qui l'a lancé (pour le retrouver dans le transcript). */
   toolUseId: string | null;
   /** Description donnée par l'agent (« Explore strength front module »). */
@@ -76,6 +92,8 @@ export class SubagentTracker {
   private readonly byId = new Map<string, SessionSubagent>();
   /** Dernière liste complète des tâches de fond vivantes (`background_tasks_changed`). */
   private backgroundIds = new Set<string>();
+  /** Début des tâches qui ne sont pas des sous-agents (commandes), pour les inscrire quand elles passent en arrière-plan ; oublié à leur notification de fin. */
+  private readonly otherStarts = new Map<string, { toolUseId: string | null; startedAt: string }>();
 
   constructor(private readonly now: () => Date = () => new Date()) {}
 
@@ -91,9 +109,13 @@ export class SubagentTracker {
         // Les sous-agents ont un task_type local_agent / remote_agent ; un message sans task_type mais avec un type de
         // sous-agent vient d'une version du SDK qui ne le renseignait pas encore.
         const type = message.task_type ?? (message.subagent_type ? 'local_agent' : '');
-        if (!REPORTING.test(type)) return null;
+        if (!REPORTING.test(type)) {
+          this.otherStarts.set(id, { toolUseId: message.tool_use_id ?? null, startedAt: this.now().toISOString() });
+          return null;
+        }
         this.byId.set(id, {
           id,
+          kind: 'agent',
           toolUseId: message.tool_use_id ?? null,
           description: clip(message.description) || 'Sous-agent',
           agentType: message.subagent_type ?? message.workflow_name ?? null,
@@ -134,6 +156,7 @@ export class SubagentTracker {
         return changed ? 'now' : null;
       }
       case 'task_notification': {
+        if (id) this.otherStarts.delete(id);
         if (!id || !this.byId.delete(id)) return null;
         return 'now';
       }
@@ -141,8 +164,17 @@ export class SubagentTracker {
         // Filet : un sous-agent de fond absent de la liste complète est fini. Ceux du premier plan n'y figurent pas.
         const live = new Set(reportingBackgroundTasks(message.tasks).map((t) => t.task_id));
         this.backgroundIds = live;
+        // Commandes de fond vivantes (ni sous-agent, ni tâche ambiante comme une surveillance).
+        const commands = new Map((message.tasks ?? []).filter((t) => !t.ambient && !REPORTING.test(t.task_type ?? '')).map((t) => [t.task_id, t]));
         let changed = false;
         for (const s of this.byId.values()) {
+          if (s.kind === 'command') {
+            if (!commands.has(s.id)) {
+              this.byId.delete(s.id);
+              changed = true;
+            }
+            continue;
+          }
           if (live.has(s.id) && !s.background) {
             s.background = true;
             changed = true;
@@ -150,6 +182,23 @@ export class SubagentTracker {
             this.byId.delete(s.id);
             changed = true;
           }
+        }
+        for (const [taskId, t] of commands) {
+          if (this.byId.has(taskId)) continue;
+          const start = this.otherStarts.get(taskId);
+          this.byId.set(taskId, {
+            id: taskId,
+            kind: 'command',
+            toolUseId: start?.toolUseId ?? null,
+            description: clip(t.description) || 'Commande',
+            agentType: null,
+            background: true,
+            startedAt: start?.startedAt ?? this.now().toISOString(),
+            toolUses: 0,
+            lastTool: null,
+            summary: null,
+          });
+          changed = true;
         }
         return changed ? 'now' : null;
       }
@@ -176,6 +225,7 @@ export class SubagentTracker {
   clear(): boolean {
     const had = this.byId.size > 0;
     this.byId.clear();
+    this.otherStarts.clear();
     this.backgroundIds = new Set();
     return had;
   }
