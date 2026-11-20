@@ -950,13 +950,30 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname, activeProjectId]);
 
-  // Défilement vers la ligne courante, une fois par chemin, quand elle est hors de vue.
+  // Défilement vers la ligne courante, une fois par chemin, quand elle est hors de vue — seulement quand on arrive
+  // d'ailleurs (onglet, recherche, notification, lien). Un clic dans la sidebar ne la fait jamais défiler : la ligne
+  // cliquée est sous les yeux, et une carte qui se déplie au clic ne doit pas faire sauter la liste.
   const scrolledFor = useRef<string | null>(null);
+  const clickedIn = useRef<string | null>(null);
+  const onSidebarClick = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest('a[href]');
+    const to = a ? new URL((a as HTMLAnchorElement).href, window.location.href).pathname : null;
+    clickedIn.current = to && to !== location.pathname ? to : null;
+  };
   useEffect(() => {
     if (!data || scrolledFor.current === location.pathname) return;
     scrolledFor.current = location.pathname;
+    if (clickedIn.current === location.pathname) {
+      clickedIn.current = null;
+      return;
+    }
+    clickedIn.current = null;
     const root = explorerRef.current;
-    const target = root?.querySelector<HTMLElement>('.wb-chip.active, .wb-session-row.active, .wb-ws.active, .wb-row.active');
+    // La ligne ou la puce la plus précise d'abord : la carte active (.wb-ws.active) englobe ses lignes et la précède
+    // dans le document, et viser toute la carte la recentrerait dès qu'elle dépasse un peu.
+    const target =
+      root?.querySelector<HTMLElement>('.wb-chip.active, .wb-session-row.active, .wb-row.active') ??
+      root?.querySelector<HTMLElement>('.wb-ws.active > .wb-ws-head');
     if (!root || !target) return;
     const r = root.getBoundingClientRect();
     const t = target.getBoundingClientRect();
@@ -971,7 +988,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   };
 
   return (
-    <aside className="wb-sidebar">
+    <aside className="wb-sidebar" onClickCapture={onSidebarClick}>
       <div className="wb-brand">
         {projectWindowId ? (
           <Link to={`/projects/${projectWindowId}`} title="Fenêtre dédiée au projet : tableau de bord du projet" className="wb-brand-project">
