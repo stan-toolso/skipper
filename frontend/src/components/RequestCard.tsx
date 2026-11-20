@@ -5,6 +5,7 @@ import type { HumanRequest } from '../graphql/operations';
 import { describeTool, editableRules, parseRuleLines, requestNote, suggestedModes } from '../lib/humanize';
 import { useRequestAnswer } from '../lib/requestAnswer';
 import Markdown from './Markdown';
+import { SecretsButton, secretsPayload } from './SecretsRequest';
 
 interface Question {
   question: string;
@@ -166,7 +167,20 @@ function ApprovalForm({ request, onAnswer, busy }: { request: HumanRequest; onAn
   );
 }
 
-const typeLabels: Record<string, string> = { permission: 'Autorisation', question: 'Question', input: 'Saisie', approval: 'Accord' };
+const typeLabels: Record<string, string> = { permission: 'Autorisation', question: 'Question', input: 'Saisie', approval: 'Accord', secrets: 'Secrets' };
+
+/** Demande de secrets : la saisie se fait dans une modale, les valeurs vont directement dans le coffre. */
+function SecretsForm({ request, busy }: { request: HumanRequest; busy: boolean }) {
+  const p = secretsPayload(request);
+  return (
+    <>
+      <div className="small mb-2">
+        {p.fields.map((f) => f.label).join(', ')} → élément <span className="font-monospace">{p.item}</span> du coffre{p.itemId ? ' (mise à jour)' : ''}. L'agent ne voit jamais les valeurs.
+      </div>
+      <SecretsButton request={request} disabled={busy} />
+    </>
+  );
+}
 
 /** Carte d'une demande d'intervention humaine, avec le formulaire de réponse adapté à son type. */
 export default function RequestCard({ request, showSession = false }: { request: HumanRequest; showSession?: boolean }) {
@@ -194,7 +208,8 @@ export default function RequestCard({ request, showSession = false }: { request:
         {request.type === 'permission' && <PermissionForm request={request} onAnswer={onAnswer} busy={busy} />}
         {request.type === 'question' && <QuestionForm request={request} onAnswer={onAnswer} busy={busy} />}
         {request.type === 'approval' && <ApprovalForm request={request} onAnswer={onAnswer} busy={busy} />}
-        {request.type !== 'permission' && request.type !== 'question' && request.type !== 'approval' && <InputForm onAnswer={onAnswer} busy={busy} />}
+        {request.type === 'secrets' && <SecretsForm request={request} busy={busy} />}
+        {request.type !== 'permission' && request.type !== 'question' && request.type !== 'approval' && request.type !== 'secrets' && <InputForm onAnswer={onAnswer} busy={busy} />}
         {error && (
           <Alert variant="danger" className="mt-2 mb-0 py-1 small">
             {error}

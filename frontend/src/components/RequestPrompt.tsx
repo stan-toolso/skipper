@@ -4,6 +4,7 @@ import { describeTool, editableRules, parseRuleLines, requestNote, suggestedMode
 import { canAutoFocus } from '../lib/device';
 import { promptTakesKey, useRequestAnswer } from '../lib/requestAnswer';
 import Markdown from './Markdown';
+import { SecretsButton, secretsPayload } from './SecretsRequest';
 
 interface Option {
   label: string;
@@ -220,6 +221,25 @@ function ApprovalPrompt({ request, answer, busy }: { request: HumanRequest; answ
   );
 }
 
+/** Demande de secrets (vault.request_secrets) : la saisie se fait dans une modale, ouverte d'office la première fois. */
+function SecretsPrompt({ request, busy }: { request: HumanRequest; busy: boolean }) {
+  const first = useContext(KeyboardTurn);
+  const p = secretsPayload(request);
+  return (
+    <div className="cc-prompt">
+      <div className="cc-prompt-title">L'agent vous demande {p.fields.length > 1 ? 'des secrets' : 'un secret'}</div>
+      <div className="cc-prompt-body">
+        {p.fields.map((f) => f.label).join(', ')} → coffre, élément « {p.item} »{p.itemId ? ' (mise à jour)' : ''}
+      </div>
+      {request.message && <Markdown className="cc-prompt-body" text={request.message} />}
+      <div className="cc-desc">Les valeurs vont directement dans le coffre : l'agent ne les voit jamais. Ne les collez pas dans la conversation.</div>
+      <div className="mt-2">
+        <SecretsButton request={request} autoOpen={first} disabled={busy} />
+      </div>
+    </div>
+  );
+}
+
 function InputPrompt({ request, answer, busy }: { request: HumanRequest; answer: (r: Record<string, unknown>) => void; busy: boolean }) {
   const [text, setText] = useState('');
   return (
@@ -251,11 +271,13 @@ export default function RequestPrompt({ request, keyboard = true }: { request: H
         <QuestionPrompt request={request} answer={answer} busy={busy} />
       ) : request.type === 'approval' ? (
         <ApprovalPrompt request={request} answer={answer} busy={busy} />
+      ) : request.type === 'secrets' ? (
+        <SecretsPrompt request={request} busy={busy} />
       ) : (
         <InputPrompt request={request} answer={answer} busy={busy} />
       )}
       <div className="cc-hint">
-        {error ? <span className="cc-red">{error}</span> : <span className="cc-hint-text">Cliquez sur une réponse, ou tapez son numéro</span>}
+        {error ? <span className="cc-red">{error}</span> : request.type === 'secrets' ? <span className="cc-hint-text">Ignorer : l'agent apprend que vous n'avez pas fourni les secrets</span> : <span className="cc-hint-text">Cliquez sur une réponse, ou tapez son numéro</span>}
         <button type="button" className="cc-btn" disabled={busy} onClick={cancel}>
           Ignorer cette demande
         </button>

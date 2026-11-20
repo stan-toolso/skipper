@@ -39,6 +39,7 @@ import { CHROME_FREE_TOOLS, chromePromptSummary, createChromeMcpServer } from '.
 import { chromeBrowserService } from '../../chrome/service.js';
 import { previewsEnabled } from '../../previews/hosts.js';
 import { createVaultMcpServer, type VaultApproval } from '../../vault/mcp.js';
+import type { CreateRequestInput } from '../../requests/types.js';
 import { vaultService } from '../../vault/service.js';
 import { sessionIdentityPrompt } from '../identity.js';
 import { RequestCancelledError } from '../../requests/service.js';
@@ -281,7 +282,7 @@ export class ClaudeProvider implements SessionProvider {
     const browserEnabled = !chat && !review && Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
     // Portée du coffre pour cette session : éléments du projet, reliés au projet, reliés par le propriétaire pour ses sessions.
     const vaultItems = review ? [] : await vaultService.agentItems(ctx.project.id, rightsHolderId);
-    const vaultTools = vaultItems.some((i) => i.kind !== 'google');
+    // Le serveur `vault` est toujours offert (hors relecture) : même sans élément, l'agent peut demander des secrets (request_secrets).
     const vaultBrowser = vaultItems.some((i) => i.kind === 'website' || i.kind === 'secret');
     // Comptes Google de la portée (Gmail, Drive) : serveur MCP `google`, lectures libres, écritures soumises à autorisation.
     const googleAccounts = review ? [] : await googleAccountService.accountsFor(ctx.project.id, rightsHolderId);
@@ -373,6 +374,8 @@ export class ClaudeProvider implements SessionProvider {
         return projectRules && ruleUsage.rules.some((r) => r.toolName === toolName && r.ruleContent?.trim().toLowerCase() === key.toLowerCase());
       },
       approve: (approval: VaultApproval) => this.approveVaultUse(ctx, ruleUsage, vaultApprovals, approval),
+      // Saisie de secrets par une personne (request_secrets) : une demande ordinaire, réglée par la mutation provideSecrets.
+      ask: (input: CreateRequestInput) => ctx.ask(input),
     };
     const disposeAll = async () => {
       if (browserServer) liveBrowserService.unregister(ctx.session.id);
@@ -404,7 +407,7 @@ export class ClaudeProvider implements SessionProvider {
         ...(scope || channels.length ? { conversations: createConversationsMcpServer(ctx.project, ctx.session.id, agent ? agent.name : ctx.session.name, scope) } : {}),
         ...(projectAgents.length ? { agents: createAgentsMcpServer(ctx.project, ctx.session.id) } : {}),
         ...(scopedAgents.length ? { agents: createAgentsMcpServer(ctx.project, ctx.session.id, scope) } : {}),
-        ...(vaultTools ? { vault: createVaultMcpServer(vaultContext) } : {}),
+        vault: createVaultMcpServer(vaultContext),
         worksessions: createWorksessionsMcpServer(ctx.project, ctx.session.id, scope),
         sessions: createSessionsMcpServer(ctx.project, ctx.session.id, scope),
         // Fichiers d'environnement du projet : un chat n'a pas de dossier de travail où les écrire.

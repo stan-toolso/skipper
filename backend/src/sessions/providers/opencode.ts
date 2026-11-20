@@ -39,6 +39,7 @@ import { conversationService, linkedThreadsPrompt } from '../../conversations/se
 import { trackedPullRequestService } from '../../pullRequests/service.js';
 import { taskService } from '../../tasks/service.js';
 import { createVaultMcpServer, type VaultApproval } from '../../vault/mcp.js';
+import type { CreateRequestInput } from '../../requests/types.js';
 import { vaultService } from '../../vault/service.js';
 import { createWorksessionsMcpServer } from '../../worksessions/mcp.js';
 import { createEnvMcpServer } from '../../envFiles/mcp.js';
@@ -307,7 +308,6 @@ class OpencodeRun {
     // Même portée qu'une session Claude : coffre, comptes Google, contexte, tâches, prompt système.
     const browserEnabled = Boolean((ctx.project.runnerConfig as { browser?: boolean } | null)?.browser);
     const vaultItems = await vaultService.agentItems(ctx.project.id, ctx.session.takenOverById ?? this.ownerId);
-    const vaultTools = vaultItems.some((i) => i.kind !== 'google');
     const vaultBrowser = vaultItems.some((i) => i.kind === 'website' || i.kind === 'secret');
     const googleAccounts = await googleAccountService.accountsFor(ctx.project.id, ctx.session.takenOverById ?? this.ownerId);
     // Session jouée par un agent de projet : son identité, sa bibliothèque propre (et celle du projet s'il en hérite), ses comptes prêtés.
@@ -352,12 +352,13 @@ class OpencodeRun {
         return projectRules && this.ruleUsage.rules.some((r) => r.toolName === toolName && r.ruleContent?.trim().toLowerCase() === key.toLowerCase());
       },
       approve: (approval: VaultApproval) => this.approveVaultUse(approval),
+      ask: (input: CreateRequestInput) => ctx.ask(input),
     };
     const factories: Record<string, McpFactory> = {
       context: () => createContextMcpServer(ctx.project, ctx.session.id, { agentLibraries, defaultAgentId: agent?.id ?? null }),
       tasks: () => createTasksMcpServer(ctx.project, ctx.session.id, agent ? agent.name : ctx.session.name, undefined, { approveMerge: sessionMergeApprover(ctx) }),
       ...(channels.length ? { conversations: () => createConversationsMcpServer(ctx.project, ctx.session.id, agent ? agent.name : ctx.session.name) } : {}),
-      ...(vaultTools ? { vault: () => createVaultMcpServer(vaultContext) } : {}),
+      vault: () => createVaultMcpServer(vaultContext),
       worksessions: () => createWorksessionsMcpServer(ctx.project, ctx.session.id),
       sessions: () => createSessionsMcpServer(ctx.project, ctx.session.id),
       env: () => createEnvMcpServer({ project: ctx.project, sessionId: ctx.session.id, ownerId: this.ownerId, worksessionId: ctx.session.worksessionId ?? null }),

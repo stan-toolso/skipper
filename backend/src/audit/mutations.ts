@@ -101,6 +101,12 @@ export const AUDITED: Record<string, MutationAudit> = {
   runScheduleNow: { action: 'schedule.run', lookup: ['schedule', 'id'] },
   // Demandes : qui a autorisé quoi.
   answerRequest: { action: 'request.answer', lookup: ['request', 'id'], details: (a, r) => ({ type: r?.type, sessionId: r?.sessionId, ...requestAnswerDetails(a.response) }) },
+  // Demande de secrets : jamais les valeurs, seulement les clés saisies et l'élément du coffre touché.
+  provideSecrets: {
+    action: 'request.secrets',
+    lookup: ['request', 'requestId'],
+    details: (a, r) => ({ sessionId: r?.sessionId, keys: (a.input?.values ?? []).map((v: { key?: string }) => v.key), destination: a.input?.destination ?? null, item: r?.response?.item ?? null }),
+  },
   cancelRequest: { action: 'request.cancel', lookup: ['request', 'id'], details: (_a, r) => ({ type: r?.type, sessionId: r?.sessionId }) },
   // Tâches (création et changement de statut sont inscrits par le service des tâches, qui sert aussi les agents).
   deleteTask: { action: 'task.delete', lookup: ['task', 'id'] },

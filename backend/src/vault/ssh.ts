@@ -111,7 +111,7 @@ export interface ExecResult {
 }
 
 /** Exécute une commande ; la sortie est tronquée au-delà de `maxBytes` par flux. */
-export function exec(session: SshSession, command: string, options: { timeoutMs?: number; maxBytes?: number } = {}): Promise<ExecResult> {
+export function exec(session: SshSession, command: string, options: { timeoutMs?: number; maxBytes?: number; stdin?: string } = {}): Promise<ExecResult> {
   const maxBytes = options.maxBytes ?? 64 * 1024;
   const started = Date.now();
   return new Promise((resolve, reject) => {
@@ -138,6 +138,8 @@ export function exec(session: SshSession, command: string, options: { timeoutMs?
             reject(new AppError(`Commande interrompue après ${Math.round(options.timeoutMs! / 1000)} s`, 'SSH_TIMEOUT'));
           }, options.timeoutMs)
         : null;
+      // Entrée standard fournie par le serveur (secret du coffre) : écrite puis fermée, jamais vue de l'agent.
+      if (options.stdin !== undefined) stream.end(options.stdin);
       stream.on('data', (chunk: Buffer) => (stdout = append(stdout, chunk)));
       stream.stderr.on('data', (chunk: Buffer) => (stderr = append(stderr, chunk)));
       stream.on('close', (code: number | null, signal: string | null) => {
@@ -155,6 +157,29 @@ export function upload(session: SshSession, localPath: string, remotePath: strin
       sftp.fastPut(localPath, remotePath, (e) => {
         sftp.end();
         e ? reject(new AppError(`Envoi impossible : ${e.message}`, 'SSH')) : resolve();
+      });
+    });
+  });
+}
+
+/** Écrit un contenu (secret du coffre) dans un fichier distant, créé ou remplacé avec les droits `mode` (ex. 0o600). */
+export function writeFile(session: SshSession, remotePath: string, content: string, mode: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    session.client.sftp((err, sftp) => {
+      if (err) return reject(new AppError(`SFTP indisponible : ${err.message}`, 'SSH'));
+      // Un fichier existant garde ses droits à l'ouverture : ils sont resserrés avant d'y écrire (erreur ignorée s'il
+      // n'existe pas encore), puis imposés une fois le contenu écrit.
+      sftp.chmod(remotePath, mode, () => {
+        sftp.writeFile(remotePath, content, { mode }, (e) => {
+          if (e) {
+            sftp.end();
+            return reject(new AppError(`Écriture impossible : ${e.message}`, 'SSH'));
+          }
+          sftp.chmod(remotePath, mode, (c) => {
+            sftp.end();
+            c ? reject(new AppError(`Droits du fichier impossibles à fixer : ${c.message}`, 'SSH')) : resolve();
+          });
+        });
       });
     });
   });

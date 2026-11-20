@@ -483,12 +483,31 @@ authentifié par le serveur (`X-Auth-Token`) ; en lecture seule, `GET` seulement
 (`/iam/v1alpha1/api-keys/<clé>` puis l'application ou l'utilisateur), mémorise le principal constaté et complète
 l'organisation et le projet par défaut s'ils manquent.
 
-**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`,
-`sql_query`, `sql_schema`, `http_request`, `aws_run`, `scw_run`, `scw_api`, `browser_fill`. Le backend déchiffre, exécute, tronque, et
+**Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `ssh_write_secret`,
+`sql_query`, `sql_schema`, `http_request`, `aws_run`, `scw_run`, `scw_api`, `browser_fill`, `request_secrets`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
 mémorisé par élément pour la session ou le projet.
+
+**Secrets demandés par un agent** (`backend/src/vault/secretRequests.ts`, `frontend/src/components/SecretsRequest.tsx`).
+Quand l'agent a besoin d'un secret que détient la personne (clé SSH à installer, jeton d'API), `request_secrets(item,
+reason, fields)` pose une demande de type `secrets` : une **modale** s'ouvre d'office sur la page de la session (bouton
+« Saisir les secrets… » sinon, aussi depuis « À traiter »), un champ par secret (masqué ; plusieurs lignes et « Charger
+un fichier » pour une clé ou un certificat). Les valeurs partent par la mutation `provideSecrets` directement dans un
+élément **secret** du coffre, créé dans le coffre personnel de la personne (ouvert à ses sessions du projet ; seulement
+si la session tourne avec ses droits) ou dans celui du projet (administrateurs), ou mis à jour s'il existe déjà dans la
+portée de la session (champs saisis remplacés, autres gardés ; permission `gérer`). La demande est réglée avec le seul
+nom de l'élément et les clés des champs : aucune valeur dans la table des demandes, le transcript, le journal d'audit
+ni la réponse de l'agent ; `answerRequest` refuse une demande de ce type. L'agent s'en sert ensuite sans la voir :
+`ssh_write_secret(item, secret: "élément.champ", remote_path, mode)` l'écrit par SFTP dans un fichier du serveur (600 par
+défaut, droits resserrés avant écriture, saut de ligne final pour une valeur sur plusieurs lignes), et `ssh_run` accepte
+`stdin_secret: "élément.champ"` pour la passer sur l'entrée standard d'une commande (`docker login --password-stdin`,
+`sudo tee …`) ; toute occurrence de la valeur (et de chacune de ses lignes) est masquée dans la sortie. Ces usages
+passent par la porte d'approbation du secret **et** du serveur (« Demander mon accord à chaque usage », coché par défaut
+dans la modale). Le masquage protège d'une fuite accidentelle dans la conversation, pas d'un agent qui voudrait
+contourner (encodage, fichier relu) : l'accord à chaque usage reste le garde-fou. Le serveur `vault` est désormais
+offert à toute session (hors relecture), même sans élément, pour que `request_secrets` soit disponible.
 
 **Migration.** Les anciennes tables `connections` et `project_google_accounts` sont reprises dans
 `vault_items` (mêmes identifiants, même nom ; comptes Google nommés `google-<adresse>`), les règles

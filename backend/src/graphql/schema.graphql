@@ -1026,6 +1026,19 @@ type ProjectVaultItem {
   forAgents: Boolean!
 }
 
+input SecretValueInput {
+  key: String!
+  value: String!
+}
+
+input ProvideSecretsInput {
+  values: [SecretValueInput!]!
+  "Nouvel élément : coffre du projet (administrateurs) ou coffre personnel ouvert à ses sessions du projet. Défaut : personnel si la session tourne avec vos droits."
+  destination: String
+  "Demander l'accord de la personne à chaque usage par un agent (défaut : oui pour un nouvel élément, inchangé sinon)."
+  requireApproval: Boolean
+}
+
 input VaultFieldInput {
   key: String!
   label: String
@@ -3581,6 +3594,11 @@ type Mutation {
   answerRequest(id: ID!, response: JSON!): Request!
   "Abandonne une demande : l'agent reçoit un refus."
   cancelRequest(id: ID!): Request!
+  """
+  Répond à une demande de secrets (outil vault.request_secrets) : les valeurs sont rangées, chiffrées, dans un élément
+  « secret » du coffre (créé ou mis à jour) ; la demande est réglée sans aucune valeur, que l'agent ne voit jamais.
+  """
+  provideSecrets(requestId: ID!, input: ProvideSecretsInput!): Request!
 
   markNotificationRead(id: ID!): Notification!
   "Renvoie le nombre de notifications marquées ; projectId : celles de ce projet seulement."

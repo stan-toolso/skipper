@@ -1118,7 +1118,10 @@ export const vaultService = {
   /** Description des éléments du coffre pour le prompt système d'une session (hors comptes Google). */
   promptSummary(items: VaultItem[], project: Pick<Project, 'runnerConfig'>): string {
     const list = items.filter((i) => i.kind !== 'google');
-    if (!list.length) return '';
+    const ask =
+      "Besoin d'un secret que détient la personne (clé privée, jeton, mot de passe) : appelle `request_secrets` (serveur `vault`) ; elle le saisit dans une modale et il est rangé dans un élément « secret » du coffre, sans que tu voies la valeur. Ne lui demande jamais de coller un secret dans la conversation.";
+    if (!list.length) return ask;
+    const hasSsh = list.some((i) => i.kind === 'ssh');
     const browser = Boolean((project.runnerConfig as { browser?: boolean } | null)?.browser);
     const byId = new Map(list.map((i) => [i.id, i]));
     const lines = list.map((i) => {
@@ -1129,15 +1132,17 @@ export const vaultService = {
           const s = i.settings as WebsiteSettings | SecretSettings;
           const publics = s.fields.filter((f) => !f.secret).map((f) => `${f.label} : ${JSON.stringify(f.value ?? '')}`);
           const secrets = s.fields.filter((f) => f.secret).map((f) => `${f.label} (clé \`${f.key}\`)`);
-          const how = browser
-            ? `dans le navigateur, clique le champ du formulaire (\`browser_click\`) puis appelle \`browser_fill\` avec l'élément et la clé du champ : le serveur y saisit la valeur, que tu ne vois jamais`
-            : "le navigateur headless n'est pas activé sur ce projet : les secrets ne sont pas utilisables";
+          const ways = [
+            browser ? "dans le navigateur, clique le champ du formulaire (`browser_click`) puis appelle `browser_fill` avec l'élément et la clé du champ : le serveur y saisit la valeur, que tu ne vois jamais" : null,
+            hasSsh ? `sur un serveur SSH du coffre, \`ssh_write_secret\` (fichier) ou \`stdin_secret\` de \`ssh_run\` (entrée standard), référence \`${i.name}.<clé>\`` : null,
+          ].filter(Boolean);
+          const how = ways.length ? ways.join(' ; ') : "ni navigateur headless ni serveur SSH dans ce projet : les secrets n'y sont pas utilisables";
           return `- \`${i.name}\` : ${i.kind === 'website' ? `site web ${(s as WebsiteSettings).url}` : 'secret'}${desc}. ${publics.length ? `Champs connus : ${publics.join(', ')}. ` : ''}${secrets.length ? `Secrets : ${secrets.join(', ')}. ` : ''}Accès : ${how}.`;
         }
         case 'ssh': {
           const s = i.settings as SshSettings;
           const policy = i.commandAllowlist.length ? ` ; commandes limitées aux préfixes ${i.commandAllowlist.map((p) => `\`${p}\``).join(', ')}, sans enchaînement ni transfert de fichiers` : '';
-          return `- \`${i.name}\` : serveur SSH ${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ''}${desc}. Outils \`ssh_run\`, \`ssh_upload\`, \`ssh_download\`${policy}.`;
+          return `- \`${i.name}\` : serveur SSH ${s.username}@${s.host}${s.port !== 22 ? `:${s.port}` : ''}${desc}. Outils \`ssh_run\`, \`ssh_upload\`, \`ssh_download\`, \`ssh_write_secret\`${policy}.`;
         }
         case 'api': {
           const s = i.settings as ApiSettings;
@@ -1167,6 +1172,7 @@ export const vaultService = {
     return [
       "Le coffre du projet donne accès à des systèmes externes avec les outils du serveur MCP `vault` (le serveur détient les identifiants : tu ne les vois jamais et ne dois pas chercher à les obtenir) ou, pour les sites web et les secrets, par le navigateur headless. Un appel peut être soumis à l'approbation d'un humain. Désigne un élément par son nom (paramètre `item`).",
       ...lines.filter(Boolean),
+      ask,
     ].join('\n');
   },
 

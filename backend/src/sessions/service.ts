@@ -766,7 +766,8 @@ export const sessionService = {
           const response = await requestService.ask(id, input, signal, (request) => {
             void notificationService.notify({
               type: 'request.created',
-              title: input.type === 'question' ? `Question de l'agent « ${session.name} »` : `« ${session.name} » attend votre autorisation`,
+              title:
+                input.type === 'question' ? `Question de l'agent « ${session.name} »` : input.type === 'secrets' ? `« ${session.name} » vous demande des secrets` : `« ${session.name} » attend votre autorisation`,
               message: input.title,
               link: `/sessions/${id}`,
               projectId: session.projectId,

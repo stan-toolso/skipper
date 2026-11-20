@@ -602,6 +602,18 @@ const requests = [
     response: null, answeredBy: null, createdAt: ago(6), answeredAt: null,
   },
   {
+    __typename: 'Request', id: 'r-secrets-contact', session: S.contact, type: 'secrets', status: 'PENDING', title: 'Saisir le secret « cle-deploiement » (Clé privée SSH, Jeton Brevo)',
+    message: 'Pour installer la clé de déploiement sur le serveur et configurer l’envoi des e-mails du formulaire.',
+    payload: {
+      item: 'cle-deploiement', itemId: null, description: null, projectId: P.site.id, personalUserId: U.me.id,
+      fields: [
+        { key: 'private_key', label: 'Clé privée SSH', hint: 'Format OpenSSH (-----BEGIN OPENSSH PRIVATE KEY-----)', multiline: true },
+        { key: 'brevo_token', label: 'Jeton Brevo', hint: 'Paramètres › Clés API de Brevo', multiline: false },
+      ],
+    },
+    response: null, answeredBy: null, createdAt: ago(2), answeredAt: null,
+  },
+  {
     __typename: 'Request', id: 'r-old', session: S.stripe, type: 'permission', status: 'ANSWERED', title: 'Bash : npm test', message: null,
     payload: { toolName: 'Bash', input: { command: 'npm test' } }, response: { behavior: 'allow' }, answeredBy: U.me, createdAt: ago(60 * 23), answeredAt: ago(60 * 23 - 1),
   },
