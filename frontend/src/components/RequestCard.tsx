@@ -175,7 +175,8 @@ function SecretsForm({ request, busy }: { request: HumanRequest; busy: boolean }
   return (
     <>
       <div className="small mb-2">
-        {p.fields.map((f) => f.label).join(', ')} → élément <span className="font-monospace">{p.item}</span> du coffre{p.itemId ? ' (mise à jour)' : ''}. L'agent ne voit jamais les valeurs.
+        {p.fields.map((f) => f.label).join(', ')} · <span className="font-monospace">{p.item}</span>
+        {p.ephemeral ? ' · pour cette session' : p.itemId ? ' · mise à jour du coffre' : ''}. L'agent ne voit jamais les valeurs.
       </div>
       <SecretsButton request={request} disabled={busy} />
     </>

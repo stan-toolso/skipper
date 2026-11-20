@@ -68,6 +68,7 @@ import { instanceRegistry } from './instances/registry.js';
 import { instanceBus } from './instances/bus.js';
 import { ctoTimeService } from './billing/ctoTime.js';
 import { leadership, type LeaderJob } from './instances/leadership.js';
+import { sessionSecretService } from './vault/sessionSecrets.js';
 import { handleInternalRoute } from './instances/internalRoute.js';
 import { handlePreviewOpenRoute, handlePreviewRoute, previewUpgrade } from './previews/proxy.js';
 import { previewRepository } from './previews/repository.js';
@@ -214,6 +215,7 @@ async function main() {
     { name: 'consolidation du temps CTO', start: () => ctoTimeService.start(), stop: () => ctoTimeService.stop() },
     { name: 'rafraîchissement des artefacts de données', start: () => artifactDataService.start(), stop: () => artifactDataService.stop() },
     { name: 'réveil des tâches en attente', start: () => taskWaker.start(), stop: () => taskWaker.stop() },
+    { name: 'purge des secrets de session', start: () => sessionSecretService.start(), stop: () => sessionSecretService.stop() },
     // Après le guetteur des relectures : écoute leurs rapports pour fusionner dès qu'une relecture est favorable.
     { name: 'politique de livraison', start: () => deliveryPolicyService.start(), stop: () => deliveryPolicyService.stop() },
     // Rattrapage des tâches qualité rattachées aux livraisons (une fois, à la prise du rôle de meneuse).

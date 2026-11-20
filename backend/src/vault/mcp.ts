@@ -1,5 +1,12 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import { execFile } from 'node:child_process';
+import { appendFile, chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
+import { envFileService } from '../envFiles/service.js';
+import { runner } from '../runners/index.js';
+import type { IsolatedResult } from '../runners/types.js';
+import { quoteDotenv } from '../envFiles/template.js';
 import { z } from 'zod';
 import { browserFill } from '../browser/fill.js';
 import { AppError } from '../errors.js';
@@ -14,6 +21,7 @@ import { kindLabels, type ApiSettings, type AwsSettings, type PostgresSettings, 
 import { describeField, siteAllows } from './website.js';
 import { RequestCancelledError } from '../requests/service.js';
 import type { CreateRequestInput } from '../requests/types.js';
+import { sessionSecretService } from './sessionSecrets.js';
 import { normalizeRequestedFields, parseSecretRef, prepareSecretsRequest, redactSecret, SECRETS_REQUEST, type SecretsResponse } from './secretRequests.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
@@ -48,11 +56,57 @@ export interface VaultMcpContext {
   ask?(input: CreateRequestInput): Promise<Record<string, unknown>>;
 }
 
+/** Secret résolu pour un usage par le serveur (voir `secretOf`). */
+interface ResolvedSecret {
+  ref: string;
+  value: string;
+  /** La valeur peut-elle aboutir dans l'environnement de la session (fichier .env) ? Élément du coffre : option envExport. */
+  envExport: boolean;
+  check(tool: string, summary: string, input: Record<string, unknown>, always?: boolean): Promise<void>;
+  use<T>(action: string, summary: string, fn: () => Promise<T>): Promise<T>;
+}
+
 /** Chemin local résolu dans le workspace de la session, sans en sortir. */
 function localPath(cwd: string, p: string): string {
   const resolved = path.resolve(cwd, p);
   if (resolved !== cwd && !resolved.startsWith(cwd + path.sep)) throw new AppError(`Le chemin local doit rester dans le dossier de travail (${cwd})`);
   return resolved;
+}
+
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+/** Variables que run_with_secrets ne laisse pas remplacer (conteneur, shell). */
+const RESERVED_ENV = new Set(['HOME', 'PATH', 'SHELL', 'USER', 'PWD', 'LD_PRELOAD', 'LD_LIBRARY_PATH']);
+
+/**
+ * Ajoute ou remplace `NAME=valeur` (citée si besoin) dans un fichier dotenv du dossier de travail (droits 600), et
+ * l'exclut de git s'il ne l'est pas déjà (`info/exclude` du dépôt). Renvoie vrai si le fichier est exclu de git.
+ */
+export async function writeEnvLine(cwd: string, rel: string, name: string, value: string): Promise<boolean> {
+  const file = path.join(cwd, rel);
+  await mkdir(path.dirname(file), { recursive: true });
+  const before = await readFile(file, 'utf8').catch(() => '');
+  const line = `${name}=${quoteDotenv(value)}`;
+  const re = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=.*$`, 'm');
+  const next = re.test(before) ? before.replace(re, () => line) : `${before}${before && !before.endsWith('\n') ? '\n' : ''}${line}\n`;
+  await writeFile(file, next, { mode: 0o600 });
+  await chmod(file, 0o600);
+  return excludeFromGit(cwd, rel);
+}
+
+async function excludeFromGit(cwd: string, rel: string): Promise<boolean> {
+  const git = (args: string[]) => promisify(execFile)('git', ['-C', cwd, ...args]);
+  try {
+    await git(['rev-parse', '--git-dir']);
+  } catch {
+    return false; // pas un dépôt git : rien à exclure
+  }
+  if (await git(['check-ignore', '-q', '--', rel]).then(() => true, () => false)) return true;
+  const exclude = path.resolve(cwd, (await git(['rev-parse', '--git-path', 'info/exclude'])).stdout.trim());
+  await mkdir(path.dirname(exclude), { recursive: true });
+  const current = await readFile(exclude, 'utf8').catch(() => '');
+  const entry = `/${rel.split(path.sep).join('/')}`;
+  if (!current.split('\n').includes(entry)) await appendFile(exclude, `${current && !current.endsWith('\n') ? '\n' : ''}${entry}\n`);
+  return true;
 }
 
 function describe(i: VaultItem, byId: Map<string, VaultItem>): string {
@@ -158,21 +212,73 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
     await ctx.approve({ toolName, key: item.name, title: `Autoriser ${tool} sur « ${item.name} »`, message: summary, input: { item: item.name, ...input }, projectRules });
   };
 
-  /** Valeur d'un champ d'un secret (ou d'un site web) désigné par « élément.champ », pour un usage par le serveur seul. */
-  const secretOf = async (ref: string) => {
+  /**
+   * Secret désigné par « élément.champ » (coffre : secret ou site web) ou « session:nom.champ » (secret saisi pour cette
+   * session seulement, vault/sessionSecrets.ts), pour un usage par le serveur seul. `check` passe par la porte
+   * d'approbation (ou l'impose avec `always`), `use` journalise l'usage (coffre et session).
+   */
+  const secretOf = async (ref: string): Promise<ResolvedSecret> => {
     const r = parseSecretRef(ref);
+    if (r.session) {
+      const secret = await sessionSecretService.find(ctx.sessionId, r.item);
+      if (!secret) {
+        const names = (await sessionSecretService.list(ctx.sessionId)).map((x) => x.name);
+        throw new AppError(`Pas de secret de session « ${r.item} »${names.length ? ` (disponibles : ${names.join(', ')})` : ''} : demande-le avec request_secrets (il expire 24 h après sa saisie)`);
+      }
+      const field = secret.fields.find((f) => f.key === r.field);
+      if (!field) throw new AppError(`Le secret de session « ${secret.name} » n'a pas de champ « ${r.field} » (champs : ${secret.fields.map((f) => f.key).join(', ')})`);
+      const value = (await sessionSecretService.values(ctx.sessionId, secret.name))[field.key];
+      if (!value) throw new AppError(`Le champ « ${r.field} » du secret de session « ${secret.name} » est vide`);
+      const key = `session:${secret.name}`;
+      const refText = `${key}.${field.key}`;
+      return {
+        ref: refText,
+        value,
+        envExport: true,
+        check: async (tool, summary, input, always = false) => {
+          if (!secret.requireApproval && !always) return;
+          const toolName = `mcp__vault__${tool}`;
+          if (await ctx.remembered(toolName, key, false)) return;
+          await ctx.approve({ toolName, key, title: `Autoriser ${tool} avec le secret de session « ${secret.name} »`, message: summary, input: { item: key, secret: refText, ...input }, projectRules: false });
+        },
+        use: async (action, summary, fn) => {
+          const started = Date.now();
+          try {
+            const result = await fn();
+            await ctx.emit('connection', { connection: key, kind: 'session_secret', action, summary, ok: true, durationMs: Date.now() - started });
+            return result;
+          } catch (err) {
+            await ctx.emit('connection', { connection: key, kind: 'session_secret', action, summary, ok: false, error: (err as Error).message, durationMs: Date.now() - started });
+            throw err;
+          }
+        },
+      };
+    }
     const item = await byName(r.item);
     if (item.kind !== 'secret' && item.kind !== 'website') throw new AppError(`« ${item.name} » est un élément ${kindLabels[item.kind]} : seuls les secrets et les sites web ont des champs`);
     const field = vaultService.fieldCredentials(item).fields.find((f) => f.key === r.field);
     if (!field) throw new AppError(`« ${item.name} » n'a pas de champ « ${r.field} » (champs : ${(item.settings as SecretSettings).fields.map((f) => f.key).join(', ')})`);
     if (!field.value) throw new AppError(`Le champ « ${r.field} » de « ${item.name} » est vide`);
-    return { item, field, ref: `${item.name}.${field.key}`, value: field.value };
+    const refText = `${item.name}.${field.key}`;
+    return {
+      ref: refText,
+      value: field.value,
+      envExport: item.envExport,
+      check: async (tool, summary, input, always = false) => {
+        if (!always) return gate(item, tool, summary, input);
+        const toolName = `mcp__vault__${tool}`;
+        const projectRules = item.ownerProjectId === ctx.project.id;
+        if (await ctx.remembered(toolName, item.name, projectRules)) return;
+        await ctx.approve({ toolName, key: item.name, title: `Autoriser ${tool} avec « ${item.name} »`, message: summary, input: { item: item.name, secret: refText, ...input }, projectRules });
+      },
+      use: async (action, summary, fn) => audited(item, action, summary, async () => ({ result: await fn() })),
+    };
   };
 
   return createSdkMcpServer({
     name: 'vault',
     version: '1.0.0',
-    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Un secret s'installe aussi sur un serveur SSH sans que tu le voies : \`ssh_write_secret\` (fichier) ou \`stdin_secret\` de \`ssh_run\` (entrée d'une commande). Besoin d'un secret que la personne détient (clé, jeton) : \`request_secrets\` lui ouvre une modale et le range dans le coffre ; ne lui demande jamais de le coller dans la conversation. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
+    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Un secret s'installe aussi sur un serveur SSH sans que tu le voies : \`ssh_write_secret\` (fichier) ou \`stdin_secret\` de \`ssh_run\` (entrée d'une commande). Pour un script ou une commande locale : \`run_with_secrets\` (variables d'environnement, conteneur jetable) ou, en dernier recours, \`write_env_secret\` (fichier .env du dossier de travail, avec accord). Besoin d'un secret que la personne détient (clé, jeton) : \`request_secrets\` lui ouvre une modale ; elle le range dans le coffre ou le confie à cette session seulement (référence \`session:nom.champ\`, effacé à l'archivage ou sous 24 h ; \`ephemeral: true\` pour un usage ponctuel) ; ne lui demande jamais de le coller dans la conversation. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
     tools: [
       tool('list', "Liste les éléments du coffre disponibles pour cette session, leur type, leur cible et leur politique d'accès.", {}, async () =>
         run(async () => {
@@ -193,7 +299,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
           stdin_secret: z
             .string()
             .optional()
-            .describe("Secret du coffre à passer sur l'entrée standard de la commande, sous la forme élément.champ (ex. cle-api.token) : le serveur l'y écrit sans te le montrer (ex. « docker login -u x --password-stdin », « sudo tee /etc/app/key >/dev/null »). Toute occurrence de la valeur dans la sortie est masquée."),
+            .describe("Secret à passer sur l'entrée standard de la commande, sous la forme élément.champ (coffre, ex. cle-api.token) ou session:nom.champ (secret saisi pour cette session) : le serveur l'y écrit sans te le montrer (ex. « docker login -u x --password-stdin », « sudo tee /etc/app/key >/dev/null »). Toute occurrence de la valeur dans la sortie est masquée."),
         },
         async ({ item, command, timeout_seconds, stdin_secret }) =>
           run(async () => {
@@ -201,14 +307,14 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
             vaultService.assertCommandAllowed(i, command);
             const secret = stdin_secret ? await secretOf(stdin_secret) : null;
             const summary = secret ? `${command} < ${secret.ref}` : command;
-            if (secret) await gate(secret.item, 'ssh_run', `${secret.ref} → ${i.name} : ${command}`, { secret: secret.ref, target: i.name, command });
+            if (secret) await secret.check('ssh_run', `${secret.ref} → ${i.name} : ${command}`, { target: i.name, command });
             await gate(i, 'ssh_run', summary, { command, ...(secret ? { stdin_secret: secret.ref } : {}) });
             const exec = async () =>
               audited(i, 'ssh_run', summary, async () => {
                 const r = await withSsh(i, (s) => ssh.exec(s, command, { timeoutMs: (timeout_seconds ?? 120) * 1000, ...(secret ? { stdin: secret.value } : {}) }));
                 return { result: r, note: `code ${r.exitCode ?? r.signal}` };
               });
-            const result = secret ? await audited(secret.item, 'ssh_run', `${secret.ref} → ${i.name} (entrée standard)`, async () => ({ result: await exec() })) : await exec();
+            const result = secret ? await secret.use('ssh_run', `${secret.ref} → ${i.name} (entrée standard)`, exec) : await exec();
             const shown = secret ? { ...result, stdout: redactSecret(result.stdout, secret.value), stderr: redactSecret(result.stderr, secret.value) } : result;
             return renderExec(shown);
           }),
@@ -249,7 +355,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
         "Écrit la valeur d'un secret du coffre dans un fichier d'un serveur SSH (créé ou remplacé, droits 600 par défaut), sans que tu voies la valeur : clé privée, jeton, fichier de configuration… Tes scripts sur le serveur lisent ensuite ce fichier. Le dossier doit exister.",
         {
           item: z.string().describe("Nom de l'élément SSH (serveur de destination)"),
-          secret: z.string().describe('Secret à écrire, sous la forme élément.champ (ex. cle-deploiement.private_key)'),
+          secret: z.string().describe('Secret à écrire : élément.champ (coffre, ex. cle-deploiement.private_key) ou session:nom.champ (secret saisi pour cette session)'),
           remote_path: z.string().describe('Chemin du fichier sur le serveur (ex. /home/ubuntu/.ssh/id_ed25519)'),
           mode: z.string().optional().describe('Droits octaux du fichier (défaut 600)'),
           newline: z.boolean().optional().describe('Ajouter un saut de ligne final si la valeur n\'en a pas (défaut : oui pour une valeur sur plusieurs lignes, non sinon)'),
@@ -264,12 +370,68 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
             const multiline = secret.value.includes('\n');
             const content = (newline ?? multiline) && !secret.value.endsWith('\n') ? `${secret.value}\n` : secret.value;
             const summary = `${secret.ref} → ${remote_path} (${m})`;
-            await gate(secret.item, 'ssh_write_secret', `${secret.ref} → ${i.name}:${remote_path}`, { secret: secret.ref, target: i.name, remote_path, mode: m });
+            await secret.check('ssh_write_secret', `${secret.ref} → ${i.name}:${remote_path}`, { target: i.name, remote_path, mode: m });
             await gate(i, 'ssh_write_secret', summary, { secret: secret.ref, remote_path, mode: m });
-            await audited(secret.item, 'ssh_write_secret', `${secret.field.key} → ${i.name}:${remote_path}`, async () => ({
-              result: await audited(i, 'ssh_write_secret', summary, async () => ({ result: await withSsh(i, (s) => ssh.writeFile(s, remote_path, content, parseInt(m, 8))) })),
-            }));
+            await secret.use('ssh_write_secret', `${secret.ref} → ${i.name}:${remote_path}`, () =>
+              audited(i, 'ssh_write_secret', summary, async () => ({ result: await withSsh(i, (s) => ssh.writeFile(s, remote_path, content, parseInt(m, 8))) })),
+            );
             return `Secret « ${secret.ref} » écrit dans ${i.name}:${remote_path} (droits ${m}, ${Buffer.byteLength(content)} octets). La valeur ne t'est pas communiquée.`;
+          }),
+      ),
+
+      tool(
+        'run_with_secrets',
+        "Exécute une commande shell avec des secrets en variables d'environnement, sans que tu voies leur valeur : script de déploiement, appel d'API, CLI qui lit un jeton dans l'environnement. Elle tourne dans un conteneur jetable de l'image du projet où seul ton dossier de travail est monté (dossier courant) : ni les processus ni les services du conteneur du projet, rien n'y reste après. Toute occurrence d'une valeur dans la sortie est masquée. N'écris pas les valeurs dans un fichier ni dans la sortie.",
+        {
+          command: z.string().describe('Commande shell (sh -c), ex. « ./scripts/deploy.sh » ou « curl -fsS -H \"Authorization: Bearer $API_TOKEN\" https://… »'),
+          // Pas de z.record : le convertisseur du SDK le refuse et tout le serveur disparaît (voir mcp.test.ts).
+          env: z.object({}).catchall(z.string()).describe('Variables → secret : { "API_TOKEN": "session:cle.token", "DB_PASSWORD": "prod-db.password" }'),
+          timeout_seconds: z.number().int().min(1).max(600).optional().describe('Délai maximal (défaut 120 s)'),
+        },
+        async ({ command, env, timeout_seconds }) =>
+          run(async () => {
+            const entries = Object.entries(env ?? {});
+            if (!entries.length) throw new AppError('Indique au moins une variable (env : { NOM: "élément.champ" })');
+            if (entries.length > 20) throw new AppError('Au plus 20 variables');
+            const secrets: Array<[string, ResolvedSecret]> = [];
+            for (const [name, ref] of entries) {
+              if (!ENV_NAME_RE.test(name) || RESERVED_ENV.has(name)) throw new AppError(`Nom de variable refusé : « ${name} » (majuscules, chiffres et soulignés ; ni ${[...RESERVED_ENV].join(', ')})`);
+              secrets.push([name, await secretOf(ref)]);
+            }
+            const vars = secrets.map(([n, x]) => `${n}=${x.ref}`).join(', ');
+            for (const [, x] of secrets) await x.check('run_with_secrets', `${command}\n(${vars})`, { command, env: vars });
+            const exec = () => runner.runIsolated(ctx.project, { cwd: ctx.cwd, command: ['sh', '-c', command], env: Object.fromEntries(secrets.map(([n, x]) => [n, x.value])), timeoutMs: (timeout_seconds ?? 120) * 1000 });
+            // Chaque secret journalise son usage ; la commande ne tourne qu'une fois.
+            let pending: Promise<IsolatedResult> | null = null;
+            const once = () => (pending ??= exec());
+            let result: IsolatedResult | null = null;
+            for (const [, x] of secrets) result = await x.use('run_with_secrets', `${command} (${vars})`, once);
+            const mask = (t: string) => secrets.reduce((acc, [, x]) => redactSecret(acc, x.value), t);
+            return renderExec({ ...result!, stdout: mask(result!.stdout), stderr: mask(result!.stderr) });
+          }),
+      ),
+
+      tool(
+        'write_env_secret',
+        "Écrit un secret dans un fichier d'environnement (dotenv) de ton dossier de travail : ajoute ou remplace la ligne NOM=valeur, crée le fichier au besoin (droits 600) et l'exclut de git. La valeur arrive alors dans l'environnement de la session (tes scripts la lisent) : demande toujours l'accord de la personne. Préfère run_with_secrets quand une commande suffit. Ne lis pas ce fichier, ne l'affiche pas, ne le commite pas.",
+        {
+          path: z.string().describe('Fichier, relatif au dossier de travail (ex. .env, backend/.env.local)'),
+          name: z.string().describe('Nom de la variable (ex. BREVO_API_KEY)'),
+          secret: z.string().describe('Secret : session:nom.champ (saisi pour cette session) ou élément.champ (élément du coffre ouvert aux fichiers d\'environnement)'),
+        },
+        async ({ path: p, name, secret: ref }) =>
+          run(async () => {
+            if (!ENV_NAME_RE.test(name)) throw new AppError(`Nom de variable invalide : « ${name} » (majuscules, chiffres et soulignés)`);
+            const file = localPath(ctx.cwd, p);
+            const rel = path.relative(ctx.cwd, file);
+            if (!rel || rel.split(path.sep).includes('.git')) throw new AppError(`Fichier refusé : ${p}`);
+            const secret = await secretOf(ref);
+            if (!secret.envExport) throw new AppError(`« ${secret.ref} » n'est pas ouvert aux fichiers d'environnement (option de l'élément dans le coffre) : utilise run_with_secrets, ou demande un secret de session avec request_secrets`, 'FORBIDDEN');
+            const managed = (await envFileService.list(ctx.project.id)).some((f) => path.normalize(f.path) === path.normalize(rel));
+            if (managed) throw new AppError(`${rel} est un fichier d'environnement du projet (serveur env), réécrit par Skipper : choisis un autre fichier (ex. ${rel}.local)`);
+            await secret.check('write_env_secret', `${name}=${secret.ref} → ${rel} (la valeur sera lisible dans l'environnement de la session)`, { path: rel, name }, true);
+            const excluded = await secret.use('write_env_secret', `${name} → ${rel}`, () => writeEnvLine(ctx.cwd, rel, name, secret.value));
+            return `Variable ${name} écrite dans ${rel} (droits 600${excluded ? ', fichier exclu de git' : ''}). La valeur ne t'est pas communiquée : ne lis pas ce fichier.`;
           }),
       ),
 
@@ -292,11 +454,15 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
                   )
                   .describe('Champs à saisir (10 au plus)'),
                 description: z.string().optional().describe("Description de l'élément créé"),
+                ephemeral: z
+                  .boolean()
+                  .optional()
+                  .describe("Tu n'en as besoin que pendant cette session (usage ponctuel) : la modale propose d'abord de ne pas le garder dans le coffre. La personne choisit."),
               },
-              async ({ item, reason, fields, description }) =>
+              async ({ item, reason, fields, description, ephemeral }) =>
                 run(async () => {
                   const normalized = normalizeRequestedFields(fields);
-                  const payload = await prepareSecretsRequest({ projectId: ctx.project.id, rightsHolderId: ctx.ownerId, item, description, fields: normalized });
+                  const payload = await prepareSecretsRequest({ projectId: ctx.project.id, rightsHolderId: ctx.ownerId, item, description, fields: normalized, ephemeral });
                   const title = `${payload.itemId ? 'Mettre à jour' : 'Saisir'} le secret « ${payload.item} » (${normalized.map((f) => f.label).join(', ')})`;
                   let response: Partial<SecretsResponse>;
                   try {
@@ -305,11 +471,19 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
                     if (err instanceof RequestCancelledError) throw new AppError("La personne n'a pas fourni les secrets (demande ignorée ou session arrêtée)");
                     throw err;
                   }
-                  const where = response.destination === 'project' ? 'coffre du projet' : response.destination === 'personal' ? 'coffre personnel de la personne, ouvert à ses sessions de ce projet' : 'élément existant mis à jour';
+                  const session = response.destination === 'session';
+                  const prefix = session ? 'session:' : '';
+                  const where = session
+                    ? `secret de cette session seulement, pas dans le coffre ; effacé à l'archivage de la session ou ${response.expiresAt ? `le ${new Date(response.expiresAt).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}` : 'sous 24 h'}`
+                    : response.destination === 'project'
+                      ? 'coffre du projet'
+                      : response.destination === 'personal'
+                        ? 'coffre personnel de la personne, ouvert à ses sessions de ce projet'
+                        : 'élément existant mis à jour';
                   return [
-                    `Secrets enregistrés dans l'élément « ${response.item} » (${where}) : champs ${(response.fields ?? []).map((f) => `\`${response.item}.${f}\``).join(', ')}. Tu n'en vois pas la valeur.`,
+                    `Secrets enregistrés (${where}) : ${(response.fields ?? []).map((f) => `\`${prefix}${response.item}.${f}\``).join(', ')}. Tu n'en vois pas la valeur.`,
                     response.requireApproval ? 'Chaque usage sera soumis à l\'accord de la personne.' : '',
-                    'Pour les utiliser : ssh_write_secret (fichier sur un serveur SSH), ssh_run avec stdin_secret (entrée standard d\'une commande), browser_fill (champ mot de passe).',
+                    `Pour les utiliser (référence ${prefix}${response.item}.<champ>) : ssh_write_secret (fichier sur un serveur SSH), ssh_run avec stdin_secret (entrée standard d'une commande), run_with_secrets (variables d'environnement d'une commande), write_env_secret (fichier .env du dossier de travail, avec accord)${session ? '' : ', browser_fill (champ mot de passe)'}.`,
                   ]
                     .filter(Boolean)
                     .join('\n');

@@ -484,7 +484,8 @@ authentifié par le serveur (`X-Auth-Token`) ; en lecture seule, `GET` seulement
 l'organisation et le projet par défaut s'ils manquent.
 
 **Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `ssh_write_secret`,
-`sql_query`, `sql_schema`, `http_request`, `aws_run`, `scw_run`, `scw_api`, `browser_fill`, `request_secrets`. Le backend déchiffre, exécute, tronque, et
+`sql_query`, `sql_schema`, `http_request`, `aws_run`, `scw_run`, `scw_api`, `browser_fill`, `request_secrets`,
+`run_with_secrets`, `write_env_secret`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
@@ -508,6 +509,19 @@ passent par la porte d'approbation du secret **et** du serveur (« Demander mon 
 dans la modale). Le masquage protège d'une fuite accidentelle dans la conversation, pas d'un agent qui voudrait
 contourner (encodage, fichier relu) : l'accord à chaque usage reste le garde-fou. Le serveur `vault` est désormais
 offert à toute session (hors relecture), même sans élément, pour que `request_secrets` soit disponible.
+
+**Secrets pour cette session seulement** (`backend/src/vault/sessionSecrets.ts`, table `session_secrets`). La modale
+propose aussi « Pour cette session seulement » (choisi d'office quand l'agent demande `ephemeral: true`) : la valeur
+n'entre pas dans le coffre ; elle est chiffrée comme lui (clé de données propre, enveloppée par la clé maîtresse), lisible
+par les seuls outils du coffre de cette session sous la référence `session:<nom>.<champ>`, et effacée à l'archivage de la
+session (`sessionService.archive`, archivage d'un dossier de travail), à sa suppression (cascade) ou au bout de 24 h
+(purge par l'instance meneuse). Une nouvelle saisie du même nom complète ou remplace les champs. Deux outils servent
+ces secrets comme ceux du coffre : `run_with_secrets(command, env: { NOM: "réf" })` lance `sh -c` dans un **conteneur
+jetable** de l'image du projet (`runner.runIsolated`, seul le dossier de travail monté, variables transmises par
+l'environnement du client `docker`), sortie masquée ; `write_env_secret(path, name, secret)` écrit `NOM=valeur` dans
+un fichier dotenv du dossier de travail (600, exclu de git par `info/exclude`, refusé pour un fichier géré par le
+serveur `env`), **toujours avec accord** puisque la valeur devient lisible dans l'environnement de la session ; un
+élément du coffre n'y est admis que s'il est ouvert aux fichiers d'environnement.
 
 **Migration.** Les anciennes tables `connections` et `project_google_accounts` sont reprises dans
 `vault_items` (mêmes identifiants, même nom ; comptes Google nommés `google-<adresse>`), les règles

@@ -1,4 +1,5 @@
 import type { Actor } from '../context/types.js';
+import { sessionSecretService } from '../vault/sessionSecrets.js';
 import { AppError, NotFoundError } from '../errors.js';
 import { projectService } from '../projects/service.js';
 import { namesFromText } from '../worksessions/names.js';
@@ -1184,6 +1185,8 @@ export const sessionService = {
     if (session.status === 'running' || session.status === 'queued') await this.stop(id);
     await finishing.get(id);
     await requestService.cancelAllForSession(id);
+    // Secrets saisis « pour cette session seulement » (vault/sessionSecrets.ts) : effacés avec son archivage.
+    await sessionSecretService.clearSession(id).catch((err) => log.warn('[sessions] secrets de session non effacés', id, err));
     return publishSession(await sessionRepository.update(id, { archivedAt: new Date() }));
   },
 

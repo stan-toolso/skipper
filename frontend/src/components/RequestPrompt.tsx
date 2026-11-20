@@ -229,10 +229,10 @@ function SecretsPrompt({ request, busy }: { request: HumanRequest; busy: boolean
     <div className="cc-prompt">
       <div className="cc-prompt-title">L'agent vous demande {p.fields.length > 1 ? 'des secrets' : 'un secret'}</div>
       <div className="cc-prompt-body">
-        {p.fields.map((f) => f.label).join(', ')} → coffre, élément « {p.item} »{p.itemId ? ' (mise à jour)' : ''}
+        {p.fields.map((f) => f.label).join(', ')} · « {p.item} »{p.ephemeral ? ' · pour cette session' : p.itemId ? ' · mise à jour du coffre' : ''}
       </div>
       {request.message && <Markdown className="cc-prompt-body" text={request.message} />}
-      <div className="cc-desc">Les valeurs vont directement dans le coffre : l'agent ne les voit jamais. Ne les collez pas dans la conversation.</div>
+      <div className="cc-desc">Les valeurs ne passent pas par l'agent, qui ne les voit jamais. Ne les collez pas dans la conversation.</div>
       <div className="mt-2">
         <SecretsButton request={request} autoOpen={first} disabled={busy} />
       </div>

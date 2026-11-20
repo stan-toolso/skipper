@@ -2223,7 +2223,7 @@ export const resolvers = {
     provideSecrets: async (_: unknown, args: { requestId: string; input: { values: { key: string; value: string }[]; destination?: string | null; requireApproval?: boolean | null } }, ctx: Ctx) => {
       await guardRequest(ctx, args.requestId, 'member');
       const destination = args.input.destination ?? null;
-      if (destination !== null && destination !== 'project' && destination !== 'personal') throw new AppError(`Destination inconnue : ${destination}`);
+      if (destination !== null && destination !== 'project' && destination !== 'personal' && destination !== 'session') throw new AppError(`Destination inconnue : ${destination}`);
       return provideSecrets(args.requestId, requireUser(ctx).id, { values: args.input.values, destination, requireApproval: args.input.requireApproval ?? null });
     },
     cancelRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {

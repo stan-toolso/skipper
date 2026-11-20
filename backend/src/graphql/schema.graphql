@@ -1033,7 +1033,11 @@ input SecretValueInput {
 
 input ProvideSecretsInput {
   values: [SecretValueInput!]!
-  "Nouvel élément : coffre du projet (administrateurs) ou coffre personnel ouvert à ses sessions du projet. Défaut : personnel si la session tourne avec vos droits."
+  """
+  project : coffre du projet (administrateurs) ; personal : coffre personnel ouvert à ses sessions du projet ;
+  session : pour cette session seulement, jamais dans le coffre, effacé à son archivage ou sous 24 h. Défaut (nouvel
+  élément) : personnel si la session tourne avec vos droits, sinon projet.
+  """
   destination: String
   "Demander l'accord de la personne à chaque usage par un agent (défaut : oui pour un nouvel élément, inchangé sinon)."
   requireApproval: Boolean

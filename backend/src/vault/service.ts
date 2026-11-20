@@ -1119,7 +1119,7 @@ export const vaultService = {
   promptSummary(items: VaultItem[], project: Pick<Project, 'runnerConfig'>): string {
     const list = items.filter((i) => i.kind !== 'google');
     const ask =
-      "Besoin d'un secret que détient la personne (clé privée, jeton, mot de passe) : appelle `request_secrets` (serveur `vault`) ; elle le saisit dans une modale et il est rangé dans un élément « secret » du coffre, sans que tu voies la valeur. Ne lui demande jamais de coller un secret dans la conversation.";
+      "Besoin d'un secret que détient la personne (clé privée, jeton, mot de passe) : appelle `request_secrets` (serveur `vault` ; `ephemeral: true` pour un usage ponctuel) ; elle le saisit dans une modale et le range dans le coffre ou le confie à cette session seulement (référence `session:nom.champ`), sans que tu voies la valeur. Sers-t'en ensuite par les outils du coffre : `run_with_secrets` (variables d'environnement d'une commande, conteneur jetable), `ssh_write_secret` et `stdin_secret` de `ssh_run` (serveur SSH), `write_env_secret` (fichier .env du dossier de travail, avec accord). Ne lui demande jamais de coller un secret dans la conversation.";
     if (!list.length) return ask;
     const hasSsh = list.some((i) => i.kind === 'ssh');
     const browser = Boolean((project.runnerConfig as { browser?: boolean } | null)?.browser);

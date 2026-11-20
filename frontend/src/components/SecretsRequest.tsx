@@ -14,14 +14,18 @@ export interface SecretsPayload {
   fields: { key: string; label: string; hint: string | null; multiline: boolean }[];
   projectId: string;
   personalUserId: string | null;
+  /** L'agent n'en a besoin que pendant la session : « pour cette session seulement » est proposé d'abord. */
+  ephemeral?: boolean;
 }
+
+type Destination = 'existing' | 'personal' | 'project' | 'session';
 
 export const secretsPayload = (request: HumanRequest) => request.payload as unknown as SecretsPayload;
 
 /** Résumé de la réponse (jamais de valeur : le nom de l'élément et les clés saisies). */
 export function secretsAnswerText(r: Record<string, unknown>): string | null {
   if (typeof r.item !== 'string' || !Array.isArray(r.fields)) return null;
-  const where = r.destination === 'project' ? 'coffre du projet' : r.destination === 'personal' ? 'coffre personnel' : 'élément mis à jour';
+  const where = r.destination === 'project' ? 'coffre du projet' : r.destination === 'personal' ? 'coffre personnel' : r.destination === 'session' ? 'pour la session seulement' : 'élément mis à jour';
   return `secrets saisis dans « ${r.item} » (${(r.fields as string[]).join(', ')} ; ${where})`;
 }
 
@@ -93,7 +97,7 @@ export function SecretsModal({ request, onClose }: { request: HumanRequest; onCl
   const p = secretsPayload(request);
   const canPersonal = Boolean(user && p.personalUserId === user.id);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [destination, setDestination] = useState<'personal' | 'project'>(canPersonal ? 'personal' : 'project');
+  const [destination, setDestination] = useState<Destination>(p.ephemeral ? 'session' : p.itemId ? 'existing' : canPersonal ? 'personal' : 'project');
   const [requireApproval, setRequireApproval] = useState(true);
   const [provide, { loading }] = useMutation(PROVIDE_SECRETS);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +117,7 @@ export function SecretsModal({ request, onClose }: { request: HumanRequest; onCl
       await provide({
         variables: {
           requestId: request.id,
-          input: { values: p.fields.map((f) => ({ key: f.key, value: values[f.key] })), ...(p.itemId ? {} : { destination, requireApproval }) },
+          input: { values: p.fields.map((f) => ({ key: f.key, value: values[f.key] })), ...(destination === 'existing' ? {} : { destination, requireApproval }) },
         },
       });
       close();
@@ -139,17 +143,43 @@ export function SecretsModal({ request, onClose }: { request: HumanRequest; onCl
         <Modal.Body>
           {request.message && <Markdown className="small mb-3" text={request.message} />}
           <p className="small text-secondary">
-            Les valeurs sont chiffrées dans le coffre, dans l'élément <strong className="font-monospace">{p.item}</strong>
-            {p.itemId ? ' (élément existant : ces champs seront remplacés, les autres gardés)' : ''}. L'agent ne les voit jamais : il s'en sert par les outils du coffre (fichier ou
-            commande sur un serveur, champ de formulaire), chaque usage journalisé.
+            L'agent ne voit jamais les valeurs : il s'en sert par les outils du coffre (fichier ou commande sur un serveur, variables d'environnement d'une commande, champ de
+            formulaire), chaque usage journalisé.
           </p>
           {p.fields.map((f, i) => (
             <SecretField key={f.key} field={f} value={values[f.key] ?? ''} disabled={loading} autoFocus={i === 0} onChange={(v) => setValues((cur) => ({ ...cur, [f.key]: v }))} />
           ))}
-          {!p.itemId && (
-            <>
-              <Form.Group className="mb-2">
-                <Form.Label className="small fw-semibold mb-1">Ranger dans</Form.Label>
+          <Form.Group className="mb-2">
+            <Form.Label className="small fw-semibold mb-1">Que faire de {p.fields.length > 1 ? 'ces secrets' : 'ce secret'} ?</Form.Label>
+            <Form.Check
+              type="radio"
+              id="secrets-dest-session"
+              name="secrets-dest"
+              disabled={loading}
+              checked={destination === 'session'}
+              onChange={() => setDestination('session')}
+              label={
+                <>
+                  Pour cette session seulement <span className="text-secondary">— pas gardé dans le coffre, effacé à l'archivage de la session ou sous 24 h</span>
+                </>
+              }
+            />
+            {p.itemId ? (
+              <Form.Check
+                type="radio"
+                id="secrets-dest-existing"
+                name="secrets-dest"
+                disabled={loading}
+                checked={destination === 'existing'}
+                onChange={() => setDestination('existing')}
+                label={
+                  <>
+                    Mettre à jour l'élément <span className="font-monospace">{p.item}</span> du coffre <span className="text-secondary">— ces champs remplacés, les autres gardés</span>
+                  </>
+                }
+              />
+            ) : (
+              <>
                 <Form.Check
                   type="radio"
                   id="secrets-dest-personal"
@@ -159,7 +189,7 @@ export function SecretsModal({ request, onClose }: { request: HumanRequest; onCl
                   onChange={() => setDestination('personal')}
                   label={
                     <>
-                      Mon coffre personnel, ouvert à mes sessions de « {request.session.project.name} »
+                      Le garder dans mon coffre personnel (<span className="font-monospace">{p.item}</span>), ouvert à mes sessions de « {request.session.project.name} »
                       {!canPersonal && <span className="text-secondary"> — indisponible : la session ne tourne pas avec vos droits</span>}
                     </>
                   }
@@ -171,20 +201,30 @@ export function SecretsModal({ request, onClose }: { request: HumanRequest; onCl
                   disabled={loading}
                   checked={destination === 'project'}
                   onChange={() => setDestination('project')}
-                  label={<>Le coffre du projet, utilisable par tous ses agents (administrateurs du projet)</>}
+                  label={
+                    <>
+                      Le garder dans le coffre du projet (<span className="font-monospace">{p.item}</span>), utilisable par tous ses agents <span className="text-secondary">— administrateurs</span>
+                    </>
+                  }
                 />
-              </Form.Group>
-              <Form.Check
-                type="switch"
-                id="secrets-approval"
-                className="small"
-                disabled={loading}
-                checked={requireApproval}
-                onChange={(e) => setRequireApproval(e.target.checked)}
-                label="Demander mon accord à chaque usage par un agent"
-              />
-            </>
+              </>
+            )}
+          </Form.Group>
+          {destination !== 'existing' && (
+            <Form.Check
+              type="switch"
+              id="secrets-approval"
+              className="small"
+              disabled={loading}
+              checked={requireApproval}
+              onChange={(e) => setRequireApproval(e.target.checked)}
+              label="Demander mon accord à chaque usage par l'agent"
+            />
           )}
+          <p className="small text-secondary mt-2 mb-0">
+            Sur un serveur (fichier, entrée d'une commande), la valeur est installée sans passer par l'environnement de l'agent. Écrite dans un fichier .env de la session, elle y
+            devient lisible : l'agent vous le demande alors toujours.
+          </p>
           {error && (
             <Alert variant="danger" className="mt-3 mb-0 py-2 small">
               {error}
@@ -196,7 +236,7 @@ export function SecretsModal({ request, onClose }: { request: HumanRequest; onCl
             Plus tard
           </Button>
           <Button type="submit" variant="primary" disabled={loading || missing.length > 0}>
-            {loading ? 'Enregistrement…' : 'Enregistrer dans le coffre'}
+            {loading ? 'Enregistrement…' : destination === 'session' ? 'Confier à la session' : 'Enregistrer dans le coffre'}
           </Button>
         </Modal.Footer>
       </Form>
