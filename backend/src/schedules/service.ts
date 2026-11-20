@@ -39,6 +39,8 @@ const WAIT_STEP_MS = 60_000;
 const BLOCKED_AFTER_MS = 10 * 60_000;
 /** Une exécution encore « en cours » sans suivi local depuis ce délai, session au repos, est close par la reprise. */
 const ORPHAN_AFTER_MS = 5 * 60_000;
+/** Exécution close « bloquée » ou « délai dépassé » : sa session est archivée (« dès la fin ») après ce silence du transcript. */
+const SETTLED_QUIET_MINUTES = 5;
 /** Fréquence du balayage de purge des transcripts (durée de conservation). */
 const SWEEP_MS = 3_600_000;
 const DEFAULT_TIMEZONE = 'UTC';
@@ -473,6 +475,12 @@ export const scheduleService = {
     for (const id of await scheduleRepository.runSessionsPastDelay(now)) {
       if (scheduledRuns.has(id)) continue;
       if (await archiveRunSession(id, 'délai d’archivage de la planification écoulé')) archived += 1;
+    }
+    // « Dès la fin de l'exécution » : une exécution close « bloquée » (ou « délai dépassé ») n'est pas archivée tout
+    // de suite ; quand l'agent a fini après une réponse, sa session est rangée ici (et terminée si elle tourne encore).
+    for (const id of await scheduleRepository.settledUnfinishedRunSessions(now, SETTLED_QUIET_MINUTES)) {
+      if (scheduledRuns.has(id)) continue;
+      if (await archiveRunSession(id, 'exécution terminée après sa clôture')) archived += 1;
     }
     return archived;
   },

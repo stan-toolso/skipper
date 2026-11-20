@@ -351,6 +351,27 @@ export const scheduleRepository = {
   },
 
   /**
+   * Sessions d'exécutions « dès la fin » closes sans avoir été archivées parce qu'elles n'avaient pas fini (demande
+   * sans réponse : `blocked`, toujours au travail : `timeout`), et qui ont fini depuis : session au repos ou terminée,
+   * plus de demande en attente, rien dans le transcript depuis `quietMinutes` (une personne qui y travaille la garde).
+   */
+  async settledUnfinishedRunSessions(now: Date, quietMinutes: number): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT DISTINCT s.id FROM session_schedule_runs r
+       JOIN session_schedules sc ON sc.id = r.schedule_id
+       JOIN sessions s ON s.id = r.run_session_id
+       WHERE sc.archive_policy = 'on_finish' AND r.status IN ('blocked', 'timeout')
+         AND s.archived_at IS NULL
+         AND (s.status::text NOT IN ('running', 'queued') OR s.activity::text = 'idle')
+         AND NOT EXISTS (SELECT 1 FROM requests q WHERE q.session_id = s.id AND q.status = 'pending')
+         AND NOT EXISTS (SELECT 1 FROM session_events e WHERE e.session_id = s.id AND e.created_at > $1::timestamptz - make_interval(mins => $2::int))
+       LIMIT 50`,
+      [now, quietMinutes],
+    );
+    return rows.map((r) => r.id);
+  },
+
+  /**
    * Clôt une exécution encore en cours. Renvoie null si elle était déjà close (une autre instance, ou la
    * reprise des exécutions orphelines, l'a fait) : seul celui qui clôt notifie.
    */
