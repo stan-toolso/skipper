@@ -23,7 +23,7 @@ import AddMenu from './AddMenu';
 import { useDeletions } from './useDeletions';
 import { useTabs } from './TabsContext';
 import { SubagentsCount, initialsOf, sessionDotClass } from './WorkspaceTabs';
-import { attachedElsewhere, cliSubagentDetail, cliSubagentsLabel, mineFirst, openItemsOf, ownerGroups, participates, runLabel, scheduleGroups, sessionGroups, subagentsSummary, workspaceState, type CliSubagent, type ScheduleGroup, type SessionNode, type SidebarProject, type SidebarSession, type OwnerGroup, type SidebarTerminal, type Workspace } from './workspaces';
+import { attachedElsewhere, cliSubagentDetail, cliSubagentsLabel, isBackgroundCommand, waitingCommandsHint, mineFirst, openItemsOf, ownerGroups, participates, runLabel, scheduleGroups, sessionGroups, subagentsSummary, workspaceState, type CliSubagent, type ScheduleGroup, type SessionNode, type SidebarProject, type SidebarSession, type OwnerGroup, type SidebarTerminal, type Workspace } from './workspaces';
 import { leaveProjectWindow, openFullSkipper, projectWindowId } from '../lib/projectWindow';
 
 const EXPANDED_KEY = 'skipper.workbench.expanded';
@@ -297,12 +297,14 @@ function CliSubagentRows({ sessionId, subagents, indent }: { sessionId: string; 
     <>
       {subagents.map((a) => {
         const d = cliSubagentDetail(a, now);
-        const to = a.toolUseId ? `/sessions/${sessionId}/subagents/${encodeURIComponent(a.toolUseId)}` : `/sessions/${sessionId}`;
+        const command = isBackgroundCommand(a);
+        // Une commande de fond n'a pas de fil à elle : son appel est dans le transcript de la session.
+        const to = a.toolUseId && !command ? `/sessions/${sessionId}/subagents/${encodeURIComponent(a.toolUseId)}` : `/sessions/${sessionId}`;
         return (
-          <Link key={a.id} to={to} className={`wb-row wb-session-row wb-cli-subagent${location.pathname === to ? ' active' : ''}`} style={{ paddingLeft: indent }} title={`${d.title} · cliquer pour suivre son fil`}>
+          <Link key={a.id} to={to} className={`wb-row wb-session-row wb-cli-subagent${location.pathname === to && !command ? ' active' : ''}`} style={{ paddingLeft: indent }} title={command ? d.title : `${d.title} · cliquer pour suivre son fil`}>
             <span className="wb-tree">└</span>
             <span className="wb-dot busy" />
-            <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />
+            {command ? <i className="bi bi-terminal wb-robot" aria-label="Commande en arrière-plan" /> : <i className="bi bi-robot wb-robot" aria-label="Sous-agent" />}
             <span className="wb-row-label">{a.description}</span>
             <span className="wb-state busy">{d.short}</span>
           </Link>
@@ -315,7 +317,7 @@ function CliSubagentRows({ sessionId, subagents, indent }: { sessionId: string; 
 /** Puce « 🤖 N » des sous-agents du CLI au travail, sur la ligne de méta d'une carte repliée. */
 const CliSubagentsChip = ({ subagents }: { subagents: readonly CliSubagent[] }) => (
   <span className="wb-chip-sub busy wb-cli-chip">
-    <i className="bi bi-robot" />
+    <i className={`bi ${subagents.every(isBackgroundCommand) ? 'bi-terminal' : 'bi-robot'}`} />
     {subagents.length}
   </span>
 );
@@ -396,6 +398,8 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
   const { archiveSession } = useDeletions();
   const [stopSession] = useMutation(STOP_SESSION, { refetchQueries: ['Sidebar'] });
   const hint = sessionStateHint(s.status, s.activity, s.pendingRequestCount);
+  // Au repos mais en attente de commandes de fond : l'anneau seul ferait croire qu'il n'y a plus rien en cours.
+  const waiting = waitingCommandsHint(s);
   const mine = participates(s, user?.id ?? null);
   const items: MenuItem[] = [
     { label: 'Ouvrir', icon: 'bi-box-arrow-in-right', to: `/sessions/${s.id}` },
@@ -432,7 +436,13 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
             </span>
           )
         )}
-        {s.pendingRequestCount > 0 ? <span className="wb-badge">{s.pendingRequestCount}</span> : hint && depth === 0 && sessionDotClass(s) !== 'idle' && <span className={`wb-state ${sessionDotClass(s)}`}>{hint}</span>}
+        {s.pendingRequestCount > 0 ? (
+          <span className="wb-badge">{s.pendingRequestCount}</span>
+        ) : waiting && depth === 0 ? (
+          <span className="wb-state pending">{waiting}</span>
+        ) : (
+          hint && depth === 0 && sessionDotClass(s) !== 'idle' && <span className={`wb-state ${sessionDotClass(s)}`}>{hint}</span>
+        )}
       </RowWithMenu>
       {s.browserActive && (
         <Link to={browserPath} className={`wb-row wb-session-row wb-browser-row${location.pathname === browserPath ? ' active' : ''}`} style={{ paddingLeft: left + 16 }} title="Voir en direct la page ouverte par l'agent">
@@ -603,7 +613,9 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
   const icon = branchIcon(ws, pr);
   const prWindow = pr ? windowFor(pr) : null;
   // « attend vos instructions » n'est pas écrit : l'anneau du point le dit déjà ; la ligne de méta garde ce qui appelle l'attention.
-  const hint = session && sessionDotClass(session) !== 'idle' ? sessionStateHint(session.status, session.activity, session.pendingRequestCount) : null;
+  // Exception : au repos en attente de commandes de fond, la ligne le dit (l'agent reprendra de lui-même).
+  const waiting = session && !session.pendingRequestCount ? waitingCommandsHint(session) : null;
+  const hint = waiting ?? (session && sessionDotClass(session) !== 'idle' ? sessionStateHint(session.status, session.activity, session.pendingRequestCount) : null);
   const mine = session ? participates(session, userId) : true;
   const chips = ws.primary
     ? [
@@ -733,7 +745,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
             if (e.target === e.currentTarget) navigate(headTo);
           }}
         >
-          {hint && session && <span className={`wb-meta-state ${sessionDotClass(session)}`}>{hint}</span>}
+          {hint && session && <span className={`wb-meta-state ${waiting ? 'pending' : sessionDotClass(session)}`}>{hint}</span>}
           {cliChip && (
             <button type="button" className="wb-meta-sub wb-meta-cli" title={`${cliSubagentsLabel(cli)} : ${cli.map((a) => `« ${a.description} »`).join(', ')} · cliquer pour détailler`} onClick={onToggle}>
               <CliSubagentsChip subagents={cli} />

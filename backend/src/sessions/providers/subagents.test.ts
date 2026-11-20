@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SubagentRecorder, SubagentTracker, type SessionSubagent } from './subagents.js';
+import { SubagentRecorder, SubagentTracker, backgroundCommands, describeBackgroundCommands, type SessionSubagent } from './subagents.js';
 
 const at = new Date('2026-11-17T10:00:00Z');
 const tracker = () => new SubagentTracker(() => at);
@@ -9,12 +9,35 @@ describe('SubagentTracker', () => {
   it('suit un sous-agent du début à la fin', () => {
     const t = tracker();
     expect(t.apply(started('a', { is_backgrounded: true }))).toBe('now');
-    expect(t.list).toEqual([{ id: 'a', toolUseId: 'tu-a', description: 'Tâche a', agentType: 'Explore', background: true, startedAt: at.toISOString(), toolUses: 0, lastTool: null, summary: null }]);
+    expect(t.list).toEqual([{ id: 'a', kind: 'agent', toolUseId: 'tu-a', description: 'Tâche a', agentType: 'Explore', background: true, startedAt: at.toISOString(), toolUses: 0, lastTool: null, summary: null }]);
     expect(t.apply({ subtype: 'task_progress', task_id: 'a', usage: { tool_uses: 3 }, last_tool_name: 'Read' })).toBe('later');
     expect(t.apply({ subtype: 'task_progress', task_id: 'a', usage: { tool_uses: 3 }, last_tool_name: 'Read' })).toBeNull();
     expect(t.list[0]).toMatchObject({ toolUses: 3, lastTool: 'Read' });
     expect(t.apply({ subtype: 'task_notification', task_id: 'a' })).toBe('now');
     expect(t.list).toEqual([]);
+  });
+
+  it('inscrit une commande Bash quand elle passe en arrière-plan, jusqu\'à sa fin (session 707e72c1)', () => {
+    const t = tracker();
+    expect(t.apply(started('b', { task_type: 'local_bash', subagent_type: undefined, description: './test.sh ci' }))).toBeNull();
+    expect(t.list).toEqual([]);
+    const live = { subtype: 'background_tasks_changed', tasks: [{ task_id: 'b', task_type: 'local_bash', description: './test.sh ci' }, { task_id: 'm', task_type: 'local_bash', description: 'surveillance', ambient: true }] };
+    expect(t.apply(live)).toBe('now');
+    expect(t.list).toEqual([{ id: 'b', kind: 'command', toolUseId: 'tu-b', description: './test.sh ci', agentType: null, background: true, startedAt: at.toISOString(), toolUses: 0, lastTool: null, summary: null }]);
+    expect(t.apply(live)).toBeNull();
+    expect(t.turnEnded()).toBe(false);
+    expect(backgroundCommands(t.list).map((c) => c.id)).toEqual(['b']);
+    expect(describeBackgroundCommands(t.list)).toBe('1 commande en arrière-plan (« ./test.sh ci »)');
+    expect(t.apply({ subtype: 'task_notification', task_id: 'b' })).toBe('now');
+    expect(t.list).toEqual([]);
+  });
+
+  it('retire une commande absente de la liste des tâches de fond', () => {
+    const t = tracker();
+    t.apply({ subtype: 'background_tasks_changed', tasks: [{ task_id: 'x', task_type: 'local_bash', description: 'npm run build' }, { task_id: 'y', task_type: 'local_bash', description: 'npm test' }] });
+    expect(describeBackgroundCommands(t.list)).toBe('2 commandes en arrière-plan (« npm run build », « npm test »)');
+    expect(t.apply({ subtype: 'background_tasks_changed', tasks: [{ task_id: 'y', task_type: 'local_bash', description: 'npm test' }] })).toBe('now');
+    expect(t.list.map((c) => c.id)).toEqual(['y']);
   });
 
   it('ignore les commandes Bash de fond et les tâches ambiantes', () => {

@@ -1072,6 +1072,13 @@ export const SESSION = gql`
     session(id: $id) {
       ...SessionFields
       viewerCanTakeOver
+      # Commandes de fond que l'agent attend (barre d'état : « attend la fin de … »).
+      subagents {
+        id
+        kind
+        description
+        startedAt
+      }
       worksession {
         id
         # PR suivie du dossier de travail : carte « à fusionner » de la page (mise à jour aussi par watchPullRequests).
@@ -1698,6 +1705,7 @@ export const SIDEBAR = gql`
     browserActive
     subagents {
       id
+      kind
       toolUseId
       description
       agentType

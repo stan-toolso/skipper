@@ -14,6 +14,7 @@ import { usePollingQuery } from '../lib/usePollingQuery';
 import { useShortcut } from '../lib/useShortcut';
 import { DOUBLE_ESCAPE_MS, nextEscape, overlayOpen } from '../lib/escapeInterrupt';
 import { useGitTarget } from '../workbench/GitTargetContext';
+import { isBackgroundCommand, type CliSubagent } from '../workbench/workspaces';
 import { useDialogs } from '../components/Dialogs';
 import { useCachedName } from '../components/PageLoading';
 import { useAuth } from '../auth/AuthContext';
@@ -54,6 +55,8 @@ type SessionWithRequests = Omit<Session, 'worksession'> & {
   requests: HumanRequest[];
   childSessions: ChildSession[];
   worksession: (NonNullable<Session['worksession']> & { trackedPullRequest?: TrackedPullRequestSummary | null }) | null;
+  /** Sous-agents et commandes de fond du CLI en cours (seules les commandes servent ici). */
+  subagents?: Pick<CliSubagent, 'id' | 'kind' | 'description' | 'startedAt'>[];
 };
 
 const TECH_KEY = 'skipper.session.technical';
@@ -401,6 +404,8 @@ export default function SessionDetailPage() {
     updateConfig({ variables: { id, config: { [field.key]: value || null } } });
   };
 
+  // Tour clos sur des commandes de fond (tests, build) : l'agent sera réveillé à leur fin, la session n'est pas « finie ».
+  const waitingCommands = (session.subagents ?? []).filter(isBackgroundCommand);
   const statusLine = readOnly
     ? `👁 Lecture seule (rôle lecteur sur le projet) · ${pending.length ? "l'agent attend la réponse d'un membre du projet" : busy ? "l'agent travaille…" : (sessionStatusLabels[session.status] ?? session.status).toLowerCase()}${archived ? ' · archivée' : ''}`
     : pending.length
@@ -409,6 +414,8 @@ export default function SessionDetailPage() {
       ? escArmed
         ? "L'agent travaille… Appuyez de nouveau sur Échap pour l'interrompre"
         : "L'agent travaille… (Échap deux fois pour l'interrompre)"
+      : running && waitingCommands.length
+        ? `⏳ L'agent attend la fin de ${waitingCommands.length > 1 ? `${waitingCommands.length} commandes` : 'sa commande'} en arrière-plan (${waitingCommands.map((c) => `« ${c.description.length > 50 ? `${c.description.slice(0, 49)}…` : c.description} »`).join(', ')}) et reprendra de lui-même — vous pouvez aussi lui écrire`
       : running
         ? "⏵ L'agent attend vos instructions"
         : folderGone

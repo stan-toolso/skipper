@@ -1944,9 +1944,11 @@ type Attachment {
   size: Int!
 }
 
-"Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI), pas une session Skipper."
+"Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI), pas une session Skipper ; ou commande de fond de l'agent (kind « command »)."
 type SessionSubagent {
   id: ID!
+  "« agent » (sous-agent ou workflow) ou « command » (commande Bash de fond : l'agent sera réveillé à sa fin)."
+  kind: String!
   "Appel de l'outil Agent qui l'a lancé : Session.events(toolUseId:) donne son fil."
   toolUseId: ID
   "Description donnée par l'agent."

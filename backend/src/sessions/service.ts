@@ -7,6 +7,7 @@ import { pubSub } from '../pubsub.js';
 import { notificationService } from '../notifications/service.js';
 import { userRepository } from '../users/repository.js';
 import { selfTurnExcerpt, selfTurnNotice } from './providers/selfTurn.js';
+import { backgroundCommands, describeBackgroundCommands } from './providers/subagents.js';
 import { ANSWERED_BY, requestService } from '../requests/service.js';
 import { removeSessionAttachments, storeAttachments } from './attachments.js';
 import { sessionRepository } from './repository.js';
@@ -1011,7 +1012,7 @@ export const sessionService = {
    * l'archivage est différé à la fin du tour. Refusé tant que la PR du dossier est ouverte (`openPullRequestOf`), sauf
    * `force` (Skipper range la session à la fin de sa PR).
    */
-  async archiveWhenDone(id: string, reason: string | null = null, opts: { auto?: boolean; force?: boolean; schedule?: boolean } = {}): Promise<boolean> {
+  async archiveWhenDone(id: string, reason: string | null = null, opts: { auto?: boolean; force?: boolean; schedule?: boolean; waitingFor?: string | null } = {}): Promise<boolean> {
     const session = await sessionRepository.findById(id);
     if (!session) throw new NotFoundError('Session introuvable');
     if (session.archivedAt) return false;
@@ -1022,6 +1023,8 @@ export const sessionService = {
     const deferred = running.has(id);
     const message = opts.schedule
       ? `Session archivée par sa planification${deferred ? ' à la fin de ce tour' : ''}${reason ? ` : ${reason}` : ''}`
+      : opts.auto && opts.waitingFor
+      ? `Session lancée sans personne : elle sera archivée d'office quand l'agent aura fini. Il attend ${opts.waitingFor} et reprendra de lui-même ensuite.`
       : opts.auto
       ? "Session archivée d'office à la fin de son tour : lancée sans personne pour la piloter, elle se range seule (le fil de sa tâche ou de son canal rappellera l'agent)"
       : opts.force
@@ -1066,7 +1069,9 @@ export const sessionService = {
       log.info(`[sessions] session ${id} non archivée d'office : sa PR #${open.number} est encore ouverte`);
       return false;
     }
-    await this.archiveWhenDone(id, null, { auto: true });
+    // Commandes de fond encore vivantes : le CLI réveillera l'agent à leur fin, l'archivage n'aura lieu qu'après ce tour-là.
+    const commands = backgroundCommands(session.subagents);
+    await this.archiveWhenDone(id, null, { auto: true, waitingFor: commands.length ? describeBackgroundCommands(commands) : null });
     log.info(`[sessions] session ${id} archivée d'office à la fin de son tour`);
     return true;
   },
