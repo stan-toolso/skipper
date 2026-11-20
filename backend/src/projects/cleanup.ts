@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises';
+import { sessionSecretService } from '../vault/sessionSecrets.js';
 import path from 'node:path';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
@@ -75,7 +76,9 @@ export async function archiveWorksessionCascade(id: string): Promise<Worksession
     for (const s of await sessionService.list({ worksessionId, archived: 'exclude', limit: 500 })) {
       if (s.status === 'running' || s.status === 'queued') await sessionService.stop(s.id).catch(() => undefined);
     }
-    await sessionRepository.archiveByWorksession(worksessionId, at);
+    const archived = await sessionRepository.archiveByWorksession(worksessionId, at);
+    // Secrets saisis « pour cette session seulement » : ils ne survivent pas à son archivage.
+    for (const sid of archived) await sessionSecretService.clearSession(sid).catch((err) => log.warn('[sessions] secrets de session non effacés', sid, err));
     await deleteTerminals(wt.projectId, worksessionId);
   });
 }

@@ -9,16 +9,22 @@ import type { VaultItem } from './types.js';
 // schéma zod échoue, tout le serveur disparaît pour l'agent, sans erreur visible dans l'interface (incident
 // du 10/10/2026 : `z.record` de zod 4 refusé par le convertisseur du SDK, aucun outil `vault`).
 // Services voisins simulés : la déclaration des outils et les outils PostgreSQL sont exercés, sans base ni réseau.
-const { service, query, sshMock } = vi.hoisted(() => ({
+const { service, query, sshMock, sessionSecrets, runIsolated, envFiles } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
   query: vi.fn(),
   sshMock: { connect: vi.fn(), exec: vi.fn(), writeFile: vi.fn() },
+  sessionSecrets: { find: vi.fn(), list: vi.fn(), values: vi.fn() },
+  runIsolated: vi.fn(),
+  envFiles: { list: vi.fn() },
 }));
 vi.mock('./service.js', () => ({ vaultService: service }));
 vi.mock('./awsService.js', () => ({ awsService: {} }));
 vi.mock('./scalewayService.js', () => ({ scalewayService: {} }));
 vi.mock('./ssh.js', () => sshMock);
 vi.mock('../browser/fill.js', () => ({ browserFill: {} }));
+vi.mock('./sessionSecrets.js', () => ({ sessionSecretService: sessionSecrets }));
+vi.mock('../runners/index.js', () => ({ runner: { runIsolated } }));
+vi.mock('../envFiles/service.js', () => ({ envFileService: envFiles }));
 vi.mock('./postgres.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./postgres.js')>()), query }));
 
 const { createVaultMcpServer } = await import('./mcp.js');
@@ -89,7 +95,7 @@ describe('serveur MCP vault', () => {
     const client = await connect(server());
     try {
       const tools = (await client.listTools()).tools;
-      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'scw_api', 'scw_run', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload', 'ssh_write_secret']);
+      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'run_with_secrets', 'scw_api', 'scw_run', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload', 'ssh_write_secret', 'write_env_secret']);
       const props = (name: string) => tools.find((t) => t.name === name)!.inputSchema.properties as Record<string, { type?: string; additionalProperties?: unknown }>;
       expect(props('scw_api').query.type).toBe('object');
       expect(Object.keys(props('sql_query')).sort()).toEqual(['database', 'item', 'sql']);
@@ -257,6 +263,65 @@ describe('secrets : demande par une modale et usage sans les voir', () => {
       const clash = (await client.callTool({ name: 'request_secrets', arguments: { item: 'prod', reason: 'x', fields: [{ key: 'token' }] } })) as ToolResult;
       expect(clash.isError).toBe(true);
       expect(clash.content[0].text).toContain("n'est pas un secret");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('run_with_secrets passe les secrets (coffre et session) en variables du conteneur jetable et masque la sortie', async () => {
+    sessionSecrets.find.mockResolvedValue({ id: 'x', sessionId: 's', name: 'brevo', fields: [{ key: 'token', label: 'Jeton' }], requireApproval: false, expiresAt: new Date() });
+    sessionSecrets.values.mockResolvedValue({ token: 'xkeysib-123456789' });
+    runIsolated.mockReset().mockResolvedValue({ stdout: 'jeton xkeysib-123456789\n', stderr: '', exitCode: 0, signal: null, truncated: false, durationMs: 5 });
+    const client = await connect(withAsk({}));
+    try {
+      const res = (await client.callTool({ name: 'run_with_secrets', arguments: { command: './deploy.sh', env: { BREVO: 'session:brevo.token', KEY: 'cle.private_key' } } })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(runIsolated).toHaveBeenCalledTimes(1);
+      expect(runIsolated.mock.calls[0][1]).toEqual(expect.objectContaining({ cwd: '/tmp', command: ['sh', '-c', './deploy.sh'], env: { BREVO: 'xkeysib-123456789', KEY } }));
+      expect(res.content[0].text).toContain('jeton [secret masqué]');
+      // Le secret du coffre (accord requis) passe par la porte ; celui de session (sans accord) non.
+      expect(approvals.map((a) => a.key)).toEqual(['cle']);
+      expect(events.some((e) => e.connection === 'session:brevo' && e.ok === true)).toBe(true);
+      const bad = (await client.callTool({ name: 'run_with_secrets', arguments: { command: 'x', env: { PATH: 'cle.private_key' } } })) as ToolResult;
+      expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("write_env_secret écrit la variable (600, exclue de git), toujours avec accord, et refuse un élément non ouvert à l'environnement", async () => {
+    const { mkdtemp, readFile, stat } = await import('node:fs/promises');
+    const os = await import('node:os');
+    const dir = await mkdtemp(`${os.tmpdir()}/envsecret-`);
+    sessionSecrets.find.mockResolvedValue({ id: 'x', sessionId: 's', name: 'brevo', fields: [{ key: 'token', label: 'Jeton' }], requireApproval: false, expiresAt: new Date() });
+    sessionSecrets.values.mockResolvedValue({ token: 'a b"c' });
+    envFiles.list.mockResolvedValue([{ path: '.env' }]);
+    const srv = createVaultMcpServer({
+      project: { id: 'p', name: 'Projet', slug: 'projet' } as Project,
+      sessionId: 's',
+      ownerId: 'u',
+      cwd: dir,
+      emit: async (type, payload) => {
+        events.push({ type, ...payload });
+      },
+      remembered: async () => false,
+      approve: async (a) => {
+        approvals.push({ toolName: a.toolName, key: a.key, input: a.input });
+      },
+    });
+    const client = await connect(srv);
+    try {
+      const managed = (await client.callTool({ name: 'write_env_secret', arguments: { path: '.env', name: 'BREVO', secret: 'session:brevo.token' } })) as ToolResult;
+      expect(managed.isError).toBe(true);
+      const res = (await client.callTool({ name: 'write_env_secret', arguments: { path: '.env.local', name: 'BREVO', secret: 'session:brevo.token' } })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(res.content[0].text).not.toContain('a b');
+      expect(await readFile(`${dir}/.env.local`, 'utf8')).toBe('BREVO="a b\\"c"\n');
+      expect((await stat(`${dir}/.env.local`)).mode & 0o777).toBe(0o600);
+      expect(approvals).toEqual([expect.objectContaining({ toolName: 'mcp__vault__write_env_secret', key: 'session:brevo' })]);
+      const vaultItem = (await client.callTool({ name: 'write_env_secret', arguments: { path: '.env.local', name: 'KEY', secret: 'cle.private_key' } })) as ToolResult;
+      expect(vaultItem.isError).toBe(true);
+      expect(vaultItem.content[0].text).toContain("n'est pas ouvert aux fichiers d'environnement");
     } finally {
       await client.close();
     }

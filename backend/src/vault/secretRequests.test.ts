@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HumanRequest } from '../requests/types.js';
 
 // Saisie de secrets par une personne : les valeurs vont dans le coffre, la réponse remise à l'agent n'en porte aucune.
-const { requests, vault, users, sessions } = vi.hoisted(() => ({
+const { requests, vault, users, sessions, sessionSecrets } = vi.hoisted(() => ({
+  sessionSecrets: { store: vi.fn() },
   requests: { get: vi.fn(), answer: vi.fn() },
   vault: { getInternal: vi.fn(), update: vi.fn(), create: vi.fn(), link: vi.fn(), delete: vi.fn(), agentItems: vi.fn() },
   users: { roleFor: vi.fn() },
@@ -12,6 +13,7 @@ vi.mock('../requests/service.js', () => ({ requestService: requests, REQUEST_SET
 vi.mock('./service.js', () => ({ vaultService: vault }));
 vi.mock('../users/service.js', () => ({ userService: users }));
 vi.mock('../sessions/repository.js', () => ({ sessionRepository: sessions }));
+vi.mock('./sessionSecrets.js', () => ({ sessionSecretService: sessionSecrets }));
 
 const { provideSecrets, redactSecret, parseSecretRef, normalizeRequestedFields, prepareSecretsRequest } = await import('./secretRequests.js');
 
@@ -32,7 +34,7 @@ const request = (payload: Record<string, unknown>, over: Partial<HumanRequest> =
   }) as HumanRequest;
 
 beforeEach(() => {
-  for (const group of [requests, vault, users, sessions]) for (const fn of Object.values(group)) fn.mockReset();
+  for (const group of [requests, vault, users, sessions, sessionSecrets]) for (const fn of Object.values(group)) fn.mockReset();
   sessions.findById.mockResolvedValue({ id: 's1', projectId: 'p', name: 'Session' });
   requests.answer.mockImplementation(async (_id: string, response: Record<string, unknown>) => ({ id: 'r1', response }));
   vault.create.mockImplementation(async (_a: unknown, projectId: string | null, input: { name: string; requireApproval: boolean }) => ({ id: 'n1', name: input.name, kind: 'secret', ownerProjectId: projectId, requireApproval: input.requireApproval }));
@@ -80,6 +82,18 @@ describe('provideSecrets', () => {
     expect(requests.answer.mock.calls[0][1]).toEqual(expect.objectContaining({ destination: 'existing', created: false }));
   });
 
+  it('confie le secret à la session seule, sans toucher au coffre', async () => {
+    requests.get.mockResolvedValue(request({ ephemeral: true }));
+    const expiresAt = new Date('2026-11-21T17:00:00Z');
+    sessionSecrets.store.mockResolvedValue({ id: 'ss1', name: 'deploy-key', requireApproval: false, expiresAt });
+    await provideSecrets('r1', 'autre', { values: [{ key: 'private_key', value: 'EPHEMERE' }], destination: 'session', requireApproval: false });
+    expect(sessionSecrets.store).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', name: 'deploy-key', values: { private_key: 'EPHEMERE' }, requireApproval: false, createdById: 'autre' }));
+    expect(vault.create).not.toHaveBeenCalled();
+    const response = requests.answer.mock.calls[0][1];
+    expect(response).toEqual(expect.objectContaining({ destination: 'session', item: 'deploy-key', expiresAt: expiresAt.toISOString() }));
+    expect(JSON.stringify(response)).not.toContain('EPHEMERE');
+  });
+
   it('exige chaque champ, et refuse une autre demande ou une demande déjà réglée', async () => {
     requests.get.mockResolvedValue(request({}));
     await expect(provideSecrets('r1', 'u', { values: [] })).rejects.toThrow(/à remplir : Clé/);
@@ -99,7 +113,8 @@ describe('outils', () => {
   });
 
   it('parseSecretRef et normalizeRequestedFields valident leurs entrées', () => {
-    expect(parseSecretRef(' Cle.Private_Key ')).toEqual({ item: 'cle', field: 'private_key' });
+    expect(parseSecretRef(' Cle.Private_Key ')).toEqual({ session: false, item: 'cle', field: 'private_key' });
+    expect(parseSecretRef('session:brevo.token')).toEqual({ session: true, item: 'brevo', field: 'token' });
     expect(() => parseSecretRef('cle')).toThrow();
     expect(() => normalizeRequestedFields([])).toThrow();
     expect(() => normalizeRequestedFields([{ key: 'a' }, { key: 'A' }])).toThrow(/deux fois/);

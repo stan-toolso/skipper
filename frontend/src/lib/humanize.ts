@@ -274,6 +274,12 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
             `${str(input, 'remote_path') ?? ''} (droits ${str(input, 'mode') ?? '600'})`,
             `écrire le secret ${secretRef ?? ''} dans ${host}:${str(input, 'remote_path') ?? ''}`,
           ],
+          run_with_secrets: [`Commande avec des secrets en variables d'environnement`, `${cmd}${str(input, 'env') ? `\n(${str(input, 'env')})` : ''}`, `exécuter une commande avec des secrets en variables d'environnement : ${short(cmd)}`],
+          write_env_secret: [
+            `Écriture du secret ${secretRef ?? ''} dans ${str(input, 'path') ?? 'un fichier .env'}`,
+            `${str(input, 'name') ?? ''} → ${str(input, 'path') ?? ''} (la valeur devient lisible dans l'environnement de la session)`,
+            `écrire le secret ${secretRef ?? ''} dans ${str(input, 'path') ?? 'un fichier .env'} (${str(input, 'name') ?? ''})`,
+          ],
           request_secrets: [`Demande de secrets (${conn})`, undefined, `vous demander des secrets pour l'élément ${conn}`],
           ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],

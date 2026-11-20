@@ -4,6 +4,7 @@ import type { HumanRequest } from '../requests/types.js';
 import { sessionRepository } from '../sessions/repository.js';
 import { userService } from '../users/service.js';
 import { vaultService } from './service.js';
+import { sessionSecretService } from './sessionSecrets.js';
 import type { SecretSettings, VaultFieldInput, VaultItem } from './types.js';
 import { validateFieldKey } from './website.js';
 
@@ -38,9 +39,12 @@ export interface SecretsRequestPayload {
   projectId: string;
   /** Personne dont les droits servent la session : seule elle peut ranger le secret dans son coffre personnel. */
   personalUserId: string | null;
+  /** L'agent n'en a besoin que pour cette session : la modale propose d'abord « pour cette session seulement ». */
+  ephemeral?: boolean;
 }
 
-export type SecretsDestination = 'project' | 'personal';
+/** `session` : secret éphémère de la session (vault/sessionSecrets.ts), jamais rangé dans le coffre. */
+export type SecretsDestination = 'project' | 'personal' | 'session';
 
 /** Contrôle et normalise les champs demandés par l'agent. */
 export function normalizeRequestedFields(fields: { key: string; label?: string | null; hint?: string | null; multiline?: boolean | null }[]): RequestedSecretField[] {
@@ -62,19 +66,21 @@ export async function prepareSecretsRequest(input: {
   item: string;
   description?: string | null;
   fields: RequestedSecretField[];
+  ephemeral?: boolean;
 }): Promise<SecretsRequestPayload> {
   const name = input.item.trim().toLowerCase();
   // Même règle que les noms du coffre (vault/service.ts) : contrôlée ici pour répondre à l'agent avant d'ouvrir la modale.
   if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(name)) throw new AppError(`Nom d'élément invalide « ${input.item} » : lettres minuscules, chiffres, tirets et soulignés, 40 caractères maximum (ex. cle-deploiement)`);
   const existing = (await vaultService.agentItems(input.projectId, input.rightsHolderId)).find((i) => i.name === name) ?? null;
-  if (existing && existing.kind !== 'secret') throw new AppError(`« ${name} » existe déjà dans le coffre et n'est pas un secret : choisis un autre nom`);
+  if (existing && existing.kind !== 'secret' && !input.ephemeral) throw new AppError(`« ${name} » existe déjà dans le coffre et n'est pas un secret : choisis un autre nom`);
   return {
     item: name,
-    itemId: existing?.id ?? null,
+    itemId: existing?.kind === 'secret' ? existing.id : null,
     description: input.description?.trim() || null,
     fields: input.fields,
     projectId: input.projectId,
     personalUserId: input.rightsHolderId,
+    ephemeral: Boolean(input.ephemeral),
   };
 }
 
@@ -92,6 +98,8 @@ export interface SecretsResponse {
   created: boolean;
   destination: SecretsDestination | 'existing';
   requireApproval: boolean;
+  /** Secret de session : date d'effacement. */
+  expiresAt?: string;
 }
 
 /**
@@ -114,6 +122,20 @@ export async function provideSecrets(requestId: string, userId: string, input: P
   const entries: VaultFieldInput[] = payload.fields.map((f) => ({ key: f.key, label: f.label, secret: true, value: values.get(f.key)! }));
   const actor = { userId, sessionId: request.sessionId, projectId: payload.projectId };
 
+  // Pour cette session seulement : chiffré à part, jamais dans le coffre, effacé à l'archivage ou à expiration.
+  if (input.destination === 'session') {
+    const secret = await sessionSecretService.store({
+      sessionId: request.sessionId,
+      name: payload.item,
+      fields: payload.fields.map((f) => ({ key: f.key, label: f.label })),
+      values: Object.fromEntries(payload.fields.map((f) => [f.key, values.get(f.key)!])),
+      requireApproval: input.requireApproval ?? true,
+      createdById: userId,
+    });
+    const response: SecretsResponse = { item: payload.item, itemId: secret.id, fields: payload.fields.map((f) => f.key), created: true, destination: 'session', requireApproval: secret.requireApproval, expiresAt: secret.expiresAt.toISOString() };
+    return requestService.answer(requestId, response as unknown as Record<string, unknown>, userId);
+  }
+
   let item: VaultItem;
   let created = false;
   let destination: SecretsResponse['destination'];
@@ -125,7 +147,7 @@ export async function provideSecrets(requestId: string, userId: string, input: P
     item = await vaultService.update(actor, existing.id, { fields: [...kept, ...entries], ...(input.requireApproval != null ? { requireApproval: input.requireApproval } : {}) });
     destination = 'existing';
   } else {
-    destination = input.destination ?? (payload.personalUserId === userId ? 'personal' : 'project');
+    destination = (input.destination as 'project' | 'personal' | null | undefined) ?? (payload.personalUserId === userId ? 'personal' : 'project');
     const base = { name: payload.item, kind: 'secret' as const, description: payload.description ?? `Saisi à la demande de la session ${session.name}`, fields: entries, requireApproval: input.requireApproval ?? true };
     if (destination === 'project') {
       if ((await userService.roleFor(userId, payload.projectId)) !== 'admin') throw new AppError("Ranger un secret dans le coffre du projet demande d'en être administrateur : choisissez votre coffre personnel", 'FORBIDDEN');
@@ -155,9 +177,9 @@ export function redactSecret(text: string, secret: string): string {
   return out;
 }
 
-/** Référence « élément.champ » d'un secret du coffre. */
-export function parseSecretRef(ref: string): { item: string; field: string } {
-  const m = /^\s*([^.\s]+)\.([^.\s]+)\s*$/.exec(ref);
-  if (!m) throw new AppError(`Référence de secret invalide : « ${ref} » (attendu : élément.champ, ex. cle-deploiement.private_key)`);
-  return { item: m[1].toLowerCase(), field: m[2].toLowerCase() };
+/** Référence « élément.champ » d'un secret du coffre, ou « session:nom.champ » d'un secret de la session. */
+export function parseSecretRef(ref: string): { session: boolean; item: string; field: string } {
+  const m = /^\s*(session:)?([^.\s:]+)\.([^.\s]+)\s*$/i.exec(ref);
+  if (!m) throw new AppError(`Référence de secret invalide : « ${ref} » (attendu : élément.champ, ex. cle-deploiement.private_key, ou session:nom.champ pour un secret de la session)`);
+  return { session: Boolean(m[1]), item: m[2].toLowerCase(), field: m[3].toLowerCase() };
 }

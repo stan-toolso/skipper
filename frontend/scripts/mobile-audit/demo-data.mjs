@@ -605,7 +605,7 @@ const requests = [
     __typename: 'Request', id: 'r-secrets-contact', session: S.contact, type: 'secrets', status: 'PENDING', title: 'Saisir le secret « cle-deploiement » (Clé privée SSH, Jeton Brevo)',
     message: 'Pour installer la clé de déploiement sur le serveur et configurer l’envoi des e-mails du formulaire.',
     payload: {
-      item: 'cle-deploiement', itemId: null, description: null, projectId: P.site.id, personalUserId: U.me.id,
+      item: 'cle-deploiement', itemId: null, description: null, projectId: P.site.id, personalUserId: U.me.id, ephemeral: true,
       fields: [
         { key: 'private_key', label: 'Clé privée SSH', hint: 'Format OpenSSH (-----BEGIN OPENSSH PRIVATE KEY-----)', multiline: true },
         { key: 'brevo_token', label: 'Jeton Brevo', hint: 'Paramètres › Clés API de Brevo', multiline: false },

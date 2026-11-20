@@ -54,7 +54,7 @@ const sessionRepository = vi.hoisted(() => ({
     }
     return ids;
   }),
-  archiveByWorksession: vi.fn(),
+  archiveByWorksession: vi.fn(async () => [] as string[]),
   unarchiveByWorksession: vi.fn(),
 }));
 const terminalService = vi.hoisted(() => ({
@@ -81,6 +81,7 @@ vi.mock('../runners/index.js', () => ({ runner: { remove: vi.fn(async () => unde
 vi.mock('../sessions/repository.js', () => ({ sessionRepository }));
 vi.mock('../sessions/service.js', () => ({ sessionService }));
 vi.mock('../terminals/service.js', () => ({ terminalService }));
+vi.mock('../vault/sessionSecrets.js', () => ({ sessionSecretService: { clearSession: vi.fn(async () => 0) } }));
 vi.mock('../worksessions/service.js', () => ({ worksessionService, worksessionsRoot: () => '/tmp/ws/p.worktrees' }));
 vi.mock('./service.js', () => ({
   projectService: {
