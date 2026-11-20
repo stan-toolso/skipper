@@ -5,6 +5,7 @@ import { applyFilters, defaultLayout, loadLayout, matchesFilter, moveColumn, nor
 const task = (over: Partial<Task> & { id: string }): Task => ({
   costUsd: 0,
   title: 'Tâche',
+  summary: null,
   description: '',
   status: 'TODO',
   statusTag: null,

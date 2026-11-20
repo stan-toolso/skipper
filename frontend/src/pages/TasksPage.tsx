@@ -69,9 +69,9 @@ function TaskCard({ task, showProject, onEdit, target, onTag }: { task: Task; sh
             <TaskTags tags={task.tags} onSelect={onTag} />
           </div>
         )}
-        {task.description && (
-          <div className="small text-secondary mt-1" style={{ whiteSpace: 'pre-wrap', maxHeight: 72, overflow: 'hidden' }}>
-            {task.description}
+        {(task.summary || task.description) && (
+          <div className={`small mt-1 ${task.summary ? '' : 'text-secondary'}`} style={{ whiteSpace: 'pre-wrap', maxHeight: 72, overflow: 'hidden' }}>
+            {task.summary || task.description}
           </div>
         )}
         <div className="small text-secondary mt-2 d-flex flex-wrap gap-2 align-items-center">

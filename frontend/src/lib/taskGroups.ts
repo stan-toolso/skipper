@@ -157,6 +157,7 @@ export function matchesSearch(t: Task, query: string): boolean {
   const hay = fold(
     [
       t.title,
+      t.summary ?? '',
       t.description,
       t.tags.join(' '),
       t.statusTag ?? '',

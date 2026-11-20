@@ -413,6 +413,8 @@ export interface Task {
   /** Coût attribué à la tâche (unité d'affichage). */
   costUsd: number;
   title: string;
+  /** Une ou deux phrases sur l'objet de la tâche, montrées avant la description ; null : aucun. */
+  summary: string | null;
   description: string;
   status: TaskStatus;
   /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…). */
@@ -1121,10 +1123,10 @@ export const SESSION = gql`
 
 /** Une page d'événements d'une session, dans l'ordre, après l'événement `after` (voir useSessionEvents). */
 export const SESSION_EVENTS = gql`
-  query SessionEvents($id: ID!, $after: ID, $limit: Int) {
+  query SessionEvents($id: ID!, $after: ID, $limit: Int, $toolUseId: ID) {
     session(id: $id) {
       id
-      events(after: $after, limit: $limit) {
+      events(after: $after, limit: $limit, toolUseId: $toolUseId) {
         id
         sessionId
         type
@@ -1694,6 +1696,17 @@ export const SIDEBAR = gql`
     activity
     pendingRequestCount
     browserActive
+    subagents {
+      id
+      toolUseId
+      description
+      agentType
+      background
+      startedAt
+      toolUses
+      lastTool
+      summary
+    }
     pages {
       id
       title
@@ -1836,6 +1849,7 @@ export const TASK_FIELDS = gql`
   fragment TaskFields on Task {
     id
     title
+    summary
     description
     status
     statusTag

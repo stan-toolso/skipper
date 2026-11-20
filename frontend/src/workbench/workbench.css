@@ -160,6 +160,13 @@
 .wb-chip-sub.busy { color: var(--cc-accent); }
 .wb-chip-sub.ask { color: var(--cc-yellow); }
 .wb-chip-sub.idle { color: var(--cc-green); }
+/* Sous-agents du CLI (outil Agent) en cours : puce de la carte repliée et une ligne chacun, dépliée. */
+.wb-cli-chip { gap: 3px; }
+.wb-cli-subagent { font-size: 12px; }
+.wb-cli-subagent .wb-dot { width: 6px; height: 6px; }
+.wb-cli-subagent .wb-row-label { color: var(--cc-dim); }
+.wb-cli-subagent .wb-state { flex: 0 0 auto; font-family: var(--cc-font-mono); font-size: 10.5px; }
+.wb-ws-meta > .wb-meta-sub.wb-meta-cli { flex-shrink: 0; }
 /* Sous-agent lancé dans un autre dossier : étiquette du dossier, qui se tronque pour laisser le nom lisible. */
 .wb-session-row .wb-tag { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-session-row .wb-tag .bi { font-size: 9px; }
@@ -959,6 +966,12 @@ button.task-tag:hover { color: var(--cc-fg); border-color: var(--cc-border); }
 .task-panel-title { color: var(--cc-fg); font-weight: 600; text-decoration: none; }
 .task-panel-title:hover { color: var(--cc-accent); }
 .task-panel-text { padding: 2px 10px 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Résumé d'une tâche (components/TaskSummary.tsx), avant la description : page, panneau, fil hors de la page. */
+.task-summary { border-left: 3px solid var(--cc-accent); background: var(--cc-accent-soft); border-radius: var(--cc-radius-sm); padding: 8px 12px; }
+.task-summary-label { font-family: var(--cc-font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--cc-dim); margin-bottom: 2px; }
+.task-summary-text { color: var(--cc-fg); font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-panel .task-summary { margin: 2px 10px 8px; }
+.task-panel .task-summary-text { font-size: 13px; }
 .task-panel-fields { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 2px 10px 6px; margin: 0; }
 .task-panel-fields dt { color: var(--cc-dim); font-weight: 500; }
 .task-panel-fields dd { margin: 0; overflow-wrap: anywhere; }
@@ -1230,6 +1243,10 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .task-grid-cell > a { display: inline; }
 .task-grid-actions { overflow: visible; }
 .task-actions-compact { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Modale « Confier à un agent » / « Reprendre » d'une tâche en attente de ses dépendances : un avis, pas une erreur. */
+.task-launch-blocked { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--cc-border); border-left: 3px solid var(--cc-yellow); border-radius: var(--cc-radius-sm); background: var(--cc-yellow-soft); color: var(--cc-fg); font-size: 0.875rem; }
+.task-launch-blocked ul li + li { margin-top: 2px; }
+.task-launch-blocked-status { font-family: var(--cc-font-mono); font-size: 0.75rem; color: var(--cc-dim); white-space: nowrap; }
 /* Première colonne figée au défilement horizontal (titre, d'ordinaire). */
 .task-grid-table th:first-child, .task-grid-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--cc-bg); }
 .task-grid-table thead th:first-child { z-index: 4; background: var(--cc-bg-elevated); }

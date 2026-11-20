@@ -47,3 +47,25 @@ describe('pullRequestRepository.update', () => {
           }
   });
 });
+
+describe('pullRequestRepository.findForWorksessions', () => {
+  it("ne retient pas par sa branche une PR terminée avant la création de la work session (nom de branche réutilisé)", async () => {
+    await pullRequestRepository.findForWorksessions([{ id: 'ws', projectId: 'p', branch: 'est-ce-qu-on-peut-faire' }]);
+    const sql = lastSql();
+    expect(sql).toContain('JOIN pull_requests p ON p.worksession_id = w.id');
+    expect(sql).toContain('COALESCE(p.merged_at, p.closed_at) >= w.created_at');
+  });
+
+  it('garde, pour chaque work session, la première PR dans l’ordre de la requête (la plus avancée)', async () => {
+    const row = (ws: string, id: string, status: string) => ({ ws_key: ws, id, status, project_id: 'p', head_branch: 'b', repo: '', number: 1, url: '', title: '' });
+    vi.mocked(pool.query).mockResolvedValueOnce({ rows: [row('a', 'pr1', 'open'), row('b', 'pr2', 'merged'), row('a', 'pr3', 'merged')], rowCount: 3 } as never);
+    const found = await pullRequestRepository.findForWorksessions([
+      { id: 'a', projectId: 'p', branch: 'b' },
+      { id: 'b', projectId: 'p', branch: 'b' },
+      { id: 'c', projectId: 'p', branch: 'c' },
+    ]);
+    expect(found.get('a')?.id).toBe('pr1');
+    expect(found.get('b')?.id).toBe('pr2');
+    expect(found.has('c')).toBe(false);
+  });
+});

@@ -115,6 +115,11 @@ const RESTART_TIMEOUT_MS = 15_000;
  * une fin ordinaire (pas d'événement de statut, pas de notification). En mémoire, comme le processus.
  */
 const restarting = new Set<string>();
+/**
+ * Sessions relancées pour une instruction arrivée pendant leur fin (`relaunchWithMessage`) : les instructions suivantes
+ * attendent la relance, puis vont au nouveau processus.
+ */
+const relaunching = new Map<string, Promise<unknown>>();
 /** Instruction de reprise d'une session redémarrée au milieu d'un tour. */
 export const RESTART_RESUME_MESSAGE =
   "La session vient d'être redémarrée pour recharger tes outils (serveurs MCP, coffre, réglages) : ta conversation est intacte, mais ton tour en cours a été coupé. Reprends le travail là où il s'est arrêté.";
@@ -200,6 +205,30 @@ async function settleIdleInterrupted(id: string, message: string, reason: string
   await emitEvent(id, 'system', { message, notice: true, reason, activity: current.activity });
   await emitEvent(id, 'status', { status: 'completed' });
   return publishSession(await sessionRepository.update(id, { status: 'completed', activity: null }));
+}
+
+/**
+ * Instruction arrivée pendant la fin d'une session dont le processus vit encore (il ne lit plus ses instructions) :
+ * l'ancien processus est arrêté comme pour un redémarrage, puis la session est relancée sur la même conversation avec
+ * l'instruction. Sans cela, l'instruction était journalisée puis perdue (session Curso 56fd4c13 du 17/11/2026 : terminée
+ * à la fin de sa tâche alors qu'une commande Bash de fond attendait une publication Android, deux messages perdus).
+ */
+async function relaunchWithMessage(id: string, handle: RunningHandle, text: string, attachments: Attachment[], author: InstructionAuthor): Promise<Session> {
+  if (restarting.has(id) || archiveWhenDone.has(id) || parking.has(id) || stopping) {
+    throw new AppError('La session est en train de se terminer : réessayez dans quelques secondes');
+  }
+  restarting.add(id);
+  try {
+    await requestService.cancelAllForSession(id);
+    await handle.stop();
+    await awaitFinished([id], RESTART_TIMEOUT_MS);
+  } catch (err) {
+    restarting.delete(id);
+    throw err;
+  }
+  if (running.has(id)) throw new AppError("L'ancien processus de la session ne s'est pas arrêté à temps : réessayez dans quelques secondes");
+  await emitEvent(id, 'system', { message: 'La session se terminait : elle est relancée (même conversation) avec votre message.', notice: true, reason: 'relaunch_for_message' });
+  return sessionService.start(id, text, attachments, { author });
 }
 
 /** Attend la fin de session de ces sessions (mise à jour finale du statut), sans jamais bloquer plus de `timeoutMs`. */
@@ -447,7 +476,7 @@ export const openPullRequestRefusal = (pr: Pick<TrackedPullRequest, 'number'>) =
 export const sessionService = {
   list: (filter?: SessionFilter) => sessionRepository.list(filter),
   get: (id: string) => sessionRepository.findById(id),
-  events: (sessionId: string, opts?: { after?: string; limit?: number }) => sessionRepository.listEvents(sessionId, opts),
+  events: (sessionId: string, opts?: { after?: string; limit?: number; toolUseId?: string }) => sessionRepository.listEvents(sessionId, opts),
   isRunning: (id: string) => running.has(id),
   /** Sessions du projet dont le processus tourne sur ce serveur. */
   runningCountByProject: (projectId: string) => [...running.keys()].filter((id) => slots.get(id) === projectId).length,
@@ -696,6 +725,9 @@ export const sessionService = {
         setContextTokens: async (contextTokens) => {
           await publishSession(await sessionRepository.update(id, { contextTokens }));
         },
+        setSubagents: async (subagents) => {
+          await publishSession(await sessionRepository.update(id, { subagents }));
+        },
         setActivity: async (activity) => {
           if (activity === 'idle') idleSince.set(id, Date.now());
           else idleSince.delete(id);
@@ -895,6 +927,22 @@ export const sessionService = {
       }
     }
     const attachments = await store();
+    const pendingRelaunch = relaunching.get(id);
+    if (pendingRelaunch) {
+      await pendingRelaunch.catch(() => undefined);
+      return this.sendMessage(id, trimmed, null, { ...opts, attachments, author });
+    }
+    // Processus encore vivant mais qui n'accepte plus d'instructions (fin demandée : tâche terminée, inactivité, remise à
+    // zéro ; le CLI attend une commande de fond avant de sortir) : la session est relancée avec l'instruction.
+    if (handle && handle.acceptsMessages?.() === false) {
+      const relaunch = relaunchWithMessage(id, handle, trimmed, attachments, author);
+      relaunching.set(id, relaunch);
+      try {
+        return await relaunch;
+      } finally {
+        relaunching.delete(id);
+      }
+    }
     // Session garée par une instance en drainage : celle-ci la réserve puis relance son processus avec l'instruction.
     if (!handle && session.status === 'running' && session.parkedAt && (await sessionRepository.claimParked(id, instanceRegistry.id))) {
       return this.start(id, trimmed, attachments, { fromParked: true, author });

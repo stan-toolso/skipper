@@ -6,6 +6,7 @@ const base: Task = {
   id: 't1',
   projectId: 'p1',
   title: 'Corriger le bug',
+  summary: null,
   description: '',
   status: 'todo',
   priority: 'medium',
@@ -95,5 +96,9 @@ describe('étiquettes', () => {
   });
   it("décrit les changements d'étiquettes", () => {
     expect(describeTaskChanges(base, { ...base, statusTag: 'en revue', tags: ['front'] })).toEqual(["- Étiquette d'état : aucune → « en revue »", '- Étiquettes : aucune → front']);
+  });
+  it('décrit les changements du résumé', () => {
+    expect(describeTaskChanges(base, { ...base, summary: 'Afficher un résumé avant la description' })).toEqual(['- Résumé, nouveau texte : Afficher un résumé avant la description']);
+    expect(describeTaskChanges({ ...base, summary: 'Ancien' }, base)).toEqual(['- Résumé retiré']);
   });
 });

@@ -25,6 +25,8 @@ export interface Task {
   id: string;
   projectId: string;
   title: string;
+  /** Une ou deux phrases qui disent l'objet de la tâche, lues avant la description ; null : pas de résumé. */
+  summary: string | null;
   description: string;
   status: TaskStatus;
   /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté. */
@@ -106,6 +108,8 @@ export interface CommentFiles {
 
 export interface CreateTaskInput {
   title: string;
+  /** Résumé de l'objet de la tâche (vide : aucun). */
+  summary?: string | null;
   description?: string | null;
   priority?: TaskPriority | null;
   status?: TaskStatus | null;
@@ -128,6 +132,8 @@ export interface CreateTaskInput {
 
 export interface UpdateTaskInput {
   title?: string | null;
+  /** `undefined` : inchangé ; null ou vide : retiré. */
+  summary?: string | null;
   description?: string | null;
   priority?: TaskPriority | null;
   status?: TaskStatus | null;

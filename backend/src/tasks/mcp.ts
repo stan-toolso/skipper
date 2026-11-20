@@ -81,7 +81,7 @@ export function qualityLinkLine(link: DeliveryTaskLink | null, delivery: Deliver
 
 function detail(t: Task, comments: TaskComment[], attachments: TaskAttachment[], pullRequests: TrackedPullRequest[] = [], reactions: TaskReaction[] = [], projectRepo = '', related: Task[] = [], quality: string | null = null): string {
   const own = attachments.filter((a) => !a.commentId);
-  const parts = [t.description || '(pas de description)'];
+  const parts = [...(t.summary ? [`Résumé : ${t.summary}`, ''] : []), t.description || '(pas de description)'];
   parts.push(...dependencyLines(t, related));
   if (own.length) parts.push(...describeAttachments(own, 'tool'));
   if (t.assignee) parts.push(`Responsable : ${formatPerson(t.assignee)}`);
@@ -198,6 +198,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
         `Crée une tâche dans le projet${where}.`,
         withProjectParam({
           title: z.string().describe('Titre court et actionnable'),
+          summary: z.string().optional().describe("Résumé de l'objet de la tâche en une ou deux phrases (500 caractères au plus), affiché avant la description pour être lu et compris d'un coup d'œil : ce qu'il faut obtenir et pourquoi, sans le détail"),
           description: z.string().optional().describe('Contexte, critères de réussite, pistes'),
           priority: prioritySchema.optional().describe('Défaut : medium'),
           status: statusSchema.optional().describe('Défaut : todo'),
@@ -211,7 +212,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
           depends_on: dependsOnSchema.describe('Identifiants des tâches du même projet dont celle-ci dépend (« bloquée par ») : elle ne pourra être confiée à un agent qu’une fois toutes terminées'),
           auto_start: autoStartSchema.describe('Confier automatiquement la tâche à une session (configuration par défaut du projet, au nom de la personne qui pilote cette session) quand sa dernière dépendance passe à done'),
         }, scope),
-        async ({ title, description, priority, status, due_date, custom_fields, tags, status_tag, assignee, reporter, assign_to_me, depends_on, auto_start, project: ref }) =>
+        async ({ title, summary, description, priority, status, due_date, custom_fields, tags, status_tag, assignee, reporter, assign_to_me, depends_on, auto_start, project: ref }) =>
           run(async () => {
             const p = await targetProject(project, scope, ref, { write: true });
             const mine = assign_to_me ?? (status === 'in_progress' || status === 'done');
@@ -219,6 +220,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
               p.id,
               {
                 title,
+                summary,
                 description,
                 priority: priority as Task['priority'] | undefined,
                 status: status as Task['status'] | undefined,
@@ -240,7 +242,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
       ),
       tool(
         'update',
-        "Met à jour une tâche (statut, étiquette d'état, priorité, titre, description, échéance, étiquettes, champs, personnes). Passe-la en done quand elle est terminée ; tiens son étiquette d'état à jour pendant que tu y travailles. custom_fields et tags remplacent la liste complète : lis-la d'abord avec get.",
+        "Met à jour une tâche (statut, étiquette d'état, priorité, titre, résumé, description, échéance, étiquettes, champs, personnes). Passe-la en done quand elle est terminée ; tiens son étiquette d'état à jour pendant que tu y travailles. custom_fields et tags remplacent la liste complète : lis-la d'abord avec get.",
         {
           id: z.string(),
           status: statusSchema.optional(),
@@ -250,6 +252,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             .describe("Court libellé (un mot ou deux, 40 caractères au plus) de l'avancement, affiché à côté du statut : « analyse », « implémentation », « tests », « en revue », « bloquée »… ; une chaîne vide la retire. N'y recopie pas l'état d'une pull request (« PR #12 à fusionner ») : l'étape de la PR suivie s'affiche d'elle-même et reste à jour"),
           priority: prioritySchema.optional(),
           title: z.string().optional(),
+          summary: z.string().optional().describe("Résumé de l'objet de la tâche en une ou deux phrases (500 caractères au plus) ; chaîne vide pour le retirer"),
           description: z.string().optional(),
           due_date: z.string().optional().describe('AAAA-MM-JJ, ou chaîne vide pour retirer'),
           custom_fields: z.array(fieldSchema).optional().describe('Liste complète des champs (remplace les précédents)'),
@@ -266,7 +269,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             ),
           wake_note: z.string().optional().describe('Ce qu\'il faudra vérifier au réveil, assez précis pour une session qui repart de zéro (transmis à l\'agent réveillé) ; chaîne vide pour retirer'),
         },
-        async ({ id, status, status_tag, priority, title, description, due_date, tags, custom_fields, assignee, reporter, depends_on, auto_start, wake_at, wake_note }) =>
+        async ({ id, status, status_tag, priority, title, summary, description, due_date, tags, custom_fields, assignee, reporter, depends_on, auto_start, wake_at, wake_note }) =>
           run(async () => {
             const current = await own(id);
             // Claim implicite : avancer une tâche que personne n'a prise, c'est la prendre (pas une tâche bloquée).
@@ -278,6 +281,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
                 statusTag: status_tag,
                 priority: priority as Task['priority'] | undefined,
                 title,
+                summary,
                 description,
                 dueDate: due_date,
                 tags,

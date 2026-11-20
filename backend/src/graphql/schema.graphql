@@ -379,6 +379,8 @@ type Task {
   id: ID!
   project: Project!
   title: String!
+  "Une ou deux phrases qui disent l'objet de la tâche, montrées avant la description pour être lues et comprises rapidement ; null : pas de résumé."
+  summary: String
   description: String!
   status: TaskStatus!
   "Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté ; posé par les personnes ou par la session en charge (outil MCP `tasks.update`)."
@@ -459,6 +461,8 @@ type Task {
 input CreateTaskInput {
   projectId: ID!
   title: String!
+  "Résumé de l'objet de la tâche (500 caractères au plus)."
+  summary: String
   description: String
   priority: TaskPriority
   status: TaskStatus
@@ -478,6 +482,8 @@ input CreateTaskInput {
 
 input UpdateTaskInput {
   title: String
+  "Absent : inchangé ; null ou vide : retiré."
+  summary: String
   description: String
   priority: TaskPriority
   status: TaskStatus
@@ -1865,13 +1871,15 @@ type Session {
   updatedAt: DateTime!
   startedAt: DateTime
   endedAt: DateTime
-  "Événements journalisés, dans l'ordre chronologique. `after` = id du dernier événement déjà reçu."
-  events(after: ID, limit: Int): [SessionEvent!]!
+  "Événements journalisés, dans l'ordre chronologique. `after` = id du dernier événement déjà reçu. `toolUseId` : seulement ceux du sous-agent du CLI lancé par cet appel de l'outil Agent (ses messages et l'appel lui-même)."
+  events(after: ID, limit: Int, toolUseId: ID): [SessionEvent!]!
   requests(status: RequestStatus): [Request!]!
   "Nombre de demandes en attente d'une réponse humaine."
   pendingRequestCount: Int!
   "Le navigateur headless de la session est ouvert et l'agent s'en est servi : vue en direct sur le WebSocket /browsers/<id>."
   browserActive: Boolean!
+  "Sous-agents du CLI en cours (outil Agent, premier plan ou arrière-plan) ; vide quand la session ne tourne pas."
+  subagents: [SessionSubagent!]!
   "Réponse en cours d'écriture par l'agent (texte reçu en streaming, pas encore journalisé) ; null quand il n'écrit pas."
   liveDraft: SessionLiveDraft
   "Mise en file d'attente (statut QUEUED)."
@@ -1934,6 +1942,25 @@ type Attachment {
   name: String!
   mediaType: String!
   size: Int!
+}
+
+"Sous-agent lancé par l'agent d'une session dans son propre processus (outil Agent du CLI), pas une session Skipper."
+type SessionSubagent {
+  id: ID!
+  "Appel de l'outil Agent qui l'a lancé : Session.events(toolUseId:) donne son fil."
+  toolUseId: ID
+  "Description donnée par l'agent."
+  description: String!
+  "Type de sous-agent (general-purpose, Explore, fork…) ou nom du workflow."
+  agentType: String
+  "Lancé ou passé en arrière-plan : l'agent principal n'attend pas sa fin pour finir son tour."
+  background: Boolean!
+  startedAt: DateTime!
+  "Nombre d'appels d'outils, d'après le dernier avancement."
+  toolUses: Int!
+  lastTool: String
+  "Résumé d'avancement en une ligne, quand le CLI en fournit un."
+  summary: String
 }
 
 "Brouillon en direct : ce que l'agent écrit en ce moment, avant le message complet dans les événements."

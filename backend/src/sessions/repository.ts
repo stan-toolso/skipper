@@ -1,5 +1,6 @@
 import { pool } from '../db/pool.js';
 import { toJson } from '../db/json.js';
+import type { SessionSubagent } from './providers/subagents.js';
 import type { FormerWorksession, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionKind, SessionStatus } from './types.js';
 
 interface SessionRow {
@@ -27,6 +28,7 @@ interface SessionRow {
   error: string | null;
   cleanup: SessionCleanup | null;
   context_tokens: number | null;
+  subagents?: SessionSubagent[] | null;
   resume_digest: string | null;
   cost_usd: string | number | null;
   billed_cost_usd?: string | number | null;
@@ -75,6 +77,7 @@ function toSession(row: SessionRow): Session {
     error: row.error,
     cleanup: row.cleanup ?? {},
     contextTokens: row.context_tokens,
+    subagents: row.subagents ?? [],
     resumeDigest: row.resume_digest ?? null,
     // Coût affiché : les seuls tours comptés (billing/billable.ts) ; cost_usd reste le total du SDK, base des deltas.
     costUsd: Number(row.billed_cost_usd ?? row.cost_usd ?? 0),
@@ -109,6 +112,7 @@ export interface SessionPatch {
   takenOverAt?: Date | null;
   cleanup?: SessionCleanup;
   contextTokens?: number | null;
+  subagents?: SessionSubagent[];
   resumeDigest?: string | null;
   baseCommit?: string | null;
   promptAttachments?: Attachment[];
@@ -134,6 +138,7 @@ const patchColumns: Record<keyof SessionPatch, string> = {
   takenOverAt: 'taken_over_at',
   cleanup: 'cleanup',
   contextTokens: 'context_tokens',
+  subagents: 'subagents',
   resumeDigest: 'resume_digest',
   baseCommit: 'base_commit',
   promptAttachments: 'prompt_attachments',
@@ -273,7 +278,7 @@ export const sessionRepository = {
     for (const [key, column] of Object.entries(patchColumns) as [keyof SessionPatch, string][]) {
       if (patch[key] !== undefined) {
         // Les colonnes jsonb reçoivent du JSON sérialisé (pg transformerait un tableau JS en tableau PostgreSQL) ; toJson retire les \u0000.
-        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' || key === 'queuedStart' ? (patch[key] === null ? null : toJson(patch[key])) : patch[key]);
+        params.push(key === 'promptAttachments' || key === 'config' || key === 'cleanup' || key === 'queuedStart' || key === 'subagents' ? (patch[key] === null ? null : toJson(patch[key])) : patch[key]);
         sets.push(`${column} = $${params.length}`);
       }
     }
@@ -436,9 +441,18 @@ export const sessionRepository = {
     return rows[0] ? toEvent(rows[0]) : null;
   },
 
-  async listEvents(sessionId: string, opts: { after?: string; limit?: number } = {}): Promise<SessionEvent[]> {
+  /**
+   * Événements d'une session, dans l'ordre. `toolUseId` : seulement ceux d'un sous-agent du CLI (outil Agent), à
+   * savoir ses propres messages (`parent_tool_use_id`) et l'appel qui l'a lancé (avec sa consigne).
+   */
+  async listEvents(sessionId: string, opts: { after?: string; limit?: number; toolUseId?: string } = {}): Promise<SessionEvent[]> {
     const params: unknown[] = [sessionId];
     let where = 'session_id = $1';
+    if (opts.toolUseId) {
+      params.push(opts.toolUseId);
+      const n = params.length;
+      where += ` AND (payload->>'parent_tool_use_id' = $${n} OR (type = 'claude.assistant' AND jsonb_typeof(payload->'message'->'content') = 'array' AND payload->'message'->'content' @> jsonb_build_array(jsonb_build_object('id', $${n}::text))))`;
+    }
     if (opts.after) {
       params.push(opts.after);
       where += ` AND id > $${params.length}`;

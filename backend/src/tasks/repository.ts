@@ -9,6 +9,7 @@ interface Row {
   id: string;
   project_id: string;
   title: string;
+  summary: string | null;
   description: string;
   status: TaskStatus;
   status_tag: string | null;
@@ -99,6 +100,7 @@ const toTask = (r: Row): Task => ({
   id: r.id,
   projectId: r.project_id,
   title: r.title,
+  summary: r.summary || null,
   description: r.description,
   status: r.status,
   statusTag: r.status_tag ?? null,
@@ -263,9 +265,9 @@ export const taskRepository = {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO tasks (project_id, title, description, status, priority, session_id, created_by_type, created_by_session_id, due_date, completed_at,
                             custom_fields, assignee_name, assignee_email, reporter_name, reporter_email, status_tag, tags, auto_start_when_unblocked, auto_start_by_id,
-                            started_at, cancelled_at)
+                            started_at, cancelled_at, summary)
          VALUES ($1, $2, $3, $4::task_status, $5, $6, $7, $8, $9, CASE WHEN $4::task_status = 'done' THEN now() ELSE NULL END, $10::jsonb, $11, $12, $13, $14, $15, $16::text[], $17, $18,
-                 CASE WHEN $4::task_status IN ('in_progress', 'done') THEN now() ELSE NULL END, CASE WHEN $4::task_status = 'cancelled' THEN now() ELSE NULL END) RETURNING id`,
+                 CASE WHEN $4::task_status IN ('in_progress', 'done') THEN now() ELSE NULL END, CASE WHEN $4::task_status = 'cancelled' THEN now() ELSE NULL END, $19) RETURNING id`,
         [
           projectId,
           input.title,
@@ -283,6 +285,7 @@ export const taskRepository = {
           input.tags ?? [],
           Boolean(input.autoStartWhenUnblocked),
           input.autoStartWhenUnblocked ? (input.autoStartById ?? null) : null,
+          input.summary?.trim() || null,
         ],
       );
       if (input.dependsOn?.length) await setDependencies(client, rows[0].id, input.dependsOn);
@@ -368,6 +371,7 @@ export const taskRepository = {
     const sets = ['updated_at = now()'];
     const params: unknown[] = [id];
     if (input.title != null) sets.push(`title = $${params.push(input.title)}`);
+    if (input.summary !== undefined) sets.push(`summary = $${params.push(input.summary?.trim() || null)}`);
     if (input.description != null) sets.push(`description = $${params.push(input.description)}`);
     if (input.priority != null) sets.push(`priority = $${params.push(input.priority)}`);
     if (input.branch !== undefined) sets.push(`branch = $${params.push(input.branch)}`);

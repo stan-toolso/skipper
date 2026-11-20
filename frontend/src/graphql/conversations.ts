@@ -311,6 +311,7 @@ export const TASK_THREAD_OPENING = gql`
       id
       title
       status
+      summary
       description
       createdAt
       createdByType

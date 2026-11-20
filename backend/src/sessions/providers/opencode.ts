@@ -566,6 +566,7 @@ class OpencodeRun {
         if (this.busy) await this.client.session.abort({ sessionID: this.sessionId }).catch(() => undefined);
         await this.finish({ exitCode: null, closedByServer: true });
       },
+      acceptsMessages: () => !this.finished && !this.endRequested && !this.stopped,
       sendMessage: async (text, attachments = [], author = null) => {
         if (this.finished || this.endRequested) throw new AppError("La session n'accepte plus d'instructions");
         await (await claudeSettings.forSession(this.ownerId)).assertBudgetAvailable();

@@ -56,7 +56,7 @@ export async function collectProjectExport(projectId: string, now = new Date()):
       [projectId],
     ),
     pool.query<{
-      id: string; title: string; description: string; status: ExportedTask['status']; status_tag: string | null; priority: ExportedTask['priority']; tags: string[] | null;
+      id: string; title: string; summary: string | null; description: string; status: ExportedTask['status']; status_tag: string | null; priority: ExportedTask['priority']; tags: string[] | null;
       due_date: string | null; custom_fields: ExportedTask['customFields'] | null; assignee_name: string | null; assignee_email: string | null; reporter_name: string | null;
       reporter_email: string | null; branch: string | null; created_by_type: 'human' | 'agent'; created_at: Date; updated_at: Date; completed_at: Date | null;
       started_at: Date | null; cancelled_at: Date | null;
@@ -134,6 +134,7 @@ export async function collectProjectExport(projectId: string, now = new Date()):
     tasks: taskRows.rows.map((t) => ({
       ref: t.id,
       title: t.title,
+      summary: t.summary,
       description: t.description,
       status: t.status,
       statusTag: t.status_tag,
@@ -271,9 +272,9 @@ export async function importProjectArchive(projectId: string, archive: Buffer, o
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO tasks (project_id, title, description, status, priority, created_by_type, due_date, completed_at, custom_fields, assignee_name, assignee_email,
                               reporter_name, reporter_email, status_tag, tags, branch, created_at, updated_at,
-                              started_at, cancelled_at)
+                              started_at, cancelled_at, summary)
            VALUES ($1, $2, $3, $4::task_status, $5::task_priority, $6, $7::date, $8, $9::jsonb, $10, $11, $12, $13, $14, $15::text[], $16, COALESCE($17, now()), COALESCE($18, now()),
-                   $19, $20) RETURNING id`,
+                   $19, $20, $21) RETURNING id`,
           [
             projectId,
             title,
@@ -295,6 +296,7 @@ export async function importProjectArchive(projectId: string, archive: Buffer, o
             date(t.updatedAt),
             status === 'in_progress' || status === 'done' || status === 'cancelled' ? (date(t.startedAt) ?? (status === 'cancelled' ? null : (date(t.createdAt) ?? new Date()))) : null,
             status === 'cancelled' ? (date(t.cancelledAt) ?? date(t.updatedAt) ?? new Date()) : null,
+            typeof t.summary === 'string' && t.summary.trim() ? t.summary.trim() : null,
           ],
         );
         report.tasksCreated++;

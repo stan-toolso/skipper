@@ -1,3 +1,4 @@
+import type { SessionSubagent } from './subagents.js';
 import type { Project } from '../../projects/types.js';
 import type { CreateRequestInput } from '../../requests/types.js';
 import type { UserClaudeSettings } from '../../settings/claude.js';
@@ -65,6 +66,8 @@ export interface RunContext {
   setExternalId(externalId: string): Promise<void>;
   /** Enregistre la taille du contexte de l'agent (tokens d'entrée du dernier appel au modèle), null si inconnue. */
   setContextTokens?(tokens: number | null): Promise<void>;
+  /** Enregistre les sous-agents du CLI en cours (providers/subagents.ts), montrés dans la sidebar ; [] quand il n'y en a plus. */
+  setSubagents?(subagents: SessionSubagent[]): Promise<void>;
   /**
    * Soumet une demande à l'humain (autorisation, question...) et attend sa réponse.
    * Rejette avec RequestCancelledError si la demande est annulée ou `signal` déclenché.
@@ -111,6 +114,12 @@ export interface RunningHandle {
   notify?(text: string): Promise<void>;
   /** Fin propre : plus d'instructions, l'agent termine son tour puis la session se termine. */
   end?(): Promise<void>;
+  /**
+   * Le processus accepte encore des instructions. Faux après `end()` ou `stop()` alors que le processus vit encore (le CLI
+   * attend la fin d'une commande de fond avant de sortir, par exemple) : `sendMessage` refuserait l'instruction, et le
+   * service relance la session avec elle plutôt que de la perdre. Absent : toujours vrai tant que la poignée existe.
+   */
+  acceptsMessages?(): boolean;
   /** Interrompt le tour en cours sans terminer la session. */
   interrupt?(): Promise<void>;
   /**

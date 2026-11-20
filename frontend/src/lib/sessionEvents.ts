@@ -1,9 +1,10 @@
 import { useApolloClient } from '@apollo/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SESSION_EVENTS, type SessionEvent, type SessionLiveDraft } from '../graphql/operations';
+import { EVENTS_PAGE_SIZE, takePrefetchedEvents } from './sessionPrefetch';
 
 /** Taille d'une page d'événements (le serveur plafonne à 2000). */
-const PAGE_SIZE = 500;
+const PAGE_SIZE = EVENTS_PAGE_SIZE;
 /** Délai entre deux relevés une fois l'historique rattrapé. */
 const POLL_MS = 1500;
 /** Délai resserré tant que l'agent écrit (brouillon en direct) : la réponse s'affiche au fil de l'eau. */
@@ -42,10 +43,13 @@ export function nextEventsState(prev: SessionEventsState, page: SessionEvent[], 
  * `refresh` déclenche un relevé sans attendre le prochain : après l'envoi d'une instruction, l'événement
  * qui la journalise est affiché dès que le serveur l'a écrit plutôt qu'au relevé suivant.
  */
-export function useSessionEvents(sessionId: string): { events: SessionEvent[]; loaded: boolean; draft: SessionLiveDraft | null; refresh: () => void } {
+export function useSessionEvents(sessionId: string, opts: { /** Fil d'un sous-agent du CLI seulement (appel de l'outil Agent qui l'a lancé). */ toolUseId?: string } = {}): { events: SessionEvent[]; loaded: boolean; draft: SessionLiveDraft | null; refresh: () => void } {
   const client = useApolloClient();
-  const [state, setState] = useState<SessionEventsState>({ sessionId, events: [], loaded: false, draft: null });
-  const cursor = useRef<{ sessionId: string; after: string | null }>({ sessionId, after: null });
+  const toolUseId = opts.toolUseId ?? null;
+  // Clé du fil suivi : la session, ou le fil d'un de ses sous-agents.
+  const key = toolUseId ? `${sessionId}#${toolUseId}` : sessionId;
+  const [state, setState] = useState<SessionEventsState>({ sessionId: key, events: [], loaded: false, draft: null });
+  const cursor = useRef<{ sessionId: string; after: string | null }>({ sessionId: key, after: null });
   const refreshRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
@@ -53,9 +57,9 @@ export function useSessionEvents(sessionId: string): { events: SessionEvent[]; l
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
     let again = false;
-    if (cursor.current.sessionId !== sessionId) {
-      cursor.current = { sessionId, after: null };
-      setState({ sessionId, events: [], loaded: false, draft: null });
+    if (cursor.current.sessionId !== key) {
+      cursor.current = { sessionId: key, after: null };
+      setState({ sessionId: key, events: [], loaded: false, draft: null });
     }
 
     const tick = async () => {
@@ -68,16 +72,24 @@ export function useSessionEvents(sessionId: string): { events: SessionEvent[]; l
       let full = false;
       let live = false;
       try {
-        const { data } = await client.query<{ session: { events: SessionEvent[]; liveDraft: SessionLiveDraft | null } | null }>({
-          query: SESSION_EVENTS,
-          variables: { id: sessionId, after: cursor.current.after, limit: PAGE_SIZE },
-          fetchPolicy: 'no-cache',
-        });
+        const fetchPage = async () =>
+          (
+            await client.query<{ session: { events: SessionEvent[]; liveDraft: SessionLiveDraft | null } | null }>({
+              query: SESSION_EVENTS,
+              variables: { id: sessionId, after: cursor.current.after, limit: PAGE_SIZE, toolUseId },
+              fetchPolicy: 'no-cache',
+            })
+          ).data;
+        // Premier relevé d'une session préchargée au survol de son lien : sa première page est déjà en route
+        // (en cas d'échec du préchargement, on la redemande aussitôt).
+        const prefetched = !toolUseId && cursor.current.after === null ? takePrefetchedEvents(sessionId) : null;
+        const data = prefetched ? await prefetched.catch(fetchPage) : await fetchPage();
         if (cancelled) return;
         const page = data.session?.events ?? [];
         full = page.length >= PAGE_SIZE;
         if (page.length) cursor.current.after = page[page.length - 1].id;
-        const draft = data.session?.liveDraft ?? null;
+        // Le brouillon en direct est celui de l'agent principal : sans objet dans le fil d'un sous-agent.
+        const draft = toolUseId ? null : data.session?.liveDraft ?? null;
         live = draft !== null;
         setState((prev) => nextEventsState(prev, page, draft, full));
       } catch {
@@ -103,9 +115,9 @@ export function useSessionEvents(sessionId: string): { events: SessionEvent[]; l
       clearTimeout(timer);
       refreshRef.current = () => undefined;
     };
-  }, [client, sessionId]);
+  }, [client, sessionId, toolUseId, key]);
   const refresh = useCallback(() => refreshRef.current(), []);
 
   // Au changement de session, l'état de la précédente ne doit pas s'afficher le temps d'un rendu.
-  return state.sessionId === sessionId ? { events: state.events, loaded: state.loaded, draft: state.draft, refresh } : { events: [], loaded: false, draft: null, refresh };
+  return state.sessionId === key ? { events: state.events, loaded: state.loaded, draft: state.draft, refresh } : { events: [], loaded: false, draft: null, refresh };
 }

@@ -75,6 +75,12 @@ const STAGE_SQL: Record<string, string> = {
 /** Ordre des listes : ce qui attend une action d'abord (à fusionner, en préparation), puis les fusionnées, puis les plus récentes. */
 const ORDER = `ORDER BY CASE WHEN status = 'open' THEN 0 WHEN status = 'pending' THEN 1 WHEN status = 'merged' THEN 2 ELSE 3 END, opened_at DESC, number DESC NULLS LAST`;
 
+/**
+ * Une PR rattachée à une work session par sa seule branche (alias `p` et `w`) : pas une PR terminée (fusionnée ou
+ * fermée) avant la création de la work session, dont le nom de branche n'est qu'une réutilisation.
+ */
+const BRANCH_STILL_RELEVANT = `(p.status IN ('open', 'pending') OR COALESCE(p.merged_at, p.closed_at) IS NULL OR COALESCE(p.merged_at, p.closed_at) >= w.created_at)`;
+
 export const pullRequestRepository = {
   async create(projectId: string, input: CreateTrackedPullRequestInput, actor: PullRequestActor): Promise<TrackedPullRequest> {
     const { rows } = await pool.query<Row>(
@@ -144,7 +150,7 @@ export const pullRequestRepository = {
   async findOpenByWorksession(worksessionId: string): Promise<TrackedPullRequest | null> {
     const { rows } = await pool.query<Row>(
       `SELECT p.* FROM pull_requests p JOIN worksessions w ON w.id = $1
-        WHERE p.status = 'open' AND (p.worksession_id = w.id OR (p.project_id = w.project_id AND p.head_branch = w.branch))
+        WHERE p.status = 'open' AND (p.worksession_id = w.id OR (p.project_id = w.project_id AND p.head_branch = w.branch AND ${BRANCH_STILL_RELEVANT}))
         ORDER BY p.opened_at DESC LIMIT 1`,
       [worksessionId],
     );
@@ -152,22 +158,23 @@ export const pullRequestRepository = {
   },
 
   /**
-   * PR suivie de chaque work session (sidebar) : celle qui la désigne (`worksession_id`) ou qui porte sa branche dans
-   * son projet, la plus avancée d'abord (ordre `ORDER` : ouverte, en préparation, fusionnée, fermée). Clé : la work session.
+   * PR suivie de chaque work session (sidebar, carte de la session) : celle qui la désigne (`worksession_id`) ou qui
+   * porte sa branche dans son projet, la plus avancée d'abord (ordre `ORDER` : ouverte, en préparation, fusionnée,
+   * fermée). Clé : la work session. Une PR fusionnée ou fermée avant la création de la work session n'est pas retenue
+   * par sa branche : le nom de branche a été réutilisé par un nouveau dossier (ex. « est-ce-qu-on-peut-faire », PR #166
+   * fusionnée le 03/11, dossier recréé sous le même nom le 17/11), ce n'est pas sa PR.
    */
   async findForWorksessions(keys: { id: string; projectId: string; branch: string }[]): Promise<Map<string, TrackedPullRequest>> {
     const found = new Map<string, TrackedPullRequest>();
     if (!keys.length) return found;
-    const { rows } = await pool.query<Row>(`SELECT * FROM pull_requests WHERE worksession_id = ANY($1::uuid[]) OR (project_id = ANY($2::uuid[]) AND head_branch = ANY($3::text[])) ${ORDER}`, [
-      keys.map((k) => k.id),
-      [...new Set(keys.map((k) => k.projectId))],
-      [...new Set(keys.map((k) => k.branch))],
-    ]);
-    const prs = rows.map(toPr);
-    for (const k of keys) {
-      const pr = prs.find((p) => p.worksessionId === k.id || (p.projectId === k.projectId && p.headBranch === k.branch));
-      if (pr) found.set(k.id, pr);
-    }
+    const { rows } = await pool.query<Row & { ws_key: string }>(
+      `SELECT w.id AS ws_key, p.* FROM worksessions w
+         JOIN pull_requests p ON p.worksession_id = w.id
+           OR (p.project_id = w.project_id AND p.head_branch = w.branch AND ${BRANCH_STILL_RELEVANT})
+        WHERE w.id = ANY($1::uuid[]) ${ORDER}`,
+      [keys.map((k) => k.id)],
+    );
+    for (const row of rows) if (!found.has(row.ws_key)) found.set(row.ws_key, toPr(row));
     return found;
   },
 
