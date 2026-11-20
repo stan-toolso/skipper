@@ -158,6 +158,44 @@ describe.skipIf(!adminUrl)('planifications (PostgreSQL)', () => {
     expect(await repo.sessionSpent(s2)).toBeCloseTo(0.5);
   });
 
+  it('« dès la fin » : une exécution close bloquée est à archiver une fois que sa session a fini', async () => {
+    const sc = await repo.create({ projectId: project, ownerId: alice, requestedById: null, provider: 'claude', config: {}, name: 'Jeton', cron: '0 6 * * *', timezone: 'UTC', prompt: 'x', enabled: true, endAfterRun: true, nextRunAt: null, archive: { policy: 'on_finish', afterMinutes: null } });
+    const now = new Date();
+    const old = new Date(now.getTime() - 60 * 60_000);
+    const runWith = async (label: string, status: 'blocked' | 'timeout' | 'done', extra: { status?: string } = {}) => {
+      const sid = await session(label, extra);
+      const run = await repo.createRun({ scheduleId: sc.id, trigger: 'schedule', status: 'running' });
+      await repo.setRunSession(run.id, sid);
+      await repo.finishRun(run.id, { status, costUsd: 0, durationMs: 1, message: null });
+      await pool.query(`INSERT INTO session_events (session_id, type, created_at) VALUES ($1, 'claude.result', $2)`, [sid, old]);
+      return sid;
+    };
+    // Bloquée, demande acceptée depuis, session terminée (fin pour inactivité) : à archiver.
+    const answered = await runWith('Jeton · 18/11', 'blocked');
+    await pool.query(`INSERT INTO requests (session_id, type, status, title, answered_at) VALUES ($1, 'permission', 'answered', 'Bash', $2)`, [answered, old]);
+    // Délai dépassé, session encore ouverte mais au repos : à archiver (l'archivage la termine).
+    const idle = await runWith('Jeton · 19/11', 'timeout', { status: 'running' });
+    await pool.query(`UPDATE sessions SET activity = 'idle' WHERE id = $1`, [idle]);
+    // Demande toujours en attente : on la laisse à portée de réponse.
+    const pending = await runWith('Jeton · 20/11', 'blocked', { status: 'running' });
+    await pool.query(`INSERT INTO requests (session_id, type, title) VALUES ($1, 'permission', 'Bash')`, [pending]);
+    // Encore au travail.
+    const busy = await runWith('Jeton · 21/11', 'blocked', { status: 'running' });
+    await pool.query(`UPDATE sessions SET activity = 'busy' WHERE id = $1`, [busy]);
+    // Quelqu'un vient d'y écrire : pas tout de suite.
+    const recent = await runWith('Jeton · 22/11', 'blocked');
+    await pool.query(`INSERT INTO session_events (session_id, type) VALUES ($1, 'instruction')`, [recent]);
+    // Terminée normalement (déjà traitée par la clôture), ou déjà archivée : hors champ.
+    await runWith('Jeton · 23/11', 'done');
+    const archived = await runWith('Jeton · 24/11', 'blocked');
+    await pool.query(`UPDATE sessions SET archived_at = now() WHERE id = $1`, [archived]);
+
+    expect((await repo.settledUnfinishedRunSessions(now, 5)).sort()).toEqual([answered, idle].sort());
+    // Autre politique d'archivage : rien.
+    await repo.update(sc.id, { cron: sc.cron, timezone: sc.timezone, prompt: sc.prompt, enabled: true, endAfterRun: true, nextRunAt: null, archive: { policy: 'never', afterMinutes: null } });
+    expect(await repo.settledUnfinishedRunSessions(now, 5)).toEqual([]);
+  });
+
   it('politique de livraison : enregistrée, relue, listée pour la fusion automatique, retirée', async () => {
     const { deliveryRepository } = await import('../deliveries/repository.js');
     expect(await deliveryRepository.getPolicy(project)).toBeNull();
