@@ -85,6 +85,7 @@ import type { Notification } from '../notifications/types.js';
 import { pubSub } from '../pubsub.js';
 import { requestService } from '../requests/service.js';
 import { APPROVAL, approvalService } from '../approvals/service.js';
+import { provideSecrets, SECRETS_REQUEST } from '../vault/secretRequests.js';
 import type { HumanRequest, RequestStatus } from '../requests/types.js';
 import { listProviders } from '../sessions/providers/registry.js';
 import { publicAttachment } from '../sessions/attachments.js';
@@ -2208,13 +2209,22 @@ export const resolvers = {
       return cleanupService.resetNow(args.id, args.keepSummary ?? true);
     },
     answerRequest: async (_: unknown, args: { id: string; response: Record<string, unknown> }, ctx: Ctx) => {
+      const type = (await requestService.get(args.id)).type;
+      // Une demande de secrets se règle par provideSecrets : les valeurs ne doivent jamais aboutir dans la réponse.
+      if (type === SECRETS_REQUEST) throw new AppError('Cette demande attend des secrets : saisissez-les dans sa fenêtre');
       // Une demande d'accord (approvals/service.ts) est réservée aux administrateurs du projet.
-      if ((await requestService.get(args.id)).type === APPROVAL) {
+      if (type === APPROVAL) {
         await guardRequest(ctx, args.id, 'admin');
         return approvalService.answer(args.id, args.response ?? {}, requireUser(ctx));
       }
       await guardRequest(ctx, args.id, 'member');
       return requestService.answer(args.id, args.response ?? {}, requireUser(ctx).id);
+    },
+    provideSecrets: async (_: unknown, args: { requestId: string; input: { values: { key: string; value: string }[]; destination?: string | null; requireApproval?: boolean | null } }, ctx: Ctx) => {
+      await guardRequest(ctx, args.requestId, 'member');
+      const destination = args.input.destination ?? null;
+      if (destination !== null && destination !== 'project' && destination !== 'personal') throw new AppError(`Destination inconnue : ${destination}`);
+      return provideSecrets(args.requestId, requireUser(ctx).id, { values: args.input.values, destination, requireApproval: args.input.requireApproval ?? null });
     },
     cancelRequest: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       if ((await requestService.get(args.id)).type === APPROVAL) {

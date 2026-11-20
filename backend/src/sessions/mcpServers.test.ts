@@ -41,7 +41,7 @@ const servers: Record<string, () => McpSdkServerConfigWithInstance> = {
   conversations: () => createConversationsMcpServer(project, 's', 'Agent'),
   agents: () => createAgentsMcpServer(project, 's'),
   vault: () =>
-    createVaultMcpServer({ project, sessionId: 's', ownerId: 'u', cwd: '/tmp', emit: async () => undefined, remembered: async () => false, approve: async () => undefined }),
+    createVaultMcpServer({ project, sessionId: 's', ownerId: 'u', cwd: '/tmp', emit: async () => undefined, remembered: async () => false, approve: async () => undefined, ask: async () => ({}) }),
   worksessions: () => createWorksessionsMcpServer(project, 's'),
   sessions: () => createSessionsMcpServer(project, 's'),
   'sessions (espace personnel)': () => createSessionsMcpServer(project, 's', scope),

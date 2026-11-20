@@ -261,9 +261,20 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
         const cmd = str(input, 'command') ?? '';
         const sql = str(input, 'sql') ?? '';
         const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n - 3)}…` : t);
+        // Usage d'un secret sur un serveur : la demande porte sur le secret (target = serveur) ou sur le serveur.
+        const secretRef = str(input, 'stdin_secret') ?? str(input, 'secret');
+        const host = str(input, 'target') ?? conn;
         const verbs: Record<string, [string, string | undefined, string]> = {
           list: ['Consultation des connexions du projet', undefined, 'consulter les connexions du projet'],
-          ssh_run: [`Commande sur ${conn} (SSH)`, cmd, `exécuter sur ${conn} : ${short(cmd)}`],
+          ssh_run: secretRef
+            ? [`Commande sur ${host} (SSH), secret ${secretRef} en entrée`, cmd, `exécuter sur ${host}, avec le secret ${secretRef} en entrée standard : ${short(cmd)}`]
+            : [`Commande sur ${conn} (SSH)`, cmd, `exécuter sur ${conn} : ${short(cmd)}`],
+          ssh_write_secret: [
+            `Écriture du secret ${secretRef ?? ''} sur ${host}`,
+            `${str(input, 'remote_path') ?? ''} (droits ${str(input, 'mode') ?? '600'})`,
+            `écrire le secret ${secretRef ?? ''} dans ${host}:${str(input, 'remote_path') ?? ''}`,
+          ],
+          request_secrets: [`Demande de secrets (${conn})`, undefined, `vous demander des secrets pour l'élément ${conn}`],
           ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
           sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],

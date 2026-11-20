@@ -9,11 +9,15 @@ import type { VaultItem } from './types.js';
 // schéma zod échoue, tout le serveur disparaît pour l'agent, sans erreur visible dans l'interface (incident
 // du 10/10/2026 : `z.record` de zod 4 refusé par le convertisseur du SDK, aucun outil `vault`).
 // Services voisins simulés : la déclaration des outils et les outils PostgreSQL sont exercés, sans base ni réseau.
-const { service, query } = vi.hoisted(() => ({ service: {} as Record<string, unknown>, query: vi.fn() }));
+const { service, query, sshMock } = vi.hoisted(() => ({
+  service: {} as Record<string, unknown>,
+  query: vi.fn(),
+  sshMock: { connect: vi.fn(), exec: vi.fn(), writeFile: vi.fn() },
+}));
 vi.mock('./service.js', () => ({ vaultService: service }));
 vi.mock('./awsService.js', () => ({ awsService: {} }));
 vi.mock('./scalewayService.js', () => ({ scalewayService: {} }));
-vi.mock('./ssh.js', () => ({}));
+vi.mock('./ssh.js', () => sshMock);
 vi.mock('../browser/fill.js', () => ({ browserFill: {} }));
 vi.mock('./postgres.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./postgres.js')>()), query }));
 
@@ -85,7 +89,7 @@ describe('serveur MCP vault', () => {
     const client = await connect(server());
     try {
       const tools = (await client.listTools()).tools;
-      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'scw_api', 'scw_run', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload']);
+      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'scw_api', 'scw_run', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload', 'ssh_write_secret']);
       const props = (name: string) => tools.find((t) => t.name === name)!.inputSchema.properties as Record<string, { type?: string; additionalProperties?: unknown }>;
       expect(props('scw_api').query.type).toBe('object');
       expect(Object.keys(props('sql_query')).sort()).toEqual(['database', 'item', 'sql']);
@@ -157,6 +161,102 @@ describe('serveur MCP vault', () => {
       expect(res.isError).toBe(true);
       expect(res.content[0].text).toContain('la base « autre » n\'y est pas accessible');
       expect(events.at(-1)).toEqual(expect.objectContaining({ type: 'connection', action: 'sql_query', ok: false }));
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe('secrets : demande par une modale et usage sans les voir', () => {
+  const KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n-----END OPENSSH PRIVATE KEY-----';
+  const sshItem = (over: Partial<VaultItem> = {}) =>
+    ({ id: 'h1', name: 'prod', kind: 'ssh', description: '', ownerUserId: null, ownerProjectId: 'p', settings: { host: 'h', port: 22, username: 'u' }, hostKey: null, readOnly: false, requireApproval: false, commandAllowlist: [], ...over }) as VaultItem;
+  const secretItem = (over: Partial<VaultItem> = {}) =>
+    ({ id: 's1', name: 'cle', kind: 'secret', description: '', ownerUserId: null, ownerProjectId: 'p', settings: { fields: [{ key: 'private_key', label: 'Clé', secret: true, value: null }] }, readOnly: true, requireApproval: true, commandAllowlist: [], ...over }) as VaultItem;
+  const asks: Array<Record<string, unknown>> = [];
+
+  const withAsk = (response: Record<string, unknown>) =>
+    createVaultMcpServer({
+      project: { id: 'p', name: 'Projet', slug: 'projet' } as Project,
+      sessionId: 's',
+      ownerId: 'u',
+      cwd: '/tmp',
+      emit: async (type, payload) => {
+        events.push({ type, ...payload });
+      },
+      remembered: async () => false,
+      approve: async (a) => {
+        approvals.push({ toolName: a.toolName, key: a.key, input: a.input });
+      },
+      ask: async (input) => {
+        asks.push(input as unknown as Record<string, unknown>);
+        return response;
+      },
+    });
+
+  beforeEach(() => {
+    asks.length = 0;
+    items = [sshItem(), secretItem()];
+    sshMock.connect.mockReset().mockResolvedValue({ hostKey: null, close: () => undefined });
+    sshMock.exec.mockReset();
+    sshMock.writeFile.mockReset().mockResolvedValue(undefined);
+    Object.assign(service, {
+      rememberHostKey: async () => undefined,
+      sshCredentials: () => ({ host: 'h', port: 22, username: 'u', privateKey: 'x' }),
+      assertCommandAllowed: () => undefined,
+      fieldCredentials: () => ({ url: null, fields: [{ key: 'private_key', label: 'Clé', secret: true, value: KEY, variable: 'CLE_PRIVATE_KEY' }] }),
+    });
+  });
+
+  it('ssh_write_secret écrit la valeur sur le serveur (600, saut de ligne final) sans la renvoyer, après accord pour le secret', async () => {
+    const client = await connect(withAsk({}));
+    try {
+      const res = (await client.callTool({ name: 'ssh_write_secret', arguments: { item: 'prod', secret: 'cle.private_key', remote_path: '/home/u/.ssh/id_ed25519' } })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(sshMock.writeFile).toHaveBeenCalledWith(expect.anything(), '/home/u/.ssh/id_ed25519', `${KEY}\n`, 0o600);
+      expect(res.content[0].text).not.toContain('PRIVATE KEY');
+      expect(approvals).toEqual([expect.objectContaining({ toolName: 'mcp__vault__ssh_write_secret', key: 'cle' })]);
+      expect(JSON.stringify(events)).not.toContain('b3BlbnNzaC1rZXktdjEAAAAABG5vbmU');
+      const bad = (await client.callTool({ name: 'ssh_write_secret', arguments: { item: 'prod', secret: 'cle.private_key', remote_path: '/x', mode: '999' } })) as ToolResult;
+      expect(bad.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("ssh_run avec stdin_secret passe la valeur sur l'entrée standard et la masque dans la sortie", async () => {
+    sshMock.exec.mockResolvedValue({ stdout: `lu : ${KEY}\n`, stderr: '', exitCode: 0, signal: null, truncated: false, durationMs: 3 });
+    const client = await connect(withAsk({}));
+    try {
+      const res = (await client.callTool({ name: 'ssh_run', arguments: { item: 'prod', command: 'cat', stdin_secret: 'cle.private_key' } })) as ToolResult;
+      expect(sshMock.exec.mock.calls[0][2]).toEqual(expect.objectContaining({ stdin: KEY }));
+      expect(res.content[0].text).toContain('[secret masqué]');
+      expect(res.content[0].text).not.toContain('b3BlbnNzaC1rZXktdjEAAAAABG5vbmU');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('request_secrets pose une demande « secrets » et ne renvoie que le nom et les clés', async () => {
+    items = [sshItem()];
+    const client = await connect(withAsk({ item: 'deploy-key', itemId: 'n1', fields: ['private_key'], created: true, destination: 'personal', requireApproval: true }));
+    try {
+      const res = (await client.callTool({
+        name: 'request_secrets',
+        arguments: { item: 'deploy-key', reason: 'Installer la clé de déploiement', fields: [{ key: 'private_key', label: 'Clé privée', multiline: true }] },
+      })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(asks[0]).toEqual(
+        expect.objectContaining({
+          type: 'secrets',
+          message: 'Installer la clé de déploiement',
+          payload: expect.objectContaining({ item: 'deploy-key', itemId: null, personalUserId: 'u', fields: [{ key: 'private_key', label: 'Clé privée', hint: null, multiline: true }] }),
+        }),
+      );
+      expect(res.content[0].text).toContain('`deploy-key.private_key`');
+      const clash = (await client.callTool({ name: 'request_secrets', arguments: { item: 'prod', reason: 'x', fields: [{ key: 'token' }] } })) as ToolResult;
+      expect(clash.isError).toBe(true);
+      expect(clash.content[0].text).toContain("n'est pas un secret");
     } finally {
       await client.close();
     }

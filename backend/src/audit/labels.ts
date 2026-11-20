@@ -59,6 +59,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'schedule.run': 'a exécuté la planification',
   'request.answer': 'a répondu à la demande',
   'request.cancel': 'a abandonné la demande',
+  'request.secrets': 'a saisi des secrets demandés par un agent',
   'approval.implicit': 'a constaté un accord implicite (la personne qui a demandé le travail est administrateur)',
   'task.create': 'a créé la tâche',
   'task.status': 'a changé le statut de la tâche',

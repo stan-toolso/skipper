@@ -9,6 +9,7 @@ import { describeTaskFeed, type TaskFeedSummary } from '../lib/taskFeed';
 import Markdown from './Markdown';
 import AgentAvatar from './AgentAvatar';
 import { Avatar } from './Thread';
+import { secretsAnswerText } from './SecretsRequest';
 
 /** Auteur journalisé avec une instruction (`author` de l'événement, backend sessions/instructionAuthor.ts). */
 export type InstructionAuthor = { type: 'user'; id?: string; name: string; email?: string | null } | { type: 'session'; id?: string; name: string } | { type: 'system'; name: string };
@@ -1163,7 +1164,7 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
           if (known && !technical) break;
           const r = (p.response ?? {}) as Record<string, unknown>;
           const text =
-            r.decision === 'allow' ? (r.always ? 'Autorisé pour toute la session' : 'Autorisé') : r.decision === 'deny' ? `Refusé${r.message ? ` : ${String(r.message)}` : ''}` : r.answers ? Object.values(r.answers as Record<string, string>).join(' ; ') : JSON.stringify(r);
+            p.type === 'secrets' ? secretsAnswerText(r) ?? 'secrets saisis' : r.decision === 'allow' ? (r.always ? 'Autorisé pour toute la session' : 'Autorisé') : r.decision === 'deny' ? `Refusé${r.message ? ` : ${String(r.message)}` : ''}` : r.answers ? Object.values(r.answers as Record<string, string>).join(' ; ') : JSON.stringify(r);
           nodes.push(
             <div key={e.id} className="cc-note">
               ▶ Votre réponse : {text}

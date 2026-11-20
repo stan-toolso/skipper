@@ -65,7 +65,7 @@ export { RateLimitGauges };
 export function RequestRow({ request, showProject = true }: { request: HumanRequest; showProject?: boolean }) {
   return (
     <li>
-      <i className={`bi ${request.type === 'question' ? 'bi-question-circle' : request.type === 'approval' ? 'bi-shield-check' : 'bi-hand-index-thumb'} icon warn`} />
+      <i className={`bi ${request.type === 'question' ? 'bi-question-circle' : request.type === 'approval' ? 'bi-shield-check' : request.type === 'secrets' ? 'bi-key' : 'bi-hand-index-thumb'} icon warn`} />
       <div className="main">
         <Link to={`/sessions/${request.session.id}`} className="title">{requestTitle(request)}</Link>
         <div className="meta">{request.session.name}{showProject && ` · ${request.session.project.name}`}</div>

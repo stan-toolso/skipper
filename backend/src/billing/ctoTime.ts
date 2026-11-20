@@ -172,6 +172,7 @@ export const CTO_TRACKED: Record<string, { target: CtoTargetType; id: (args: Arg
   handBackSession: { target: 'session', id: (a) => a.id },
   updateSessionConfig: { target: 'session', id: (a) => a.id },
   answerRequest: { target: 'request', id: (a) => a.id },
+  provideSecrets: { target: 'request', id: (a) => a.requestId },
   startTaskSession: { target: 'task', id: (a) => a.id },
   resumeTaskSession: { target: 'task', id: (a) => a.id },
   // Conversations : canaux et fils des tâches.

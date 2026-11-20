@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Alert, Badge, Form, Nav, Spinner, Table } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import RequestCard from '../components/RequestCard';
+import { secretsAnswerText } from '../components/SecretsRequest';
 import { REQUESTS, type HumanRequest, type RequestStatus } from '../graphql/operations';
 import { describeTool, requestTitle } from '../lib/humanize';
 
@@ -12,7 +13,7 @@ const statusLabels: Record<RequestStatus, { label: string; bg: string }> = {
   CANCELLED: { label: 'Annulée', bg: 'secondary' },
   EXPIRED: { label: 'Expirée', bg: 'dark' },
 };
-const typeLabels: Record<string, string> = { permission: 'Autorisation', question: 'Question', input: 'Saisie', approval: 'Accord' };
+const typeLabels: Record<string, string> = { permission: 'Autorisation', question: 'Question', input: 'Saisie', approval: 'Accord', secrets: 'Secrets' };
 
 /** Résumé lisible de la réponse d'une demande selon son type. */
 function summarizeResponse(r: HumanRequest): string {
@@ -25,6 +26,7 @@ function summarizeResponse(r: HumanRequest): string {
     const answers = (r.response.answers ?? {}) as Record<string, string>;
     return Object.values(answers).join(' ; ') || '—';
   }
+  if (r.type === 'secrets') return secretsAnswerText(r.response) ?? '—';
   return typeof r.response.text === 'string' ? r.response.text : JSON.stringify(r.response);
 }
 

@@ -12,6 +12,9 @@ import { vaultService } from './service.js';
 import * as ssh from './ssh.js';
 import { kindLabels, type ApiSettings, type AwsSettings, type PostgresSettings, type ScalewaySettings, type SecretSettings, type SshSettings, type VaultItem, type WebsiteSettings } from './types.js';
 import { describeField, siteAllows } from './website.js';
+import { RequestCancelledError } from '../requests/service.js';
+import type { CreateRequestInput } from '../requests/types.js';
+import { normalizeRequestedFields, parseSecretRef, prepareSecretsRequest, redactSecret, SECRETS_REQUEST, type SecretsResponse } from './secretRequests.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
@@ -41,6 +44,8 @@ export interface VaultMcpContext {
   approve(approval: VaultApproval): Promise<void>;
   /** Une approbation déjà mémorisée pour cette clé (session ou projet) ? */
   remembered(toolName: string, key: string, projectRules: boolean): Promise<boolean>;
+  /** Pose une demande à un humain et attend sa réponse (saisie de secrets) ; absent : `request_secrets` indisponible. */
+  ask?(input: CreateRequestInput): Promise<Record<string, unknown>>;
 }
 
 /** Chemin local résolu dans le workspace de la session, sans en sortir. */
@@ -153,10 +158,21 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
     await ctx.approve({ toolName, key: item.name, title: `Autoriser ${tool} sur « ${item.name} »`, message: summary, input: { item: item.name, ...input }, projectRules });
   };
 
+  /** Valeur d'un champ d'un secret (ou d'un site web) désigné par « élément.champ », pour un usage par le serveur seul. */
+  const secretOf = async (ref: string) => {
+    const r = parseSecretRef(ref);
+    const item = await byName(r.item);
+    if (item.kind !== 'secret' && item.kind !== 'website') throw new AppError(`« ${item.name} » est un élément ${kindLabels[item.kind]} : seuls les secrets et les sites web ont des champs`);
+    const field = vaultService.fieldCredentials(item).fields.find((f) => f.key === r.field);
+    if (!field) throw new AppError(`« ${item.name} » n'a pas de champ « ${r.field} » (champs : ${(item.settings as SecretSettings).fields.map((f) => f.key).join(', ')})`);
+    if (!field.value) throw new AppError(`Le champ « ${r.field} » de « ${item.name} » est vide`);
+    return { item, field, ref: `${item.name}.${field.key}`, value: field.value };
+  };
+
   return createSdkMcpServer({
     name: 'vault',
     version: '1.0.0',
-    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
+    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Un secret s'installe aussi sur un serveur SSH sans que tu le voies : \`ssh_write_secret\` (fichier) ou \`stdin_secret\` de \`ssh_run\` (entrée d'une commande). Besoin d'un secret que la personne détient (clé, jeton) : \`request_secrets\` lui ouvre une modale et le range dans le coffre ; ne lui demande jamais de le coller dans la conversation. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
     tools: [
       tool('list', "Liste les éléments du coffre disponibles pour cette session, leur type, leur cible et leur politique d'accès.", {}, async () =>
         run(async () => {
@@ -174,17 +190,27 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
           item: z.string().describe("Nom de l'élément SSH"),
           command: z.string().describe("Commande shell (exécutée par le shell de connexion de l'utilisateur distant)"),
           timeout_seconds: z.number().int().min(1).max(600).optional().describe('Délai maximal (défaut 120 s)'),
+          stdin_secret: z
+            .string()
+            .optional()
+            .describe("Secret du coffre à passer sur l'entrée standard de la commande, sous la forme élément.champ (ex. cle-api.token) : le serveur l'y écrit sans te le montrer (ex. « docker login -u x --password-stdin », « sudo tee /etc/app/key >/dev/null »). Toute occurrence de la valeur dans la sortie est masquée."),
         },
-        async ({ item, command, timeout_seconds }) =>
+        async ({ item, command, timeout_seconds, stdin_secret }) =>
           run(async () => {
             const i = await ofKind(item, 'ssh');
             vaultService.assertCommandAllowed(i, command);
-            await gate(i, 'ssh_run', command, { command });
-            const result = await audited(i, 'ssh_run', command, async () => {
-              const r = await withSsh(i, (s) => ssh.exec(s, command, { timeoutMs: (timeout_seconds ?? 120) * 1000 }));
-              return { result: r, note: `code ${r.exitCode ?? r.signal}` };
-            });
-            return renderExec(result);
+            const secret = stdin_secret ? await secretOf(stdin_secret) : null;
+            const summary = secret ? `${command} < ${secret.ref}` : command;
+            if (secret) await gate(secret.item, 'ssh_run', `${secret.ref} → ${i.name} : ${command}`, { secret: secret.ref, target: i.name, command });
+            await gate(i, 'ssh_run', summary, { command, ...(secret ? { stdin_secret: secret.ref } : {}) });
+            const exec = async () =>
+              audited(i, 'ssh_run', summary, async () => {
+                const r = await withSsh(i, (s) => ssh.exec(s, command, { timeoutMs: (timeout_seconds ?? 120) * 1000, ...(secret ? { stdin: secret.value } : {}) }));
+                return { result: r, note: `code ${r.exitCode ?? r.signal}` };
+              });
+            const result = secret ? await audited(secret.item, 'ssh_run', `${secret.ref} → ${i.name} (entrée standard)`, async () => ({ result: await exec() })) : await exec();
+            const shown = secret ? { ...result, stdout: redactSecret(result.stdout, secret.value), stderr: redactSecret(result.stderr, secret.value) } : result;
+            return renderExec(shown);
           }),
       ),
 
@@ -217,6 +243,80 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
             return `Fichier récupéré : ${i.name}:${remote_path} → ${local_path}`;
           }),
       ),
+
+      tool(
+        'ssh_write_secret',
+        "Écrit la valeur d'un secret du coffre dans un fichier d'un serveur SSH (créé ou remplacé, droits 600 par défaut), sans que tu voies la valeur : clé privée, jeton, fichier de configuration… Tes scripts sur le serveur lisent ensuite ce fichier. Le dossier doit exister.",
+        {
+          item: z.string().describe("Nom de l'élément SSH (serveur de destination)"),
+          secret: z.string().describe('Secret à écrire, sous la forme élément.champ (ex. cle-deploiement.private_key)'),
+          remote_path: z.string().describe('Chemin du fichier sur le serveur (ex. /home/ubuntu/.ssh/id_ed25519)'),
+          mode: z.string().optional().describe('Droits octaux du fichier (défaut 600)'),
+          newline: z.boolean().optional().describe('Ajouter un saut de ligne final si la valeur n\'en a pas (défaut : oui pour une valeur sur plusieurs lignes, non sinon)'),
+        },
+        async ({ item, secret: ref, remote_path, mode, newline }) =>
+          run(async () => {
+            const i = await ofKind(item, 'ssh');
+            noTransfers(i);
+            const m = (mode ?? '600').trim();
+            if (!/^[0-7]{3,4}$/.test(m)) throw new AppError(`Droits invalides : « ${mode} » (ex. 600, 640)`);
+            const secret = await secretOf(ref);
+            const multiline = secret.value.includes('\n');
+            const content = (newline ?? multiline) && !secret.value.endsWith('\n') ? `${secret.value}\n` : secret.value;
+            const summary = `${secret.ref} → ${remote_path} (${m})`;
+            await gate(secret.item, 'ssh_write_secret', `${secret.ref} → ${i.name}:${remote_path}`, { secret: secret.ref, target: i.name, remote_path, mode: m });
+            await gate(i, 'ssh_write_secret', summary, { secret: secret.ref, remote_path, mode: m });
+            await audited(secret.item, 'ssh_write_secret', `${secret.field.key} → ${i.name}:${remote_path}`, async () => ({
+              result: await audited(i, 'ssh_write_secret', summary, async () => ({ result: await withSsh(i, (s) => ssh.writeFile(s, remote_path, content, parseInt(m, 8))) })),
+            }));
+            return `Secret « ${secret.ref} » écrit dans ${i.name}:${remote_path} (droits ${m}, ${Buffer.byteLength(content)} octets). La valeur ne t'est pas communiquée.`;
+          }),
+      ),
+
+      ...(ctx.ask
+        ? [
+            tool(
+              'request_secrets',
+              "Demande à la personne qui suit la session de saisir un ou plusieurs secrets (clé privée, jeton, mot de passe…) dans une modale de Skipper. Les valeurs sont rangées dans un élément « secret » du coffre (créé, ou mis à jour s'il existe déjà dans ta portée) sans jamais t'être montrées ; la personne choisit le coffre (projet ou personnel). Attend sa réponse. Ensuite, sers-t'en sans les voir : ssh_write_secret (fichier sur un serveur), stdin_secret de ssh_run (entrée d'une commande), browser_fill (formulaire). N'écris jamais de secret en clair dans un message, un fichier ou une commande.",
+              {
+                item: z.string().describe("Nom de l'élément du coffre à créer ou mettre à jour (minuscules, chiffres, tirets ; ex. cle-deploiement)"),
+                reason: z.string().describe('Pourquoi tu en as besoin et ce que tu vas en faire (montré à la personne)'),
+                fields: z
+                  .array(
+                    z.object({
+                      key: z.string().describe('Clé du champ (minuscules, chiffres, soulignés ; ex. private_key, token)'),
+                      label: z.string().optional().describe('Libellé montré à la personne'),
+                      hint: z.string().optional().describe('Aide : format attendu, où trouver la valeur'),
+                      multiline: z.boolean().optional().describe('Saisie sur plusieurs lignes (clé privée, certificat)'),
+                    }),
+                  )
+                  .describe('Champs à saisir (10 au plus)'),
+                description: z.string().optional().describe("Description de l'élément créé"),
+              },
+              async ({ item, reason, fields, description }) =>
+                run(async () => {
+                  const normalized = normalizeRequestedFields(fields);
+                  const payload = await prepareSecretsRequest({ projectId: ctx.project.id, rightsHolderId: ctx.ownerId, item, description, fields: normalized });
+                  const title = `${payload.itemId ? 'Mettre à jour' : 'Saisir'} le secret « ${payload.item} » (${normalized.map((f) => f.label).join(', ')})`;
+                  let response: Partial<SecretsResponse>;
+                  try {
+                    response = (await ctx.ask!({ type: SECRETS_REQUEST, title, message: reason.trim() || null, payload: payload as unknown as Record<string, unknown> })) as Partial<SecretsResponse>;
+                  } catch (err) {
+                    if (err instanceof RequestCancelledError) throw new AppError("La personne n'a pas fourni les secrets (demande ignorée ou session arrêtée)");
+                    throw err;
+                  }
+                  const where = response.destination === 'project' ? 'coffre du projet' : response.destination === 'personal' ? 'coffre personnel de la personne, ouvert à ses sessions de ce projet' : 'élément existant mis à jour';
+                  return [
+                    `Secrets enregistrés dans l'élément « ${response.item} » (${where}) : champs ${(response.fields ?? []).map((f) => `\`${response.item}.${f}\``).join(', ')}. Tu n'en vois pas la valeur.`,
+                    response.requireApproval ? 'Chaque usage sera soumis à l\'accord de la personne.' : '',
+                    'Pour les utiliser : ssh_write_secret (fichier sur un serveur SSH), ssh_run avec stdin_secret (entrée standard d\'une commande), browser_fill (champ mot de passe).',
+                  ]
+                    .filter(Boolean)
+                    .join('\n');
+                }),
+            ),
+          ]
+        : []),
 
       tool(
         'sql_query',

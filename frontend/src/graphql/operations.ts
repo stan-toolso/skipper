@@ -1489,6 +1489,16 @@ export const ANSWER_REQUEST = gql`
   }
 `;
 
+/** Saisie des secrets demandés par un agent (vault.request_secrets) : rangés dans le coffre, jamais dans la réponse. */
+export const PROVIDE_SECRETS = gql`
+  ${REQUEST_FIELDS}
+  mutation ProvideSecrets($requestId: ID!, $input: ProvideSecretsInput!) {
+    provideSecrets(requestId: $requestId, input: $input) {
+      ...RequestFields
+    }
+  }
+`;
+
 export const CANCEL_REQUEST = gql`
   ${REQUEST_FIELDS}
   mutation CancelRequest($id: ID!) {
