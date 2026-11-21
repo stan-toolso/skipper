@@ -1139,6 +1139,10 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .vault-expanded td, .vault-notice td { background: var(--cc-bg-elevated); white-space: normal; }
 .vault-item-details { padding: 6px 4px 10px; }
 .vault-details { line-height: 1.6; }
+.vault-history-entry { padding: 6px 0; border-bottom: 1px solid var(--cc-border); }
+.vault-history-entry:last-child { border-bottom: 0; }
+.vault-history-changes { padding-left: 1.2rem; margin-top: 2px; overflow-wrap: anywhere; }
+.vault-history-before { color: var(--cc-dim); text-decoration: line-through; }
 .vault-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
 .vault-kind { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; background: var(--cc-bg); border: 1px solid var(--cc-border); border-radius: 6px; color: var(--cc-fg); font: inherit; text-align: left; cursor: pointer; }
 .vault-kind:hover { border-color: var(--cc-dim); }

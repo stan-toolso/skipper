@@ -137,6 +137,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'vault.delete': 'a supprimé l’élément du coffre',
   'vault.duplicate': 'a dupliqué l’élément du coffre',
   'vault.regenerate_key': 'a régénéré la clé SSH de',
+  'vault.restore_version': 'a restauré une version de',
   'vault.forget_host_key': 'a oublié la clé d’hôte de',
   'vault.reveal': 'a révélé un secret de',
   'vault.share': 'a partagé l’élément du coffre',

@@ -692,16 +692,27 @@ const vault = (id, name, kind, description, extra = {}) => ({
   ssl: null, sslCa: null, via: null, authScheme: null, authName: null, google: null, aws: null, scaleway: null, readOnly: true, requireApproval: false,
   envExport: false, commandAllowlist: [], publicKey: null, hostFingerprint: null, hostKeySeenAt: null, hasSecret: true, revealableFields: [],
   secretUpdatedAt: ago(60 * 24 * 30), expiresAt: null, lastTestAt: ago(60 * 3), lastTestOk: true, lastTestError: null, shares: [], links: [], audit: [],
+  versioned: kind !== 'google', versions: [],
   createdBy: U.me, createdAt: ago(60 * 24 * 40), updatedAt: ago(60 * 24 * 2), ...extra,
 });
 const vaultItems = [
   vault('v-prod-ssh', 'serveur-prod', 'ssh', 'Serveur de production (Scaleway), utilisateur deploy.', { ownerProject: P.api, host: 'prod.toolso.io', port: 22, username: 'deploy', requireApproval: true, readOnly: false }),
   vault('v-db', 'base-facturation', 'postgres', 'Base PostgreSQL de la facturation, en lecture seule.', { ownerProject: P.api, host: 'db.toolso.io', port: 5432, username: 'lecture', database: 'facturation', ssl: true }),
-  vault('v-stripe', 'stripe-test', 'api', 'Clé Stripe du mode test.', { ownerProject: P.api, url: 'https://api.stripe.com', authScheme: 'BEARER' }),
+  vault('v-stripe', 'stripe-test', 'api', 'Clé Stripe du mode test.', { ownerProject: P.api, url: 'https://api.stripe.com', authScheme: 'bearer' }),
   vault('v-metabase', 'metabase', 'website', 'Compte de service Metabase.', { ownerProject: P.data, url: 'https://metabase.toolso.io', username: 'agents@toolso.io' }),
   vault('v-gmail', 'gmail-camille', 'google', 'Boîte Gmail de Camille, lecture seule.', { shared: true }),
 ];
 for (const v of vaultItems) v.ownerProject = teamProjects.find((p) => p.name === v.ownerProjectName) ?? null;
+// Historique des versions de la base : une correction par une session d'agent, une rotation du mot de passe.
+const vaultVersion = (version, action, minutes, actor, changes, extra = {}) => ({
+  __typename: 'VaultItemVersion', id: `vv-${version}`, version, action, name: 'base-facturation', restoredFrom: null, actor, sessionId: null, session: null,
+  current: false, createdAt: ago(minutes), changes: changes.map((c) => ({ __typename: 'VaultChange', before: null, after: null, secret: false, ...c })), ...extra,
+});
+vaultItems.find((v) => v.id === 'v-db').versions = [
+  vaultVersion(3, 'updated', 60 * 24 * 2, U.me, [{ field: 'settings.host', label: 'hôte', before: 'db-old.toolso.io', after: 'db.toolso.io' }, { field: 'description', label: 'description', before: 'Base de la facturation.', after: 'Base PostgreSQL de la facturation, en lecture seule.' }], { current: true, sessionId: S.tarifs.id, session: S.tarifs }),
+  vaultVersion(2, 'secret_changed', 60 * 24 * 12, U.me, [{ field: 'secrets.password', label: 'mot de passe', secret: true }]),
+  vaultVersion(1, 'created', 60 * 24 * 40, U.me, []),
+];
 
 // ---- Contexte -----------------------------------------------------------------------------------------------------
 

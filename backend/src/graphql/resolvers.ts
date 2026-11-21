@@ -37,6 +37,7 @@ import { fingerprint } from '../vault/ssh.js';
 import { isOauthToken, vaultService, type VaultItemWithPermission } from '../vault/service.js';
 import { awsService } from '../vault/awsService.js';
 import type { ApiSettings, AwsSettings, LangfuseSettings, LitellmSettings, PostgresSettings, ProjectVaultRow, ScalewaySettings, SecretSettings, SshSettings, TokenSettings, VaultAuditEvent, VaultItem, VaultItemInput, VaultItemKind, VaultLink, VaultLinkScope, VaultPermission, VaultShare, WebsiteSettings } from '../vault/types.js';
+import type { VaultChange, VaultItemVersion } from '../vault/versions.js';
 import { variableName } from '../vault/website.js';
 import { billingService } from '../billing/service.js';
 import type { BillingSettings, CtoTimeEntry, CtoTimeEntryInput } from '../billing/types.js';
@@ -727,7 +728,28 @@ export const resolvers = {
       return links.filter((l) => (l.scope === 'personal' ? l.userId === user.id : mine.includes(l.projectId)));
     },
     audit: async (i: VaultItemWithPermission, args: { limit?: number | null; before?: string | null }, ctx: Ctx) => ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i))) === 'manage' ? vaultService.auditLog(i.id, args.limit ?? 50, args.before) : []),
+    versions: async (i: VaultItemWithPermission, args: { limit?: number | null; before?: number | null }, ctx: Ctx) => {
+      if ((i.permission ?? (await vaultService.permissionFor(requireUser(ctx).id, i))) !== 'manage') return [];
+      const list = await vaultService.versions(requireUser(ctx).id, i.id, args.limit ?? 50, args.before);
+      const latest = args.before ? (await vaultService.versions(requireUser(ctx).id, i.id, 1))[0] : list[0];
+      return list.map((v) => ({ ...v, current: v.version === latest?.version }));
+    },
+    versioned: (i: VaultItem) => vaultService.isVersioned(i),
     createdBy: (i: VaultItem, _: unknown, ctx: Ctx) => userOrNull(ctx, i.createdById),
+  },
+
+  VaultItemVersion: {
+    actor: (v: VaultItemVersion, _: unknown, ctx: Ctx) => userOrNull(ctx, v.actorUserId),
+    project: (v: VaultItemVersion, _: unknown, ctx: Ctx) => projectIfAccessible(ctx, v.projectId),
+    session: async (v: VaultItemVersion, _: unknown, ctx: Ctx) => {
+      if (!v.sessionId) return null;
+      const session = await sessionRepository.findById(v.sessionId);
+      return session && (await projectIfAccessible(ctx, session.projectId)) ? session : null;
+    },
+  },
+
+  VaultChange: {
+    secret: (c: VaultChange) => Boolean(c.secret),
   },
 
   VaultShare: {
@@ -2433,6 +2455,7 @@ export const resolvers = {
     },
     duplicateVaultItem: (_: unknown, args: { id: string; name?: string | null }, ctx: Ctx) => vaultService.duplicate(vaultActor(ctx), args.id, args.name),
     regenerateVaultKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.regenerateKey(vaultActor(ctx), args.id),
+    restoreVaultItemVersion: (_: unknown, args: { id: string; version: number }, ctx: Ctx) => vaultService.restoreVersion(vaultActor(ctx), args.id, args.version),
     forgetVaultHostKey: (_: unknown, args: { id: string }, ctx: Ctx) => vaultService.forgetHostKey(vaultActor(ctx), args.id),
     revealVaultSecret: async (_: unknown, args: { id: string; field: string }, ctx: Ctx) => ({ field: args.field, value: await vaultService.reveal(vaultActor(ctx), args.id, args.field) }),
     shareVaultItem: (_: unknown, args: { id: string; email: string; permission: string }, ctx: Ctx) => vaultService.share(vaultActor(ctx), args.id, args.email, fromGqlPermission(args.permission)),

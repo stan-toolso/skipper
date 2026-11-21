@@ -179,6 +179,7 @@ export const AUDITED: Record<string, MutationAudit> = {
   deleteVaultItem: vault('vault.delete'),
   duplicateVaultItem: vault('vault.duplicate', (_a, r) => ({ copyId: r?.id, copyName: r?.name })),
   regenerateVaultKey: vault('vault.regenerate_key'),
+  restoreVaultItemVersion: vault('vault.restore_version', (a) => ({ version: a.version })),
   forgetVaultHostKey: vault('vault.forget_host_key'),
   revealVaultSecret: vault('vault.reveal', (a) => ({ field: a.field })),
   shareVaultItem: vault('vault.share', (a) => ({ email: a.email, permission: a.permission })),
