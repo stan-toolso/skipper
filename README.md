@@ -494,10 +494,10 @@ serveur lui-même : le mode « tout autoriser » d'une session ne le contourne p
 mémorisé par élément pour la session ou le projet.
 
 **Modification par une session et historique** (`backend/src/vault/agentEdit.ts`, `versions.ts`). `update_item(item, …)`
-permet à une session de corriger un élément de sa portée : description, cible (hôte, port, utilisateur, base, adresse),
-champs d'un secret ou d'un site web (ajoutés, modifiés, retirés), nouvelle valeur d'un secret **par référence seulement**
+permet à une session de corriger un élément de sa portée : description, cible (hôte, port, utilisateur, base, adresse,
+tunnel SSH d'une base vers un serveur SSH du même coffre), TLS d'une base (seulement l'activer), champs d'un secret ou d'un site web (ajoutés, modifiés, retirés), nouvelle valeur d'un secret **par référence seulement**
 (`value_from`, `password_from`, `token_from` : `élément.champ` ou `session:nom.champ`, jamais en clair). La politique
-d'accès (nom, lecture seule, accord à chaque usage, commandes autorisées, fichiers d'environnement, tunnel) et les comptes
+d'accès (nom, lecture seule, accord à chaque usage, commandes autorisées, fichiers d'environnement) et les comptes
 AWS / Scaleway (sauf la description) restent aux personnes. Il faut que la personne au nom de qui tourne la session ait la
 permission `gérer`, et **chaque appel demande l'accord** de la personne (jamais mémorisé), avec le détail des changements
 et un avertissement quand la cible d'un élément qui porte des identifiants change. Toute modification, par l'interface ou
