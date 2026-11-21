@@ -22,6 +22,8 @@ import { describeField, siteAllows } from './website.js';
 import { RequestCancelledError } from '../requests/service.js';
 import type { CreateRequestInput } from '../requests/types.js';
 import { sessionSecretService } from './sessionSecrets.js';
+import { buildAgentEdit, secretRefsOf } from './agentEdit.js';
+import { versionRepository } from './versions.js';
 import { normalizeRequestedFields, parseSecretRef, prepareSecretsRequest, redactSecret, SECRETS_REQUEST, type SecretsResponse } from './secretRequests.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
@@ -278,7 +280,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
   return createSdkMcpServer({
     name: 'vault',
     version: '1.0.0',
-    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Un secret s'installe aussi sur un serveur SSH sans que tu le voies : \`ssh_write_secret\` (fichier) ou \`stdin_secret\` de \`ssh_run\` (entrée d'une commande). Pour un script ou une commande locale : \`run_with_secrets\` (variables d'environnement, conteneur jetable) ou, en dernier recours, \`write_env_secret\` (fichier .env du dossier de travail, avec accord). Besoin d'un secret que la personne détient (clé, jeton) : \`request_secrets\` lui ouvre une modale ; elle le range dans le coffre ou le confie à cette session seulement (référence \`session:nom.champ\`, effacé à l'archivage ou sous 24 h ; \`ephemeral: true\` pour un usage ponctuel) ; ne lui demande jamais de le coller dans la conversation. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
+    instructions: `Coffre du projet "${ctx.project.name}" : serveurs SSH, bases PostgreSQL, API HTTP, comptes AWS (CLI aws), comptes Scaleway (CLI scw et API), sites web et secrets. Commence par \`list\` pour connaître les noms. Le serveur détient les identifiants : ne cherche jamais à les obtenir, les afficher ou les deviner. Un élément PostgreSQL rattaché à un serveur entier accepte le paramètre \`database\` (sql_schema sans base liste les bases). Pour un site web ou un secret, utilise le navigateur headless : clique le champ du formulaire (browser_click), puis appelle \`browser_fill\` avec l'élément et la clé du champ ; Skipper y saisit la valeur, que tu ne vois jamais. Un secret s'installe aussi sur un serveur SSH sans que tu le voies : \`ssh_write_secret\` (fichier) ou \`stdin_secret\` de \`ssh_run\` (entrée d'une commande). Pour un script ou une commande locale : \`run_with_secrets\` (variables d'environnement, conteneur jetable) ou, en dernier recours, \`write_env_secret\` (fichier .env du dossier de travail, avec accord). Besoin d'un secret que la personne détient (clé, jeton) : \`request_secrets\` lui ouvre une modale ; elle le range dans le coffre ou le confie à cette session seulement (référence \`session:nom.champ\`, effacé à l'archivage ou sous 24 h ; \`ephemeral: true\` pour un usage ponctuel) ; ne lui demande jamais de le coller dans la conversation. \`update_item\` modifie un élément (description, cible, champs ; secrets par référence seulement), avec l'accord de la personne, en gardant la version précédente. Les résultats volumineux sont tronqués : filtre côté distant (grep, LIMIT, pagination).`,
     tools: [
       tool('list', "Liste les éléments du coffre disponibles pour cette session, leur type, leur cible et leur politique d'accès.", {}, async () =>
         run(async () => {
@@ -432,6 +434,71 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
             await secret.check('write_env_secret', `${name}=${secret.ref} → ${rel} (la valeur sera lisible dans l'environnement de la session)`, { path: rel, name }, true);
             const excluded = await secret.use('write_env_secret', `${name} → ${rel}`, () => writeEnvLine(ctx.cwd, rel, name, secret.value));
             return `Variable ${name} écrite dans ${rel} (droits 600${excluded ? ', fichier exclu de git' : ''}). La valeur ne t'est pas communiquée : ne lis pas ce fichier.`;
+          }),
+      ),
+
+      tool(
+        'update_item',
+        "Modifie un élément du coffre de ta portée : description, cible (hôte, port, utilisateur, base, adresse) ou champs d'un secret ou d'un site web. Toujours soumis à l'accord de la personne, qui voit le détail ; il faut que la session ait la permission « gérer » sur l'élément. Chaque modification est historisée (version restaurable depuis la page Coffre). Une valeur secrète ne se donne jamais en clair : passe une référence à un secret que tu ne vois pas (value_from, password_from, token_from : élément.champ ou session:nom.champ, obtenu par request_secrets). La politique d'accès (nom, lecture seule, accord à chaque usage, commandes autorisées, fichiers d'environnement, tunnel) ne se change pas par cet outil : demande-le à une personne.",
+        {
+          item: z.string().describe("Nom de l'élément"),
+          description: z.string().optional().describe('Nouvelle description'),
+          host: z.string().optional().describe('ssh, postgres : hôte'),
+          port: z.number().int().optional().describe('ssh, postgres : port'),
+          username: z.string().optional().describe('ssh, postgres, api (Basic) : utilisateur'),
+          database: z.string().optional().describe('postgres : base rattachée ; chaîne vide = le serveur entier'),
+          url: z.string().optional().describe("api : adresse de base ; website : adresse du site"),
+          fields: z
+            .array(
+              z.object({
+                key: z.string().describe('Clé du champ (existant : modifié ; nouveau : ajouté)'),
+                label: z.string().optional(),
+                value: z.string().optional().describe("Valeur d'un champ public (jamais d'un champ secret)"),
+                value_from: z.string().optional().describe('Champ secret : référence du secret qui en devient la valeur (élément.champ ou session:nom.champ)'),
+                secret: z.boolean().optional().describe('Le champ est secret (défaut : inchangé ; vrai avec value_from)'),
+              }),
+            )
+            .optional()
+            .describe('website, secret : champs à modifier ou ajouter (les autres restent tels quels)'),
+          remove_fields: z.array(z.string()).optional().describe('website, secret : clés des champs à retirer'),
+          password_from: z.string().optional().describe('postgres : référence du secret qui devient le mot de passe'),
+          token_from: z.string().optional().describe("api : référence du secret qui devient le jeton (ou le mot de passe en Basic)"),
+        },
+        async ({ item, ...params }) =>
+          run(async () => {
+            if (!ctx.ownerId) throw new AppError("Cette session ne tourne au nom de personne : elle ne peut pas modifier le coffre");
+            const i = await byName(item);
+            if (!vaultService.isVersioned(i)) throw new AppError(`« ${i.name} » est un compte relié par une connexion : il se reconnecte depuis la page Coffre`);
+            if (i.kind === 'aws' || i.kind === 'scaleway') {
+              const extra = Object.entries(params).filter(([k, v]) => v !== undefined && k !== 'description');
+              if (extra.length) throw new AppError(`Pour un compte ${kindLabels[i.kind]}, seule la description se modifie par cet outil : le reste se règle depuis la page Coffre`);
+            }
+            const permission = await vaultService.permissionFor(ctx.ownerId, i);
+            if (permission !== 'manage') throw new AppError(`Modifier « ${i.name} » demande la permission « gérer » ; cette session ne l'a pas (${permission ?? 'aucune'}). Demande à une personne qui gère l'élément.`);
+            const secrets = new Map<string, Awaited<ReturnType<typeof secretOf>>>();
+            for (const ref of secretRefsOf(params)) secrets.set(ref, await secretOf(ref));
+            const edit = buildAgentEdit(i, params, (ref) => secrets.get(ref)!.value);
+            const warning = edit.retargets && vaultService.hasSecret(i) ? `\n\n⚠ La cible change : les identifiants de « ${i.name} » seront désormais envoyés à la nouvelle adresse.` : '';
+            const summary = edit.summary.join(' ; ');
+            await ctx.approve({
+              toolName: 'mcp__vault__update_item',
+              key: `update:${i.name}`,
+              title: `Autoriser la modification de « ${i.name} » dans le coffre`,
+              message: `${edit.summary.map((l) => `• ${l}`).join('\n')}${warning}`,
+              input: { item: i.name, ...params },
+              projectRules: false,
+            });
+            const started = Date.now();
+            try {
+              await vaultService.update({ userId: ctx.ownerId, sessionId: ctx.sessionId, projectId: ctx.project.id }, i.id, edit.input);
+            } catch (err) {
+              await ctx.emit('connection', { connection: i.name, itemId: i.id, kind: i.kind, action: 'update_item', summary, ok: false, error: (err as Error).message, durationMs: Date.now() - started });
+              throw err;
+            }
+            for (const [ref, secret] of secrets) await secret.use('update_item', `${ref} → ${i.name}`, async () => undefined);
+            await ctx.emit('connection', { connection: i.name, itemId: i.id, kind: i.kind, action: 'update_item', summary, ok: true, durationMs: Date.now() - started });
+            const version = await versionRepository.latest(i.id);
+            return [`« ${i.name} » modifié${version ? ` (version ${version.version})` : ''} :`, ...edit.summary.map((l) => `- ${l}`), 'La version précédente reste restaurable depuis la page Coffre (onglet Historique de l\'élément).'].join('\n');
           }),
       ),
 

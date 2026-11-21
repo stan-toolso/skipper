@@ -25,6 +25,7 @@ vi.mock('../browser/fill.js', () => ({ browserFill: {} }));
 vi.mock('./sessionSecrets.js', () => ({ sessionSecretService: sessionSecrets }));
 vi.mock('../runners/index.js', () => ({ runner: { runIsolated } }));
 vi.mock('../envFiles/service.js', () => ({ envFileService: envFiles }));
+vi.mock('./versions.js', () => ({ versionRepository: { latest: async () => ({ version: 4 }) } }));
 vi.mock('./postgres.js', async (importOriginal) => ({ ...(await importOriginal<typeof import('./postgres.js')>()), query }));
 
 const { createVaultMcpServer } = await import('./mcp.js');
@@ -95,7 +96,7 @@ describe('serveur MCP vault', () => {
     const client = await connect(server());
     try {
       const tools = (await client.listTools()).tools;
-      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'run_with_secrets', 'scw_api', 'scw_run', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload', 'ssh_write_secret', 'write_env_secret']);
+      expect(tools.map((t) => t.name).sort()).toEqual(['aws_run', 'browser_fill', 'http_request', 'list', 'run_with_secrets', 'scw_api', 'scw_run', 'sql_query', 'sql_schema', 'ssh_download', 'ssh_run', 'ssh_upload', 'ssh_write_secret', 'update_item', 'write_env_secret']);
       const props = (name: string) => tools.find((t) => t.name === name)!.inputSchema.properties as Record<string, { type?: string; additionalProperties?: unknown }>;
       expect(props('scw_api').query.type).toBe('object');
       expect(Object.keys(props('sql_query')).sort()).toEqual(['database', 'item', 'sql']);
@@ -322,6 +323,55 @@ describe('secrets : demande par une modale et usage sans les voir', () => {
       const vaultItem = (await client.callTool({ name: 'write_env_secret', arguments: { path: '.env.local', name: 'KEY', secret: 'cle.private_key' } })) as ToolResult;
       expect(vaultItem.isError).toBe(true);
       expect(vaultItem.content[0].text).toContain("n'est pas ouvert aux fichiers d'environnement");
+    } finally {
+      await client.close();
+    }
+  });
+  it("update_item modifie un élément avec accord, sans valeur secrète en clair, et refuse la politique d'accès", async () => {
+    const secretItem = {
+      id: 'i2',
+      name: 'brevo',
+      kind: 'secret',
+      description: '',
+      ownerUserId: null,
+      ownerProjectId: 'p',
+      settings: { fields: [{ key: 'user', label: 'Utilisateur', secret: false, value: 'a' }, { key: 'token', label: 'Jeton', secret: true, value: null }] },
+      readOnly: true,
+      requireApproval: true,
+      commandAllowlist: [],
+    } as unknown as VaultItem;
+    items = [pgItem(), secretItem];
+    const updates: Array<{ id: string; input: Record<string, unknown> }> = [];
+    sessionSecrets.find.mockResolvedValue({ name: 'neuf', fields: [{ key: 'token' }], requireApproval: false });
+    sessionSecrets.values.mockResolvedValue({ token: 'S3CRET' });
+    Object.assign(service, {
+      isVersioned: () => true,
+      hasSecret: () => true,
+      permissionFor: async () => 'manage',
+      update: async (_a: unknown, id: string, input: Record<string, unknown>) => {
+        updates.push({ id, input });
+      },
+    });
+    const client = await connect(server());
+    try {
+      const clear = (await client.callTool({ name: 'update_item', arguments: { item: 'brevo', fields: [{ key: 'token', value: 'en-clair' }] } })) as ToolResult;
+      expect(clear.isError).toBe(true);
+      expect(clear.content[0].text).toMatch(/secret/);
+      const res = (await client.callTool({ name: 'update_item', arguments: { item: 'brevo', description: 'Brevo', fields: [{ key: 'token', value_from: 'session:neuf.token' }, { key: 'user', value: 'b' }] } })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(res.content[0].text).toMatch(/version 4/);
+      expect(updates[0].id).toBe('i2');
+      expect(updates[0].input).toMatchObject({ description: 'Brevo', fields: [{ key: 'user', value: 'b', secret: false }, { key: 'token', value: 'S3CRET', secret: true }] });
+      expect(approvals.at(-1)).toMatchObject({ toolName: 'mcp__vault__update_item', key: 'update:brevo' });
+      expect(JSON.stringify(approvals)).not.toContain('S3CRET');
+      expect(res.content[0].text).not.toContain('S3CRET');
+      const moved = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', host: 'evil.example.org' } })) as ToolResult;
+      expect(moved.isError).toBeFalsy();
+      const policy = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', url: 'https://x' } })) as ToolResult;
+      expect(policy.isError).toBe(true);
+      Object.assign(service, { permissionFor: async () => 'use' });
+      const denied = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', port: 6543 } })) as ToolResult;
+      expect(denied.content[0].text).toMatch(/gérer/);
     } finally {
       await client.close();
     }

@@ -281,6 +281,7 @@ export function describeTool(rawName: string, input: Record<string, unknown> = {
             `écrire le secret ${secretRef ?? ''} dans ${str(input, 'path') ?? 'un fichier .env'} (${str(input, 'name') ?? ''})`,
           ],
           request_secrets: [`Demande de secrets (${conn})`, undefined, `vous demander des secrets pour l'élément ${conn}`],
+          update_item: [`Modification de l'élément ${conn} du coffre`, undefined, `modifier l'élément ${conn} du coffre`],
           ssh_upload: [`Envoi de ${str(input, 'local_path') ?? ''} vers ${conn}`, str(input, 'remote_path'), `envoyer ${str(input, 'local_path') ?? 'un fichier'} vers ${conn}`],
           ssh_download: [`Récupération de ${str(input, 'remote_path') ?? ''} depuis ${conn}`, str(input, 'local_path'), `récupérer ${str(input, 'remote_path') ?? 'un fichier'} depuis ${conn}`],
           sql_query: [`Requête SQL sur ${conn}${db}`, sql, `exécuter sur ${conn}${db} : ${short(sql)}`],

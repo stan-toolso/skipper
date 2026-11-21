@@ -30,14 +30,17 @@ import {
   type VaultShare,
 } from '../../graphql/vault';
 import { useDialogs } from '../Dialogs';
+import VaultItemHistory from './VaultItemHistory';
 import { agentToolsOf, daysToExpiry, fmtDate, fmtDay, isOauthToken, isSkipperKind, PERMISSION_LABELS, skipperUsageOf } from './kinds';
 
-type Tab = 'details' | 'shares' | 'links' | 'audit';
+type Tab = 'details' | 'shares' | 'links' | 'history' | 'audit';
 const REFETCH = ['VaultItems', 'VaultProject', 'VaultItemDetails'];
 
 const ACTION_LABELS: Record<string, string> = {
   created: 'création',
   updated: 'modification',
+  secret_changed: 'secret modifié',
+  restored: 'version restaurée',
   deleted: 'suppression',
   revealed: 'secret révélé',
   shared: 'partage',
@@ -773,7 +776,7 @@ function AuditTab({ events, onMore, canMore }: { events: VaultAuditEvent[]; onMo
   );
 }
 
-/** Ligne de détails d'un élément : onglets Détails, Partage, Projets, Journal (selon la permission). */
+/** Ligne de détails d'un élément : onglets Détails, Partage, Projets, Historique, Journal (selon la permission). */
 export default function VaultItemDetails({ item, projects, projectPage = false, browserDisabled = false, onEdited }: { item: VaultItem; projects: Project[]; projectPage?: boolean; browserDisabled?: boolean; onEdited: (item: VaultItem) => void }) {
   const [tab, setTab] = useState<Tab>('details');
   const [before, setBefore] = useState<string | null>(null);
@@ -806,6 +809,11 @@ export default function VaultItemDetails({ item, projects, projectPage = false, 
           <Nav.Item>
             <Nav.Link eventKey="links">Projets{data?.vaultItem?.links.length ? ` (${data.vaultItem.links.length})` : ''}</Nav.Link>
           </Nav.Item>
+          {item.versioned && (
+            <Nav.Item>
+              <Nav.Link eventKey="history">Historique</Nav.Link>
+            </Nav.Item>
+          )}
           <Nav.Item>
             <Nav.Link eventKey="audit">Journal</Nav.Link>
           </Nav.Item>
@@ -814,6 +822,7 @@ export default function VaultItemDetails({ item, projects, projectPage = false, 
       {tab === 'details' && <DetailsTab item={item} projectPage={projectPage} browserDisabled={browserDisabled} onEdited={onEdited} />}
       {tab === 'shares' && <SharesTab item={item} shares={data?.vaultItem?.shares ?? []} />}
       {tab === 'links' && <LinksTab item={item} links={data?.vaultItem?.links ?? []} projects={projects} />}
+      {tab === 'history' && <VaultItemHistory item={item} />}
       {tab === 'audit' && (
         <AuditTab
           events={events}

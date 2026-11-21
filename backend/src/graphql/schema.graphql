@@ -942,6 +942,36 @@ type VaultAuditEvent {
   createdAt: DateTime!
 }
 
+"Différence d'une version à la précédente ; jamais de valeur secrète (secret : seul le fait qu'elle a changé)."
+type VaultChange {
+  field: String!
+  label: String!
+  before: String
+  after: String
+  secret: Boolean!
+}
+
+"Version d'un élément du coffre : état figé après une modification par une personne ou une session (secrets compris, jamais renvoyés)."
+type VaultItemVersion {
+  id: ID!
+  version: Int!
+  "created, updated, secret_changed, key_regenerated, restored, imported"
+  action: String!
+  name: String!
+  description: String!
+  changes: [VaultChange!]!
+  "Version restaurée (action restored)."
+  restoredFrom: Int
+  actor: User
+  "Session d'agent à l'origine de la modification."
+  sessionId: ID
+  session: Session
+  project: Project
+  "La plus récente : l'état actuel de l'élément."
+  current: Boolean!
+  createdAt: DateTime!
+}
+
 "Élément du coffre : serveur SSH, base PostgreSQL, API HTTP, site web, secret ou compte Google. Les secrets ne sont jamais renvoyés (sauf révélation explicite, journalisée)."
 type VaultItem {
   id: ID!
@@ -1011,6 +1041,10 @@ type VaultItem {
   links: [VaultLink!]!
   "Journal (permission MANAGE ; vide sinon), le plus récent d'abord. before = identifiant de la dernière entrée reçue."
   audit(limit: Int = 50, before: ID): [VaultAuditEvent!]!
+  "Historique des versions (permission MANAGE ; vide sinon), la plus récente d'abord. before = numéro de la dernière version reçue."
+  versions(limit: Int = 50, before: Int): [VaultItemVersion!]!
+  "Les comptes reliés par une connexion (Google, jeton OAuth) n'ont pas d'historique."
+  versioned: Boolean!
   createdBy: User
   createdAt: DateTime!
   updatedAt: DateTime!
@@ -3732,6 +3766,8 @@ type Mutation {
   duplicateVaultItem(id: ID!, name: String): VaultItem!
   "ssh : nouvelle paire de clés (l'ancienne clé publique est à retirer du serveur)."
   regenerateVaultKey(id: ID!): VaultItem!
+  "Restaure une version de l'historique (MANAGE) : nom, description, réglages, secrets et politique d'accès reviennent à cet état ; la restauration est une nouvelle version."
+  restoreVaultItemVersion(id: ID!, version: Int!): VaultItem!
   "ssh : oublie la clé d'hôte mémorisée (serveur réinstallé)."
   forgetVaultHostKey(id: ID!): VaultItem!
   "Révèle un champ secret (permission READ) ; journalisé et limité en fréquence."

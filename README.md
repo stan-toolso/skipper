@@ -264,7 +264,9 @@ backend/
       local.ts                 # travail local d'une work session (commits en avance sur la base, fichiers non commités) pour les PR en préparation
       service.ts               # suivi : enregistrement, ouverture sur GitHub, mise à jour, synchronisation GitHub et PR en préparation, notifications
     vault/
-      service.ts               # coffre : éléments, permissions, partages, liens, copie, révélation, tests, journal
+      service.ts               # coffre : éléments, permissions, partages, liens, copie, révélation, tests, journal, versions et restauration
+      versions.ts              # historique des versions des éléments (vault_item_versions) et calcul des différences sans valeur secrète
+      agentEdit.ts             # outil vault.update_item : ce qu'une session peut modifier, résumé montré à la personne
       access.ts                # calcul des permissions (utiliser < lire < gérer)
       crypto.ts                # chiffrement par enveloppe, rotation de la clé maîtresse
       ssh.ts                   # client ssh2 : clés, exécution, SFTP, tunnels, clé d'hôte (TOFU)
@@ -485,11 +487,26 @@ l'organisation et le projet par défaut s'ils manquent.
 
 **Accès des agents.** Serveur MCP `vault` : `list`, `ssh_run`, `ssh_upload`, `ssh_download`, `ssh_write_secret`,
 `sql_query`, `sql_schema`, `http_request`, `aws_run`, `scw_run`, `scw_api`, `browser_fill`, `request_secrets`,
-`run_with_secrets`, `write_env_secret`. Le backend déchiffre, exécute, tronque, et
+`run_with_secrets`, `write_env_secret`, `update_item`. Le backend déchiffre, exécute, tronque, et
 journalise chaque usage dans le **journal** de l'élément (`vault_audit_events`, conservé 400 jours) et
 comme événement `connection` de la session. « Demander l'accord avant chaque usage » est appliqué par le
 serveur lui-même : le mode « tout autoriser » d'une session ne le contourne pas ; l'accord peut être
 mémorisé par élément pour la session ou le projet.
+
+**Modification par une session et historique** (`backend/src/vault/agentEdit.ts`, `versions.ts`). `update_item(item, …)`
+permet à une session de corriger un élément de sa portée : description, cible (hôte, port, utilisateur, base, adresse),
+champs d'un secret ou d'un site web (ajoutés, modifiés, retirés), nouvelle valeur d'un secret **par référence seulement**
+(`value_from`, `password_from`, `token_from` : `élément.champ` ou `session:nom.champ`, jamais en clair). La politique
+d'accès (nom, lecture seule, accord à chaque usage, commandes autorisées, fichiers d'environnement, tunnel) et les comptes
+AWS / Scaleway (sauf la description) restent aux personnes. Il faut que la personne au nom de qui tourne la session ait la
+permission `gérer`, et **chaque appel demande l'accord** de la personne (jamais mémorisé), avec le détail des changements
+et un avertissement quand la cible d'un élément qui porte des identifiants change. Toute modification, par l'interface ou
+par une session (création, mise à jour, secrets saisis, nouvelle paire de clés, restauration), fige une **version**
+(`vault_item_versions` : état complet, secrets compris, chiffrés tels quels avec la clé de l'élément et ré-enveloppés à la
+rotation de la clé maîtresse ; 100 dernières versions par élément ; auteur et session) avec ce qui a changé, sans jamais de
+valeur secrète. Onglet « Historique » des détails d'un élément (permission `gérer`) : versions, auteur, session, différences,
+et **Restaurer** (mutation `restoreVaultItemVersion`) qui crée une nouvelle version. Les renouvellements automatiques de jetons
+n'y entrent pas, et les comptes reliés par une connexion (Google, jeton OAuth) n'ont pas d'historique.
 
 **Secrets demandés par un agent** (`backend/src/vault/secretRequests.ts`, `frontend/src/components/SecretsRequest.tsx`).
 Quand l'agent a besoin d'un secret que détient la personne (clé SSH à installer, jeton d'API), `request_secrets(item,

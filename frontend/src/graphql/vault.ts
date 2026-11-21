@@ -137,6 +137,28 @@ export interface VaultAuditEvent {
   createdAt: string;
 }
 
+export interface VaultChange {
+  field: string;
+  label: string;
+  before: string | null;
+  after: string | null;
+  secret: boolean;
+}
+
+export interface VaultItemVersion {
+  id: string;
+  version: number;
+  action: string;
+  name: string;
+  changes: VaultChange[];
+  restoredFrom: number | null;
+  actor: { id: string; name: string } | null;
+  sessionId: string | null;
+  session: { id: string; name: string } | null;
+  current: boolean;
+  createdAt: string;
+}
+
 export interface VaultItem {
   id: string;
   name: string;
@@ -174,6 +196,8 @@ export interface VaultItem {
   hostFingerprint: string | null;
   hostKeySeenAt: string | null;
   hasSecret: boolean;
+  /** Historique des versions disponible (pas pour un compte relié par une connexion). */
+  versioned: boolean;
   revealableFields: string[];
   secretUpdatedAt: string | null;
   expiresAt: string | null;
@@ -319,6 +343,7 @@ export const VAULT_ITEM_FIELDS = gql`
     hostFingerprint
     hostKeySeenAt
     hasSecret
+    versioned
     revealableFields
     secretUpdatedAt
     expiresAt
@@ -488,6 +513,48 @@ export const DUPLICATE_VAULT_ITEM = gql`
   ${VAULT_ITEM_FIELDS}
   mutation DuplicateVaultItem($id: ID!, $name: String) {
     duplicateVaultItem(id: $id, name: $name) {
+      ...VaultItemFields
+    }
+  }
+`;
+
+export const VAULT_ITEM_VERSIONS = gql`
+  query VaultItemVersions($id: ID!, $before: Int) {
+    vaultItem(id: $id) {
+      id
+      versions(limit: 30, before: $before) {
+        id
+        version
+        action
+        name
+        changes {
+          field
+          label
+          before
+          after
+          secret
+        }
+        restoredFrom
+        actor {
+          id
+          name
+        }
+        sessionId
+        session {
+          id
+          name
+        }
+        current
+        createdAt
+      }
+    }
+  }
+`;
+
+export const RESTORE_VAULT_ITEM_VERSION = gql`
+  ${VAULT_ITEM_FIELDS}
+  mutation RestoreVaultItemVersion($id: ID!, $version: Int!) {
+    restoreVaultItemVersion(id: $id, version: $version) {
       ...VaultItemFields
     }
   }

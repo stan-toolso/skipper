@@ -56,6 +56,7 @@ import {
 } from './types.js';
 import * as website from './website.js';
 import { log } from '../log.js';
+import { diffSnapshots, snapshotOf, versionRepository, type VaultChange, type VaultItemVersion } from './versions.js';
 
 /** Un jeton applicatif obtenu par un parcours de connexion : il ne quitte jamais le serveur et ne se modifie pas à la main. */
 export const isOauthToken = (item: Pick<VaultItem, 'kind' | 'settings'>): boolean => item.kind === 'token' && (item.settings as TokenSettings).obtained === 'oauth';
@@ -230,6 +231,101 @@ export const vaultService = {
   },
 
   auditLog: (itemId: string, limit = 50, before?: string | null) => vaultRepository.listAudit(itemId, limit, before),
+
+  // ---- Historique des versions ---------------------------------------------------------------------
+
+  /** Les comptes reliés par OAuth se reconnectent : ni historique ni restauration. */
+  isVersioned: (item: Pick<VaultItem, 'kind' | 'settings'>) => item.kind !== 'google' && !isOauthToken(item),
+
+  /**
+   * Fige l'état de l'élément après une modification (versions.ts), avec ce qui a changé depuis `previous` (état avant
+   * la modification ; null à la création). Une erreur est journalisée sans annuler la modification déjà faite.
+   */
+  async recordVersion(item: VaultItem, action: string, actor: VaultActor | null, previous: VaultItem | null, restoredFrom?: number | null): Promise<VaultChange[]> {
+    if (!this.isVersioned(item)) return [];
+    try {
+      const safeSecrets = (i: VaultItem) => {
+        try {
+          return this.secretsOf(i);
+        } catch {
+          return {};
+        }
+      };
+      const changes = previous ? diffSnapshots(snapshotOf(previous), snapshotOf(item), safeSecrets(previous), safeSecrets(item)) : [];
+      if (previous && !changes.length && action !== 'restored') return [];
+      await versionRepository.add({
+        itemId: item.id,
+        action,
+        snapshot: snapshotOf(item),
+        changes,
+        restoredFrom: restoredFrom ?? null,
+        actorUserId: actor?.userId ?? null,
+        sessionId: actor?.sessionId ?? null,
+        projectId: actor?.projectId ?? null,
+      });
+      return changes;
+    } catch (err) {
+      log.error(`[vault] version de ${item.name} perdue`, err);
+      return [];
+    }
+  },
+
+  /** Versions d'un élément (permission manage), la plus récente d'abord. */
+  async versions(userId: string, itemId: string, limit = 50, before?: number | null): Promise<VaultItemVersion[]> {
+    await this.getFor(userId, itemId, 'manage');
+    return versionRepository.list(itemId, limit, before);
+  },
+
+  /**
+   * Restaure une version (permission manage) : nom, description, réglages, secrets et politique d'accès reviennent à
+   * cet état ; la restauration est elle-même une nouvelle version. La clé d'hôte SSH est oubliée si l'hôte change.
+   */
+  async restoreVersion(actor: VaultActor & { userId: string }, itemId: string, version: number): Promise<VaultItemWithPermission> {
+    const current = await this.getFor(actor.userId, itemId, 'manage');
+    if (!this.isVersioned(current)) throw new AppError('Un compte relié par une connexion ne se restaure pas : reconnectez-le');
+    const target = await versionRepository.find(itemId, version);
+    if (!target) throw new NotFoundError(`Pas de version ${version} pour « ${current.name} »`);
+    const latest = await versionRepository.latest(itemId);
+    if (latest && latest.version === version) throw new AppError(`La version ${version} est déjà la version actuelle`);
+    if (target.name !== current.name) {
+      if (current.ownerProjectId) await this.assertNameFree(current.ownerProjectId, null, target.name, current.id);
+      for (const link of await vaultRepository.listLinks(current.id)) await this.assertNameFree(link.projectId, link.scope === 'personal' ? link.userId : null, target.name, current.id);
+    }
+    if (current.kind === 'postgres') {
+      const viaItemId = (target.settings as PostgresSettings).viaItemId;
+      if (viaItemId) {
+        const via = await vaultRepository.findById(viaItemId);
+        if (!via || via.ownerUserId !== current.ownerUserId || via.ownerProjectId !== current.ownerProjectId) throw new AppError("Le tunnel SSH de cette version n'existe plus dans ce coffre : modifiez l'élément à la main");
+      }
+    }
+    const patch: VaultItemPatch = {
+      name: target.name,
+      description: target.description,
+      settings: target.settings,
+      publicKey: target.publicKey,
+      readOnly: target.readOnly,
+      requireApproval: target.requireApproval,
+      envExport: target.envExport,
+      commandAllowlist: target.commandAllowlist,
+      expiresAt: target.expiresAt,
+    };
+    if (target.secretCiphertext !== current.secretCiphertext) Object.assign(patch, { secretCiphertext: target.secretCiphertext, wrappedKey: target.wrappedKey });
+    if (current.kind === 'ssh') {
+      const a = current.settings as SshSettings;
+      const b = target.settings as SshSettings;
+      if (a.host !== b.host || a.port !== b.port) Object.assign(patch, { hostKey: null, hostKeySeenAt: null });
+    }
+    let item: VaultItem;
+    try {
+      item = await vaultRepository.update(itemId, patch);
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') throw new AppError(`Un élément « ${target.name} » existe déjà`);
+      throw err;
+    }
+    const changes = await this.recordVersion(item, 'restored', actor, current, version);
+    await this.audit(item, 'restored', actor, `version ${version}${changes.length ? ` : ${changes.map((c) => c.label).join(', ')}` : ''}`);
+    return { ...item, permission: 'manage' };
+  },
 
   // ---- Création / mise à jour ----------------------------------------------------------------------
 
@@ -477,6 +573,7 @@ export const vaultService = {
       throw err;
     }
     await this.audit(item, 'created', actor, `${kindLabels[kind]} (${projectId ? 'projet' : 'personnel'})`);
+    await this.recordVersion(item, 'created', actor, null);
     return { ...item, permission: 'manage' };
   },
 
@@ -551,6 +648,7 @@ export const vaultService = {
       throw err;
     }
     await this.audit(item, secretChanged ? 'secret_changed' : 'updated', actor, changed.join(', '));
+    await this.recordVersion(item, secretChanged ? 'secret_changed' : 'updated', actor, current);
     return { ...item, permission: 'manage' };
   },
 
@@ -570,6 +668,7 @@ export const vaultService = {
     const pair = ssh.generateKeyPair(`skipper-${item.name}`);
     const updated = await vaultRepository.update(id, { ...sealSecrets(id, 'ssh', { ...this.secretsOf(item), privateKey: pair.privateKey }), publicKey: pair.publicKey });
     await this.audit(item, 'key_regenerated', actor);
+    await this.recordVersion(updated, 'key_regenerated', actor, item);
     return { ...updated, permission: 'manage' };
   },
 
@@ -718,6 +817,7 @@ export const vaultService = {
     });
     const origin = source.ownerProjectId ? `projet ${(await projectService.get(source.ownerProjectId).catch(() => null))?.name ?? '?'}` : 'coffre personnel';
     await this.audit(item, 'created', actor, `${kindLabels[item.kind]} (projet), copie de « ${source.name} » (${origin})`);
+    await this.recordVersion(item, 'created', actor, null);
     await this.audit(source, 'copied', actor, `${project.name} : « ${newName} »`);
     for (const l of links) {
       await vaultRepository.deleteLink(l.id);
@@ -763,6 +863,7 @@ export const vaultService = {
       throw err;
     });
     await this.audit(item, 'created', actor, `${kindLabels[item.kind]}, copie de « ${source.name} »`);
+    await this.recordVersion(item, 'created', actor, null);
     await this.audit(source, 'duplicated', actor, `« ${newName} »`);
     return { ...item, permission: 'manage' };
   },
@@ -1109,6 +1210,15 @@ export const vaultService = {
         log.error(`[vault] reprise des secrets de ${item.name} impossible : ${(err as Error).message}`);
       }
     }
+    for (const v of await versionRepository.listToRewrap(currentKeyId())) {
+      try {
+        const wrapped = rewrapKey(v.itemId, v.wrappedKey!);
+        if (wrapped && (await versionRepository.replaceWrappedKey(v.id, wrapped, v.wrappedKey!))) rewrapped++;
+      } catch (err) {
+        failed++;
+        log.error(`[vault] ré-enveloppe de la version ${v.id} impossible : ${(err as Error).message}`);
+      }
+    }
     const pruned = await vaultRepository.pruneAudit(AUDIT_RETENTION_DAYS);
     return { converted, rewrapped, failed, pruned };
   },
@@ -1119,7 +1229,7 @@ export const vaultService = {
   promptSummary(items: VaultItem[], project: Pick<Project, 'runnerConfig'>): string {
     const list = items.filter((i) => i.kind !== 'google');
     const ask =
-      "Besoin d'un secret que détient la personne (clé privée, jeton, mot de passe) : appelle `request_secrets` (serveur `vault` ; `ephemeral: true` pour un usage ponctuel) ; elle le saisit dans une modale et le range dans le coffre ou le confie à cette session seulement (référence `session:nom.champ`), sans que tu voies la valeur. Sers-t'en ensuite par les outils du coffre : `run_with_secrets` (variables d'environnement d'une commande, conteneur jetable), `ssh_write_secret` et `stdin_secret` de `ssh_run` (serveur SSH), `write_env_secret` (fichier .env du dossier de travail, avec accord). Ne lui demande jamais de coller un secret dans la conversation.";
+      "Besoin d'un secret que détient la personne (clé privée, jeton, mot de passe) : appelle `request_secrets` (serveur `vault` ; `ephemeral: true` pour un usage ponctuel) ; elle le saisit dans une modale et le range dans le coffre ou le confie à cette session seulement (référence `session:nom.champ`), sans que tu voies la valeur. Sers-t'en ensuite par les outils du coffre : `run_with_secrets` (variables d'environnement d'une commande, conteneur jetable), `ssh_write_secret` et `stdin_secret` de `ssh_run` (serveur SSH), `write_env_secret` (fichier .env du dossier de travail, avec accord). Ne lui demande jamais de coller un secret dans la conversation. Pour corriger un élément (description, hôte, adresse, champs d'un secret, nouvelle valeur d'un secret par référence) : `update_item`, toujours avec l'accord de la personne et historisé (version restaurable).";
     if (!list.length) return ask;
     const hasSsh = list.some((i) => i.kind === 'ssh');
     const browser = Boolean((project.runnerConfig as { browser?: boolean } | null)?.browser);
