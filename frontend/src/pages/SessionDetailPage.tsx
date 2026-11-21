@@ -552,7 +552,7 @@ export default function SessionDetailPage() {
       {/* Sur mobile, la ligne vit dans le détail repliable de l'en-tête, avec les boutons. */}
       <div className="cc-toggle d-none d-md-flex">{technicalToggle}</div>
       <ToolPermissionContext.Provider value={toolPermissions}>
-        <Transcript events={shownEvents} draft={draft} loading={!eventsLoaded} technical={technical} participants={participants} busy={Boolean(busy) && !pending.length} subagentLinks />
+        <Transcript events={shownEvents} draft={draft} loading={!eventsLoaded} technical={technical} participants={participants} busy={Boolean(busy) && !pending.length} subagentLinks waitingOnCommands={Boolean(!readOnly && running && !busy && !pending.length && waitingCommands.length)} />
       </ToolPermissionContext.Provider>
       {actions.modals}
 

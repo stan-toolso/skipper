@@ -753,7 +753,7 @@ const STICK_MARGIN = 80;
  * `busy` : l'agent travaille (sans attendre de réponse) ; en conversation, une simple ligne « réfléchit… » le dit.
  * `subagentLinks` : les appels de l'outil Agent mènent au fil de leur sous-agent (pages/SubagentPage.tsx).
  */
-export default function Transcript({ events, draft = null, autoScroll = true, technical = false, loading = false, participants = null, busy = false, subagentLinks = false }: { events: SessionEvent[]; draft?: SessionLiveDraft | null; autoScroll?: boolean; technical?: boolean; loading?: boolean; participants?: ChatParticipants | null; busy?: boolean; /** Lien « voir le fil » sur les appels de l'outil Agent (pas sur une page publique : la page du sous-agent est dans l'application). */ subagentLinks?: boolean }) {
+export default function Transcript({ events, draft = null, autoScroll = true, technical = false, loading = false, participants = null, busy = false, subagentLinks = false, waitingOnCommands = false }: { events: SessionEvent[]; draft?: SessionLiveDraft | null; autoScroll?: boolean; technical?: boolean; loading?: boolean; participants?: ChatParticipants | null; busy?: boolean; /** Lien « voir le fil » sur les appels de l'outil Agent (pas sur une page publique : la page du sous-agent est dans l'application). */ subagentLinks?: boolean; /** L'agent attend en ce moment ses commandes de fond et la page le dit dans sa ligne d'état : l'avis « Tour terminé, 1 commande en arrière-plan… » du dernier tour ferait doublon, il est masqué (il reparaît dans l'historique une fois l'attente finie). */ waitingOnCommands?: boolean }) {
   // Sans le détail technique et avec ses interlocuteurs, la session se lit comme une conversation (`ChatRow`).
   const chat = !technical && participants ? participants : null;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -794,6 +794,14 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
   const { nodes, tailAgent } = useMemo(() => {
     const rel = (path: string) => (cwd && path.startsWith(`${cwd}/`) ? path.slice(cwd.length + 1) : path);
     const nodes: React.ReactNode[] = [];
+    // Avis de fin de tour sur des commandes de fond : le dernier est repris, en direct, par la ligne d'état de la page.
+    let hiddenWaitNotice: string | undefined;
+    for (let i = events.length - 1; waitingOnCommands && i >= 0; i--) {
+      if (events[i].type === 'system' && (events[i].payload as { backgroundCommands?: unknown }).backgroundCommands) {
+        hiddenWaitNotice = events[i].id;
+        break;
+      }
+    }
     // Sans le détail technique, le travail de l'agent entre deux événements affichés (un tour, le plus souvent)
     // est replié : son dernier message et ses questions restent en vue, les étapes entre deux sont rassemblées
     // en une ligne chacune (`WorkGroup`), dépliée au clic.
@@ -1090,6 +1098,7 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
               </div>,
             );
           } else if (p.notice) {
+            if (e.id === hiddenWaitNotice) break;
             nodes.push(
               <div key={e.id} className="cc-note warn">
                 {stamp(true)}⚠ {String(p.message ?? '')}
@@ -1203,7 +1212,7 @@ export default function Transcript({ events, draft = null, autoScroll = true, te
     const tail = flushWork(true);
     nodes.push(...tail);
     return { nodes, tailAgent: Boolean(chat && tail.length) };
-  }, [events, technical, chat, results, subCalls, cwd, subagentLinks]);
+  }, [events, technical, chat, results, subCalls, cwd, subagentLinks, waitingOnCommands]);
   // Ce que l'agent écrit en ce moment : le texte grandit à chaque relevé, puis le message journalisé le remplace.
   // En conversation, elle prolonge le message de l'agent du tour en cours, ou en ouvre un.
   // Tant que l'agent travaille sans écrire, la conversation montre seulement qu'il réfléchit.
