@@ -367,6 +367,16 @@ describe('secrets : demande par une modale et usage sans les voir', () => {
       expect(res.content[0].text).not.toContain('S3CRET');
       const moved = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', host: 'evil.example.org' } })) as ToolResult;
       expect(moved.isError).toBeFalsy();
+      // Tunnel SSH d'une base : le serveur SSH est désigné par son nom ; TLS s'active mais ne se désactive pas.
+      items.push({ id: 'i3', name: 'bastion', kind: 'ssh', settings: { host: 'b', port: 22, username: 'u' }, commandAllowlist: [] } as unknown as VaultItem);
+      const tunnel = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', via: 'bastion' } })) as ToolResult;
+      expect(tunnel.isError).toBeFalsy();
+      expect(updates.at(-1)!.input).toMatchObject({ viaItemId: 'i3' });
+      expect(approvals.at(-1)!.input).toMatchObject({ via: 'bastion' });
+      const notSsh = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', via: 'brevo' } })) as ToolResult;
+      expect(notSsh.isError).toBe(true);
+      const sslOff = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', ssl: false } })) as ToolResult;
+      expect(sslOff.content[0].text).toMatch(/TLS/);
       const policy = (await client.callTool({ name: 'update_item', arguments: { item: 'rds', url: 'https://x' } })) as ToolResult;
       expect(policy.isError).toBe(true);
       Object.assign(service, { permissionFor: async () => 'use' });

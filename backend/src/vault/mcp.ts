@@ -22,7 +22,7 @@ import { describeField, siteAllows } from './website.js';
 import { RequestCancelledError } from '../requests/service.js';
 import type { CreateRequestInput } from '../requests/types.js';
 import { sessionSecretService } from './sessionSecrets.js';
-import { buildAgentEdit, secretRefsOf } from './agentEdit.js';
+import { buildAgentEdit, secretRefsOf, type AgentEditTunnels } from './agentEdit.js';
 import { versionRepository } from './versions.js';
 import { normalizeRequestedFields, parseSecretRef, prepareSecretsRequest, redactSecret, SECRETS_REQUEST, type SecretsResponse } from './secretRequests.js';
 
@@ -439,7 +439,7 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
 
       tool(
         'update_item',
-        "Modifie un élément du coffre de ta portée : description, cible (hôte, port, utilisateur, base, adresse) ou champs d'un secret ou d'un site web. Toujours soumis à l'accord de la personne, qui voit le détail ; il faut que la session ait la permission « gérer » sur l'élément. Chaque modification est historisée (version restaurable depuis la page Coffre). Une valeur secrète ne se donne jamais en clair : passe une référence à un secret que tu ne vois pas (value_from, password_from, token_from : élément.champ ou session:nom.champ, obtenu par request_secrets). La politique d'accès (nom, lecture seule, accord à chaque usage, commandes autorisées, fichiers d'environnement, tunnel) ne se change pas par cet outil : demande-le à une personne.",
+        "Modifie un élément du coffre de ta portée : description, cible (hôte, port, utilisateur, base, adresse, tunnel SSH d'une base), TLS d'une base (seulement l'activer) ou champs d'un secret ou d'un site web. Toujours soumis à l'accord de la personne, qui voit le détail ; il faut que la session ait la permission « gérer » sur l'élément. Chaque modification est historisée (version restaurable depuis la page Coffre). Une valeur secrète ne se donne jamais en clair : passe une référence à un secret que tu ne vois pas (value_from, password_from, token_from : élément.champ ou session:nom.champ, obtenu par request_secrets). La politique d'accès (nom, lecture seule, accord à chaque usage, commandes autorisées, fichiers d'environnement) ne se change pas par cet outil : demande-le à une personne.",
         {
           item: z.string().describe("Nom de l'élément"),
           description: z.string().optional().describe('Nouvelle description'),
@@ -463,6 +463,8 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
           remove_fields: z.array(z.string()).optional().describe('website, secret : clés des champs à retirer'),
           password_from: z.string().optional().describe('postgres : référence du secret qui devient le mot de passe'),
           token_from: z.string().optional().describe("api : référence du secret qui devient le jeton (ou le mot de passe en Basic)"),
+          via: z.string().optional().describe('postgres : nom du serveur SSH du même coffre à traverser (tunnel) ; chaîne vide pour une connexion directe'),
+          ssl: z.boolean().optional().describe('postgres : true pour activer TLS (le désactiver reste aux personnes)'),
         },
         async ({ item, ...params }) =>
           run(async () => {
@@ -477,7 +479,16 @@ export function createVaultMcpServer(ctx: VaultMcpContext): McpSdkServerConfigWi
             if (permission !== 'manage') throw new AppError(`Modifier « ${i.name} » demande la permission « gérer » ; cette session ne l'a pas (${permission ?? 'aucune'}). Demande à une personne qui gère l'élément.`);
             const secrets = new Map<string, Awaited<ReturnType<typeof secretOf>>>();
             for (const ref of secretRefsOf(params)) secrets.set(ref, await secretOf(ref));
-            const edit = buildAgentEdit(i, params, (ref) => secrets.get(ref)!.value);
+            const tunnels: AgentEditTunnels = {};
+            if (i.kind === 'postgres' && params.via !== undefined) {
+              const currentVia = (i.settings as PostgresSettings).viaItemId;
+              tunnels.current = currentVia ? (await vaultService.getInternal(currentVia).catch(() => null))?.name ?? null : null;
+              if (params.via.trim()) {
+                const via = await ofKind(params.via.trim(), 'ssh');
+                tunnels.next = { id: via.id, name: via.name };
+              }
+            }
+            const edit = buildAgentEdit(i, params, (ref) => secrets.get(ref)!.value, tunnels);
             const warning = edit.retargets && vaultService.hasSecret(i) ? `\n\n⚠ La cible change : les identifiants de « ${i.name} » seront désormais envoyés à la nouvelle adresse.` : '';
             const summary = edit.summary.join(' ; ');
             await ctx.approve({

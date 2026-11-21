@@ -5,10 +5,11 @@ import { kindLabels, type ApiSettings, type PostgresSettings, type SecretSetting
  * Modification d'un élément du coffre par une session d'agent (outil vault.update_item) : traduction des paramètres
  * de l'outil en entrée du service, et résumé lisible montré à la personne qui donne son accord.
  *
- * Ce qu'un agent peut changer : la description, la cible (hôte, port, utilisateur, base, adresse) et les champs d'un
- * secret ou d'un site web ; une valeur secrète ne s'écrit jamais en clair, seulement par référence à un secret qu'il
- * ne voit pas (`élément.champ` ou `session:nom.champ`). Jamais la politique d'accès (nom, lecture seule, accord à
- * chaque usage, fichiers d'environnement, commandes autorisées, tunnel) : elle reste aux personnes.
+ * Ce qu'un agent peut changer : la description, la cible (hôte, port, utilisateur, base, adresse, tunnel SSH d'une
+ * base) et les champs d'un secret ou d'un site web, et activer TLS sur une base (jamais le désactiver) ; une valeur
+ * secrète ne s'écrit jamais en clair, seulement par référence à un secret qu'il ne voit pas (`élément.champ` ou
+ * `session:nom.champ`). Jamais la politique d'accès (nom, lecture seule, accord à chaque usage, fichiers
+ * d'environnement, commandes autorisées) : elle reste aux personnes.
  */
 
 export interface AgentFieldEdit {
@@ -32,6 +33,16 @@ export interface AgentEditParams {
   remove_fields?: string[];
   password_from?: string;
   token_from?: string;
+  /** postgres : nom du serveur SSH du même coffre à traverser ; chaîne vide = connexion directe. */
+  via?: string;
+  /** postgres : TLS (seulement l'activer). */
+  ssl?: boolean;
+}
+
+/** Tunnels résolus par l'appelant : l'actuel (nom) et le demandé (null = connexion directe). */
+export interface AgentEditTunnels {
+  current?: string | null;
+  next?: { id: string; name: string } | null;
 }
 
 export interface AgentEdit {
@@ -49,7 +60,7 @@ export function secretRefsOf(p: AgentEditParams): string[] {
   return [p.password_from, p.token_from, ...(p.fields ?? []).map((f) => f.value_from)].filter((r): r is string => Boolean(r?.trim()));
 }
 
-export function buildAgentEdit(item: VaultItem, p: AgentEditParams, secretValue: (ref: string) => string): AgentEdit {
+export function buildAgentEdit(item: VaultItem, p: AgentEditParams, secretValue: (ref: string) => string, tunnels: AgentEditTunnels = {}): AgentEdit {
   const input: VaultItemInput = {};
   const summary: string[] = [];
   let retargets = false;
@@ -63,6 +74,8 @@ export function buildAgentEdit(item: VaultItem, p: AgentEditParams, secretValue:
     remove_fields: ['website', 'secret'],
     password_from: ['postgres'],
     token_from: ['api'],
+    via: ['postgres'],
+    ssl: ['postgres'],
   };
   for (const [param, kinds] of Object.entries(allowed)) {
     if ((p as Record<string, unknown>)[param] !== undefined && !kinds.includes(item.kind))
@@ -95,6 +108,22 @@ export function buildAgentEdit(item: VaultItem, p: AgentEditParams, secretValue:
     if (p.password_from) {
       input.password = secretValue(p.password_from);
       summary.push(`mot de passe : remplacé par le secret ${p.password_from}`);
+    }
+    if (p.via !== undefined) {
+      const next = p.via.trim() ? tunnels.next : null;
+      if (p.via.trim() && !next) throw new AppError(`Tunnel « ${p.via.trim()} » introuvable`);
+      if ((next?.id ?? null) !== (t.viaItemId ?? null)) {
+        input.viaItemId = next?.id ?? '';
+        summary.push(`tunnel SSH : ${t.viaItemId ? q(tunnels.current ?? '?') : '(aucun, connexion directe)'} → ${next ? q(next.name) : 'aucun (connexion directe)'}`);
+        retargets = true;
+      }
+    }
+    if (p.ssl !== undefined) {
+      if (!p.ssl && t.ssl) throw new AppError(`Désactiver TLS sur « ${item.name} » reste aux personnes (page Coffre) : les échanges avec la base passeraient en clair`);
+      if (p.ssl && !t.ssl) {
+        input.ssl = true;
+        summary.push('TLS : désactivé → activé');
+      }
     }
   }
   if (item.kind === 'api') {
