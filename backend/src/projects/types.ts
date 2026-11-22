@@ -1,5 +1,6 @@
 import type { SessionCleanup } from '../sessions/types.js';
 import type { TaskModels } from './models.js';
+import type { TaskStatusDefinition, TaskStatusInput } from '../tasks/statuses.js';
 
 /** Modes d'autorisation proposés comme réglage par défaut d'un projet (voir le provider Claude). */
 export const projectPermissionModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan'] as const;
@@ -34,6 +35,10 @@ export interface Project {
   taskModels: TaskModels | null;
   /** Consignes ajoutées à l'instruction de toute session qui réalise une tâche du projet, après le texte de la tâche (vide : aucune). */
   taskInstructions: string;
+  /** Statuts des tâches du projet, dans l'ordre d'affichage (les statuts par défaut s'il n'en a pas choisi, voir tasks/statuses.ts). */
+  taskStatuses: TaskStatusDefinition[];
+  /** Le projet a choisi ses statuts (sinon : ceux par défaut, qui suivent les évolutions de Skipper). */
+  taskStatusesCustomized: boolean;
   /** Espace personnel : la personne à qui il appartient (jamais partagé) ; null pour un projet ordinaire. */
   personalOwnerId: string | null;
   /** Budget mensuel du projet en USD (au-delà : plus de session ni de tour, voir projects/budget.ts) ; null : aucun. */
@@ -81,6 +86,8 @@ export interface UpdateProjectInput {
   /** Null ou objet vide : aucun. */
   taskModels?: TaskModels | null;
   taskInstructions?: string | null;
+  /** Statuts des tâches (liste complète, dans l'ordre) ; null ou vide : les statuts par défaut. */
+  taskStatuses?: TaskStatusInput[] | TaskStatusDefinition[] | null;
   /** Budget mensuel en USD ; null ou 0 : aucun. Modifié par la mutation setProjectBudget (pas par updateProject). */
   monthlyBudgetUsd?: number | null;
 }

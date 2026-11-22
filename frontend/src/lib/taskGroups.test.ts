@@ -9,6 +9,9 @@ const task = (over: Partial<Task> & { id: string }): Task => ({
   summary: null,
   description: '',
   status: 'TODO',
+  state: 'todo',
+  stateLabel: 'À faire',
+  stateAttention: false,
   statusTag: null,
   stalledSince: null,
   waitingSince: null,
@@ -49,6 +52,12 @@ const place = (tasks: Task[]) => new Map<string, Placement>(tasks.map((t) => [t.
 const ids = (list: Task[]) => list.map((t) => t.id);
 
 describe('rangement par ce qui est attendu', () => {
+  it('à traiter : statut du projet qui attend une personne (à trier, à valider)', () => {
+    expect(placeTask(task({ id: 't', status: 'TODO', state: 'triage', stateLabel: 'À trier', stateAttention: true }), now)).toEqual({ lane: 'attention', reason: 'à trier' });
+    expect(placeTask(task({ id: 'v', status: 'IN_PROGRESS', state: 'review', stateLabel: 'À valider', stateAttention: true }), now)).toEqual({ lane: 'attention', reason: 'à valider' });
+    expect(placeTask(task({ id: 'd', status: 'DONE', stateAttention: true }), now).lane).toBe('done');
+  });
+
   it('à traiter : agent arrêté, PR à fusionner, retard, réveil passé, urgente pas commencée', () => {
     expect(placeTask(task({ id: 'a', status: 'IN_PROGRESS', stalledSince: '2026-11-12T00:00:00Z' }), now)).toEqual({ lane: 'attention', reason: 'agent arrêté' });
     expect(placeTask(task({ id: 'b', status: 'IN_PROGRESS', pullRequests: [pr('TO_MERGE')] }), now).reason).toBe('PR à fusionner');

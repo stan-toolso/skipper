@@ -1,5 +1,6 @@
 import type { Task, TaskPriority } from '../graphql/operations';
 import { fold, PRIORITY_LABELS, todayIso } from './taskTable';
+import { lowerFirst } from './taskStatuses';
 
 /**
  * Liste des tâches rangée par ce qui est attendu : chaque tâche tombe dans un « couloir » (à traiter, en cours, en
@@ -41,6 +42,8 @@ const PRIORITY_RANK: Record<TaskPriority, number> = { URGENT: 0, HIGH: 1, MEDIUM
 export function placeTask(t: Task, now = new Date()): Placement {
   if (t.status === 'CANCELLED') return { lane: 'cancelled', reason: null };
   if (t.status === 'DONE') return { lane: 'done', reason: null };
+  // Statut du projet qui attend une personne (« À trier », « À valider ») : à traiter, quel que soit le reste.
+  if (t.stateAttention) return { lane: 'attention', reason: lowerFirst(t.stateLabel) };
   const overdue = Boolean(t.dueDate) && t.dueDate! < todayIso(now);
   if (t.status === 'IN_PROGRESS') {
     if (t.stalledSince) return { lane: 'attention', reason: 'agent arrêté' };

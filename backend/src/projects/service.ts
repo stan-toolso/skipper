@@ -7,6 +7,7 @@ import { slugify } from './slug.js';
 import { ensureWorkspace } from './workspace.js';
 import { normalizeContextLimit } from '../sessions/context.js';
 import { normalizeModel, normalizeTaskModels } from './models.js';
+import { isDefaultStatuses, normalizeTaskStatuses, type TaskStatusInput } from '../tasks/statuses.js';
 
 /** Dérive un identifiant de dossier sûr à partir du nom du projet. */
 export { slugify };
@@ -88,6 +89,11 @@ export const projectService = {
     if (input.defaultContextCleanup !== undefined) patch.defaultContextCleanup = normalizeContextLimit(input.defaultContextCleanup);
     if (input.defaultModel !== undefined) patch.defaultModel = normalizeModel(input.defaultModel);
     if (input.taskModels !== undefined) patch.taskModels = normalizeTaskModels(input.taskModels);
+    if (input.taskStatuses !== undefined) {
+      // Null ou vide : retour aux statuts par défaut ; une liste identique à celle par défaut n'est pas figée non plus.
+      const statuses = input.taskStatuses?.length ? normalizeTaskStatuses(input.taskStatuses as TaskStatusInput[]) : null;
+      patch.taskStatuses = statuses && !isDefaultStatuses(statuses) ? statuses : null;
+    }
     if (before.gitHosted) {
       // L'hébergement ne se désactive pas (les dossiers de travail sont des clones du dépôt hébergé) et n'a pas d'adresse.
       if (input.gitHosted === false) throw new AppError("L'hébergement du dépôt par Skipper ne se désactive pas : supprimez le projet, ou créez-en un autre");
@@ -102,6 +108,8 @@ export const projectService = {
     }
     const project = await projectRepository.update(id, patch);
     if (!project) throw new NotFoundError('Projet introuvable');
+    // Tâches dont le statut a disparu (ou changé de catégorie) : elles prennent le statut par défaut de leur catégorie.
+    if (input.taskStatuses !== undefined) await projectRepository.resetStaleTaskStates(id, project.taskStatuses);
     return project;
   },
 

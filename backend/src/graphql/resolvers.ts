@@ -123,6 +123,7 @@ import { resumableTaskSession, resumeTaskSession, startTaskSession } from '../ta
 import { taskService } from '../tasks/service.js';
 import { conversationService } from '../conversations/service.js';
 import type { Conversation, Message, MessageAttachment, MessageReaction } from '../conversations/types.js';
+import { DEFAULT_TASK_STATUSES, effectiveStatus } from '../tasks/statuses.js';
 import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskReaction, TaskStatus, ProjectApiKey } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
 import type { AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionStatus } from '../sessions/types.js';
@@ -277,6 +278,7 @@ interface GqlTaskInput {
   description?: string | null;
   priority?: GqlTaskPriority | null;
   status?: GqlTaskStatus | null;
+  state?: string | null;
   sessionId?: string | null;
   releaseSessionIds?: string[] | null;
   dueDate?: string | null;
@@ -298,6 +300,7 @@ const toTaskInput = (i: GqlTaskInput) => ({
   description: i.description ?? undefined,
   priority: fromGqlTaskPriority(i.priority),
   status: fromGqlTaskStatus(i.status),
+  state: i.state?.trim() || undefined,
   sessionId: i.sessionId,
   releaseSessionIds: i.releaseSessionIds ?? undefined,
   dueDate: i.dueDate,
@@ -313,6 +316,11 @@ const toTaskInput = (i: GqlTaskInput) => ({
   wakeAt: i.wakeAt,
   wakeNote: i.wakeNote,
 });
+/** Statut effectif d'une tâche dans son projet (projet chargé une fois par requête). */
+const taskStateOf = async (ctx: Ctx, t: Task) => {
+  const project = await loadersOf(ctx).project(t.projectId);
+  return effectiveStatus(project?.taskStatuses ?? DEFAULT_TASK_STATUSES, t);
+};
 /** Tâches d'identifiants donnés, dans leur ordre (chargeur groupé de la requête). */
 const tasksByIds = async (ctx: Ctx, ids: string[]) => (await Promise.all(ids.map((id) => loadersOf(ctx).task(id)))).filter((t): t is Task => Boolean(t));
 const actorOf = (user: User) => ({ type: 'human' as const, userId: user.id, name: user.name || user.email });
@@ -499,6 +507,9 @@ export const resolvers = {
   },
   Task: {
     status: (t: Task) => t.status.toUpperCase(),
+    state: async (t: Task, _: unknown, ctx: Ctx) => (await taskStateOf(ctx, t)).key,
+    stateLabel: async (t: Task, _: unknown, ctx: Ctx) => (await taskStateOf(ctx, t)).label,
+    stateAttention: async (t: Task, _: unknown, ctx: Ctx) => (await taskStateOf(ctx, t)).attention,
     priority: (t: Task) => t.priority.toUpperCase(),
     project: (t: Task) => projectService.get(t.projectId),
     session: (t: Task) => (t.sessionId ? sessionService.get(t.sessionId) : null),
@@ -969,6 +980,7 @@ export const resolvers = {
   },
 
   Project: {
+    taskStatuses: (project: Project) => project.taskStatuses.map((s) => ({ ...s, category: s.category.toUpperCase() })),
     workspacePath: (project: Project) => workspacePath(project),
     pages: (project: Project) => projectPageService.list(project.id),
     tabs: (project: Project) => projectPageService.tabs(project.id),
@@ -2062,7 +2074,10 @@ export const resolvers = {
     updateProject: async (_: unknown, { id, input }: { id: string; input: UpdateProjectInput }, ctx: Ctx) => {
       await requireProject(ctx, id, 'admin');
       const before = await projectService.get(id);
-      const project = await projectService.update(id, input);
+      const project = await projectService.update(id, {
+        ...input,
+        ...(input.taskStatuses ? { taskStatuses: input.taskStatuses.map((st) => ({ ...st, category: String(st.category).toLowerCase() as TaskStatus })) } : {}),
+      });
       // Limite du projet changée : des places se libèrent peut-être pour la file d'attente.
       void sessionService.drainQueue();
       // Limites mémoire / CPU modifiées : appliquées à chaud au conteneur existant, sans couper les sessions.

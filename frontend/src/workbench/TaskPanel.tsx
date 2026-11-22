@@ -30,7 +30,7 @@ export default function TaskPanel({ taskId }: { taskId: string }) {
         </button>
       </div>
       <div className="d-flex gap-2 align-items-center px-2 pb-2">
-        <TaskStatusBadge status={task.status} statusTag={task.statusTag} />
+        <TaskStatusBadge status={task.status} statusTag={task.statusTag} label={task.stateLabel} attention={task.stateAttention} />
         <TaskPriorityBadge priority={task.priority} />
         {task.dueDate && <span className={`small ${overdue ? 'text-danger' : 'text-secondary'}`}>{overdue ? 'En retard : ' : 'Pour le '}{new Date(task.dueDate).toLocaleDateString()}</span>}
       </div>

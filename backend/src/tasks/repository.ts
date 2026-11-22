@@ -3,6 +3,7 @@ import { toJson } from '../db/json.js';
 import type { Actor } from '../context/types.js';
 import { conversationRepository } from '../conversations/repository.js';
 import type { Message, MessageAttachment, MessageReaction } from '../conversations/types.js';
+import { DEFAULT_TASK_STATUSES } from './statuses.js';
 import type { CreateTaskInput, Task, TaskAttachment, TaskComment, TaskFilter, TaskField, TaskMention, TaskPerson, TaskPriority, TaskReaction, TaskStatus, UpdateTaskInput } from './types.js';
 
 interface Row {
@@ -12,6 +13,7 @@ interface Row {
   summary: string | null;
   description: string;
   status: TaskStatus;
+  state: string | null;
   status_tag: string | null;
   tags: string[] | null;
   priority: TaskPriority;
@@ -103,6 +105,7 @@ const toTask = (r: Row): Task => ({
   summary: r.summary || null,
   description: r.description,
   status: r.status,
+  state: r.state ?? null,
   statusTag: r.status_tag ?? null,
   tags: Array.isArray(r.tags) ? r.tags : [],
   priority: r.priority,
@@ -138,6 +141,13 @@ export const ACTIVE_SESSION_STATUSES = ['pending', 'queued', 'running'] as const
 
 /** Durée d'une attente implicite (étiquette d'état ou compte rendu d'agent, sans date de réveil) avant le retour dans « À traiter ». */
 export const IMPLICIT_WAIT_DAYS = 7;
+
+/**
+ * La tâche (alias `t`) est-elle dans un statut de son projet qui attend une personne (« À valider »…) ? Elle n'attend
+ * alors plus d'agent : ni « agent arrêté », ni « en attente » (voir tasks/statuses.ts).
+ */
+const IN_ATTENTION_STATE = `EXISTS (SELECT 1 FROM projects sp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sp.task_statuses, '${JSON.stringify(DEFAULT_TASK_STATUSES).replace(/'/g, "''")}'::jsonb)) se
+  WHERE sp.id = t.project_id AND se->>'key' = t.state AND se->>'category' = t.status::text AND (se->>'attention')::boolean)`;
 
 /**
  * Tâche en cours sans agent au travail (jointure latérale sur l'alias `t`, colonnes `att.stalled_since` et
@@ -176,6 +186,7 @@ export const ATTENTION_JOIN = `LEFT JOIN LATERAL (
         ) c
     ) x
    WHERE t.status = 'in_progress' AND NOT EXISTS (SELECT 1 FROM pull_requests pr WHERE pr.task_id = t.id AND pr.status = 'open')
+     AND NOT ${IN_ATTENTION_STATE}
 ) att ON true`;
 
 /** Colonnes d'une tâche avec le nombre de messages de son fil (conversation de la tâche). */
@@ -265,9 +276,9 @@ export const taskRepository = {
       const { rows } = await client.query<{ id: string }>(
         `INSERT INTO tasks (project_id, title, description, status, priority, session_id, created_by_type, created_by_session_id, due_date, completed_at,
                             custom_fields, assignee_name, assignee_email, reporter_name, reporter_email, status_tag, tags, auto_start_when_unblocked, auto_start_by_id,
-                            started_at, cancelled_at, summary)
+                            started_at, cancelled_at, summary, state)
          VALUES ($1, $2, $3, $4::task_status, $5, $6, $7, $8, $9, CASE WHEN $4::task_status = 'done' THEN now() ELSE NULL END, $10::jsonb, $11, $12, $13, $14, $15, $16::text[], $17, $18,
-                 CASE WHEN $4::task_status IN ('in_progress', 'done') THEN now() ELSE NULL END, CASE WHEN $4::task_status = 'cancelled' THEN now() ELSE NULL END, $19) RETURNING id`,
+                 CASE WHEN $4::task_status IN ('in_progress', 'done') THEN now() ELSE NULL END, CASE WHEN $4::task_status = 'cancelled' THEN now() ELSE NULL END, $19, $20) RETURNING id`,
         [
           projectId,
           input.title,
@@ -286,6 +297,7 @@ export const taskRepository = {
           Boolean(input.autoStartWhenUnblocked),
           input.autoStartWhenUnblocked ? (input.autoStartById ?? null) : null,
           input.summary?.trim() || null,
+          input.state ?? null,
         ],
       );
       if (input.dependsOn?.length) await setDependencies(client, rows[0].id, input.dependsOn);
@@ -397,6 +409,7 @@ export const taskRepository = {
       if (input.wakeAt === null && input.wakeNote === undefined) sets.push('wake_note = NULL');
     }
     if (input.wakeNote !== undefined) sets.push(`wake_note = $${params.push(input.wakeNote)}`);
+    if (input.state !== undefined) sets.push(`state = $${params.push(input.state)}`);
     if (input.status != null) {
       sets.push(`status = $${params.push(input.status)}`);
       sets.push(...statusDateSets(input.status));

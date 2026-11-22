@@ -29,6 +29,11 @@ export interface Task {
   summary: string | null;
   description: string;
   status: TaskStatus;
+  /**
+   * Statut de la tâche dans son projet (clé, voir tasks/statuses.ts) tel qu'enregistré ; `status` en est la catégorie.
+   * Null : le statut par défaut de la catégorie. Lire le statut effectif avec `effectiveStatus`.
+   */
+  state: string | null;
   /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté. */
   statusTag: string | null;
   /** Étiquettes libres (uniques sans tenir compte de la casse, dans l'ordre d'affichage). */
@@ -113,6 +118,8 @@ export interface CreateTaskInput {
   description?: string | null;
   priority?: TaskPriority | null;
   status?: TaskStatus | null;
+  /** Statut du projet (clé ou libellé) ; fixe la catégorie `status`. Résolu en clé par le service. */
+  state?: string | null;
   sessionId?: string | null;
   dueDate?: string | null;
   customFields?: TaskField[] | null;
@@ -137,6 +144,8 @@ export interface UpdateTaskInput {
   description?: string | null;
   priority?: TaskPriority | null;
   status?: TaskStatus | null;
+  /** Statut du projet (clé ou libellé) ; fixe la catégorie `status`. Résolu en clé par le service. */
+  state?: string | null;
   /** Session qui prend la charge (s'ajoute aux sessions déjà en charge) ; null : plus aucune session en charge. */
   sessionId?: string | null;
   /** Sessions qui cessent d'être en charge (passation, fin de travail). */

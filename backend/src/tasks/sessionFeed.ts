@@ -6,6 +6,8 @@ import { asInstructionAttachments, fitInInstruction } from './attachments.js';
 import { describeComment, describeTaskChanges, taskService } from './service.js';
 import type { Task, TaskAttachment, TaskChange } from './types.js';
 import { log } from '../log.js';
+import { projectService } from '../projects/service.js';
+import type { TaskStatusDefinition } from './statuses.js';
 
 /** Message à transmettre à une session reliée à une tâche pour un changement fait par quelqu'un d'autre. */
 export interface TaskFeed {
@@ -44,7 +46,7 @@ const QUIET_HINT = "Pour information : poursuis sans en parler, sauf si cela cha
  * relira la tâche à son prochain démarrage grâce à son prompt système), et pas à celle qui vient de prendre la charge
  * (elle a reçu la tâche entière). Une réaction n'est signalée qu'à la session autrice du message.
  */
-export function feedsFor(change: TaskChange, linked: string[] = [], alsoAddressed: Set<string> = new Set()): TaskFeed[] {
+export function feedsFor(change: TaskChange, linked: string[] = [], alsoAddressed: Set<string> = new Set(), statuses: TaskStatusDefinition[] | null = null): TaskFeed[] {
   const recipients = new Set<string>(linked);
   for (const id of change.task.sessionIds) recipients.add(id);
   if (change.kind === 'commented') {
@@ -89,7 +91,7 @@ export function feedsFor(change: TaskChange, linked: string[] = [], alsoAddresse
   }
   // Sans acteur (Skipper lui-même : lancement, fusion), rien à dire.
   if (!change.actor) return [];
-  const lines = describeTaskChanges(change.before, change.task, change.addedAttachments);
+  const lines = describeTaskChanges(change.before, change.task, change.addedAttachments, statuses);
   if (!lines.length) return [];
   // Tâche fermée (terminée ou annulée) : ses sessions se terminent (tasks/endSessions.ts) ; un tour juste pour en
   // prendre acte serait facturé sans travail. Elles en reçoivent une note.
@@ -141,7 +143,8 @@ export async function deliverFeed(feed: TaskFeed): Promise<void> {
 export async function deliverTaskChange(change: TaskChange): Promise<void> {
   const linked = await taskService.sessionIds(change.task.id).catch(() => [] as string[]);
   const addressed = await agentFeedTargets(change, linked).catch(() => new Set<string>());
-  await Promise.all(feedsFor(change, linked, addressed).map(deliverFeed));
+  const statuses = change.kind === 'updated' ? await projectService.get(change.task.projectId).then((p) => p.taskStatuses).catch(() => null) : null;
+  await Promise.all(feedsFor(change, linked, addressed, statuses).map(deliverFeed));
 }
 
 /** Branche l'écouteur sur le service des tâches (au démarrage du serveur). */

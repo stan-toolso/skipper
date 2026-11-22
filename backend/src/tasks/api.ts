@@ -28,6 +28,8 @@ export const createSchema = z
     summary: z.string().nullable().optional(),
     description: z.string().optional(),
     status: statusSchema.optional(),
+    /** Statut du projet (clé ou libellé, ex. « triage ») : fixe la catégorie `status`. */
+    state: z.string().optional(),
     priority: prioritySchema.optional(),
     dueDate: z.string().nullable().optional(),
     customFields: z.array(fieldSchema).optional(),
@@ -60,6 +62,8 @@ function publicTask(t: Task) {
     summary: t.summary,
     description: t.description,
     status: t.status,
+    /** Clé du statut dans le projet ; null : le statut par défaut de la catégorie. */
+    state: t.state,
     statusTag: t.statusTag,
     tags: t.tags,
     priority: t.priority,

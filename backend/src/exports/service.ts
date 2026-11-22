@@ -11,6 +11,7 @@ import { permissionRuleService } from '../permissions/service.js';
 import { slugify } from '../projects/slug.js';
 import { projectService } from '../projects/service.js';
 import { projectPermissionModes } from '../projects/types.js';
+import { normalizeTaskStatuses, type TaskStatusInput } from '../tasks/statuses.js';
 import { vaultRepository } from '../vault/repository.js';
 import { buildProjectArchive, parseProjectArchive, sanitizeSettings, stripCredentials, type ExportedInstruction, type ExportedTask, type ProjectExport } from './projectArchive.js';
 
@@ -56,7 +57,7 @@ export async function collectProjectExport(projectId: string, now = new Date()):
       [projectId],
     ),
     pool.query<{
-      id: string; title: string; summary: string | null; description: string; status: ExportedTask['status']; status_tag: string | null; priority: ExportedTask['priority']; tags: string[] | null;
+      id: string; title: string; summary: string | null; description: string; status: ExportedTask['status']; state: string | null; status_tag: string | null; priority: ExportedTask['priority']; tags: string[] | null;
       due_date: string | null; custom_fields: ExportedTask['customFields'] | null; assignee_name: string | null; assignee_email: string | null; reporter_name: string | null;
       reporter_email: string | null; branch: string | null; created_by_type: 'human' | 'agent'; created_at: Date; updated_at: Date; completed_at: Date | null;
       started_at: Date | null; cancelled_at: Date | null;
@@ -108,6 +109,7 @@ export async function collectProjectExport(projectId: string, now = new Date()):
       runnerConfig: project.runnerConfig,
       defaultPermissionMode: project.defaultPermissionMode,
       taskInstructions: project.taskInstructions,
+      taskStatuses: project.taskStatusesCustomized ? project.taskStatuses : null,
       permissionRules: rules.map((r) => ({ toolName: r.toolName, ruleContent: r.ruleContent })),
       tabs: await projectPageService.tabs(projectId),
       pages: (await projectPageService.list(projectId)).map((pg) => ({ slug: pg.slug, title: pg.title, icon: pg.icon, position: pg.position })),
@@ -137,6 +139,7 @@ export async function collectProjectExport(projectId: string, now = new Date()):
       summary: t.summary,
       description: t.description,
       status: t.status,
+      state: t.state,
       statusTag: t.status_tag,
       priority: t.priority,
       tags: t.tags ?? [],
@@ -272,9 +275,9 @@ export async function importProjectArchive(projectId: string, archive: Buffer, o
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO tasks (project_id, title, description, status, priority, created_by_type, due_date, completed_at, custom_fields, assignee_name, assignee_email,
                               reporter_name, reporter_email, status_tag, tags, branch, created_at, updated_at,
-                              started_at, cancelled_at, summary)
+                              started_at, cancelled_at, summary, state)
            VALUES ($1, $2, $3, $4::task_status, $5::task_priority, $6, $7::date, $8, $9::jsonb, $10, $11, $12, $13, $14, $15::text[], $16, COALESCE($17, now()), COALESCE($18, now()),
-                   $19, $20, $21) RETURNING id`,
+                   $19, $20, $21, $22) RETURNING id`,
           [
             projectId,
             title,
@@ -297,6 +300,8 @@ export async function importProjectArchive(projectId: string, archive: Buffer, o
             status === 'in_progress' || status === 'done' || status === 'cancelled' ? (date(t.startedAt) ?? (status === 'cancelled' ? null : (date(t.createdAt) ?? new Date()))) : null,
             status === 'cancelled' ? (date(t.cancelledAt) ?? date(t.updatedAt) ?? new Date()) : null,
             typeof t.summary === 'string' && t.summary.trim() ? t.summary.trim() : null,
+            // Statut d'un autre projet : gardé s'il existe ici dans la même catégorie (sinon, statut par défaut ; voir resetStaleTaskStates).
+            typeof t.state === 'string' && /^[a-z0-9][a-z0-9_-]{0,39}$/.test(t.state) ? t.state : null,
           ],
         );
         report.tasksCreated++;
@@ -331,6 +336,14 @@ export async function importProjectArchive(projectId: string, archive: Buffer, o
         mode,
         str(p.description),
       ]);
+      if (Array.isArray(p.taskStatuses) && p.taskStatuses.length) {
+        try {
+          const statuses = normalizeTaskStatuses(p.taskStatuses as TaskStatusInput[]);
+          await client.query('UPDATE projects SET task_statuses = $2::jsonb WHERE id = $1', [projectId, toJson(statuses)]);
+        } catch (err) {
+          log.warn(`[exports] statuts des tâches de l'archive ignorés : ${(err as Error).message}`);
+        }
+      }
       for (const rule of Array.isArray(p.permissionRules) ? p.permissionRules : []) {
         if (typeof rule?.toolName !== 'string' || !rule.toolName) continue;
         await client.query(

@@ -186,6 +186,10 @@ export interface Project {
   description: string | null;
   systemPrompt: string;
   taskInstructions: string;
+  /** Statuts des tâches du projet, dans l'ordre d'affichage. */
+  taskStatuses: TaskStatusDefinition[];
+  /** Le projet a choisi ses statuts (sinon : ceux par défaut). */
+  taskStatusesCustomized: boolean;
   gitUrl: string | null;
   gitBranch: string | null;
   /** Dépôt hébergé par Skipper : gitUrl est alors son URL de clone. */
@@ -348,6 +352,16 @@ export interface Terminal {
 }
 
 export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
+/** Statut de tâche d'un projet : une étape choisie par le projet, rangée dans une catégorie (TaskStatus). */
+export interface TaskStatusDefinition {
+  key: string;
+  label: string;
+  category: TaskStatus;
+  description: string | null;
+  /** Attend une personne (trier, valider) : rangée dans « À traiter ». */
+  attention: boolean;
+  isDefault: boolean;
+}
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
 /** Modèle des sessions de tâches d'un projet, par priorité (clés en minuscules, comme côté serveur). */
 export type TaskModels = Partial<Record<'low' | 'medium' | 'high' | 'urgent', string>>;
@@ -416,7 +430,13 @@ export interface Task {
   /** Une ou deux phrases sur l'objet de la tâche, montrées avant la description ; null : aucun. */
   summary: string | null;
   description: string;
+  /** Catégorie du statut. */
   status: TaskStatus;
+  /** Statut dans le projet (clé de Project.taskStatuses) et son libellé. */
+  state: string;
+  stateLabel: string;
+  /** Le statut attend une personne (trier, valider). */
+  stateAttention: boolean;
   /** Court libellé de l'avancement dans le statut (« en revue », « bloquée »…). */
   statusTag: string | null;
   /** Étiquettes libres. */
@@ -589,6 +609,15 @@ export const PROJECT_FIELDS = gql`
     description
     systemPrompt
     taskInstructions
+    taskStatuses {
+      key
+      label
+      category
+      description
+      attention
+      isDefault
+    }
+    taskStatusesCustomized
     gitUrl
     gitBranch
     gitHosted
@@ -1870,6 +1899,9 @@ export const TASK_FIELDS = gql`
     summary
     description
     status
+    state
+    stateLabel
+    stateAttention
     statusTag
     tags
     priority
