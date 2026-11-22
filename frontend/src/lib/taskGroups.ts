@@ -42,8 +42,12 @@ const PRIORITY_RANK: Record<TaskPriority, number> = { URGENT: 0, HIGH: 1, MEDIUM
 export function placeTask(t: Task, now = new Date()): Placement {
   if (t.status === 'CANCELLED') return { lane: 'cancelled', reason: null };
   if (t.status === 'DONE') return { lane: 'done', reason: null };
-  // Statut du projet qui attend une personne (« À trier », « À valider ») : à traiter, quel que soit le reste.
-  if (t.stateAttention) return { lane: 'attention', reason: lowerFirst(t.stateLabel) };
+  // Statut du projet qui attend une personne (« À trier », « À valider ») : à traiter, sauf quand une vérification est
+  // programmée plus tard (date de réveil future, le serveur la dit « en attente ») : rien à faire avant cette date.
+  if (t.stateAttention) {
+    if (t.waitingSince && t.wakeAt && new Date(t.wakeAt).getTime() > now.getTime()) return { lane: 'waiting', reason: null };
+    return { lane: 'attention', reason: lowerFirst(t.stateLabel) };
+  }
   const overdue = Boolean(t.dueDate) && t.dueDate! < todayIso(now);
   if (t.status === 'IN_PROGRESS') {
     if (t.stalledSince) return { lane: 'attention', reason: 'agent arrêté' };

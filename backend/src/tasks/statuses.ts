@@ -12,7 +12,8 @@ import { TASK_STATUSES, type TaskStatus } from './types.js';
  * `claim`, passage à `done`…) est celui marqué `isDefault`, sinon le premier de la catégorie.
  *
  * `attention` : le statut attend une personne (trier, valider) : la tâche est rangée dans « À traiter » et, en cours,
- * n'est pas signalée « agent arrêté » faute de session au travail.
+ * n'est pas signalée « agent arrêté » faute de session au travail. Avec une date de réveil future (une vérification ou
+ * une mesure prévue plus tard), elle est « en attente » jusqu'à cette date, pas « À traiter » (ATTENTION_JOIN).
  */
 export interface TaskStatusDefinition {
   key: string;

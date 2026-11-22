@@ -12,6 +12,7 @@ import TaskActions from '../components/TaskActions';
 import { isOverdue, Linkified, TaskBlockedBadge, TaskStalledBadge, TaskWaitingBadge, TaskPriorityBadge, TaskRefList, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
 import TaskSummary from '../components/TaskSummary';
 import TaskThread from '../components/TaskThread';
+import TaskWakeField from '../components/TaskWake';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 import TaskModal from '../components/TaskModal';
 import { TASK_LAUNCH_TARGETS, type SessionActivity, type SessionStatus, type Task } from '../graphql/operations';
@@ -227,6 +228,16 @@ export default function TaskPage() {
                   <>
                     <dt className="col-4">Échéance</dt>
                     <dd className={`col-8${overdue ? ' text-danger' : ''}`}>{new Date(task.dueDate).toLocaleDateString()}{overdue && ' (en retard)'}</dd>
+                  </>
+                )}
+                {(task.status === 'IN_PROGRESS' || task.wakeAt) && (
+                  <>
+                    <dt className="col-4" title="Date de réveil : jusque-là la tâche est en attente ; à la date, l'agent qui la tenait est reconvoqué, ou elle revient dans « À traiter »">
+                      Vérification
+                    </dt>
+                    <dd className="col-8">
+                      <TaskWakeField task={task} canWrite={canWrite} />
+                    </dd>
                   </>
                 )}
                 {task.completedAt && (

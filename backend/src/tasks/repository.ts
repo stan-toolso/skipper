@@ -144,7 +144,8 @@ export const IMPLICIT_WAIT_DAYS = 7;
 
 /**
  * La tâche (alias `t`) est-elle dans un statut de son projet qui attend une personne (« À valider »…) ? Elle n'attend
- * alors plus d'agent : ni « agent arrêté », ni « en attente » (voir tasks/statuses.ts).
+ * alors plus d'agent : jamais « agent arrêté », et « en attente » seulement avec une date de réveil future (voir
+ * ATTENTION_JOIN et tasks/statuses.ts).
  */
 const IN_ATTENTION_STATE = `EXISTS (SELECT 1 FROM projects sp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sp.task_statuses, '${JSON.stringify(DEFAULT_TASK_STATUSES).replace(/'/g, "''")}'::jsonb)) se
   WHERE sp.id = t.project_id AND se->>'key' = t.state AND se->>'category' = t.status::text AND (se->>'attention')::boolean)`;
@@ -162,6 +163,10 @@ const IN_ATTENTION_STATE = `EXISTS (SELECT 1 FROM projects sp CROSS JOIN LATERAL
  *   en charge (un agent de passage, une exécution planifiée qui rend compte, comptent aussi).
  *
  * Les deux valent la fin la plus récente des sessions en charge (le réveil, s'il est passé et plus récent).
+ *
+ * Une tâche dans un statut qui attend une personne (« À valider ») n'est jamais « agent arrêté » ; elle est « en
+ * attente » tant qu'une date de réveil future est posée (une vérification ou une mesure prévue plus tard : rien à faire
+ * avant), sans PR ouverte ni session au travail, et revient « à valider » une fois la date passée.
  */
 export const ATTENTION_JOIN = `LEFT JOIN LATERAL (
   SELECT CASE WHEN x.kind = 'stalled' THEN x.since END AS stalled_since, CASE WHEN x.kind = 'waiting' THEN x.since END AS waiting_since
@@ -187,6 +192,13 @@ export const ATTENTION_JOIN = `LEFT JOIN LATERAL (
     ) x
    WHERE t.status = 'in_progress' AND NOT EXISTS (SELECT 1 FROM pull_requests pr WHERE pr.task_id = t.id AND pr.status = 'open')
      AND NOT ${IN_ATTENTION_STATE}
+  UNION ALL
+  SELECT NULL::timestamptz, COALESCE((SELECT max(COALESCE(s.ended_at, s.updated_at)) FROM task_sessions ts JOIN sessions s ON s.id = ts.session_id
+                                        WHERE ts.task_id = t.id AND ts.in_charge_since IS NOT NULL), t.updated_at)
+   WHERE t.status = 'in_progress' AND t.wake_at > now() AND ${IN_ATTENTION_STATE}
+     AND NOT EXISTS (SELECT 1 FROM pull_requests pr WHERE pr.task_id = t.id AND pr.status = 'open')
+     AND NOT EXISTS (SELECT 1 FROM task_sessions ts JOIN sessions s ON s.id = ts.session_id
+                      WHERE ts.task_id = t.id AND ts.in_charge_since IS NOT NULL AND s.status IN (${ACTIVE_SESSION_STATUSES.map((x) => `'${x}'`).join(', ')}))
 ) att ON true`;
 
 /** Colonnes d'une tâche avec le nombre de messages de son fil (conversation de la tâche). */

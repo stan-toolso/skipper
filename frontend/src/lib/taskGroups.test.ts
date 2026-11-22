@@ -58,6 +58,12 @@ describe('rangement par ce qui est attendu', () => {
     expect(placeTask(task({ id: 'd', status: 'DONE', stateAttention: true }), now).lane).toBe('done');
   });
 
+  it('en attente : « à valider » avec une vérification programmée plus tard (date de réveil future), à valider une fois la date passée', () => {
+    const review = { status: 'IN_PROGRESS' as const, state: 'review', stateLabel: 'À valider', stateAttention: true, waitingSince: '2026-11-10T00:00:00Z' };
+    expect(placeTask(task({ id: 'm', ...review, wakeAt: '2026-11-29T21:30:00Z' }), now)).toEqual({ lane: 'waiting', reason: null });
+    expect(placeTask(task({ id: 'p', ...review, waitingSince: null, wakeAt: '2026-11-01T00:00:00Z' }), now)).toEqual({ lane: 'attention', reason: 'à valider' });
+  });
+
   it('à traiter : agent arrêté, PR à fusionner, retard, réveil passé, urgente pas commencée', () => {
     expect(placeTask(task({ id: 'a', status: 'IN_PROGRESS', stalledSince: '2026-11-12T00:00:00Z' }), now)).toEqual({ lane: 'attention', reason: 'agent arrêté' });
     expect(placeTask(task({ id: 'b', status: 'IN_PROGRESS', pullRequests: [pr('TO_MERGE')] }), now).reason).toBe('PR à fusionner');

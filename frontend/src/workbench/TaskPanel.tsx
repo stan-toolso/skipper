@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PullRequestChip } from '../components/PullRequests';
 import TaskAttachments from '../components/TaskAttachments';
-import { isOverdue, Linkified, TaskPriorityBadge, TaskRefList, TaskStatusBadge, TaskTags } from '../components/TaskBadges';
+import { isOverdue, Linkified, TaskPriorityBadge, TaskRefList, TaskStatusBadge, TaskTags, TaskWakeDate } from '../components/TaskBadges';
 import TaskSummary from '../components/TaskSummary';
 import TaskThread from '../components/TaskThread';
 import TaskModal from '../components/TaskModal';
@@ -33,6 +33,7 @@ export default function TaskPanel({ taskId }: { taskId: string }) {
         <TaskStatusBadge status={task.status} statusTag={task.statusTag} label={task.stateLabel} attention={task.stateAttention} />
         <TaskPriorityBadge priority={task.priority} />
         {task.dueDate && <span className={`small ${overdue ? 'text-danger' : 'text-secondary'}`}>{overdue ? 'En retard : ' : 'Pour le '}{new Date(task.dueDate).toLocaleDateString()}</span>}
+        <TaskWakeDate task={task} className="small" />
       </div>
       {task.tags.length > 0 && (
         <div className="px-2 pb-2">
