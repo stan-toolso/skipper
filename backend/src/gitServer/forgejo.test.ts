@@ -1,3 +1,4 @@
+import { DEFAULT_TASK_STATUSES } from '../tasks/statuses.js';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -143,7 +144,7 @@ async function git(args: string[], cwd?: string): Promise<string> {
 const withToken = (slug: string, token: string) => hostedGitUrl(slug).replace('http://', `http://x:${token}@`);
 
 function addProject(slug: string, over: Partial<Project> = {}): Project {
-  const p: Project = { id: `id-${slug}`, name: slug, slug, description: null, systemPrompt: '', gitUrl: hostedGitUrl(slug), gitBranch: null, gitHosted: true, runnerConfig: {}, defaultPermissionMode: 'default', defaultContextCleanup: null, defaultModel: null, taskModels: null, taskInstructions: '', personalOwnerId: null, monthlyBudgetUsd: null, createdAt: new Date(), updatedAt: new Date(), ...over };
+  const p: Project = { id: `id-${slug}`, name: slug, slug, description: null, systemPrompt: '', gitUrl: hostedGitUrl(slug), gitBranch: null, gitHosted: true, runnerConfig: {}, defaultPermissionMode: 'default', defaultContextCleanup: null, defaultModel: null, taskModels: null, taskInstructions: '', taskStatuses: DEFAULT_TASK_STATUSES, taskStatusesCustomized: false, personalOwnerId: null, monthlyBudgetUsd: null, createdAt: new Date(), updatedAt: new Date(), ...over };
   state.projects.push(p);
   return p;
 }
