@@ -478,7 +478,7 @@ function Cell({ task: t, col, reason, onEdit, onTag, target }: { task: Task; col
     case 'project':
       return <Link to={`/projects/${t.project.id}/tasks`} className="task-grid-project">{t.project.name}</Link>;
     case 'status':
-      return <TaskStatusBadge status={t.status} statusTag={t.statusTag} />;
+      return <TaskStatusBadge status={t.status} statusTag={t.statusTag} label={t.stateLabel} attention={t.stateAttention} />;
     case 'statusTag':
       return <>{t.statusTag ?? ''}</>;
     case 'priority':

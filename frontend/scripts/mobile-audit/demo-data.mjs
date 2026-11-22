@@ -31,6 +31,15 @@ const person = (u) => ({ __typename: 'TaskPerson', name: u.name, email: u.email 
 // ---- Projets ------------------------------------------------------------------------------------------------------
 
 const P = {};
+// Statuts des tâches par défaut (backend/src/tasks/statuses.ts).
+const DEMO_TASK_STATUSES = [
+  { key: 'triage', label: 'À trier', category: 'TODO', description: 'Demandes reçues, pas encore qualifiées : à préciser, prioriser ou refuser avant d’être prêtes', attention: true, isDefault: false },
+  { key: 'todo', label: 'À faire', category: 'TODO', description: 'Prêtes à être confiées à un agent', attention: false, isDefault: true },
+  { key: 'in_progress', label: 'En cours', category: 'IN_PROGRESS', description: 'Un agent ou une personne y travaille', attention: false, isDefault: true },
+  { key: 'review', label: 'À valider', category: 'IN_PROGRESS', description: 'Le travail est fait : une personne doit le vérifier avant de terminer la tâche', attention: true, isDefault: false },
+  { key: 'done', label: 'Terminée', category: 'DONE', description: null, attention: false, isDefault: true },
+  { key: 'cancelled', label: 'Annulée', category: 'CANCELLED', description: null, attention: false, isDefault: true },
+].map((st) => ({ __typename: 'TaskStatusDefinition', ...st }));
 const project = (id, name, slug, description, gitUrl, extra = {}) => ({
   __typename: 'Project',
   id,
@@ -43,6 +52,8 @@ const project = (id, name, slug, description, gitUrl, extra = {}) => ({
   gitBranch: gitUrl ? 'main' : null,
   systemPrompt: '',
   taskInstructions: '',
+  taskStatuses: DEMO_TASK_STATUSES,
+  taskStatusesCustomized: false,
   runnerConfig: {},
   defaultPermissionMode: 'default',
   defaultModel: null,
@@ -412,6 +423,10 @@ function task(p, title, status, priority, opts = {}) {
     summary: opts.summary ?? null,
     description: opts.description ?? `${title}.\n\nCritères d’acceptation : le comportement est couvert par un test et la documentation est à jour.`,
     status,
+    ...(() => {
+      const st = DEMO_TASK_STATUSES.find((x) => x.key === opts.state && x.category === status) ?? DEMO_TASK_STATUSES.find((x) => x.category === status && x.isDefault);
+      return { state: st.key, stateLabel: st.label, stateAttention: st.attention };
+    })(),
     statusTag: opts.statusTag ?? null,
     tags: opts.tags ?? [],
     priority,
@@ -463,9 +478,9 @@ function task(p, title, status, priority, opts = {}) {
   return t;
 }
 const T = {
-  tarifs: task(P.site, 'Refondre la page tarifs (offres, comparatif, FAQ)', 'IN_PROGRESS', 'HIGH', { sessions: [S.tarifs], assignee: U.me, tags: ['site', 'design'], due: day(3), statusTag: 'en revue', summary: 'Rendre la page tarifs lisible en un coup d’œil : trois offres en cartes, un comparatif détaillé et une FAQ, pour réduire les questions au support avant achat.' }),
+  tarifs: task(P.site, 'Refondre la page tarifs (offres, comparatif, FAQ)', 'IN_PROGRESS', 'HIGH', { sessions: [S.tarifs], assignee: U.me, tags: ['site', 'design'], due: day(3), state: 'review', summary: 'Rendre la page tarifs lisible en un coup d’œil : trois offres en cartes, un comparatif détaillé et une FAQ, pour réduire les questions au support avant achat.' }),
   contact: task(P.site, 'Le formulaire de contact déborde sur iPhone SE', 'IN_PROGRESS', 'MEDIUM', { sessions: [S.contact], assignee: U.me, tags: ['mobile', 'bug'], summary: 'Sur les petits écrans (iPhone SE), le formulaire de contact sort de la page : le ramener dans la largeur de l’écran.' }),
-  seo: task(P.site, 'Balises Open Graph pour les articles du blog', 'TODO', 'LOW', { tags: ['seo'], byAgent: true, reporter: U.chris }),
+  seo: task(P.site, 'Balises Open Graph pour les articles du blog', 'TODO', 'LOW', { tags: ['seo'], byAgent: true, reporter: U.chris, state: 'triage' }),
   cas: task(P.site, 'Page « Cas clients » avec trois témoignages', 'TODO', 'MEDIUM', { tags: ['contenu'], assignee: U.lea, due: day(10) }),
   perf: task(P.site, 'Score Lighthouse mobile au-dessus de 90', 'DONE', 'MEDIUM', { tags: ['perf'], updated: 60 * 24 * 2 }),
   pdf: task(P.api, 'Export des factures en PDF depuis l’espace client', 'IN_PROGRESS', 'URGENT', { sessions: [S.pdf], assignee: U.hugo, tags: ['factures'], due: day(1) }),

@@ -3,6 +3,7 @@ import { hostedGitUrl } from '../gitServer/paths.js';
 import { toJson } from '../db/json.js';
 import type { SessionCleanup } from '../sessions/types.js';
 import type { TaskModels } from './models.js';
+import { projectTaskStatuses } from '../tasks/statuses.js';
 import type { CreateProjectInput, Project, ProjectPermissionMode, UpdateProjectInput } from './types.js';
 
 interface ProjectRow {
@@ -20,6 +21,7 @@ interface ProjectRow {
   default_model: string | null;
   task_models: TaskModels | null;
   task_instructions: string | null;
+  task_statuses: unknown;
   personal_owner_id: string | null;
   monthly_budget_usd: string | null;
   created_at: Date;
@@ -43,6 +45,8 @@ function toProject(row: ProjectRow): Project {
     defaultModel: row.default_model ?? null,
     taskModels: row.task_models ?? null,
     taskInstructions: row.task_instructions ?? '',
+    taskStatuses: projectTaskStatuses(row.task_statuses),
+    taskStatusesCustomized: Array.isArray(row.task_statuses) && row.task_statuses.length > 0,
     personalOwnerId: row.personal_owner_id ?? null,
     monthlyBudgetUsd: row.monthly_budget_usd == null ? null : Number(row.monthly_budget_usd),
     createdAt: row.created_at,
@@ -63,6 +67,7 @@ const updateColumns: Record<keyof UpdateProjectInput, string> = {
   defaultModel: 'default_model',
   taskModels: 'task_models',
   taskInstructions: 'task_instructions',
+  taskStatuses: 'task_statuses',
   monthlyBudgetUsd: 'monthly_budget_usd',
 };
 
@@ -140,8 +145,8 @@ export const projectRepository = {
         sets.push(`${column} = $${params.length}::jsonb`);
         continue;
       }
-      if (key === 'defaultContextCleanup' || key === 'taskModels') {
-        params.push(value ? toJson(value) : null);
+      if (key === 'defaultContextCleanup' || key === 'taskModels' || key === 'taskStatuses') {
+        params.push(value && !(Array.isArray(value) && value.length === 0) ? toJson(value) : null);
         sets.push(`${column} = $${params.length}::jsonb`);
         continue;
       }
@@ -163,6 +168,16 @@ export const projectRepository = {
     }
     const { rows } = await pool.query<ProjectRow>(`UPDATE projects SET ${sets.join(', ')} WHERE id = $1 RETURNING *`, params);
     return rows[0] ? toProject(rows[0]) : null;
+  },
+
+  /** Oublie le statut des tâches du projet qui ne correspond plus à aucun statut de sa catégorie (null : statut par défaut). */
+  async resetStaleTaskStates(id: string, statuses: { key: string; category: string }[]): Promise<number> {
+    const { rowCount } = await pool.query(
+      `UPDATE tasks t SET state = NULL WHERE t.project_id = $1 AND t.state IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($2::jsonb) AS s(key text, category text) WHERE s.key = t.state AND s.category = t.status::text)`,
+      [id, toJson(statuses.map((s) => ({ key: s.key, category: s.category })))],
+    );
+    return rowCount ?? 0;
   },
 
   async delete(id: string): Promise<boolean> {

@@ -10,13 +10,14 @@ const PRIORITY: Record<TaskPriority, { label: string; icon: string }> = {
 };
 
 /**
- * Statut d'une tâche : une pastille par étape (à faire gris, en cours bleu, terminée vert, annulée barrée) ; son
+ * Statut d'une tâche (`label` : son statut dans le projet, `attention` : il attend une personne) : une pastille par étape (à faire gris, en cours bleu, terminée vert, annulée barrée) ; son
  * étiquette d'état (où en est le travail : « en revue », « bloquée »…), quand elle existe, suit dans la même pastille.
  */
-export function TaskStatusBadge({ status, statusTag, className = '' }: { status: TaskStatus; statusTag?: string | null; className?: string }) {
-  const label = STATUS[status];
+export function TaskStatusBadge({ status, statusTag, label: own, attention, className = '' }: { status: TaskStatus; statusTag?: string | null; label?: string | null; attention?: boolean; className?: string }) {
+  // Statut du projet (« À valider »…) quand on le connaît, sinon celui de la catégorie.
+  const label = own || STATUS[status];
   return (
-    <span className={`task-status task-status-${status.toLowerCase()} ${className}`} title={statusTag ? `${label} · ${statusTag}` : undefined}>
+    <span className={`task-status task-status-${status.toLowerCase()}${attention ? ' task-status-attention' : ''} ${className}`} title={statusTag ? `${label} · ${statusTag}` : undefined}>
       {label}
       {statusTag && <span className="task-status-tag">{statusTag}</span>}
     </span>

@@ -4,8 +4,8 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { PROJECT, PROJECTS, TASKS, TASK_LAUNCH_TARGETS, type Project, type Task, type TaskPerson, type TaskPriority, type TaskStatus } from '../graphql/operations';
-import { TASK_PEOPLE, TASK_TAGS } from '../graphql/tasks';
+import { PROJECT, PROJECTS, TASKS, TASK_LAUNCH_TARGETS, type Project, type Task, type TaskPerson, type TaskPriority, type TaskStatus, type TaskStatusDefinition } from '../graphql/operations';
+import { PROJECT_TASK_STATUSES, TASK_PEOPLE, TASK_TAGS } from '../graphql/tasks';
 import { formatCost, taskPriorityLabels } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
 import { useTabTitle } from '../workbench/TabsContext';
@@ -22,11 +22,21 @@ import { isOverdue, PersonChip, TaskBlockedBadge, TaskStalledBadge, TaskWaitingB
 import TaskModal from '../components/TaskModal';
 import type { LaunchTarget } from '../components/TaskLaunchModal';
 
-const columns: { status: TaskStatus; label: string; hint: string }[] = [
-  { status: 'TODO', label: 'À faire', hint: 'Prêtes à être confiées à un agent' },
-  { status: 'IN_PROGRESS', label: 'En cours', hint: 'Un agent ou vous y travaillez' },
-  { status: 'DONE', label: 'Terminées', hint: `Fermées ces ${RECENT_DAYS} derniers jours` },
+/** Colonne du kanban : une catégorie (plusieurs projets), ou un statut du projet (`state`). */
+interface BoardColumn {
+  key: string;
+  status: TaskStatus;
+  state?: string;
+  label: string;
+  hint: string;
+  attention?: boolean;
+}
+const columns: BoardColumn[] = [
+  { key: 'TODO', status: 'TODO', label: 'À faire', hint: 'Prêtes à être confiées à un agent' },
+  { key: 'IN_PROGRESS', status: 'IN_PROGRESS', label: 'En cours', hint: 'Un agent ou vous y travaillez' },
+  { key: 'DONE', status: 'DONE', label: 'Terminées', hint: `Fermées ces ${RECENT_DAYS} derniers jours` },
 ];
+const CANCELLED_COLUMN: BoardColumn = { key: 'CANCELLED', status: 'CANCELLED', label: 'Annulées', hint: '' };
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 const VIEW_KEY = 'skipper.tasks.view';
 type View = 'board' | 'table' | 'dashboard';
@@ -60,12 +70,12 @@ function TaskCard({ task, showProject, onEdit, target, onTag }: { task: Task; sh
           </Link>
           <TaskPriorityBadge priority={task.priority} />
         </div>
-        {(task.statusTag || task.tags.length > 0 || task.blockedBy.length > 0 || task.stalledSince || task.waitingSince) && (
+        {(task.statusTag || task.stateAttention || task.tags.length > 0 || task.blockedBy.length > 0 || task.stalledSince || task.waitingSince) && (
           <div className="mt-1 d-flex flex-wrap gap-1 align-items-center">
             <TaskBlockedBadge task={task} />
             <TaskStalledBadge task={task} />
             <TaskWaitingBadge task={task} />
-            {task.statusTag && <TaskStatusBadge status={task.status} statusTag={task.statusTag} />}
+            {(task.statusTag || task.stateAttention) && <TaskStatusBadge status={task.status} statusTag={task.statusTag} label={task.stateLabel} attention={task.stateAttention} />}
             <TaskTags tags={task.tags} onSelect={onTag} />
           </div>
         )}
@@ -166,6 +176,7 @@ export default function TasksPage() {
   const tagQ = useDebounced(tag, 300);
 
   const { data: projectData } = useQuery<{ project: Project | null }>(PROJECT, { variables: { id: routeProjectId }, skip: !routeProjectId });
+  const { data: statusesData } = useQuery<{ project: { id: string; taskStatuses: TaskStatusDefinition[] } | null }>(PROJECT_TASK_STATUSES, { variables: { id: projectId }, skip: !projectId });
   const { data: projectsData } = useQuery<{ projects: Project[] }>(PROJECTS, { variables: { all: Boolean(user?.isSuperAdmin) } });
   const { data: targetsData } = usePollingQuery<{ projects: LaunchTarget[] }>(TASK_LAUNCH_TARGETS, { pollInterval: 10_000 });
   const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId: projectId || null } });
@@ -225,12 +236,22 @@ export default function TasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLink, data]);
 
-  const byStatus = useMemo(() => {
-    const m = new Map<TaskStatus, Task[]>();
-    for (const t of tasks) m.set(t.status, [...(m.get(t.status) ?? []), t]);
+  // Un seul projet : une colonne par statut du projet, dans son ordre ; sinon une par catégorie.
+  const projectStatuses = projectId ? statusesData?.project?.taskStatuses : undefined;
+  const cols: BoardColumn[] = useMemo(() => {
+    const base: BoardColumn[] = projectStatuses?.length
+      ? projectStatuses.map((st) => ({ key: `${st.category}:${st.key}`, status: st.category, state: st.key, label: st.label, hint: st.description ?? (st.category === 'DONE' ? `Fermées ces ${RECENT_DAYS} derniers jours` : ''), attention: st.attention }))
+      : [...columns, CANCELLED_COLUMN];
+    return base.filter((c) => (c.status === 'DONE' ? !mine : c.status === 'CANCELLED' ? showCancelled && !mine : true));
+  }, [projectStatuses, mine, showCancelled]);
+  const byColumn = useMemo(() => {
+    const m = new Map<string, Task[]>();
+    for (const t of tasks) {
+      const key = cols.some((c) => c.state) ? `${t.status}:${t.state}` : t.status;
+      m.set(key, [...(m.get(key) ?? []), t]);
+    }
     return m;
-  }, [tasks]);
-  const cols = (mine ? columns.filter((c) => c.status !== 'DONE') : columns).concat(showCancelled && !mine ? [{ status: 'CANCELLED' as TaskStatus, label: 'Annulées', hint: '' }] : []);
+  }, [tasks, cols]);
   const writableProjects = (projectsData?.projects ?? []).filter((p) => p.myRole !== 'VIEWER');
   const newTaskProjectId = projectId || writableProjects[0]?.id || '';
   const showProject = !routeProjectId;
@@ -361,13 +382,14 @@ export default function TasksPage() {
           targets={targets}
         />
       ) : (
-        <Row className="g-3">
+        <Row className={`g-3${cols.length > 4 ? ' flex-md-nowrap overflow-auto pb-2 tasks-board-wide' : ''}`}>
           {cols.map((col) => {
-            const list = byStatus.get(col.status) ?? [];
+            const list = byColumn.get(col.key) ?? [];
             return (
-              <Col key={col.status} md={12 / cols.length}>
+              <Col key={col.key} xs={12} md={cols.length > 4 ? true : 12 / cols.length} style={cols.length > 4 ? { minWidth: 240 } : undefined}>
                 <div className="d-flex justify-content-between align-items-baseline mb-2">
                   <span className="fw-semibold">
+                    {col.attention && <i className="bi bi-person-exclamation me-1 text-warning" title="Ce statut attend une personne : ces tâches sont aussi dans « À traiter »" />}
                     {col.label} <span className="text-secondary fw-normal">({list.length})</span>
                   </span>
                   {col.status === 'TODO' && list.some(isOverdue) && <Badge bg="danger">en retard</Badge>}

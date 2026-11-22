@@ -97,7 +97,7 @@ export default function TaskPage() {
       <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap">
         <div>
           <h1 className="h3 mb-1">
-            {task.title} <TaskStatusBadge status={task.status} statusTag={task.statusTag} /> <TaskPriorityBadge priority={task.priority} /> <TaskBlockedBadge task={task} /> <TaskStalledBadge task={task} /> <TaskWaitingBadge task={task} />
+            {task.title} <TaskStatusBadge status={task.status} statusTag={task.statusTag} label={task.stateLabel} attention={task.stateAttention} /> <TaskPriorityBadge priority={task.priority} /> <TaskBlockedBadge task={task} /> <TaskStalledBadge task={task} /> <TaskWaitingBadge task={task} />
           </h1>
           <div className="small text-secondary">
             <Link to={`/projects/${task.project.id}`}>{task.project.name}</Link>

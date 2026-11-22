@@ -9,7 +9,7 @@ import { usePollingQuery } from '../lib/usePollingQuery';
 import { useSessionLauncher } from './SessionLauncher';
 import { openProjectWindow, projectWindowId } from '../lib/projectWindow';
 
-export type ProjectTab = 'overview' | 'conversations' | 'chats' | 'repo' | 'files' | 'tasks' | 'artifacts' | 'agents' | 'pullRequests' | 'deliveries' | 'context' | 'vault' | 'env' | 'schedules' | 'workflows' | 'history' | 'audit' | 'usage' | 'members' | 'settings' | 'edit' | 'pages' | `page:${string}`;
+export type ProjectTab = 'overview' | 'conversations' | 'chats' | 'repo' | 'files' | 'tasks' | 'artifacts' | 'agents' | 'pullRequests' | 'deliveries' | 'context' | 'vault' | 'env' | 'schedules' | 'workflows' | 'history' | 'audit' | 'usage' | 'members' | 'settings' | 'edit' | 'pages' | 'taskStatuses' | `page:${string}`;
 
 export interface ProjectTabItem {
   key: ProjectTab;
@@ -45,6 +45,7 @@ export const CONFIG_GROUPS: { label: string; items: ProjectTabItem[] }[] = [
       { key: 'settings', label: 'Réglages', path: '/settings', icon: 'bi-gear', title: 'Dossier de travail, conteneur, autorisations mémorisées, disque, clés d’API, canaux de notification, sessions en cours' },
       { key: 'edit', label: 'Informations', path: '/edit', icon: 'bi-pencil', title: 'Nom, description, instructions permanentes, modèles, dépôt git et conteneur', adminOnly: true },
       { key: 'pages', label: 'Onglets et pages', path: '/tabs', icon: 'bi-layout-text-window', title: 'Onglets affichés dans le projet, leur ordre et les pages personnalisées' },
+      { key: 'taskStatuses', label: 'Statuts des tâches', path: '/task-statuses', icon: 'bi-kanban', title: 'Statuts que prennent les tâches du projet (colonnes du kanban), leurs libellés et leur ordre' },
     ],
   },
   {

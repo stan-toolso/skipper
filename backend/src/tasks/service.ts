@@ -9,6 +9,7 @@ import { dependencyCycle, normalizeDependencyIds } from './dependencyGraph.js';
 import { findMentions, sessionMentionable, userMentionable, type Mentionable } from './mentions.js';
 import { taskRepository } from './repository.js';
 import { promptTasks } from './promptList.js';
+import { describeStatusesForAgents, effectiveStatus, resolveTaskState, type TaskStatusDefinition } from './statuses.js';
 import {
   OPEN_STATUSES,
   TASK_PRIORITIES,
@@ -42,6 +43,23 @@ const MAX_COMMENT = 20_000;
 const MAX_EMOJI_CODEPOINTS = 8;
 const MAX_DEPENDENCIES = 50;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Libellé du statut d'une tâche dans son projet, en minuscule initiale (« à valider ») ; sans statuts du projet, celui de sa catégorie. */
+export function stateText(t: Pick<Task, 'status' | 'state'>, statuses?: TaskStatusDefinition[] | null): string {
+  if (!statuses) return statusLabels[t.status];
+  const label = effectiveStatus(statuses, t).label;
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+/** Statuts des projets demandés (une lecture par projet). */
+async function statusesByProject(projectIds: string[]): Promise<Map<string, TaskStatusDefinition[]>> {
+  const out = new Map<string, TaskStatusDefinition[]>();
+  for (const id of new Set(projectIds)) {
+    const project = await projectService.get(id).catch(() => null);
+    if (project) out.set(id, project.taskStatuses);
+  }
+  return out;
+}
 
 /** « « Titre » (id) » d'une tâche, pour les messages et prompts. */
 const taskRef = (t: Pick<Task, 'id' | 'title'>) => `« ${t.title} » (${t.id})`;
@@ -213,10 +231,10 @@ function prepare<T extends CreateTaskInput | UpdateTaskInput>(input: T): T & { a
 }
 
 /** Lignes décrivant ce qui a changé entre deux états d'une tâche (vide si rien de visible n'a changé). */
-export function describeTaskChanges(before: Task, after: Task, addedAttachments: TaskAttachment[] = []): string[] {
+export function describeTaskChanges(before: Task, after: Task, addedAttachments: TaskAttachment[] = [], statuses?: TaskStatusDefinition[] | null): string[] {
   const lines: string[] = [];
   if (before.title !== after.title) lines.push(`- Titre : « ${before.title} » → « ${after.title} »`);
-  if (before.status !== after.status) lines.push(`- Statut : ${statusLabels[before.status]} → ${statusLabels[after.status]}`);
+  if (stateText(before, statuses) !== stateText(after, statuses) || before.status !== after.status) lines.push(`- Statut : ${stateText(before, statuses)} → ${stateText(after, statuses)}`);
   if (before.statusTag !== after.statusTag) lines.push(`- Étiquette d'état : ${before.statusTag ? `« ${before.statusTag} »` : 'aucune'} → ${after.statusTag ? `« ${after.statusTag} »` : 'aucune'}`);
   if (before.tags.join('\n') !== after.tags.join('\n')) lines.push(`- Étiquettes : ${before.tags.join(', ') || 'aucune'} → ${after.tags.join(', ') || 'aucune'}`);
   if (before.priority !== after.priority) lines.push(`- Priorité : ${priorityLabels[before.priority]} → ${priorityLabels[after.priority]}`);
@@ -354,6 +372,9 @@ export const taskService = {
     const project = await projectService.get(projectId);
     await validateTaskAttachments('', null, input.attachments);
     input = await this.withDependencies(projectId, null, input, actor);
+    // Statut du projet : celui demandé, sinon le statut par défaut de la catégorie (« À faire » d'ordinaire).
+    const resolved = resolveTaskState(project.taskStatuses, input, null) ?? resolveTaskState(project.taskStatuses, { status: 'todo' }, null)!;
+    input = { ...input, ...resolved };
     const created = await taskRepository.create(projectId, prepare(input), actor);
     const attachments = await storeTaskAttachments(created.id, null, input.attachments).catch(async (err) => {
       await taskRepository.delete(created.id).catch(() => undefined);
@@ -390,13 +411,18 @@ export const taskService = {
     if (!before) throw new NotFoundError('Tâche introuvable');
     await validateTaskAttachments(id, null, input.attachments, input.removeAttachmentIds);
     input = await this.withDependencies(before.projectId, before, input, actor);
+    if (input.state != null || input.status != null) {
+      const resolved = resolveTaskState((await projectService.get(before.projectId)).taskStatuses, input, before);
+      if (resolved) input = { ...input, ...resolved };
+      else delete input.state;
+    } else delete input.state;
     const updated = await taskRepository.update(id, prepare(input));
     if (!updated) throw new NotFoundError('Tâche introuvable');
     const removed = await removeTaskAttachments(id, null, input.removeAttachmentIds);
     const addedAttachments = await storeTaskAttachments(id, null, input.attachments);
     const task = removed.length || addedAttachments.length ? { ...updated, attachmentCount: updated.attachmentCount - removed.length + addedAttachments.length } : updated;
-    if (before.status !== task.status) {
-      await auditService.record({ projectId: task.projectId, actor: auditActor(actor), action: 'task.status', targetType: 'task', targetId: task.id, targetLabel: task.title, details: { from: before.status, to: task.status } });
+    if (before.status !== task.status || (before.state ?? null) !== (task.state ?? null)) {
+      await auditService.record({ projectId: task.projectId, actor: auditActor(actor), action: 'task.status', targetType: 'task', targetId: task.id, targetLabel: task.title, details: { from: before.status, to: task.status, fromState: before.state ?? undefined, toState: task.state ?? undefined } });
     }
     if (actor?.type === 'agent' && before.status !== 'done' && task.status === 'done') {
       const project = await projectService.get(task.projectId);
@@ -562,9 +588,11 @@ export const taskService = {
   /** Résumé des tâches ouvertes, injecté dans le prompt système des agents. */
   async promptSummary(projectId: string, sessionId?: string): Promise<string> {
     const open = await taskRepository.list({ projectId, status: OPEN_STATUSES });
+    const statuses = (await projectService.get(projectId)).taskStatuses;
     const intro = [
       "Le projet dispose d'un tableau de tâches géré avec les outils du serveur MCP `tasks` (list, get, create, update, claim, release, comment, react, people). Quand tu réalises une tâche, passe-la en `in_progress` avec `claim` puis en `done` une fois terminée ; une tâche que tu crées déjà en cours ou terminée (ton propre travail) t'est rattachée d'office, et une session peut être en charge de plusieurs tâches. Si tu découvres du travail à faire plus tard, crée une tâche `todo` plutôt que de le laisser tomber.",
       "Une tâche peut dépendre d'autres tâches du projet (`depends_on` de `create` et `update`) : tant qu'une de ses dépendances n'est pas terminée, elle est bloquée et ne peut pas être prise ni confiée à un agent ; termine d'abord ce qui la bloque.",
+      `Statuts des tâches de ce projet (paramètre \`state\` de \`create\` et \`update\`, qui fixe la catégorie \`status\` ; une catégorie seule prend son statut par défaut) : ${describeStatusesForAgents(statuses)}. Un statut qui attend une personne (« à valider » par exemple) : passe-y la tâche quand ton travail est fait mais doit être vérifié par quelqu'un, plutôt que \`done\`, sauf consigne contraire.`,
       THREAD_HINT,
     ].join(' ');
     if (open.length === 0) return `${intro}\nAucune tâche ouverte pour le moment.`;
@@ -572,7 +600,7 @@ export const taskService = {
     const { shown, hidden } = promptTasks(open, sessionId);
     const lines = shown.map(
       (t) =>
-        `- [${statusLabels[t.status]}${statusTagText(t)}, priorité ${priorityLabels[t.priority]}${sessionId && t.sessionIds.includes(sessionId) ? ', assignée à cette session' : t.sessionIds.length ? ', prise par une autre session' : ''}${t.assignee ? `, responsable ${formatPerson(t.assignee)}` : ''}${tagsText(t)}] ${t.title} (id ${t.id})${dependencyText(t)}`,
+        `- [${stateText(t, statuses)}${statusTagText(t)}, priorité ${priorityLabels[t.priority]}${sessionId && t.sessionIds.includes(sessionId) ? ', assignée à cette session' : t.sessionIds.length ? ', prise par une autre session' : ''}${t.assignee ? `, responsable ${formatPerson(t.assignee)}` : ''}${tagsText(t)}] ${t.title} (id ${t.id})${dependencyText(t)}`,
     );
     if (hidden.length) {
       const byPriority = [...TASK_PRIORITIES].reverse().map((p) => [p, hidden.filter((t) => t.priority === p).length] as const).filter(([, n]) => n > 0);
@@ -591,14 +619,15 @@ export const taskService = {
     const charged = new Set(tasks.map((t) => t.id));
     const others = (await taskRepository.listForSession(sessionId)).filter((t) => !charged.has(t.id) && t.status !== 'cancelled' && t.status !== 'done');
     if (!tasks.length && !others.length) return '';
-    const describe = (task: Task) => `${task.id} (« ${task.title} », ${statusLabels[task.status]}${statusTagText(task)}, priorité ${priorityLabels[task.priority]}${tagsText(task)})`;
+    const statuses = await statusesByProject([...tasks, ...others].map((t) => t.projectId));
+    const describe = (task: Task) => `${task.id} (« ${task.title} », ${stateText(task, statuses.get(task.projectId))}${statusTagText(task)}, priorité ${priorityLabels[task.priority]}${tagsText(task)})`;
     const lines: string[] = [];
     if (tasks.length === 1) {
       lines.push(`Cette session est en charge de la tâche ${describe(tasks[0])} : utilise cet identifiant avec les outils \`tasks\` (\`get\` la lit avec son fil de discussion, \`update\`, \`comment\`, \`react\`).`);
     } else if (tasks.length > 1) {
       lines.push(`Cette session est en charge de ${tasks.length} tâches : utilise leurs identifiants avec les outils \`tasks\` (\`get\`, \`update\`, \`comment\`, \`react\`) ; \`release\` rend une tâche que tu ne traites plus.`, ...tasks.map((t) => `- ${describe(t)}`));
     }
-    if (others.length) lines.push(`Cette session est aussi reliée aux tâches : ${others.map((t) => `${t.id} (« ${t.title} », ${statusLabels[t.status]})`).join(' ; ')}.`);
+    if (others.length) lines.push(`Cette session est aussi reliée aux tâches : ${others.map((t) => `${t.id} (« ${t.title} », ${stateText(t, statuses.get(t.projectId))})`).join(' ; ')}.`);
     lines.push(
       "Quand quelqu'un d'autre modifie l'une de ces tâches ou écrit dans son fil, tu reçois un texte commençant par « [Mise à jour de la tâche] », « [Commentaire sur la tâche] » ou « [Réaction sur la tâche] » qui décrit le changement. Ce qui t'est adressé (message du fil d'une tâche dont tu es en charge ou qui te mentionne, modification par une personne d'une tâche dont tu es en charge) arrive comme une instruction : tiens-en compte, et réponds à un message avec `tasks.comment` (`reply_to` pour rester dans son fil) quand il appelle une réponse ; un simple accusé se fait avec `tasks.react`. Le reste arrive comme une note discrète, jointe au résultat d'un outil ou à l'instruction suivante : prends-la en compte sans en rendre compte, sauf si elle change ton travail.",
     );

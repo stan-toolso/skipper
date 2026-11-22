@@ -12,6 +12,7 @@ const ProjectSettingsPage = lazy(() => import('./pages/ProjectSettingsPage'));
 const ProjectMembersPage = lazy(() => import('./pages/ProjectMembersPage'));
 const ProjectCustomPage = lazy(() => import('./pages/ProjectCustomPage'));
 const ProjectTabsPage = lazy(() => import('./pages/ProjectTabsPage'));
+const ProjectTaskStatusesPage = lazy(() => import('./pages/ProjectTaskStatusesPage'));
 import LoginPage from './pages/LoginPage';
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 import SessionsPage from './pages/SessionsPage';
@@ -87,6 +88,7 @@ function PageRoutes({ location, isAdmin, restricted }: { location: Location; isA
       <Route path="/projects/:id/edit" element={<ProjectRoleGate><ProjectConfigShell><ProjectFormPage /></ProjectConfigShell></ProjectRoleGate>} />
       <Route path="/projects/:id/settings" element={<ProjectRoleGate><ProjectConfigShell><ProjectSettingsPage /></ProjectConfigShell></ProjectRoleGate>} />
       <Route path="/projects/:id/tabs" element={<ProjectRoleGate><ProjectConfigShell><ProjectTabsPage /></ProjectConfigShell></ProjectRoleGate>} />
+      <Route path="/projects/:id/task-statuses" element={<ProjectRoleGate><ProjectConfigShell><ProjectTaskStatusesPage /></ProjectConfigShell></ProjectRoleGate>} />
       <Route path="/projects/:id/members" element={<ProjectRoleGate><ProjectConfigShell><ProjectMembersPage /></ProjectConfigShell></ProjectRoleGate>} />
       <Route path="/projects/:id/p/:slug" element={<ProjectRoleGate><ProjectCustomPage /></ProjectRoleGate>} />
       <Route path="/projects/:id/context" element={<ProjectRoleGate><ProjectConfigShell><ContextPage /></ProjectConfigShell></ProjectRoleGate>} />

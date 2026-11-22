@@ -410,3 +410,38 @@ export const TASK_DEPENDENCY_CHOICES = gql`
     }
   }
 `;
+
+const TASK_STATUS_FIELDS = `
+  taskStatuses {
+    key
+    label
+    category
+    description
+    attention
+    isDefault
+  }
+  taskStatusesCustomized
+`;
+
+/** Statuts des tâches d'un projet (Configuration › Statuts des tâches, formulaire et kanban). */
+export const PROJECT_TASK_STATUSES = gql`
+  query ProjectTaskStatuses($id: ID!) {
+    project(id: $id) {
+      id
+      name
+      description
+      myRole
+      isPersonal
+      ${TASK_STATUS_FIELDS}
+    }
+  }
+`;
+
+export const UPDATE_PROJECT_TASK_STATUSES = gql`
+  mutation UpdateProjectTaskStatuses($id: ID!, $statuses: [TaskStatusDefinitionInput!]) {
+    updateProject(id: $id, input: { taskStatuses: $statuses }) {
+      id
+      ${TASK_STATUS_FIELDS}
+    }
+  }
+`;

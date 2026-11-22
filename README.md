@@ -69,8 +69,12 @@ Trois notions :
   des projets) ou à un projet. Le coffre garde aussi ce que Skipper utilise **lui-même** pour une
   personne, jamais offert aux agents : jetons applicatifs (abonnement Claude, clé API Anthropic, comptes
   GitHub, fournisseurs de modèles d'OpenCode), proxy LiteLLM, projet Langfuse. Voir « Coffre » plus bas.
-- **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut
-  (à faire, en cours, terminée, annulée). Créée et mise à jour par les humains (tableau dans
+- **Tâche** : élément de travail d'un projet avec priorité (basse, moyenne, haute, urgente) et statut.
+  Chaque projet choisit ses statuts (Configuration › Statuts des tâches : nombre, libellés, ordre = colonnes du
+  kanban) ; par défaut : À trier, À faire, En cours, À valider, Terminée, Annulée. Chaque statut appartient à une
+  catégorie (à faire, en cours, terminée, annulée) qui porte son sens pour Skipper (ouverte, bloquante, cycle time…) ;
+  un statut qui « attend une personne » (À trier, À valider) range la tâche dans « À traiter » et n'est jamais
+  « agent arrêté ». Voir `backend/src/tasks/statuses.ts`. Créée et mise à jour par les humains (tableau dans
   l'application) comme par les agents (outils MCP). « Confier à un agent » lance une session avec la
   tâche comme consigne.
 - **Agent de projet** : membre du projet qui n'est pas une personne (Product Manager, Developer…), avec ses propres
@@ -711,7 +715,8 @@ L'hébergement ne se désactive pas.
   mémoire du serveur ; la sortie récente est rejouée à chaque connexion WebSocket. Le menu « + » d'un
   projet dans la sidebar propose d'ouvrir une session d'agent ou un terminal.
 
-- **Task** : `projectId`, `title`, `description`, `status` (`todo`, `in_progress`, `done`, `cancelled`),
+- **Task** : `projectId`, `title`, `description`, `status` (catégorie : `todo`, `in_progress`, `done`, `cancelled`),
+  `state` (statut du projet, clé de `Project.taskStatuses` ; `stateLabel`, `stateAttention`),
   `priority` (`low`, `medium`, `high`, `urgent`), `sessionId` (session qui s'en occupe), auteur
   (`human` ou `agent` avec sa session), `dueDate`. Les sessions Claude reçoivent la liste des tâches
   ouvertes dans leur prompt système et le serveur MCP `tasks` (`list`, `get`, `create`, `update`,

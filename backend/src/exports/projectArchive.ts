@@ -22,6 +22,8 @@ export interface ExportedProject {
   runnerConfig: Record<string, unknown>;
   defaultPermissionMode: string;
   taskInstructions: string;
+  /** Statuts des tâches choisis par le projet ; absent ou null : les statuts par défaut (et dans les archives d'avant). */
+  taskStatuses?: { key: string; label: string; category: string; description: string | null; attention: boolean; isDefault: boolean }[] | null;
   permissionRules: { toolName: string; ruleContent: string | null }[];
   /** Fichiers d'environnement : chemins et clés, avec leurs références au coffre ; jamais les valeurs. */
   envFiles: { path: string; applyOnCreate: boolean; keys: { key: string; vaultRefs: string[] }[] }[];
@@ -77,6 +79,8 @@ export interface ExportedTask {
   summary?: string | null;
   description: string;
   status: 'todo' | 'in_progress' | 'done' | 'cancelled';
+  /** Statut dans le projet (clé) ; absent des archives d'avant. */
+  state?: string | null;
   statusTag: string | null;
   priority: 'low' | 'medium' | 'high' | 'urgent';
   tags: string[];

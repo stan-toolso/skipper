@@ -942,6 +942,9 @@ a.prq-meta-item:hover { color: var(--cc-fg); text-decoration: underline; }
 .task-status-blocked { color: var(--cc-red); --st: var(--cc-red); }
 .task-status-done { color: var(--cc-dim); --st: var(--cc-dimmer); }
 .task-status-cancelled { color: var(--cc-dimmer); text-decoration: line-through; }
+/* Statut du projet qui attend une personne (« À trier », « À valider ») : à traiter. */
+.task-status.task-status-attention { color: var(--cc-yellow); --st: var(--cc-yellow); }
+.task-status.task-status-attention::before { box-shadow: none; }
 .task-status { overflow: hidden; text-overflow: ellipsis; }
 .task-status-tag { font-weight: 400; text-transform: none; letter-spacing: 0; font-family: var(--cc-font-sans); font-size: 11.5px; color: var(--cc-dim); }
 .task-status-tag::before { content: '·'; margin-right: 6px; color: var(--cc-dimmer); }

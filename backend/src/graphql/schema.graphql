@@ -125,6 +125,10 @@ type Project {
   systemPrompt: String!
   "Consignes ajoutées à l'instruction de toute session qui réalise une tâche du projet, après le texte de la tâche (vide : aucune)."
   taskInstructions: String!
+  "Statuts des tâches du projet, dans l'ordre d'affichage (colonnes du kanban) : ceux choisis par le projet, sinon les statuts par défaut."
+  taskStatuses: [TaskStatusDefinition!]!
+  "Vrai quand le projet a choisi ses statuts ; faux : les statuts par défaut de Skipper."
+  taskStatusesCustomized: Boolean!
   gitUrl: String
   gitBranch: String
   "Réglages du conteneur Docker du projet : { image, memory, cpus, browser }."
@@ -273,6 +277,29 @@ enum TaskStatus {
   CANCELLED
 }
 
+"Statut de tâche d'un projet : une étape choisie par le projet, rangée dans une catégorie (TaskStatus) qui porte son sens pour Skipper (ouverte, en cours, terminée, annulée)."
+type TaskStatusDefinition {
+  "Identifiant stable (minuscules), écrit dans Task.state."
+  key: String!
+  label: String!
+  category: TaskStatus!
+  description: String
+  "Le statut attend une personne (trier, valider) : la tâche est rangée dans « À traiter » et n'est jamais « agent arrêté »."
+  attention: Boolean!
+  "Statut que prend une tâche qui entre dans la catégorie sans statut précis (création, prise en charge, fin…)."
+  isDefault: Boolean!
+}
+
+input TaskStatusDefinitionInput {
+  "Absente : dérivée du libellé. Garder la clé d'un statut renommé conserve ses tâches."
+  key: String
+  label: String!
+  category: TaskStatus!
+  description: String
+  attention: Boolean
+  isDefault: Boolean
+}
+
 enum TaskPriority {
   LOW
   MEDIUM
@@ -382,7 +409,14 @@ type Task {
   "Une ou deux phrases qui disent l'objet de la tâche, montrées avant la description pour être lues et comprises rapidement ; null : pas de résumé."
   summary: String
   description: String!
+  "Catégorie du statut (le statut du projet est dans state)."
   status: TaskStatus!
+  "Statut de la tâche dans son projet (clé de Project.taskStatuses) ; sa catégorie est status."
+  state: String!
+  "Libellé du statut de la tâche dans son projet (« À valider »…)."
+  stateLabel: String!
+  "Le statut de la tâche attend une personne (voir TaskStatusDefinition.attention)."
+  stateAttention: Boolean!
   "Court libellé de l'avancement dans le statut (« en revue », « bloquée »…), affiché à côté ; posé par les personnes ou par la session en charge (outil MCP `tasks.update`)."
   statusTag: String
   "Étiquettes libres de la tâche, dans l'ordre d'affichage."
@@ -466,6 +500,8 @@ input CreateTaskInput {
   description: String
   priority: TaskPriority
   status: TaskStatus
+  "Statut du projet (clé ou libellé) : fixe la catégorie status ; absent : le statut par défaut de la catégorie."
+  state: String
   dueDate: String
   customFields: [TaskFieldInput!]
   statusTag: String
@@ -486,7 +522,10 @@ input UpdateTaskInput {
   summary: String
   description: String
   priority: TaskPriority
+  "Catégorie : une tâche qui en change prend le statut par défaut de la nouvelle catégorie."
   status: TaskStatus
+  "Statut du projet (clé ou libellé) : fixe la catégorie status."
+  state: String
   "Session qui prend la charge, en plus de celles déjà en charge (null : plus aucune session en charge)."
   sessionId: ID
   "Sessions qui cessent d'être en charge."
@@ -3443,6 +3482,8 @@ input UpdateProjectInput {
   "Modèle des sessions de tâches par priorité ({ low, medium, high, urgent }) ; null ou objet vide : aucun."
   taskModels: JSON
   taskInstructions: String
+  "Statuts des tâches (liste complète, dans l'ordre ; au moins un par catégorie) ; null ou vide : les statuts par défaut. Les tâches d'un statut retiré prennent le statut par défaut de leur catégorie."
+  taskStatuses: [TaskStatusDefinitionInput!]
 }
 
 "Work session à créer en même temps que la session, qui s'y exécutera. Sans nom, branche ni libellé : nommée d'après la consigne."

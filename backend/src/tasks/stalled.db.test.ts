@@ -75,6 +75,31 @@ describe.skipIf(!adminUrl)('tâches « agent arrêté » (PostgreSQL)', () => {
     expect(listed.map((x) => x.id)).toContain(t);
   });
 
+  it('ni « agent arrêté » ni « en attente » dans un statut qui attend une personne (« À valider »), y compris un statut choisi par le projet', async () => {
+    const review = await task('in_progress', [await session('failed', '2026-11-01T10:00:00Z')]);
+    await pool.query(`UPDATE tasks SET state = 'review' WHERE id = $1`, [review]);
+    expect(await stalled(review)).toBeNull();
+    expect(await waiting(review)).toBeNull();
+    // Statuts propres au projet : « recette » attend une personne, « review » n'existe plus (statut par défaut : en cours).
+    await pool.query(
+      `UPDATE projects SET task_statuses = $2::jsonb WHERE id = $1`,
+      [project, JSON.stringify([
+        { key: 'todo', label: 'À faire', category: 'todo', description: null, attention: false, isDefault: true },
+        { key: 'dev', label: 'Dev', category: 'in_progress', description: null, attention: false, isDefault: true },
+        { key: 'recette', label: 'Recette', category: 'in_progress', description: null, attention: true, isDefault: false },
+        { key: 'done', label: 'Terminée', category: 'done', description: null, attention: false, isDefault: true },
+        { key: 'cancelled', label: 'Annulée', category: 'cancelled', description: null, attention: false, isDefault: true },
+      ])],
+    );
+    try {
+      expect(await stalled(review)).not.toBeNull();
+      await pool.query(`UPDATE tasks SET state = 'recette' WHERE id = $1`, [review]);
+      expect(await stalled(review)).toBeNull();
+    } finally {
+      await pool.query(`UPDATE projects SET task_statuses = NULL WHERE id = $1`, [project]);
+    }
+  });
+
   it('rien tant qu’une session en charge tourne, sans session, hors « en cours », ou avec une PR ouverte', async () => {
     const running = await task('in_progress', [await session('stopped', '2026-11-01T10:00:00Z'), await session('running')]);
     const none = await task('in_progress', []);

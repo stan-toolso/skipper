@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from '@apollo/client';
 import { useState } from 'react';
 import { Button, Form, Modal } from 'react-bootstrap';
-import { DELETE_TASK, MOVE_TASK, PROJECTS, UPDATE_TASK, type Project, type Task, type TaskStatus } from '../graphql/operations';
+import { DELETE_TASK, MOVE_TASK, PROJECTS, UPDATE_TASK, type Project, type Task, type TaskStatus, type TaskStatusDefinition } from '../graphql/operations';
+import { PROJECT_TASK_STATUSES } from '../graphql/tasks';
 import { useDialogs } from './Dialogs';
 import PopMenu, { type MenuItem } from './PopMenu';
 import { useTaskLauncher, type LaunchTarget } from './TaskLaunchModal';
@@ -66,6 +67,9 @@ export default function TaskActions({ task, target, onEdit, onDeleted, compact =
   const [moving, setMoving] = useState(false);
   const [menuAt, setMenuAt] = useState<{ top: number; right: number } | null>(null);
   const move = (status: TaskStatus) => updateTask({ variables: { id: task.id, input: { status } } });
+  const moveTo = (state: string) => updateTask({ variables: { id: task.id, input: { state } } });
+  // Statuts du projet (menu compact) : chargés une fois par projet (cache Apollo).
+  const { data: statusesData } = useQuery<{ project: { id: string; taskStatuses: TaskStatusDefinition[] } | null }>(PROJECT_TASK_STATUSES, { variables: { id: task.project.id }, skip: !compact });
   const open = task.status === 'TODO' || task.status === 'IN_PROGRESS';
   // Une session déjà en charge : la modale propose de reprendre sa conversation plutôt que d'en lancer une nouvelle.
   const resume = Boolean(task.session);
@@ -83,13 +87,20 @@ export default function TaskActions({ task, target, onEdit, onDeleted, compact =
 
   if (compact) {
     const items: MenuItem[] = [];
-    if (task.status === 'TODO') items.push({ label: 'Passer en cours', icon: 'bi-play', onClick: () => void move('IN_PROGRESS') });
-    if (task.status === 'IN_PROGRESS') {
-      items.push({ label: 'Terminée', icon: 'bi-check2', onClick: () => void move('DONE') });
-      items.push({ label: 'Remettre à faire', icon: 'bi-arrow-counterclockwise', onClick: () => void move('TODO') });
+    const statuses = statusesData?.project?.taskStatuses;
+    if (statuses?.length) {
+      // Un statut du projet par entrée (sauf l'actuel), dans l'ordre du projet.
+      const icons: Record<TaskStatus, string> = { TODO: 'bi-circle', IN_PROGRESS: 'bi-play', DONE: 'bi-check2', CANCELLED: 'bi-x-circle' };
+      for (const st of statuses) if (st.key !== task.state) items.push({ label: `Passer à « ${st.label} »`, icon: st.attention ? 'bi-person-exclamation' : icons[st.category], onClick: () => void moveTo(st.key) });
+    } else {
+      if (task.status === 'TODO') items.push({ label: 'Passer en cours', icon: 'bi-play', onClick: () => void move('IN_PROGRESS') });
+      if (task.status === 'IN_PROGRESS') {
+        items.push({ label: 'Terminée', icon: 'bi-check2', onClick: () => void move('DONE') });
+        items.push({ label: 'Remettre à faire', icon: 'bi-arrow-counterclockwise', onClick: () => void move('TODO') });
+      }
+      if (task.status === 'DONE' || task.status === 'CANCELLED') items.push({ label: 'Rouvrir', icon: 'bi-arrow-counterclockwise', onClick: () => void move('TODO') });
+      if (open) items.push({ label: 'Annuler la tâche', icon: 'bi-x-circle', onClick: () => void move('CANCELLED') });
     }
-    if (task.status === 'DONE' || task.status === 'CANCELLED') items.push({ label: 'Rouvrir', icon: 'bi-arrow-counterclockwise', onClick: () => void move('TODO') });
-    if (open) items.push({ label: 'Annuler la tâche', icon: 'bi-x-circle', onClick: () => void move('CANCELLED') });
     items.push({ label: 'Modifier', icon: 'bi-pencil', onClick: onEdit, separatorBefore: true });
     items.push({ label: 'Déplacer dans un autre projet', icon: 'bi-arrow-left-right', onClick: () => setMoving(true) });
     items.push({ label: 'Supprimer', icon: 'bi-trash', danger: true, onClick: () => void remove(), separatorBefore: true });

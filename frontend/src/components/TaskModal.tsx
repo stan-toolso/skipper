@@ -2,10 +2,11 @@ import { useMutation, useQuery } from '@apollo/client';
 import { useState } from 'react';
 import { Alert, Button, Col, Form, Modal, Row } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
-import { CREATE_TASK, UPDATE_TASK, type Task, type TaskField, type TaskPerson, type TaskPriority, type TaskRef, type TaskStatus } from '../graphql/operations';
-import { TASK_DEPENDENCY_CHOICES, TASK_PEOPLE, TASK_PROJECT_MEMBERS, TASK_TAGS } from '../graphql/tasks';
+import { CREATE_TASK, UPDATE_TASK, type Task, type TaskField, type TaskPerson, type TaskPriority, type TaskRef, type TaskStatus, type TaskStatusDefinition } from '../graphql/operations';
+import { PROJECT_TASK_STATUSES, TASK_DEPENDENCY_CHOICES, TASK_PEOPLE, TASK_PROJECT_MEMBERS, TASK_TAGS } from '../graphql/tasks';
+import { DEFAULT_TASK_STATUSES, defaultStatusOf } from '../lib/taskStatuses';
 import { canAutoFocus } from '../lib/device';
-import { taskPriorityLabels, taskStatusLabels } from '../lib/humanize';
+import { taskPriorityLabels } from '../lib/humanize';
 import { toAttachmentInputs, usePendingAttachments } from '../lib/attachments';
 import AttachmentChips from './AttachmentChips';
 import TagsInput from './TagsInput';
@@ -25,6 +26,8 @@ interface TaskForm {
   description: string;
   priority: TaskPriority;
   status: TaskStatus;
+  /** Statut du projet (clé) ; vide : le statut par défaut de la catégorie. */
+  state: string;
   statusTag: string;
   tags: string[];
   dueDate: string;
@@ -185,6 +188,7 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
     description: task?.description ?? '',
     priority: task?.priority ?? 'MEDIUM',
     status: task?.status ?? 'TODO',
+    state: task?.state ?? '',
     statusTag: task?.statusTag ?? '',
     tags: task?.tags ?? [],
     dueDate: task?.dueDate ?? '',
@@ -194,6 +198,9 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
     dependsOn: task?.dependsOn ?? [],
     autoStart: task?.autoStartWhenUnblocked ?? false,
   });
+  const { data: statusesData } = useQuery<{ project: { id: string; taskStatuses: TaskStatusDefinition[] } | null }>(PROJECT_TASK_STATUSES, { variables: { id: projectId }, skip: !projectId });
+  const statuses = statusesData?.project?.taskStatuses?.length ? statusesData.project.taskStatuses : DEFAULT_TASK_STATUSES;
+  const currentState = statuses.find((st) => st.key === form.state && st.category === form.status) ?? defaultStatusOf(statuses, form.status);
   const { data: peopleData } = useQuery<{ taskPeople: TaskPerson[] }>(TASK_PEOPLE, { variables: { projectId }, skip: !projectId });
   const people = peopleData?.taskPeople ?? [];
   const { data: tagsData } = useQuery<{ taskTags: string[] }>(TASK_TAGS, { variables: { projectId }, skip: !projectId });
@@ -222,6 +229,8 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
       description: form.description,
       priority: form.priority,
       status: form.status,
+      // Statut du projet choisi (un statut d'un autre projet, après un changement de projet, n'est pas envoyé).
+      state: statuses.some((st) => st.key === form.state && st.category === form.status) && !(task && task.state === form.state && task.status === form.status) ? form.state : null,
       statusTag: form.statusTag.trim() || null,
       tags: form.tags,
       dueDate: form.dueDate || null,
@@ -311,10 +320,17 @@ export default function TaskModal({ task, projectId: initialProjectId, projects,
             </Col>
             <Col sm={4}>
               <Form.Label>Statut</Form.Label>
-              <Form.Select value={form.status} onChange={set('status')}>
-                {(Object.keys(taskStatusLabels) as TaskStatus[]).map((s) => (
-                  <option key={s} value={s}>
-                    {taskStatusLabels[s]}
+              <Form.Select
+                value={currentState?.key ?? ''}
+                title={currentState?.description ?? undefined}
+                onChange={(e) => {
+                  const st = statuses.find((x) => x.key === e.target.value);
+                  if (st) setForm((f) => ({ ...f, state: st.key, status: st.category }));
+                }}
+              >
+                {statuses.map((st) => (
+                  <option key={st.key} value={st.key}>
+                    {st.label}
                   </option>
                 ))}
               </Form.Select>

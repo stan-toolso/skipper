@@ -112,6 +112,7 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (/^\/projects\/[^/]+\/settings$/.test(pathname)) return { title: 'Réglages du projet', kind: 'project-settings' };
   if (/^\/projects\/[^/]+\/members$/.test(pathname)) return { title: 'Membres', kind: 'project-members' };
   if (/^\/projects\/[^/]+\/tabs$/.test(pathname)) return { title: 'Onglets et pages', kind: 'project-settings' };
+  if (/^\/projects\/[^/]+\/task-statuses$/.test(pathname)) return { title: 'Statuts des tâches', kind: 'project-settings' };
   if (/^\/projects\/[^/]+\/p\/[^/]+$/.test(pathname)) return { title: 'Page du projet', kind: 'project' };
   if (/^\/projects\/[^/]+\/pull-requests$/.test(pathname)) return { title: 'Pull requests', kind: 'pull-requests' };
   if (/^\/projects\/[^/]+\/deliveries$/.test(pathname)) return { title: 'Livraisons', kind: 'deliveries' };
