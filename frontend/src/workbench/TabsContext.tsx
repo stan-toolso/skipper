@@ -217,7 +217,10 @@ export function TabsProvider({ children }: { children: ReactNode }) {
   // Les dossiers de travail viennent de la requête Sidebar, que la sidebar interroge ; ici on lit le cache et on
   // demande la liste une fois, avec les éléments ouverts (projets non membres d'un super administrateur).
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
-  const { data } = useQuery<{ projects: SidebarProject[] }>(SIDEBAR, { variables: { open }, fetchPolicy: 'cache-first' });
+  // Données précédentes gardées pendant le chargement de nouvelles variables : sinon les dossiers disparaissent un
+  // instant et la page ouverte se range dans un onglet à part.
+  const sidebarQuery = useQuery<{ projects: SidebarProject[] }>(SIDEBAR, { variables: { open }, fetchPolicy: 'cache-first' });
+  const data = sidebarQuery.data ?? sidebarQuery.previousData;
   const workspaces = useMemo(() => (data ? new WorkspaceIndex(data.projects) : EMPTY_INDEX), [data]);
 
   const resolveKey = useCallback((pathname: string) => workspaces.keyOf(pathname) ?? tabKey(pathname), [workspaces]);

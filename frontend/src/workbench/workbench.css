@@ -1395,3 +1395,9 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
 .wb-fav-icon.wb-fav-data { color: var(--cc-red); }
 .wb-fav-icon.wb-fav-slides { color: var(--cc-yellow); }
 .wb-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* PR d'un sous-agent dans son propre dossier, sur sa ligne (SubPrTag). */
+.wb-session-row .wb-sub-pr { flex: 0 0 auto; border-color: transparent; }
+.wb-session-row .wb-sub-pr.wt-pr-pending { border: 1px dashed var(--cc-dimmer); }
+/* Ligne courante dans une carte : la carte active a déjà le fond « elevated », la ligne prend la teinte de l'accent
+   pour se voir (sinon une ligne survolée paraissait plus sélectionnée qu'elle). */
+.wb-ws .wb-ws-rows .wb-row.active { background: var(--cc-accent-soft); box-shadow: inset 0 0 0 1px rgba(var(--cc-accent-rgb), 0.35); font-weight: 500; }
