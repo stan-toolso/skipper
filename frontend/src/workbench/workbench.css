@@ -1379,7 +1379,9 @@ a.task-mention:hover { background: rgba(var(--cc-accent-rgb), 0.24); color: var(
   .deploy-card .card-body > .d-flex { width: 100%; }
 }
 /* Planification dans la sidebar (scheduleGroups) : une ligne avec l'alarme, les sessions de ses exécutions dessous. */
-.wb-schedule-group { color: var(--cc-dim); font-size: 12.5px; cursor: pointer; }
+/* width: auto : .wb-row-btn met width: 100 %, qui s'ajoute à la marge de .wb-row et faisait déborder la sidebar
+   de 6 px (barre de défilement horizontale permanente, visible sous Firefox). */
+.wb-schedule-group { color: var(--cc-dim); font-size: 12.5px; cursor: pointer; width: auto; }
 .wb-schedule-group .wb-row-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-schedule-group .wb-state { flex: 0 0 auto; }
 .wb-schedule-group:hover, .wb-schedule-group.open { color: var(--cc-fg); }
