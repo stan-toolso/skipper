@@ -36,4 +36,10 @@ RUN arch="$(uname -m)"; case "$arch" in x86_64) a=amd64 ;; aarch64|arm64) a=arm6
 RUN mkdir -p /tmp/home && chmod 1777 /tmp/home
 ENV TERM=xterm-256color LANG=C.UTF-8
 
+# Commandes Bash des agents en priorité basse (nice 10) : un build, une installation ou des tests ne ralentissent
+# plus les processus claude, les serveurs MCP ni les aperçus du conteneur. Le CLI Claude Code enveloppe chaque
+# commande par ce script (chemin absolu de l'image, hors des dossiers inscriptibles par les sessions).
+COPY --chmod=755 skipper-low-priority /usr/local/bin/skipper-low-priority
+ENV CLAUDE_CODE_SHELL_PREFIX=/usr/local/bin/skipper-low-priority
+
 CMD ["sleep", "infinity"]
