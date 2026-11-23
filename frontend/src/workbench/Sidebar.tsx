@@ -2,7 +2,7 @@ import AgentAvatar from '../components/AgentAvatar';
 import { isOpus, shortModel } from '../lib/models';
 import { useMutation, useQuery } from '@apollo/client';
 import PopMenu, { type MenuItem } from '../components/PopMenu';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Spinner } from 'react-bootstrap';
 import { useAuth } from '../auth/AuthContext';
@@ -350,6 +350,21 @@ function branchIcon(ws: Workspace, pr: PullRequestRef | null | undefined): { cls
   return { cls: `wt-pr-${state}`, title: `${base} · pull request #${pr.number} ${state === 'draft' ? 'brouillon' : state === 'open' ? 'ouverte' : state === 'merged' ? 'fusionnée' : 'fermée'}` };
 }
 
+/**
+ * Étape de la PR d'un sous-agent qui travaille dans son propre dossier, sur sa ligne : « #12 », « #12 ✓ »… colorée
+ * comme la pastille des cartes. Seulement tant qu'elle attend une action ou vient d'être fusionnée (PR_PILL).
+ */
+function SubPrTag({ pr }: { pr: PullRequestRef }) {
+  const state = prState(pr);
+  const pill = PR_PILL[state];
+  if (!pill) return null;
+  return (
+    <span className={`wb-tag wb-sub-pr wt-pr-${state}`} title={`Pull request de sa branche : ${pr.number == null ? prLabel(pr) : `#${pr.number}`} · ${pill}`}>
+      <i className="bi bi-git" /> {pr.number == null ? pill : `#${pr.number}`}
+    </span>
+  );
+}
+
 function RowWithMenu({ to, active, indent, title, items, children }: { to: string; active: boolean; indent: number; title: string; items: MenuItem[]; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
@@ -388,7 +403,7 @@ function RowWithMenu({ to, active, indent, title, items, children }: { to: strin
  * Ligne d'une session. Ses sous-agents (`children`, sessions lancées par son agent) sont repliés derrière une ligne
  * « N sous-agents » ; dépliés, ils apparaissent indentés (`depth`), reliés par └ et marqués d'un robot.
  */
-function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null }: { s: SidebarSession; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null }) {
+function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, children = [], wsKey = null, elsewhere = null, pr = null, prOf }: { s: SidebarSession; indent: number; depth?: number; byAgent?: boolean; parentName?: string | null; children?: SessionNode<PoolSession>[]; /** Clé du dossier de la carte : un sous-agent d'un autre dossier est étiqueté. */ wsKey?: string | null; /** Nom du dossier du sous-agent quand ce n'est pas celui de la carte. */ elsewhere?: string | null; /** PR suivie du dossier propre à cette session (sous-agent dans son dossier à lui). */ pr?: PullRequestRef | null; /** PR suivie d'un dossier, pour les sous-agents dépliés. */ prOf?: (worksessionId: string | null) => PullRequestRef | null }) {
   const location = useLocation();
   const [open, setOpen] = useState<boolean | null>(null); // null : automatique (page courante ou demande en attente chez un sous-agent)
   const childActive = children.some((c) => location.pathname.startsWith(`/sessions/${c.session.id}`));
@@ -421,6 +436,7 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
             {shortModel(s.model)}
           </span>
         )}
+        {pr && <SubPrTag pr={pr} />}
         {elsewhere && !s.name.toLowerCase().startsWith(elsewhere.toLowerCase()) && (
           <span className="wb-tag" title={`Travaille dans le dossier ${elsewhere}`}>
             <i className="bi bi-layers" /> {elsewhere}
@@ -452,7 +468,7 @@ function SessionRow({ s, indent, depth = 0, byAgent = false, parentName = null, 
       )}
       {(s.subagents?.length ?? 0) > 0 && <CliSubagentRows sessionId={s.id} subagents={s.subagents!} indent={left + CHILD_INDENT} />}
       {children.length > 0 && <SubagentsRow children={children.map((c) => c.session)} indent={left + CHILD_INDENT} expanded={expanded} onToggle={() => setOpen(!expanded)} />}
-      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'dossier supprimé' : c.session.wsBranch ?? c.session.wsName) : null} />)}
+      {expanded && children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={indent} depth={c.depth} byAgent parentName={c.parentName} elsewhere={c.session.wsKey !== wsKey ? (c.session.wsDeleted ? 'dossier supprimé' : c.session.wsBranch ?? c.session.wsName) : null} pr={c.session.wsKey !== wsKey ? prOf?.(c.session.wsWorksessionId) ?? null : null} prOf={prOf} />)}
     </>
   );
 }
@@ -573,7 +589,7 @@ function TerminalRow({ t, indent }: { t: SidebarTerminal; indent: number }) {
  * La carte du checkout principal (`primary`) ne subsiste que pour les sessions et terminaux d'avant les work
  * sessions : elle liste ses sessions comme avant.
  */
-function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOthers, onShowOthers, label }: { ws: Workspace; pr: PullRequestRef | null | undefined; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; showOthers: boolean; onShowOthers: () => void; /** Nom affiché à la place de celui du dossier (session d'exécution sous sa planification : la date seule). */ label?: string }) {
+function WorkspaceCard({ ws, pr, prOf, expanded, onToggle, tabUrl, filterMine, showOthers, onShowOthers, label }: { ws: Workspace; pr: PullRequestRef | null | undefined; /** PR suivie d'un autre dossier du projet (sous-agents dans leur dossier). */ prOf: (worksessionId: string | null) => PullRequestRef | null; expanded: boolean; onToggle: () => void; tabUrl: string | null; filterMine: boolean; showOthers: boolean; onShowOthers: () => void; /** Nom affiché à la place de celui du dossier (session d'exécution sous sa planification : la date seule). */ label?: string }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -805,7 +821,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
           {ws.primary ? (
             <>
               {groups.map(({ root, children }) => (
-                <SessionRow key={root.session.id} s={root.session} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} />
+                <SessionRow key={root.session.id} s={root.session} indent={30} byAgent={root.byAgent} parentName={root.parentName} children={children} wsKey={ws.key} prOf={prOf} />
               ))}
               {hiddenOthers > 0 && (
                 <button type="button" className="wb-row wb-empty wb-row-btn" style={{ paddingLeft: 30 }} onClick={onShowOthers}>
@@ -825,7 +841,7 @@ function WorkspaceCard({ ws, pr, expanded, onToggle, tabUrl, filterMine, showOth
                 )}
                 {cli.length > 0 && <CliSubagentRows sessionId={session.id} subagents={cli} indent={16} />}
                 {/* La carte dépliée liste directement les sous-agents : pas de ligne « N sous-agents » intermédiaire, la carte se replie déjà. */}
-                {children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={16} depth={c.depth} byAgent parentName={c.parentName} elsewhere={null} />)}
+                {children.map((c) => <SessionRow key={c.session.id} s={c.session} indent={16} depth={c.depth} byAgent parentName={c.parentName} elsewhere={null} pr={c.session.wsKey !== ws.key ? prOf(c.session.wsWorksessionId) : null} prOf={prOf} />)}
               </>
             )
           )}
@@ -905,15 +921,20 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
   const { openSearch } = useSearchPalette();
   const { openHelp } = useShortcutsHelp();
   const open = useMemo(() => (user?.isSuperAdmin ? openItemsOf([...tabs.map((t) => t.url), location.pathname]) : null), [user?.isSuperAdmin, tabs, location.pathname]);
-  const { data } = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[]; guestProjects: GuestProject[] }>(SIDEBAR, { variables: { open }, pollInterval: 5000, fetchPolicy: 'cache-and-network' });
+  // Les variables (`open`) changent quand un super administrateur ouvre une session pas encore en onglet : on garde
+  // les données précédentes le temps du chargement, sinon la liste se vide (défilement perdu, aucune ligne active).
+  const sidebarQuery = usePollingQuery<{ projects: SidebarProject[]; chats: SidebarSession[]; guestProjects: GuestProject[] }>(SIDEBAR, { variables: { open }, pollInterval: 5000, fetchPolicy: 'cache-and-network' });
+  const data = sidebarQuery.data ?? sidebarQuery.previousData;
   const chats = data?.chats ?? [];
   const guestProjects = data?.guestProjects ?? [];
   // Accès restreint (invité seulement) : la sidebar se réduit aux conversations et aux artefacts partagés.
   const restricted = Boolean(user?.conversationsOnly);
-  const { data: prData } = usePollingQuery<{ projects: { id: string; worksessions: { id: string; trackedPullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const prQuery = usePollingQuery<{ projects: { id: string; worksessions: { id: string; trackedPullRequest: PullRequestRef | null }[] }[] }>(SIDEBAR_PULL_REQUESTS, { variables: { open }, pollInterval: 60_000 });
+  const prData = prQuery.data ?? prQuery.previousData;
   const { data: inboxData } = usePollingQuery<{ inboxCounts: { total: number } }>(INBOX_COUNTS, { variables: { projectId: projectWindowId }, pollInterval: 5000 });
   const inboxTotal = inboxData?.inboxCounts.total ?? 0;
   const prByWorksession = useMemo(() => new Map((prData?.projects ?? []).flatMap((p) => p.worksessions.map((w) => [w.id, w.trackedPullRequest] as const))), [prData]);
+  const prOf = useCallback((worksessionId: string | null) => (worksessionId ? prByWorksession.get(worksessionId) ?? null : null), [prByWorksession]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(loadExpanded);
   const [filter, setFilter] = useState<'mine' | 'all'>(() => {
     try {
@@ -1162,6 +1183,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                     key={ws.key}
                     ws={ws}
                     pr={ws.worksessionId ? prByWorksession.get(ws.worksessionId) : null}
+                    prOf={prOf}
                     expanded={expanded[ws.key] ?? false}
                     onToggle={() => toggle(ws.key, false)}
                     tabUrl={tabs.find((t) => t.key === ws.key)?.url ?? null}
