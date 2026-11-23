@@ -1,0 +1,13 @@
+#!/bin/sh
+# Enveloppe des commandes Bash des agents (CLAUDE_CODE_SHELL_PREFIX, posée par l'image du runner).
+# Le CLI Claude Code lance chaque commande sous la forme : skipper-low-priority '<commande complète>'
+# (préparation du shell comprise). On l'exécute avec bash, en priorité basse (nice 10) : les builds,
+# installations et tests des agents cèdent le CPU aux processus claude, aux serveurs MCP et aux aperçus
+# du même conteneur, qui restent à la priorité normale. Si nice échoue, la commande tourne quand même.
+[ "$#" -eq 0 ] && exit 0
+cmd=$1
+shift
+if command -v nice >/dev/null 2>&1 && nice -n 10 true >/dev/null 2>&1; then
+  exec nice -n 10 /bin/bash -c "$cmd" "$@"
+fi
+exec /bin/bash -c "$cmd" "$@"
