@@ -487,7 +487,7 @@ const T = {
   stripe: task(P.api, 'Passer à l’API Stripe 2026-10', 'DONE', 'HIGH', { sessions: [S.stripe], assignee: U.me, tags: ['stripe'], updated: 60 * 22, statusTag: 'à livrer' }),
   relances: task(P.api, 'Relances automatiques des factures impayées (J+7, J+15, J+30)', 'IN_PROGRESS', 'HIGH', { sessions: [S.relances], assignee: U.me, tags: ['factures'], statusTag: 'bloquée', due: day(-1) }),
   tva: task(P.api, 'TVA intracommunautaire sur les factures B2B', 'TODO', 'MEDIUM', { tags: ['compta'] }),
-  push: task(P.mobile, 'Rappel push la veille du départ en camp', 'IN_PROGRESS', 'HIGH', { sessions: [S.push], assignee: U.lea, tags: ['notifications'], statusTag: 'surveillance', wakeAt: ago(-60 * 14), wakeNote: 'vérifier que le rappel de 18 h est bien parti et compter les ouvertures' }),
+  push: task(P.mobile, 'Rappel push la veille du départ en camp', 'IN_PROGRESS', 'HIGH', { sessions: [S.push], assignee: U.lea, tags: ['notifications'], state: 'review', statusTag: 'en prod · mesure', wakeAt: ago(-60 * 14), wakeNote: 'vérifier que le rappel de 18 h est bien parti et compter les ouvertures' }),
   cotis: task(P.mobile, 'Paiement des cotisations en trois fois', 'IN_PROGRESS', 'MEDIUM', { sessions: [S.revue], assignee: U.max, tags: ['paiement'], reporter: U.lea }),
   hors: task(P.mobile, 'Mode hors ligne pour la fiche sanitaire', 'TODO', 'LOW', { tags: ['offline'] }),
   ios: task(P.mobile, 'Publier la version 2.4 sur l’App Store', 'CANCELLED', 'MEDIUM', { updated: 60 * 24 * 5 }),

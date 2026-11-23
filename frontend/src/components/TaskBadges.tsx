@@ -154,6 +154,21 @@ export function TaskWaitingBadge({ task, short = false, className = '' }: { task
   );
 }
 
+/**
+ * Date de vérification programmée (date de réveil, `Task.wakeAt`) : jusque-là la tâche est en attente ; passée, elle
+ * revient à traiter (en rouge).
+ */
+export function TaskWakeDate({ task, className = '' }: { task: { wakeAt?: string | null; wakeNote?: string | null }; className?: string }) {
+  if (!task.wakeAt) return null;
+  const past = new Date(task.wakeAt).getTime() <= Date.now();
+  return (
+    <span className={`text-nowrap${past ? ' text-danger' : ''} ${className}`} title={`${past ? 'Vérification prévue (date passée)' : 'Vérification programmée'} le ${new Date(task.wakeAt).toLocaleString()}${task.wakeNote ? ` : ${task.wakeNote}` : ''}`}>
+      <i className="bi bi-alarm me-1" />
+      {shortDate(task.wakeAt)}
+    </span>
+  );
+}
+
 /** Liste de tâches liées (dépendances, tâches qui en dépendent), chacune avec son statut et un lien vers sa page. */
 export function TaskRefList({ tasks }: { tasks: TaskRef[] }) {
   return (

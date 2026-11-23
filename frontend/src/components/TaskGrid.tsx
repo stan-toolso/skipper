@@ -26,7 +26,7 @@ import {
 import { PullRequestChip } from './PullRequests';
 import { TrackedPullRequestChip } from './TrackedPullRequests';
 import TaskActions from './TaskActions';
-import { formatPerson, isOverdue, TaskBlockedBadge, TaskStalledBadge, TaskWaitingBadge, TaskPriorityBadge, TaskStatusBadge, TaskTags } from './TaskBadges';
+import { formatPerson, isOverdue, TaskWakeDate, TaskBlockedBadge, TaskStalledBadge, TaskWaitingBadge, TaskPriorityBadge, TaskStatusBadge, TaskTags } from './TaskBadges';
 import type { LaunchTarget } from './TaskLaunchModal';
 
 export interface TaskGridProps {
@@ -339,6 +339,8 @@ function cellTitle(t: Task, key: TaskColumnKey): string | undefined {
       return new Date(cellText(t, key)).toLocaleString();
     case 'completedAt':
       return t.completedAt ? new Date(t.completedAt).toLocaleString() : undefined;
+    case 'wakeAt':
+      return t.wakeAt ? `Vérification programmée le ${new Date(t.wakeAt).toLocaleString()}${t.wakeNote ? ` : ${t.wakeNote}` : ''}` : undefined;
     case 'createdBy':
       return t.createdBySession ? `Créée par la session ${t.createdBySession.name}` : "Créée depuis l'interface";
     case 'session':
@@ -491,6 +493,8 @@ function Cell({ task: t, col, reason, onEdit, onTag, target }: { task: Task; col
       return <>{t.reporter?.name ?? t.reporter?.email ?? ''}</>;
     case 'dueDate':
       return t.dueDate ? <span className={isOverdue(t) ? 'text-danger' : undefined}>{new Date(t.dueDate).toLocaleDateString()}</span> : null;
+    case 'wakeAt':
+      return <TaskWakeDate task={t} />;
     case 'session':
       return t.session ? (
         <Link to={`/sessions/${t.session.id}`} className="text-reset text-decoration-none">

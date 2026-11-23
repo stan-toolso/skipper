@@ -100,6 +100,31 @@ describe.skipIf(!adminUrl)('tâches « agent arrêté » (PostgreSQL)', () => {
     }
   });
 
+  it('« À valider » avec une date de réveil future : en attente (vérification prévue plus tard), puis à valider une fois la date passée', async () => {
+    // Cas Curso : « en prod · mesure 29/11 », statut À valider, réveil posé au jour de la mesure.
+    const measured = await task('in_progress', [await session('completed', '2026-11-20T10:00:00Z')]);
+    await pool.query(`UPDATE tasks SET state = 'review', status_tag = 'en prod · mesure', wake_at = now() + interval '3 days' WHERE id = $1`, [measured]);
+    expect(await stalled(measured)).toBeNull();
+    expect((await waiting(measured))?.toISOString()).toBe('2026-11-20T10:00:00.000Z');
+    expect((await repo.list({ projectId: project, waiting: true })).map((x) => x.id)).toContain(measured);
+    // Même sans session en charge (tâche passée à la main), et même si la dernière session a échoué.
+    const manual = await task('in_progress', [await session('failed', '2026-11-20T10:00:00Z')]);
+    await pool.query(`UPDATE tasks SET state = 'review', wake_at = now() + interval '1 day' WHERE id = $1`, [manual]);
+    expect(await stalled(manual)).toBeNull();
+    expect(await waiting(manual)).not.toBeNull();
+    const alone = await task('in_progress', []);
+    await pool.query(`UPDATE tasks SET state = 'review', wake_at = now() + interval '1 day' WHERE id = $1`, [alone]);
+    expect(await waiting(alone)).not.toBeNull();
+    // Une session au travail : ni l'un ni l'autre.
+    const busy = await task('in_progress', [await session('running')]);
+    await pool.query(`UPDATE tasks SET state = 'review', wake_at = now() + interval '1 day' WHERE id = $1`, [busy]);
+    expect(await waiting(busy)).toBeNull();
+    // Date passée : de nouveau « à valider » (ni arrêté, ni en attente).
+    await pool.query(`UPDATE tasks SET wake_at = now() - interval '1 hour' WHERE id = $1`, [measured]);
+    expect(await stalled(measured)).toBeNull();
+    expect(await waiting(measured)).toBeNull();
+  });
+
   it('rien tant qu’une session en charge tourne, sans session, hors « en cours », ou avec une PR ouverte', async () => {
     const running = await task('in_progress', [await session('stopped', '2026-11-01T10:00:00Z'), await session('running')]);
     const none = await task('in_progress', []);

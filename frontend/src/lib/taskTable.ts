@@ -21,6 +21,7 @@ export type TaskColumnKey =
   | 'assignee'
   | 'reporter'
   | 'dueDate'
+  | 'wakeAt'
   | 'session'
   | 'branch'
   | 'pullRequest'
@@ -62,6 +63,13 @@ export const DUE_FILTER_OPTIONS = [
   { value: 'none', label: 'Sans échéance' },
 ];
 
+/** Filtre de la colonne « Vérification » (date de réveil posée par l'agent ou une personne). */
+export const WAKE_FILTER_OPTIONS = [
+  { value: 'set', label: 'Programmée' },
+  { value: 'past', label: 'Date passée' },
+  { value: 'none', label: 'Non programmée' },
+];
+
 export const TASK_COLUMNS: TaskColumn[] = [
   { key: 'title', label: 'Titre', width: 360, minWidth: 140, defaultVisible: true, sortable: true, filter: { kind: 'text' } },
   { key: 'project', label: 'Projet', width: 105, minWidth: 70, defaultVisible: true, sortable: true, filter: { kind: 'select', options: [] } },
@@ -72,6 +80,7 @@ export const TASK_COLUMNS: TaskColumn[] = [
   { key: 'assignee', label: 'Responsable', width: 115, minWidth: 70, defaultVisible: true, sortable: true, filter: { kind: 'text' } },
   { key: 'reporter', label: 'Rapporteur', width: 130, minWidth: 70, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
   { key: 'dueDate', label: 'Échéance', width: 100, minWidth: 80, defaultVisible: false, sortable: true, filter: { kind: 'select', options: DUE_FILTER_OPTIONS } },
+  { key: 'wakeAt', label: 'Vérification', width: 118, minWidth: 80, defaultVisible: true, sortable: true, filter: { kind: 'select', options: WAKE_FILTER_OPTIONS } },
   { key: 'session', label: 'Session', width: 160, minWidth: 80, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
   { key: 'branch', label: 'Branche', width: 160, minWidth: 80, defaultVisible: false, sortable: true, filter: { kind: 'text' } },
   { key: 'pullRequest', label: 'PR', width: 96, minWidth: 60, defaultVisible: true, sortable: true, filter: { kind: 'text' } },
@@ -227,6 +236,8 @@ export function cellText(t: Task, key: TaskColumnKey): string {
       return personText(t.reporter);
     case 'dueDate':
       return t.dueDate ?? '';
+    case 'wakeAt':
+      return t.wakeAt ? `${t.wakeAt}${t.wakeNote ? ` ${t.wakeNote}` : ''}` : '';
     case 'session':
       return t.session?.name ?? '';
     case 'branch':
@@ -287,6 +298,11 @@ export function matchesFilter(t: Task, key: TaskColumnKey, value: string, now = 
       }
       return true;
     }
+    case 'wakeAt':
+      if (v === 'none') return !t.wakeAt;
+      if (!t.wakeAt) return false;
+      if (v === 'past') return new Date(t.wakeAt).getTime() <= now.getTime();
+      return true;
     default: {
       const needle = fold(v);
       if (key === 'tags') return t.tags.some((tag) => fold(tag).includes(needle));
@@ -330,6 +346,8 @@ export function sortValue(t: Task, key: TaskColumnKey): string | number | null {
       return t.reporter ? fold(personText(t.reporter)) : null;
     case 'dueDate':
       return t.dueDate ?? null;
+    case 'wakeAt':
+      return t.wakeAt ?? null;
     case 'session':
       return t.session ? fold(t.session.name) : null;
     case 'branch':
