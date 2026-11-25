@@ -295,7 +295,7 @@ export function createTasksMcpServer(project: Project, sessionId: string, sessio
             .string()
             .optional()
             .describe(
-              "Date de réveil (ISO 8601 avec fuseau, ex. 2026-11-14T08:00:00+01:00 ; chaîne vide pour retirer) d'une tâche que tu laisses en cours parce que tu attends quelque chose de daté (job de nuit, relevé du lendemain, réponse) : elle est « en attente » (pas « agent arrêté ») jusque-là, puis l'agent qui la tenait est reconvoqué sur la tâche (pour une session pilotée par une personne, elle revient dans « À traiter »). 90 jours au plus",
+              "Date de réveil (ISO 8601 avec fuseau, ex. 2026-11-14T08:00:00+01:00 ; chaîne vide pour retirer) d'une tâche en cours ou « à valider » (statut qui attend une personne) parce que tu attends quelque chose de daté (job de nuit, relevé du lendemain, réponse) : elle est « en attente » (pas « agent arrêté ») jusque-là, puis l'agent qui la tenait est reconvoqué sur la tâche (pour une session pilotée par une personne, elle revient dans « À traiter »). 90 jours au plus",
             ),
           wake_note: z.string().optional().describe('Ce qu\'il faudra vérifier au réveil, assez précis pour une session qui repart de zéro (transmis à l\'agent réveillé) ; chaîne vide pour retirer'),
         },
