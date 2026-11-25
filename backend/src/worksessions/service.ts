@@ -10,7 +10,7 @@ import { LABEL_MAX, uniqueName, uniqueNameAndBranch } from './names.js';
 import { worksessionRepository } from './repository.js';
 import { worksessionLabel, type Worksession } from './types.js';
 import { log } from '../log.js';
-import { seedWorksessionDeps } from '../previews/deps.js';
+import { removeNodeModules, seedWorksessionDeps } from '../previews/deps.js';
 
 export { namesFromText, uniqueName } from './names.js';
 
@@ -126,6 +126,34 @@ async function runRetireHooks(project: Project, worksession: Worksession): Promi
   for (const hook of worksessionHooks.beforeRetire) {
     await hook(project, worksession).catch((err) => log.warn(`[worksessions] ${worksession.name} : ${(err as Error).message}`));
   }
+}
+
+async function runOnCreatedHooks(project: Project, worksession: Worksession, actorId: string | null): Promise<void> {
+  for (const hook of worksessionHooks.onCreated) {
+    await hook(project, worksession, actorId).catch((err) => log.warn(`[worksessions] ${worksession.name} : ${(err as Error).message}`));
+  }
+}
+
+/** Allègements en cours des dossiers archivés, par work session : la restauration attend le sien. */
+const lightening = new Map<string, Promise<void>>();
+
+/**
+ * Allège le dossier d'une work session qui vient d'être archivée : ses `node_modules` sont retirés (de quelques Mo de liens
+ * à 1 Go pour une copie installée à part), la restauration les reconstitue depuis l'instantané. Lancé sans être attendu ;
+ * rien n'est retiré si la work session a été restaurée entre-temps.
+ */
+function lightenArchived(project: Project, wt: Worksession): void {
+  if (!project.gitUrl) return;
+  const dir = worksessionPath(project, wt);
+  const task = (async () => {
+    const current = await worksessionRepository.findById(wt.id);
+    if (!current?.archivedAt || !(await exists(dir))) return;
+    const removed = await removeNodeModules(dir);
+    if (removed.length) log.info(`[worksessions] ${wt.name} archivée : ${removed.join(', ')} retiré(s)`);
+  })()
+    .catch((err) => log.warn(`[worksessions] ${wt.name} : dossier archivé non allégé : ${(err as Error).message}`))
+    .finally(() => lightening.delete(wt.id));
+  lightening.set(wt.id, task);
 }
 
 /** Restaurations de dossier en cours, par work session : des appels concurrents partagent la même. */
@@ -248,9 +276,7 @@ export const worksessionService = {
       if ((err as { code?: string }).code === '23505') throw new AppError(`Une work session « ${name} » existe déjà`);
       throw err;
     }
-    for (const hook of worksessionHooks.onCreated) {
-      await hook(project, created, actorId ?? null).catch((err) => log.warn(`[worksessions] ${created.name} : ${(err as Error).message}`));
-    }
+    await runOnCreatedHooks(project, created, actorId ?? null);
     if (main) void runCreateHooks(project, created);
     return created;
   },
@@ -355,11 +381,16 @@ export const worksessionService = {
     return worksessionRepository.delete(id);
   },
 
-  /** Archive la work session : ses sessions actives sont archivées avec elle (date commune), son dossier est conservé. */
+  /**
+   * Archive la work session : ses sessions actives sont archivées avec elle (date commune), son dossier est conservé,
+   * allégé de ses dépendances (`lightenArchived`), puis retiré du disque quelques jours plus tard s'il n'a rien
+   * d'unique (worksessions/housekeeping.ts) ; la restauration le reconstitue.
+   */
   async archive(id: string, archiveSessions: (worksessionId: string, at: Date) => Promise<void>): Promise<Worksession> {
     const wt = await this.get(id);
     if (wt.archivedAt) return wt;
-    await runRetireHooks(await projectService.get(wt.projectId), wt);
+    const project = await projectService.get(wt.projectId);
+    await runRetireHooks(project, wt);
     const at = new Date();
     const archived = (await worksessionRepository.setArchived(id, at)) ?? wt;
     try {
@@ -368,6 +399,7 @@ export const worksessionService = {
       await worksessionRepository.setArchived(id, null);
       throw new AppError(`La work session n'a pas pu être archivée, son dossier est conservé : ${(err as Error).message}`);
     }
+    lightenArchived(project, archived);
     return archived;
   },
 
@@ -377,7 +409,17 @@ export const worksessionService = {
     if (!wt.archivedAt) return wt;
     const other = await worksessionRepository.findByBranch(wt.projectId, wt.branch);
     if (other && other.id !== wt.id) throw new AppError(`La branche ${wt.branch} est extraite dans la work session « ${worksessionLabel(other)} » : archivez-la ou supprimez-la d'abord`);
-    return (await worksessionRepository.setArchived(id, null)) ?? wt;
+    await lightening.get(id);
+    const restored = (await worksessionRepository.setArchived(id, null)) ?? wt;
+    // Dépendances retirées à l'archivage : reliées depuis l'instantané (une seconde), installation de la différence en
+    // arrière-plan. Dossier retiré du disque : `ensureDir` le recrée au démarrage de la session.
+    const project = await projectService.get(wt.projectId);
+    const dir = worksessionPath(project, restored);
+    if (project.gitUrl && (await exists(dir))) {
+      await seedWorksessionDeps(worksessionsRoot(project), dir);
+      void runCreateHooks(project, restored);
+    }
+    return restored;
   },
 
   /** Vérifie qu'une work session peut recevoir une session ou un terminal : du projet, non archivée. */
@@ -409,8 +451,12 @@ export const worksessionService = {
       await git(['worktree', 'prune'], main).catch(() => undefined);
       await mkdir(worksessionsRoot(project), { recursive: true });
       const { how, from } = await this.checkout(main, dir, wt.branch, { defaultBranch: project.gitBranch });
-      if (how === 'new') log.warn(`[worksessions] ${wt.name} : branche ${wt.branch} disparue, work session recréée depuis ${from}`);
+      if (how === 'new') log.info(`[worksessions] ${wt.name} : branche ${wt.branch} absente, work session recréée depuis ${from}`);
       else log.info(`[worksessions] dossier de ${wt.name} recréé (${how})`);
+      // Comme à la création : dépendances liées, fichiers d'environnement écrits, installation de la différence.
+      await seedWorksessionDeps(worksessionsRoot(project), dir);
+      await runOnCreatedHooks(project, wt, null);
+      void runCreateHooks(project, wt);
       return dir;
     })().finally(() => restoring.delete(wt.id));
     restoring.set(wt.id, task);

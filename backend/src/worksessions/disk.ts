@@ -99,6 +99,37 @@ export function assessCleanup(e: Pick<WorksessionDiskEntry, 'worksession' | 'exi
   return null;
 }
 
+/**
+ * Place propre d'un dossier (octets) : ses fichiers qui n'ont qu'un lien, c'est-à-dire hors dépendances liées à un instantané
+ * (`.skipper-deps`, compté à part). Indépendant des autres dossiers : chaque mesure se garde et se refait seule.
+ */
+export async function ownBytes(dir: string): Promise<number> {
+  let stdout = '';
+  try {
+    ({ stdout } = await execFileAsync('find', [dir, '-xdev', '-links', '1', '-printf', '%b\\n'], { maxBuffer: 64 * 1024 * 1024 }));
+  } catch (err) {
+    // Fichiers illisibles (droits du conteneur) : find sort en erreur mais donne quand même ce qu'il a lu.
+    stdout = (err as { stdout?: string }).stdout ?? '';
+  }
+  let blocks = 0;
+  for (const line of stdout.split('\n')) if (line) blocks += Number(line) || 0;
+  return blocks * 512;
+}
+
+/** Applique `fn` à chaque élément, `limit` à la fois, dans l'ordre d'origine. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 /** `du -sk` en un seul appel : un fichier lié plusieurs fois n'est compté qu'au premier dossier qui le contient. */
 export async function diskUsage(dirs: string[]): Promise<Map<string, number>> {
   const sizes = new Map<string, number>();
@@ -135,7 +166,7 @@ async function count(args: string[], cwd: string): Promise<number | null> {
   return git(args, cwd).then((out) => Number(out) || 0, () => null);
 }
 
-async function gitState(dir: string, base: string | null): Promise<Pick<WorksessionDiskEntry, 'branch' | 'aheadCount' | 'unpushedCount' | 'changes'> & { lastCommitAt: Date | null }> {
+export async function gitState(dir: string, base: string | null): Promise<Pick<WorksessionDiskEntry, 'branch' | 'aheadCount' | 'unpushedCount' | 'changes'> & { lastCommitAt: Date | null }> {
   const head = await git(['rev-parse', '--abbrev-ref', 'HEAD'], dir).catch(() => null);
   const branch = head && head !== 'HEAD' ? head : null;
   const [status, aheadCount, unpushedCount, lastCommit] = await Promise.all([
@@ -159,43 +190,67 @@ const latest = (...dates: (Date | null | undefined)[]): Date | null =>
   dates.reduce<Date | null>((a, d) => (d && !Number.isNaN(d.getTime()) && (!a || d > a) ? d : a), null);
 
 /**
- * Tailles par projet : un `du` sur les dossiers d'un gros projet prend une vingtaine de secondes (94 dossiers, plus d'un
- * million de fichiers pour Skipper). La mesure tourne en arrière-plan, une à la fois par projet ; la liste attend au plus
- * `SIZE_WAIT_MS` puis rend la mesure précédente (ou aucune) en signalant qu'une mesure est en cours.
+ * Tailles, dossier par dossier : un seul `du` sur tous les dossiers d'un gros projet ne finissait plus (575 dossiers pour
+ * Curso : plus de cinq minutes, refaites toutes les dix minutes). Chaque dossier est mesuré seul (`ownBytes`, les fichiers
+ * liés à un instantané n'y comptent pas) et sa mesure gardée : 10 min pour un dossier actif, 6 h pour un dossier archivé,
+ * qui ne bouge plus ; l'instantané (`du`) une heure. Les mesures manquantes ou périmées tournent en arrière-plan, trois à
+ * la fois, une file par projet ; la liste attend au plus `SIZE_WAIT_MS` et rend ce qui est déjà mesuré.
  */
-const SIZE_TTL_MS = 10 * 60_000;
+export const SIZE_TTL_MS = 10 * 60_000;
+export const ARCHIVED_SIZE_TTL_MS = 6 * 60 * 60_000;
+const STORE_SIZE_TTL_MS = 60 * 60_000;
 const SIZE_WAIT_MS = 2_000;
-interface SizeState {
-  done: { at: number; sizes: Map<string, number> } | null;
-  running: Promise<void> | null;
+const SIZE_CONCURRENCY = 3;
+interface SizeTarget {
+  path: string;
+  ttlMs: number;
+  /** Instantané des dépendances : mesuré par `du` (tout compte), pas par `ownBytes`. */
+  store?: boolean;
 }
-const sizeStates = new Map<string, SizeState>();
+const sizeCache = new Map<string, { at: number; bytes: number }>();
+const sizeRuns = new Map<string, Promise<void>>();
 
-/** Tailles des dossiers (gardées 10 min, sauf `refresh` ou dossier jamais mesuré), date de la mesure, mesure en cours. */
-async function sizesFor(projectId: string, dirs: string[], refresh: boolean): Promise<{ at: Date | null; sizes: Map<string, number>; measuring: boolean }> {
-  let st = sizeStates.get(projectId);
-  if (!st) sizeStates.set(projectId, (st = { done: null, running: null }));
-  const state = st;
-  const fresh = state.done && Date.now() - state.done.at < SIZE_TTL_MS && dirs.every((d) => state.done!.sizes.has(d));
-  if (!state.running && (refresh || !fresh)) {
-    const at = Date.now();
-    state.running = diskUsage(dirs)
-      .then((sizes) => {
-        state.done = { at, sizes };
-      })
-      .catch((err) => log.warn(`[worksessions] du a échoué : ${(err as Error).message}`))
-      .finally(() => {
-        state.running = null;
-      });
+/** Tailles connues des dossiers, date de la plus ancienne mesure rendue, mesure en cours. */
+async function sizesFor(projectId: string, targets: SizeTarget[]): Promise<{ at: Date | null; sizes: Map<string, number>; measuring: boolean }> {
+  const now = Date.now();
+  const stale = targets.filter((t) => {
+    const c = sizeCache.get(t.path);
+    return !c || now - c.at >= t.ttlMs;
+  });
+  if (stale.length && !sizeRuns.has(projectId)) {
+    const run = mapLimit(stale, SIZE_CONCURRENCY, async (t) => {
+      try {
+        const bytes = t.store ? ((await diskUsage([t.path])).get(t.path) ?? 0) : await ownBytes(t.path);
+        sizeCache.set(t.path, { at: Date.now(), bytes });
+      } catch (err) {
+        log.warn(`[worksessions] mesure de ${t.path} : ${(err as Error).message}`);
+      }
+    })
+      .then(() => undefined)
+      .finally(() => sizeRuns.delete(projectId));
+    sizeRuns.set(projectId, run);
   }
-  if (state.running) await Promise.race([state.running, new Promise((r) => setTimeout(r, SIZE_WAIT_MS))]);
-  return { at: state.done ? new Date(state.done.at) : null, sizes: state.done?.sizes ?? new Map(), measuring: Boolean(state.running) };
+  const running = sizeRuns.get(projectId);
+  if (running) await Promise.race([running, new Promise((r) => setTimeout(r, SIZE_WAIT_MS))]);
+  const sizes = new Map<string, number>();
+  let oldest: number | null = null;
+  for (const t of targets) {
+    const c = sizeCache.get(t.path);
+    if (!c) continue;
+    sizes.set(t.path, c.bytes);
+    if (oldest === null || c.at < oldest) oldest = c.at;
+  }
+  return { at: oldest === null ? null : new Date(oldest), sizes, measuring: sizeRuns.has(projectId) };
 }
 
-/** Les tailles du projet sont à remesurer (dossiers supprimés ou ajoutés) ; les dernières restent affichées en attendant. */
-function invalidateSizes(projectId: string): void {
-  const st = sizeStates.get(projectId);
-  if (st?.done) st.done.at = 0;
+/** Ces dossiers sont à remesurer (supprimés, dépendances remplacées). */
+function invalidateSizes(paths: string[]): void {
+  for (const p of paths) sizeCache.delete(p);
+}
+
+/** Oublie la taille d'un dossier qui vient de changer du tout au tout (archivé et allégé, supprimé). */
+export function forgetSize(dir: string): void {
+  sizeCache.delete(dir);
 }
 
 /** Nom de dossier acceptable pour un orphelin : enfant direct du dossier des work sessions, pas un dossier technique. */
@@ -231,12 +286,14 @@ export const worksessionDisk = {
     ]);
     const taskOf = (w: Worksession) => (w.taskId ? tasks.find((t) => t.id === w.taskId) : undefined) ?? branchTasks.get(`${projectId}\u0000${w.branch}`) ?? null;
 
-    const entries: WorksessionDiskEntry[] = [];
-    for (const name of names) {
+    // Un dossier à la fois prenait plusieurs minutes pour les gros projets (cinq commandes git chacun) : huit à la fois.
+    const built = await mapLimit(names, 8, async (name): Promise<WorksessionDiskEntry | null> => {
       const dir = path.join(root, name);
       const worksession = byName.get(name) ?? null;
       const dirStat = await stat(dir).catch(() => null);
       const exists = Boolean(dirStat?.isDirectory());
+      // Dossier archivé puis retiré du disque (allègement des archives) : rien à montrer ni à nettoyer, il sera recréé à la restauration.
+      if (!exists && worksession?.archivedAt) return null;
       const wt = worktrees.get(dir);
       const state = exists && wt ? await gitState(dir, base) : null;
       const act = worksession ? (activity.get(worksession.id) ?? null) : null;
@@ -264,19 +321,28 @@ export const worksessionDisk = {
       // Projet sans dépôt : rien à fusionner, le nettoyage ne le concerne pas.
       entry.blocker = isGit ? assessCleanup(entry) : 'Projet sans dépôt git';
       entry.cleanable = entry.blocker === null;
-      entries.push(entry);
-    }
+      return entry;
+    });
+    const entries = built.filter((e): e is WorksessionDiskEntry => e !== null);
 
     const store = depsStoreRoot(root);
-    for (const e of entries) {
-      if (!e.exists) continue;
-      const { state } = await depsShareState(store, e.path).catch(() => ({ state: 'none' as const }));
-      e.deps = state === 'none' ? null : state;
-    }
+    await mapLimit(
+      entries.filter((e) => e.exists),
+      8,
+      async (e) => {
+        const { state } = await depsShareState(store, e.path).catch(() => ({ state: 'none' as const }));
+        e.deps = state === 'none' ? null : state;
+      },
+    );
     const hasStore = await stat(store).then((s) => s.isDirectory(), () => false);
-    // Instantanés d'abord : leurs fichiers liés dans les dossiers ne comptent qu'une fois, pour eux.
-    const measured = [...(hasStore ? [store] : []), ...entries.filter((e) => e.exists).map((e) => e.path)];
-    const { at: computedAt, sizes, measuring } = await sizesFor(projectId, measured, Boolean(opts.refresh));
+    // L'instantané compte ses fichiers une fois ; chaque dossier, ses seuls fichiers propres. « Actualiser » remesure les
+    // dossiers actifs, pas les archivés (qui ne bougent plus, remesurés toutes les 6 h).
+    const refresh = Boolean(opts.refresh);
+    const targets: SizeTarget[] = [
+      ...(hasStore ? [{ path: store, ttlMs: refresh ? 0 : STORE_SIZE_TTL_MS, store: true }] : []),
+      ...entries.filter((e) => e.exists).map((e) => ({ path: e.path, ttlMs: e.worksession?.archivedAt ? ARCHIVED_SIZE_TTL_MS : refresh ? 0 : SIZE_TTL_MS })),
+    ];
+    const { at: computedAt, sizes, measuring } = await sizesFor(projectId, targets);
     for (const e of entries) e.bytes = sizes.get(e.path) ?? null;
     const sharedBytes = hasStore ? (sizes.get(store) ?? null) : 0;
     const known = entries.filter((e) => e.bytes !== null);
@@ -296,6 +362,7 @@ export const worksessionDisk = {
     const report = await this.report(projectId, { refresh: true, actorId });
     const wanted = names?.length ? new Set(names) : null;
     const removed: string[] = [];
+    const removedPaths: string[] = [];
     const skipped: { name: string; reason: string }[] = [];
     let freedBytes = 0;
     for (const e of report.entries) {
@@ -307,6 +374,7 @@ export const worksessionDisk = {
       try {
         await removeWorksessionKeepingSessions(e.worksession.id, { deleteBranch: true });
         removed.push(e.name);
+        removedPaths.push(e.path);
         freedBytes += e.bytes ?? 0;
       } catch (err) {
         skipped.push({ name: e.name, reason: (err as Error).message });
@@ -314,7 +382,7 @@ export const worksessionDisk = {
     }
     const project = await projectService.get(projectId);
     if (project.gitUrl && (await isGitRepository(workspacePath(project)))) await git(['worktree', 'prune'], workspacePath(project)).catch(() => undefined);
-    invalidateSizes(projectId);
+    invalidateSizes(removedPaths);
     if (removed.length) log.info(`[worksessions] nettoyage de ${project.slug} : ${removed.join(', ')}`);
     return { removed, freedBytes, skipped };
   },
@@ -344,13 +412,15 @@ export const worksessionDisk = {
         continue;
       }
       try {
-        if (await relinkDeps(store, e.path)) relinked.push(e.name);
+        if (await relinkDeps(store, e.path)) {
+          relinked.push(e.name);
+          invalidateSizes([e.path]);
+        }
         else skipped.push({ name: e.name, reason: 'Dépendances déjà partagées ou sans instantané' });
       } catch (err) {
         skipped.push({ name: e.name, reason: (err as Error).message });
       }
     }
-    invalidateSizes(projectId);
     return { relinked, skipped };
   },
 
@@ -363,7 +433,6 @@ export const worksessionDisk = {
     const branch = project.gitUrl ? orphan.branch : name;
     if (!branch) throw new AppError(`Le dossier ${name} n'est sur aucune branche (HEAD détaché) : extrayez-y une branche d'abord`);
     if (await worksessionRepository.findByBranch(projectId, branch)) throw new AppError(`La branche ${branch} est déjà celle d'une autre work session`);
-    invalidateSizes(projectId);
     return worksessionRepository.create(projectId, name, branch);
   },
 
@@ -376,7 +445,7 @@ export const worksessionDisk = {
     if (orphan.gitWorktree) await git(['worktree', 'remove', '--force', orphan.path], main).catch(() => rm(orphan.path, { recursive: true, force: true }));
     else await rm(orphan.path, { recursive: true, force: true });
     if (project.gitUrl && (await isGitRepository(main))) await git(['worktree', 'prune'], main).catch(() => undefined);
-    invalidateSizes(projectId);
+    invalidateSizes([orphan.path]);
     log.info(`[worksessions] dossier orphelin supprimé : ${orphan.path}`);
     return true;
   },

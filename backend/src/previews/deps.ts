@@ -310,3 +310,21 @@ export async function relinkDeps(store: string, root: string): Promise<boolean> 
   log.info(`[deps] ${path.basename(root)} : node_modules remplacés par l'instantané ${hash} (liens physiques)`);
   return true;
 }
+
+/**
+ * Retire les `node_modules` d'un dossier de travail (dossier archivé : ils se reconstituent en une seconde depuis
+ * l'instantané à la restauration, `seedWorksessionDeps`). Les fichiers liés ne disparaissent que de ce dossier, jamais
+ * de l'instantané. Renvoie les dossiers retirés (relatifs).
+ */
+export async function removeNodeModules(root: string): Promise<string[]> {
+  const { nodeModules } = await scanTree(root);
+  const removed: string[] = [];
+  for (const rel of nodeModules) {
+    const dir = path.join(root, rel);
+    // Garde-fou : un dossier node_modules sous la racine, jamais autre chose.
+    if (path.basename(dir) !== 'node_modules' || !dir.startsWith(root + path.sep)) continue;
+    await rm(dir, { recursive: true, force: true });
+    removed.push(rel);
+  }
+  return removed;
+}
