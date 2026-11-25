@@ -12,6 +12,7 @@ import type { Worksession } from '../worksessions/types.js';
 import { assertUnblocked, taskService } from './service.js';
 import { asInstructionAttachments, describeAttachment, fitInInstruction } from './attachments.js';
 import type { Task, TaskAttachment, TaskComment } from './types.js';
+import type { TaskStatusDefinition } from './statuses.js';
 import type { InstructionAuthor } from '../sessions/instructionAuthor.js';
 
 export interface StartTaskOptions {
@@ -36,10 +37,10 @@ export interface StartTaskOptions {
  * Instruction d'une session qui réalise une tâche : le texte de la tâche, puis les consignes de tâches du
  * projet et celles de l'appelant (nœud de workflow, exécution d'agent), sous « Consignes supplémentaires ».
  */
-export function composeTaskPrompt(task: Task, comments: TaskComment[], files: TaskFiles | null, ...instructions: (string | null | undefined)[]): string {
+export function composeTaskPrompt(task: Task, comments: TaskComment[], files: TaskFiles | null, statuses: TaskStatusDefinition[] | null, ...instructions: (string | null | undefined)[]): string {
   const extra = instructions.map((i) => i?.trim()).filter((i): i is string => Boolean(i));
   const leftOut = files?.leftOut.length ? ['', `Non joints (au-delà des limites d'une instruction, lisibles dans l'interface) : ${files.leftOut.map(describeAttachment).join(', ')}.`] : [];
-  return [taskService.describeForPrompt(task, comments, files?.kept ?? [], 'instruction'), ...leftOut, ...(extra.length ? ['', '---', '', 'Consignes supplémentaires :', '', extra.join('\n\n')] : [])].join('\n');
+  return [taskService.describeForPrompt(task, comments, files?.kept ?? [], 'instruction', [], statuses), ...leftOut, ...(extra.length ? ['', '---', '', 'Consignes supplémentaires :', '', extra.join('\n\n')] : [])].join('\n');
 }
 
 /** Les fichiers d'une tâche (les siens et ceux de ses commentaires), partagés entre ce qu'une instruction porte et le reste. */
@@ -104,7 +105,7 @@ export async function startTaskSession(taskId: string, options: StartTaskOptions
   const files = options.includeTask === false ? null : await taskFiles(task.id);
   const prompt =
     options.prompt?.trim() ||
-    (options.includeTask === false ? (options.instructions?.trim() ?? '') : composeTaskPrompt(inProgress, await taskService.comments(task.id), files, project.taskInstructions, options.instructions));
+    (options.includeTask === false ? (options.instructions?.trim() ?? '') : composeTaskPrompt(inProgress, await taskService.comments(task.id), files, project.taskStatuses, project.taskInstructions, options.instructions));
   const session = await sessionService.create({
     projectId: task.projectId,
     worksessionId,

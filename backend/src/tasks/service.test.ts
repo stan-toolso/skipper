@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { describeTaskChanges, normalizeFields, normalizePerson, normalizeStatusTag, normalizeTags } from './service.js';
+import { describeTaskChanges, finishTaskHint, finishTaskInstruction, normalizeFields, normalizePerson, normalizeStatusTag, normalizeTags, reviewStatusOf } from './service.js';
+import { DEFAULT_TASK_STATUSES, normalizeTaskStatuses } from './statuses.js';
 import type { Task } from './types.js';
 
 const base: Task = {
@@ -100,5 +101,37 @@ describe('étiquettes', () => {
   it('décrit les changements du résumé', () => {
     expect(describeTaskChanges(base, { ...base, summary: 'Afficher un résumé avant la description' })).toEqual(['- Résumé, nouveau texte : Afficher un résumé avant la description']);
     expect(describeTaskChanges({ ...base, summary: 'Ancien' }, base)).toEqual(['- Résumé retiré']);
+  });
+});
+
+describe('fin de l’instruction d’une tâche', () => {
+  it('nomme le statut « à valider » du projet, avec la date de réveil pour une vérification différée', () => {
+    const text = finishTaskInstruction(DEFAULT_TASK_STATUSES);
+    expect(text).toMatch(/passe-la en `done`/);
+    expect(text).toMatch(/`review` « À valider »/);
+    expect(text).toMatch(/wake_at/);
+    expect(finishTaskHint(DEFAULT_TASK_STATUSES)).toMatch(/`review` « À valider »/);
+    // Sans statuts (projet incomplet, test) : ceux par défaut.
+    expect(reviewStatusOf(null)?.key).toBe('review');
+  });
+
+  it('reprend le statut propre au projet, et s’en passe quand le projet n’en a pas', () => {
+    const custom = normalizeTaskStatuses([
+      { label: 'Prête', category: 'todo' },
+      { label: 'Développement', category: 'in_progress' },
+      { label: 'Recette client', category: 'in_progress', attention: true },
+      { label: 'Livrée', category: 'done' },
+      { label: 'Abandonnée', category: 'cancelled' },
+    ]);
+    expect(finishTaskInstruction(custom)).toMatch(/`recette_client` « Recette client »/);
+    const plain = normalizeTaskStatuses([
+      { label: 'Prête', category: 'todo' },
+      { label: 'Développement', category: 'in_progress' },
+      { label: 'Livrée', category: 'done' },
+      { label: 'Abandonnée', category: 'cancelled' },
+    ]);
+    expect(reviewStatusOf(plain)).toBeNull();
+    expect(finishTaskInstruction(plain)).not.toMatch(/state/);
+    expect(finishTaskInstruction(plain)).toMatch(/laisse-la en cours/);
   });
 });
