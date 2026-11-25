@@ -30,6 +30,7 @@ import { registerTaskAutoStart } from './tasks/autoStart.js';
 import { registerTaskSessionEnd } from './tasks/endSessions.js';
 import { registerStalledTasks } from './tasks/stalled.js';
 import { taskWaker } from './tasks/wake.js';
+import { archivedWorksessionPurge } from './worksessions/housekeeping.js';
 import { agentService } from './agents/service.js';
 import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
@@ -218,6 +219,7 @@ async function main() {
     { name: 'purge des secrets de session', start: () => sessionSecretService.start(), stop: () => sessionSecretService.stop() },
     // Après le guetteur des relectures : écoute leurs rapports pour fusionner dès qu'une relecture est favorable.
     { name: 'politique de livraison', start: () => deliveryPolicyService.start(), stop: () => deliveryPolicyService.stop() },
+    { name: 'retrait des dossiers archivés', start: () => archivedWorksessionPurge.start(), stop: () => archivedWorksessionPurge.stop() },
     // Rattrapage des tâches qualité rattachées aux livraisons (une fois, à la prise du rôle de meneuse).
     { name: 'rattrapage des tâches qualité', start: () => void deliveryQualityService.backfillAll().catch((err) => log.warn('[deliveries] rattrapage des tâches qualité', err)), stop: () => undefined },
   ];
