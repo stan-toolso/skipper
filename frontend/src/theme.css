@@ -355,12 +355,24 @@ pre { color: var(--cc-fg); font-family: var(--cc-font-mono); }
   --bs-modal-footer-border-color: var(--cc-border-soft);
   --bs-modal-box-shadow: 0 30px 80px -30px var(--cc-shadow);
 }
-.modal-title { font-family: var(--cc-font-serif); font-weight: 400; font-size: 21px; letter-spacing: -0.015em; }
+/* Texte des modales à la taille de l'interface (14 px), pas aux 16 px de Bootstrap : à 16 px, une
+   confirmation de trois phrases remplit la boîte et fait brouillon. */
+.modal-content { font-size: 14px; line-height: 1.55; }
+.modal-header { padding: 1.1rem 1.5rem 0.9rem; }
+.modal-body { padding: 1.15rem 1.5rem; }
+.modal-footer { padding: 0.75rem 1.25rem; gap: 0.5rem; background: var(--cc-bg); border-bottom-left-radius: var(--bs-modal-inner-border-radius); border-bottom-right-radius: var(--bs-modal-inner-border-radius); }
+.modal-footer > * { margin: 0; }
+.modal-footer .btn { font-size: 13.5px; padding: 0.4rem 0.95rem; }
+.modal-header .btn-close { font-size: 0.7rem; opacity: 0.45; }
+.modal-header .btn-close:hover { opacity: 0.8; }
+.modal-title { font-family: var(--cc-font-serif); font-weight: 400; font-size: 19px; letter-spacing: -0.015em; line-height: 1.3; }
 .modal-backdrop { --bs-backdrop-bg: var(--cc-fg); --bs-backdrop-opacity: 0.35; }
 [data-bs-theme='dark'] .modal-backdrop { --bs-backdrop-bg: #000; --bs-backdrop-opacity: 0.6; }
-.app-dialog .modal-dialog { max-width: 460px; }
-.app-dialog .modal-header { padding-bottom: 0.5rem; }
-.app-dialog .modal-body { padding-top: 0.5rem; }
-.app-dialog .app-dialog-message { line-height: 1.5; overflow-wrap: anywhere; }
+.app-dialog .modal-dialog { max-width: 540px; }
+.app-dialog .modal-header { border-bottom: 0; padding-bottom: 0.25rem; }
+.app-dialog .modal-body { padding-top: 0.5rem; padding-bottom: 1.35rem; }
+.app-dialog .app-dialog-message { color: var(--cc-dim); overflow-wrap: anywhere; text-wrap: pretty; }
 .app-dialog code { color: var(--cc-fg); background: var(--cc-bg); padding: 0 0.3em; border-radius: 3px; }
-.app-dialog .modal-footer { padding-top: 0.5rem; }
+/* Case à cocher d'une confirmation : une option posée dans un encadré discret, sous le texte. */
+.app-dialog .app-dialog-check { margin: 1rem 0 0; padding: 0.6rem 0.8rem 0.6rem 2.3rem; border: 1px solid var(--cc-border-soft); border-radius: var(--cc-radius-sm); background: var(--cc-bg); color: var(--cc-fg); }
+.app-dialog .app-dialog-check .form-check-input { margin-top: 0.2rem; }

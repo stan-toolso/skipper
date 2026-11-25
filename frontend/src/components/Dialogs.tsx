@@ -182,7 +182,7 @@ function DialogModal({ pending, show, onSettled, onExited }: { pending: Pending;
             <Form.Control autoFocus={canAutoFocus()} value={value} placeholder={pending.opts.placeholder} onChange={(e) => setValue(e.target.value)} onFocus={(e) => e.target.select()} />
           )}
           {pending.kind === 'confirm' && pending.opts.checkbox && (
-            <Form.Check className="mt-3" id={`dialog-check-${pending.id}`} label={pending.opts.checkbox.label} checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+            <Form.Check className="app-dialog-check" id={`dialog-check-${pending.id}`} label={pending.opts.checkbox.label} checked={checked} onChange={(e) => setChecked(e.target.checked)} />
           )}
         </Modal.Body>
         <Modal.Footer>
