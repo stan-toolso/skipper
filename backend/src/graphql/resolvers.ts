@@ -511,8 +511,8 @@ export const resolvers = {
     stateLabel: async (t: Task, _: unknown, ctx: Ctx) => (await taskStateOf(ctx, t)).label,
     stateAttention: async (t: Task, _: unknown, ctx: Ctx) => (await taskStateOf(ctx, t)).attention,
     priority: (t: Task) => t.priority.toUpperCase(),
-    project: (t: Task) => projectService.get(t.projectId),
-    session: (t: Task) => (t.sessionId ? sessionService.get(t.sessionId) : null),
+    project: (t: Task, _: unknown, ctx: Ctx) => loadersOf(ctx).project(t.projectId),
+    session: async (t: Task, _: unknown, ctx: Ctx) => (t.sessionId ? ((await loadersOf(ctx).session(t.sessionId)) ?? null) : null),
     sessionsInCharge: async (t: Task) => {
       const sessions = t.sessionIds.length ? await sessionService.list({ ids: t.sessionIds, archived: 'all', limit: 100 }) : [];
       return t.sessionIds.map((id) => sessions.find((s) => s.id === id)).filter((s): s is Session => Boolean(s));
@@ -531,7 +531,7 @@ export const resolvers = {
       const sessions = await sessionService.list({ ids: [...cost.bySession.keys()], archived: 'all', limit: 500 });
       return sessions.map((session) => ({ session, usd: cost.bySession.get(session.id) ?? 0 })).sort((a, b) => b.usd - a.usd);
     },
-    createdBySession: (t: Task) => (t.createdBySessionId ? sessionService.get(t.createdBySessionId) : null),
+    createdBySession: async (t: Task, _: unknown, ctx: Ctx) => (t.createdBySessionId ? ((await loadersOf(ctx).session(t.createdBySessionId)) ?? null) : null),
     // Les réactions de toute la tâche sont lues une fois et accrochées à chaque message (évite une requête par message).
     comments: async (t: Task) => {
       const [comments, reactions] = await Promise.all([taskService.comments(t.id), taskService.reactions(t.id)]);
@@ -540,8 +540,8 @@ export const resolvers = {
     reactions: async (t: Task, _: unknown, ctx: Ctx) => groupReactions((await taskService.reactions(t.id)).filter((r) => !r.commentId), ctx.user?.id),
     mentionables: (t: Task) => taskService.mentionables(t.projectId),
     pullRequest: (t: Task, _: unknown, ctx: Ctx) => (t.branch ? pullRequestService.forBranch(t.projectId, ctx.user?.id, t.branch) : null),
-    pullRequests: (t: Task) => trackedPullRequestService.forTask(t.id),
-    worksession: async (t: Task) => (await worksessionRepository.findByTask(t.id))[0] ?? null,
+    pullRequests: async (t: Task, _: unknown, ctx: Ctx) => (await loadersOf(ctx).taskPullRequests(t.id)) ?? [],
+    worksession: async (t: Task, _: unknown, ctx: Ctx) => (await loadersOf(ctx).taskWorksession(t.id)) ?? null,
     attachments: (t: Task) => (t.attachmentCount ? taskService.attachments(t.id, null) : []),
     dependsOn: (t: Task, _: unknown, ctx: Ctx) => tasksByIds(ctx, t.dependsOnIds),
     blockedBy: (t: Task, _: unknown, ctx: Ctx) => tasksByIds(ctx, t.blockedByIds),
@@ -637,14 +637,17 @@ export const resolvers = {
     task: async (r: SessionReview, _: unknown, ctx: Ctx) => (r.taskId ? (await loadersOf(ctx).task(r.taskId)) ?? null : null),
   },
   TrackedPullRequest: {
-    project: (pr: TrackedPullRequest) => projectService.get(pr.projectId),
+    project: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => loadersOf(ctx).project(pr.projectId),
     task: (pr: TrackedPullRequest) => (pr.taskId ? taskService.get(pr.taskId).catch(() => null) : null),
     status: (pr: TrackedPullRequest) => pr.status.toUpperCase(),
     stage: (pr: TrackedPullRequest) => stageOf(pr).toUpperCase(),
-    foreignRepo: async (pr: TrackedPullRequest) => Boolean(foreignRepoOf(pr, projectRepoName(await projectService.get(pr.projectId)))),
-    worksession: (pr: TrackedPullRequest) => (pr.worksessionId ? worksessionRepository.findById(pr.worksessionId) : null),
+    foreignRepo: async (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => {
+      const project = await loadersOf(ctx).project(pr.projectId);
+      return Boolean(project && foreignRepoOf(pr, projectRepoName(project)));
+    },
+    worksession: async (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => (pr.worksessionId ? ((await loadersOf(ctx).worksession(pr.worksessionId)) ?? null) : null),
     createdBy: (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => userOrNull(ctx, pr.createdByUserId),
-    createdBySession: (pr: TrackedPullRequest) => (pr.createdBySessionId ? sessionService.get(pr.createdBySessionId) : null),
+    createdBySession: async (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => (pr.createdBySessionId ? ((await loadersOf(ctx).session(pr.createdBySessionId)) ?? null) : null),
     // En direct depuis GitHub (cache de 20 s côté service) : null si la PR n'est pas encore ouverte, si le projet n'y est pas ou si GitHub ne répond pas.
     github: async (pr: TrackedPullRequest, _: unknown, ctx: Ctx) => {
       if (pr.number == null) return null;

@@ -195,6 +195,15 @@ export const pullRequestRepository = {
     return rows.map(toPr);
   },
 
+  /** PR suivies de ces tâches, dans l'ordre de `list` (chargement groupé de `Task.pullRequests`). */
+  async listByTasks(taskIds: string[]): Promise<Map<string, TrackedPullRequest[]>> {
+    const out = new Map<string, TrackedPullRequest[]>(taskIds.map((id) => [id, []]));
+    if (!taskIds.length) return out;
+    const { rows } = await pool.query<Row>(`SELECT * FROM pull_requests WHERE task_id = ANY($1::uuid[]) ${ORDER}`, [taskIds]);
+    for (const pr of rows.map(toPr)) if (pr.taskId) out.get(pr.taskId)?.push(pr);
+    return out;
+  },
+
   /**
    * Projets git à synchroniser en fond : ceux qui ont une PR suivie ouverte ou en préparation, ou une work session
    * active (une PR en préparation peut y naître). Pour chacun, le membre dont le compte GitHub ou GitLab (celui de la forge du dépôt de préférence) servira à lire le dépôt :

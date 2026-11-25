@@ -117,6 +117,10 @@ export function createLoaders() {
       return out;
     }, (k) => `${k.userId}:${k.pageId}`),
     sharedPageOpenComments: createBatcher<string, number>((ids) => sharedPageCommentRepository.countOpenByPages(ids)),
+    /** PR suivies d'une tâche (liste de `Task.pullRequests`). */
+    taskPullRequests: createBatcher<string, TrackedPullRequest[]>((ids) => pullRequestRepository.listByTasks(ids)),
+    /** Dossier de travail d'une tâche (absent : pas encore de dossier). */
+    taskWorksession: createBatcher<string, Worksession>((ids) => worksessionRepository.findFirstByTasks(ids)),
     taskForBranch: createBatcher<{ projectId: string; branch: string }, Task>((keys) => taskRepository.findForBranches(keys), branchKey),
     /** Tâches qualité rattachées à une livraison (onglet Livraisons : une centaine de livraisons par relevé). */
     deliveryQualityTasks: createBatcher<string, DeliveryTaskLink[]>((ids) => deliveryQualityRepository.linksOfDeliveries(ids)),
