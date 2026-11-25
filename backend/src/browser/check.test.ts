@@ -1,11 +1,12 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '../projects/types.js';
 
 // Contrôle de bout en bout : le « conteneur » est la machine du test (Chromium de /opt/ms-playwright et
 // playwright-mcp dans le PATH, comme dans l'image skipper-runner). Ignoré quand ils n'y sont pas.
-vi.mock('../runners/index.js', () => {
+vi.mock('../runners/index.js', async () => {
+  const { LAZY_BROWSER_MCP, START_CHROMIUM, parseDevToolsActivePort } = await import('../runners/browserLauncher.js');
   const run = (script: string) => {
     try {
       return { stdout: execFileSync('sh', ['-c', script], { encoding: 'utf8' }), code: 0 };
@@ -19,26 +20,31 @@ vi.mock('../runners/index.js', () => {
       status: async () => ({ image: 'local', ready: true }),
       exec: async (_p: unknown, command: string[]) => run(command[2]),
       shellCommand: async (_p: unknown, _cwd: string, _shell: string, script: string) => ({ command: 'sh', args: ['-c', script] }),
+      // Même commande que celle du runner Docker (relais qui lance Chromium au premier outil), sans conteneur.
       browserMcpCommand: async (_p: unknown, cwd: string, opts: { sessionId: string }) => {
         const dir = `/tmp/skipper-check-test-${opts.sessionId}`;
-        mkdirSync(`${dir}/profile`, { recursive: true });
-        const bin = run('ls -d /opt/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell | sort -V | tail -n 1').stdout.trim();
-        const child = spawn(bin, ['--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${dir}/profile`, 'about:blank'], { stdio: 'ignore' });
-        let port = 0;
-        let browserPath = '';
-        for (let i = 0; i < 100 && !browserPath; i++) {
-          await new Promise((r) => setTimeout(r, 100));
-          const lines = existsSync(`${dir}/profile/DevToolsActivePort`) ? readFileSync(`${dir}/profile/DevToolsActivePort`, 'utf8').split('\n') : [];
-          if (lines[1]) [port, browserPath] = [Number(lines[0]), lines[1]];
-        }
+        const portFile = `${dir}/profile/DevToolsActivePort`;
         return {
-          command: 'playwright-mcp',
-          args: ['--cdp-endpoint', `http://127.0.0.1:${port}`, '--output-dir', `${cwd}/.playwright-mcp`],
-          cdp: { port, browserPath },
+          command: 'node',
+          args: ['-e', LAZY_BROWSER_MCP, dir, START_CHROMIUM, '--output-dir', `${cwd}/.playwright-mcp`],
+          cdp: async () => (existsSync(portFile) ? parseDevToolsActivePort(readFileSync(portFile, 'utf8')) : null),
           dispose: async () => {
-            const exited = new Promise((r) => child.once('exit', r));
-            child.kill();
-            await exited;
+            const pid = existsSync(`${dir}/chromium.pid`) ? Number(readFileSync(`${dir}/chromium.pid`, 'utf8')) : 0;
+            if (pid) {
+              try {
+                process.kill(pid);
+              } catch {
+                /* déjà arrêté */
+              }
+              for (let i = 0; i < 50; i++) {
+                try {
+                  process.kill(pid, 0);
+                  await new Promise((r) => setTimeout(r, 100));
+                } catch {
+                  break;
+                }
+              }
+            }
             rmSync(dir, { recursive: true, force: true });
           },
         };

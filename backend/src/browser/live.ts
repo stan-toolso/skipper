@@ -8,7 +8,8 @@ import { log } from '../log.js';
 /**
  * Vue en direct du navigateur headless des sessions.
  *
- * Le provider Claude enregistre le Chromium de chaque session (port CDP dans le conteneur du projet).
+ * Le provider enregistre le navigateur de chaque session (retrouvé par CDP dans le conteneur du projet, une fois
+ * lancé : Chromium ne démarre qu'au premier outil du navigateur, voir runners/browserLauncher.ts).
  * Tant qu'au moins une personne regarde (WebSocket `/browsers/<session>`), le backend s'attache au
  * navigateur par CDP et diffuse le screencast de l'onglet que pilote l'agent : Chromium n'envoie une
  * image (JPEG) que lorsque la page change. Personne ne regarde : aucune connexion, aucun coût.
@@ -20,6 +21,7 @@ import { log } from '../log.js';
 
 interface LiveBrowser {
   project: Project;
+  /** Point d'accès CDP, null tant que Chromium n'a pas été lancé. */
   cdp: BrowserMcpServer['cdp'];
   /** L'agent a utilisé le navigateur (un outil `mcp__playwright__*`) : la vue est proposée dans la sidebar. */
   used: boolean;
@@ -39,6 +41,13 @@ const MAX_BUFFERED = 2 * 1024 * 1024;
 const IDLE_CLOSE_MS = 10_000;
 const RETRY_MS = 3_000;
 
+/** Chromium pas encore lancé : l'agent ne s'est pas encore servi du navigateur. */
+class BrowserNotStarted extends Error {
+  constructor() {
+    super("Le navigateur n'est pas encore ouvert : il démarre au premier outil du navigateur utilisé par l'agent");
+  }
+}
+
 /** Connexion CDP d'une session et diffusion du screencast de l'onglet suivi. */
 class BrowserStream {
   private cdp: CdpClient | null = null;
@@ -54,7 +63,10 @@ class BrowserStream {
   ) {}
 
   async start(): Promise<void> {
-    const cdp = await CdpClient.connect(runner.cdpTunnelCommand(this.browser.project, this.browser.cdp.port), this.browser.cdp.browserPath);
+    const endpoint = await this.browser.cdp();
+    if (!endpoint) throw new BrowserNotStarted();
+    if (this.stopped) return;
+    const cdp = await CdpClient.connect(runner.cdpTunnelCommand(this.browser.project, endpoint.port), endpoint.browserPath);
     if (this.stopped) return cdp.close();
     this.cdp = cdp;
     cdp.on('event', (method: string, params: Record<string, unknown>, sessionId?: string) => void this.onEvent(method, params, sessionId).catch(() => undefined));
@@ -151,7 +163,7 @@ class LiveBrowserService {
   private readonly idleTimers = new Map<string, NodeJS.Timeout>();
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
 
-  /** Chromium de la session démarré (début de session). */
+  /** Navigateur de la session prêt à démarrer (début de session) ; Chromium est lancé au premier usage. */
   register(sessionId: string, project: Project, cdp: BrowserMcpServer['cdp']): void {
     this.browsers.set(sessionId, { project, cdp, used: false });
     if (this.viewers.get(sessionId)?.size) this.startStream(sessionId);
@@ -197,7 +209,7 @@ class LiveBrowserService {
       if (page) ws.send(page);
       if (stream.lastFrame) ws.send(stream.lastFrame);
     } else if (this.browsers.has(sessionId)) this.startStream(sessionId);
-    else ws.send(status('waiting', "Pas de navigateur ouvert pour cette session : il démarre avec la session si l'option navigateur du projet est activée"));
+    else ws.send(status('waiting', "Pas de navigateur ouvert pour cette session : il démarre au premier usage par l'agent si l'option navigateur du projet est activée"));
   }
 
   private detach(sessionId: string, ws: WebSocket): void {
@@ -223,7 +235,7 @@ class LiveBrowserService {
     const fail = (err: Error) => {
       if (this.streams.get(sessionId) !== stream) return;
       this.stopStream(sessionId);
-      this.send(sessionId, status('error', err.message));
+      this.send(sessionId, err instanceof BrowserNotStarted ? status('waiting', err.message) : status('error', err.message));
       // Nouvelle tentative tant que la session tourne et que quelqu'un regarde.
       if (this.browsers.has(sessionId) && this.viewers.get(sessionId)?.size) {
         this.retryTimers.set(
@@ -241,7 +253,7 @@ class LiveBrowserService {
       .start()
       .then(() => this.streams.get(sessionId) === stream && this.send(sessionId, status('live')))
       .catch((err: Error) => {
-        log.warn(`[browser] vue en direct de la session ${sessionId} : ${err.message}`);
+        if (!(err instanceof BrowserNotStarted)) log.warn(`[browser] vue en direct de la session ${sessionId} : ${err.message}`);
         fail(err);
       });
   }

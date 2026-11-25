@@ -115,8 +115,9 @@ export interface Runner {
   /** Exécution d'un script shell dans `cwd` (provider shell). */
   shellCommand(project: Project, cwd: string, shell: string, script: string): Promise<SpawnSpec>;
   /**
-   * Navigateur headless de la session : un Chromium lancé dans l'environnement du projet, avec son port
-   * CDP, et la commande du serveur MCP Playwright (stdio) qui s'y attache. `dispose` arrête Chromium et supprime le profil.
+   * Navigateur headless de la session : la commande du serveur MCP Playwright (stdio) à donner au CLI, qui lance
+   * Chromium dans l'environnement du projet au premier outil du navigateur (browserLauncher.ts) ; `cdp` le retrouve
+   * une fois lancé. `dispose` arrête Chromium et supprime le profil.
    */
   browserMcpCommand(project: Project, cwd: string, options: BrowserMcpOptions): Promise<BrowserMcpServer>;
   /**
@@ -154,9 +155,17 @@ export interface BrowserMcpOptions {
   sessionId: string;
 }
 
+export interface CdpEndpoint {
+  port: number;
+  browserPath: string;
+}
+
 export interface BrowserMcpServer extends SpawnSpec {
-  /** Point d'accès CDP du Chromium de la session, dans l'environnement du projet. */
-  cdp: { port: number; browserPath: string };
+  /**
+   * Point d'accès CDP du Chromium de la session, dans l'environnement du projet ; null tant que l'agent ne s'est
+   * pas servi du navigateur (Chromium n'est lancé qu'au premier usage).
+   */
+  cdp(): Promise<CdpEndpoint | null>;
   /** Arrête Chromium et supprime son dossier (profil) ; à appeler en fin de session. */
   dispose(): Promise<void>;
 }
