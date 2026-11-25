@@ -2757,6 +2757,15 @@ type SearchGroup {
   total: Int!
 }
 
+"Début d'identifiant cité seul dans un texte, résolu en une tâche ou une session."
+type ResolvedRef {
+  "Début d'identifiant tel que demandé (minuscules)."
+  prefix: String!
+  "task ou session."
+  kind: String!
+  id: ID!
+}
+
 type SearchResults {
   query: String!
   groups: [SearchGroup!]!
@@ -3278,6 +3287,8 @@ type Query {
   sidebarProjects(open: OpenItemsInput): [Project!]!
   "Recherche globale ; requête vide = objets les plus récents. limit = résultats par type (défaut 8, 50 au plus) ; projectId : seulement ce projet (fenêtre dédiée à un projet)."
   search(query: String!, kinds: [SearchKind!], limit: Int, projectId: ID): SearchResults!
+  "Débuts d'identifiants (8 à 12 caractères hexadécimaux) cités seuls dans un texte : ceux qui désignent une seule tâche ou session (même archivée) des projets de l'utilisateur. Les autres sont omis (200 au plus par requête)."
+  resolveRefs(prefixes: [String!]!): [ResolvedRef!]!
   "Propriétaires des sessions actives des projets de l'utilisateur (ou d'un projet)."
   sessionOwners(projectId: ID): [User!]!
   "Sessions archivées d'un projet, les plus récemment archivées d'abord ; search cherche dans le nom, la consigne et la conversation."

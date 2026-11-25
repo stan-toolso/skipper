@@ -2,7 +2,7 @@ import { pool } from '../db/pool.js';
 import { vaultService } from '../vault/service.js';
 import { kindLabels as vaultKindLabels } from '../vault/types.js';
 import { log } from '../log.js';
-import { idPrefixOf } from './idPrefix.js';
+import { idPrefixOf, shortRefOf, uuidRange } from './idPrefix.js';
 
 /**
  * Recherche globale (palette ⌘K) : projets, sessions, terminaux, tâches et éléments du coffre
@@ -109,6 +109,36 @@ async function searchKind(kind: SearchKind, sql: { from: string; title: string; 
       updatedAt: r.updated_at,
     })),
   };
+}
+
+export interface ResolvedRef {
+  prefix: string;
+  kind: 'task' | 'session';
+  id: string;
+}
+
+/** Débuts d'identifiants résolus en une seule requête au plus. */
+export const MAX_REFS = 200;
+
+/**
+ * Débuts d'identifiants cités seuls dans un texte (« **56f64f35** : … ») : ceux qui désignent une seule tâche ou
+ * session (même archivée) des projets donnés. Les autres (commit, identifiant d'un projet inaccessible, préfixe
+ * ambigu) sont omis : ils restent du texte. Cherché par plages de la clé primaire (index), sans `LIKE`.
+ */
+export async function resolveRefs(projectIds: string[], prefixes: string[]): Promise<ResolvedRef[]> {
+  const wanted = [...new Set(prefixes.map(shortRefOf).filter((p): p is string => p !== null))].slice(0, MAX_REFS);
+  if (!wanted.length || !projectIds.length) return [];
+  const ranges = wanted.map(uuidRange);
+  const { rows } = await pool.query<{ prefix: string; kind: 'task' | 'session'; id: string }>(
+    `WITH r(prefix, lo, hi) AS (SELECT * FROM unnest($2::text[], $3::uuid[], $4::uuid[]))
+     SELECT r.prefix, 'task' AS kind, t.id FROM r JOIN tasks t ON t.id BETWEEN r.lo AND r.hi WHERE t.project_id = ANY($1::uuid[])
+     UNION ALL
+     SELECT r.prefix, 'session' AS kind, s.id FROM r JOIN sessions s ON s.id BETWEEN r.lo AND r.hi WHERE s.project_id = ANY($1::uuid[]) AND s.kind = 'session'`,
+    [projectIds, wanted, ranges.map((r) => r[0]), ranges.map((r) => r[1])],
+  );
+  const byPrefix = new Map<string, ResolvedRef[]>();
+  for (const r of rows) byPrefix.set(r.prefix, [...(byPrefix.get(r.prefix) ?? []), { prefix: r.prefix, kind: r.kind, id: r.id }]);
+  return [...byPrefix.values()].filter((list) => list.length === 1).map((list) => list[0]);
 }
 
 const normalize = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

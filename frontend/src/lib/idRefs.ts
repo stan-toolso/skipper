@@ -6,6 +6,10 @@
  * « task » ou « session » (au singulier ou au pluriel, éventuellement suivi de « d'agent », « id », « n° », « # »…) :
  * seul, il pourrait être un commit. Un UUID complet est toujours reconnu, d'après le mot qui le précède quand il y en
  * a un, sinon sans type (la page `/r/any/<id>` cherche une tâche puis une session).
+ *
+ * Un identifiant court cité seul (« **56f64f35** : … ») n'est lié que s'il désigne une tâche ou une session connue :
+ * `candidateRefs` relève ces identifiants dans le texte, le serveur les résout (`useKnownRefs`), puis `splitKnown`
+ * découpe le texte d'après ceux qu'il a reconnus. Un hash de commit n'est ainsi jamais pris pour une tâche.
  */
 
 export type RefKind = 'task' | 'session' | 'any';
@@ -100,4 +104,38 @@ export function trailingKeyword(text: string): RefKind | null {
 export function bareId(text: string): string | null {
   const t = text.trim();
   return new RegExp(`^${ID}$`, 'i').test(t) && plausible(t) ? t.toLowerCase() : null;
+}
+
+/** Identifiants courts résolus par le serveur (début d'identifiant → tâche ou session unique, identifiant complet). */
+export type KnownRefs = ReadonlyMap<string, { kind: 'task' | 'session'; id: string }>;
+
+const BARE = String.raw`(?<![0-9a-z_-])[0-9a-f]{8,12}(?![0-9a-z_-])`;
+/** Au plus autant d'identifiants relevés par texte (le serveur en résout 200 par requête). */
+const MAX_CANDIDATES = 100;
+
+/** Identifiants courts plausibles cités dans un texte (minuscules, sans doublon) : à faire résoudre par le serveur. */
+export function candidateRefs(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(new RegExp(BARE, 'gi'))) {
+    const id = m[0].toLowerCase();
+    if (plausible(id)) out.add(id);
+    if (out.size >= MAX_CANDIDATES) break;
+  }
+  return [...out];
+}
+
+/** Découpe un texte autour des identifiants courts reconnus (`known`) ; les autres restent du texte. */
+export function splitKnown(text: string, known: KnownRefs | null | undefined): RefSegment[] {
+  if (!known?.size) return [{ text }];
+  const out: RefSegment[] = [];
+  let pos = 0;
+  for (const m of text.matchAll(new RegExp(BARE, 'gi'))) {
+    const ref = known.get(m[0].toLowerCase());
+    if (!ref) continue;
+    if (m.index! > pos) out.push({ text: text.slice(pos, m.index) });
+    out.push({ text: m[0], kind: ref.kind, id: ref.id });
+    pos = m.index! + m[0].length;
+  }
+  if (pos < text.length) out.push({ text: text.slice(pos) });
+  return out.length ? out : [{ text }];
 }

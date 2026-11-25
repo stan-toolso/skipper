@@ -803,3 +803,14 @@ export const GUEST_PROJECTS = gql`
     }
   }
 `;
+
+/** Débuts d'identifiants cités seuls dans un texte, résolus en tâches ou sessions (voir lib/useKnownRefs). */
+export const RESOLVE_REFS = gql`
+  query ResolveRefs($prefixes: [String!]!) {
+    resolveRefs(prefixes: $prefixes) {
+      prefix
+      kind
+      id
+    }
+  }
+`;
