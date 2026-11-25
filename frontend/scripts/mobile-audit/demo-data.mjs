@@ -106,7 +106,29 @@ const project = (id, name, slug, description, gitUrl, extra = {}) => ({
         return { __typename: 'TaskThreadSummary', id: `cv-${t.id}`, slug: `task-${t.id}`, task: t, messageCount: own.length, lastMessageAt: last };
       })
       .sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt))),
-  permissionRules: [],
+  // Autorisations mémorisées : quelques règles Bash et d'outils, utilisées ou non.
+  permissionRules: [
+    ['Bash', 'git status *', 412, 30],
+    ['Bash', 'npm test *', 96, 120],
+    ['Bash', 'git checkout *', 58, 60 * 26],
+    ['Bash', './orca-setup.sh', 0, null],
+    ['Bash', "awk 'NR>=420 && NR<=520' WorkoutService.js", 0, null],
+    ['Read', null, 1844, 5],
+    ['WebFetch', 'domain:docs.stripe.com', 12, 60 * 50],
+    ['mcp__vault__ssh_run', null, 3, 60 * 24 * 3],
+  ].map(([toolName, ruleContent, useCount, lastMin], i) => ({
+    __typename: 'PermissionRule',
+    id: `${id}-perm-${i}`,
+    projectId: id,
+    toolName,
+    ruleContent,
+    rule: ruleContent ? `${toolName}(${ruleContent})` : toolName,
+    createdBySession: null,
+    createdAt: ago(60 * 24 * (20 - i)),
+    lastUsedAt: lastMin == null ? null : ago(lastMin),
+    useCount,
+    usageTrackedSince: ago(60 * 24 * 30),
+  })),
   ...extra,
 });
 const key = (id) => id.slice(2);
