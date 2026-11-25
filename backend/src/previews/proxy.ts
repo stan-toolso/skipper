@@ -11,6 +11,7 @@ import { runner } from '../runners/index.js';
 import { userRepository } from '../users/repository.js';
 import { handleAnnotateRoute, INJECT_MAX_BYTES, injectScript, wantsInjection } from './annotate.js';
 import { labelFromHost, parsePreviewTemplate, safeNext } from './hosts.js';
+import { markVisited, SOCKET_TOUCH_MS } from './idle.js';
 import { previewRepository, type PreviewRow } from './repository.js';
 import { ACCESS_COOKIE, ACCESS_PATH, ACCESS_TTL_MS, previewService } from './service.js';
 
@@ -139,6 +140,8 @@ export async function handlePreviewRoute(req: IncomingMessage, res: ServerRespon
     page(res, 401, 'Accès réservé', "Cet aperçu est réservé aux membres du projet. Ouvrez-le depuis la session dans Skipper (onglet « Aperçu »).");
     return true;
   }
+  // Visite notée (au plus une fois par minute) : un aperçu que personne ne regarde est arrêté au bout de quelques heures.
+  markVisited(preview.projectId, preview.worksessionId);
   if (await handleAnnotateRoute(req, res, preview, userId)) return true;
   const upstream = await upstreamOf(preview);
   if (!upstream) {
@@ -278,6 +281,11 @@ export function previewUpgrade(req: IncomingMessage, socket: Duplex, head: Buffe
     const upstream = await upstreamOf(preview);
     if (!upstream) return reject(socket, 502, 'Bad Gateway');
     const headers = forwardHeaders(req, upstream.port);
+    // Page ouverte (rechargement à chaud) : visite notée tant que la WebSocket reste ouverte.
+    markVisited(preview.projectId, preview.worksessionId);
+    const visiting = setInterval(() => markVisited(preview.projectId, preview.worksessionId), SOCKET_TOUCH_MS);
+    visiting.unref();
+    socket.once('close', () => clearInterval(visiting));
     const conn = net.connect(upstream.port, upstream.host, () => {
       let raw = `${req.method} ${req.url} HTTP/1.1\r\n`;
       for (const [k, v] of Object.entries(headers)) {
