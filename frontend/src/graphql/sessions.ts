@@ -35,11 +35,20 @@ export const CREATE_CHAT = gql`
 `;
 
 export const ARCHIVE_SESSION = gql`
-  mutation ArchiveSession($id: ID!) {
-    archiveSession(id: $id) {
+  mutation ArchiveSession($id: ID!, $removeFolder: Boolean) {
+    archiveSession(id: $id, removeFolder: $removeFolder) {
       id
       archivedAt
       status
+    }
+  }
+`;
+
+export const SESSION_FOLDER_REMOVAL = gql`
+  query SessionFolderRemoval($id: ID!) {
+    sessionFolderRemoval(id: $id) {
+      removable
+      reason
     }
   }
 `;

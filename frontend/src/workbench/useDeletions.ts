@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useDialogs } from '../components/Dialogs';
 import { DELETE_PROJECT, DELETE_SESSION, DELETE_TERMINAL } from '../graphql/operations';
-import { ARCHIVE_SESSION } from '../graphql/sessions';
+import { ARCHIVE_SESSION, SESSION_FOLDER_REMOVAL } from '../graphql/sessions';
 import { useTabs } from './TabsContext';
 
 export interface DeletableSession {
@@ -35,7 +35,8 @@ function evict(cache: ApolloCache<unknown>, __typename: string, id: string): voi
  * couche est retirée et l'élément réapparaît.
  *
  * Le dossier de travail d'une session (sa work session, notion technique) suit la session : archivé avec elle
- * (terminaux fermés, dossier et branche conservés), supprimé avec elle (la branche reste sauf demande).
+ * (terminaux fermés, branche conservée ; dossier supprimé par défaut s'il n'a rien d'unique, recréé à la restauration),
+ * supprimé avec elle (la branche reste sauf demande).
  */
 export function useDeletions() {
   const client = useApolloClient();
@@ -67,16 +68,29 @@ export function useDeletions() {
   const sessionTabs = (id: string) => (key: string) => key === `/sessions/${id}` || key.startsWith(`/sessions/${id}/`);
 
   const archiveSession = async (session: DeletableSession) => {
-    const ok = await confirm({
-      title: 'Archiver la session',
-      message: `Archiver la session « ${session.name} » ? Elle quitte la barre latérale avec son dossier de travail (terminaux fermés, modifications et branche conservées) et reste consultable, restaurable et relançable depuis l'historique du projet.`,
-      confirmLabel: 'Archiver',
-    });
-    if (!ok) return;
+    // Le dossier peut-il partir avec elle sans rien perdre ? Proposé (coché) seulement dans ce cas.
+    const removal = await client
+      .query<{ sessionFolderRemoval: { removable: boolean; reason: string | null } }>({ query: SESSION_FOLDER_REMOVAL, variables: { id: session.id }, fetchPolicy: 'network-only' })
+      .then((r) => r.data.sessionFolderRemoval, () => null);
+    const base = `Archiver la session « ${session.name} » ? Elle quitte la barre latérale (terminaux fermés, branche conservée) et reste consultable, restaurable et relançable depuis l'historique du projet.`;
+    const opts = { title: 'Archiver la session', confirmLabel: 'Archiver' };
+    let removeFolder = false;
+    if (removal?.removable) {
+      const res = await confirm({
+        ...opts,
+        message: `${base} Son dossier de travail n'a rien d'unique (tout est commité et dans la branche principale ou sur origin) : il peut être supprimé, la restauration le recrée.`,
+        checkbox: { label: 'Supprimer aussi son dossier de travail', defaultChecked: true },
+      });
+      if (!res) return;
+      removeFolder = res.checked;
+    } else {
+      const why = removal?.reason && !/sans dossier|sans dépôt|déjà absent/i.test(removal.reason) ? ` Son dossier de travail est conservé : ${removal.reason.charAt(0).toLowerCase()}${removal.reason.slice(1)}.` : '';
+      if (!(await confirm({ ...opts, message: `${base}${why}` }))) return;
+    }
     const layer = `archive:session:${session.id}`;
     hide(layer, sessionTabs(session.id), [['Session', session.id]]);
     await finish(layer, async () => {
-      await client.mutate({ mutation: ARCHIVE_SESSION, variables: { id: session.id }, update: (cache) => evict(cache, 'Session', session.id) });
+      await client.mutate({ mutation: ARCHIVE_SESSION, variables: { id: session.id, removeFolder }, update: (cache) => evict(cache, 'Session', session.id) });
     });
   };
 

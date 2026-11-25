@@ -1919,6 +1919,15 @@ enum SessionKind {
   CHAT
 }
 
+"Suppression possible du dossier de travail d'une session à son archivage."
+type FolderRemoval {
+  "Rien n'y serait perdu : aucune modification, commits dans la branche principale ou sur origin, aucun fichier ignoré à garder."
+  removable: Boolean!
+  "Pourquoi il serait gardé (null : supprimable)."
+  reason: String
+}
+
+
 type Session {
   id: ID!
   kind: SessionKind!
@@ -3342,6 +3351,8 @@ type Query {
   "Sessions (par défaut : les sessions ordinaires, sans les chats)."
   sessions(projectId: ID, status: SessionStatus, provider: String, ownerId: ID, kind: SessionKind, limit: Int, offset: Int): [Session!]!
   session(id: ID!): Session
+  "Le dossier de travail de la session peut-il être supprimé en l'archivant, sans rien perdre ? Posé avant l'archivage."
+  sessionFolderRemoval(id: ID!): FolderRemoval!
   "Espace personnel de la personne connectée, créé à la première demande."
   personalSpace: Project!
   "Chats de la personne connectée (sessions légères de son espace personnel), les plus récents d'abord."
@@ -3647,7 +3658,7 @@ type Mutation {
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
   "Archive la session et, avec elle, son dossier de travail (terminaux fermés, dossier et branche conservés) : consultable, restaurable et relançable depuis l'historique du projet."
-  archiveSession(id: ID!): Session!
+  archiveSession(id: ID!, "Supprimer aussi le dossier de travail s'il n'a rien d'unique (sinon il est gardé). La restauration le recrée." removeFolder: Boolean = false): Session!
   "Restaure une session archivée avec son dossier de travail ; refusé si une autre session y travaille depuis."
   unarchiveSession(id: ID!): Session!
   "Nouvelle session qui reprend la conversation de celle-ci comme contexte."
