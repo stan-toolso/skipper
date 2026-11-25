@@ -1984,24 +1984,17 @@ export const TASK_FIELDS = gql`
   }
 `;
 
+/**
+ * Liste des tâches. Pas de `pullRequest` (lu en direct sur GitHub, avec le jeton de la personne, pour chaque tâche :
+ * plusieurs secondes et des milliers de requêtes SQL sur une liste de 500 tâches) : les PR suivies (`pullRequests`,
+ * synchronisées en base) suffisent à la liste ; la page et le panneau d'une tâche gardent la PR en direct.
+ */
 export const TASKS = gql`
   ${TASK_FIELDS}
   ${TASK_PULL_REQUEST_FIELDS}
   query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean, $closedSince: DateTime, $limit: Int) {
     tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine, closedSince: $closedSince, limit: $limit) {
       ...TaskFields
-      pullRequest {
-        number
-        title
-        url
-        state
-        isDraft
-        mergeable
-        reviewDecision
-        checksState
-        headRefName
-        baseRefName
-      }
       pullRequests {
         ...TaskPullRequestFields
       }

@@ -1,4 +1,5 @@
 import { pool } from '../db/pool.js';
+import { idPrefixOf } from '../search/idPrefix.js';
 import { toJson } from '../db/json.js';
 import type { SessionSubagent } from './providers/subagents.js';
 import type { FormerWorksession, Attachment, CreateSessionInput, QueuedStart, Session, SessionActivity, SessionCleanup, SessionEvent, SessionFilter, SessionKind, SessionStatus } from './types.js';
@@ -226,7 +227,10 @@ export const sessionRepository = {
     if (filter.search?.trim()) {
       params.push(`%${filter.search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
       const s = `$${params.length}`;
-      where.push(`(name ILIKE ${s} OR prompt ILIKE ${s} OR EXISTS (SELECT 1 FROM session_events e WHERE e.session_id = sessions.id AND e.type IN ('instruction', 'claude.assistant') AND e.payload::text ILIKE ${s}))`);
+      // Identifiant (« 2927a9fc ») : la session dont l'identifiant commence par la recherche.
+      const idPrefix = idPrefixOf(filter.search);
+      const byId = idPrefix ? `id::text LIKE $${params.push(`${idPrefix}%`)} OR ` : '';
+      where.push(`(${byId}name ILIKE ${s} OR prompt ILIKE ${s} OR EXISTS (SELECT 1 FROM session_events e WHERE e.session_id = sessions.id AND e.type IN ('instruction', 'claude.assistant') AND e.payload::text ILIKE ${s}))`);
     }
     params.push(Math.min(filter.limit ?? 50, 500));
     const limitIdx = params.length;

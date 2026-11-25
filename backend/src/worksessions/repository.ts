@@ -25,6 +25,12 @@ export const worksessionRepository = {
     const { rows } = await pool.query<Row>('SELECT * FROM worksessions WHERE task_id = $1 ORDER BY (archived_at IS NOT NULL), archived_at DESC, created_at DESC', [taskId]);
     return rows.map(toWorksession);
   },
+  /** Work session de chacune de ces tâches, la même que `findByTask(id)[0]` (chargement groupé de `Task.worksession`). */
+  async findFirstByTasks(taskIds: string[]): Promise<Map<string, Worksession>> {
+    if (!taskIds.length) return new Map();
+    const { rows } = await pool.query<Row>('SELECT DISTINCT ON (task_id) * FROM worksessions WHERE task_id = ANY($1::uuid[]) ORDER BY task_id, (archived_at IS NOT NULL), archived_at DESC, created_at DESC', [taskIds]);
+    return new Map(rows.map(toWorksession).map((w) => [w.taskId!, w]));
+  },
   async findById(id: string): Promise<Worksession | null> {
     const { rows } = await pool.query<Row>('SELECT * FROM worksessions WHERE id = $1', [id]);
     return rows[0] ? toWorksession(rows[0]) : null;

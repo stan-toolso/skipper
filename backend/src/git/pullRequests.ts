@@ -371,6 +371,21 @@ function cached<T>(key: string, load: () => Promise<T>, opts: { fresh?: boolean;
     }
     return hit.value as Promise<T>;
   }
+  // Relecture forcée (synchronisation) d'une liste déjà connue : l'ancienne reste servie aux lecteurs qui acceptent une
+  // liste un peu ancienne jusqu'à l'arrivée de la nouvelle, au lieu de les faire tous attendre GitHub (2 à 4 s).
+  if (opts.fresh && hit?.settled) {
+    hit.refreshing = true;
+    const value = load();
+    value.then(
+      (v) => {
+        if (cache.get(key) === hit) cache.set(key, { at: Date.now(), value: Promise.resolve(v), settled: true });
+      },
+      () => {
+        hit.refreshing = false;
+      },
+    );
+    return value;
+  }
   const value = load();
   const entry: CacheEntry = { at: Date.now(), value, settled: false };
   cache.set(key, entry);

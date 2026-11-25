@@ -138,6 +138,7 @@ export function describeRoute(pathname: string): { title: string; kind: TabKind 
   if (pathname === '/chats') return { title: 'Chats', kind: 'chats' };
   if (/^\/chats\/[^/]+$/.test(pathname)) return { title: 'Chat', kind: 'chat' };
   if (pathname === '/me') return { title: 'Mon espace', kind: 'project' };
+  if (/^\/r\/[^/]+\/[^/]+$/.test(pathname)) return { title: pathname.startsWith('/r/session/') ? 'Session' : 'Tâche', kind: 'other' };
   if (/^\/sessions\/[^/]+$/.test(pathname)) return { title: 'Session', kind: 'session' };
   if (/^\/sessions\/[^/]+\/browser$/.test(pathname)) return { title: 'Navigateur', kind: 'browser' };
   if (/^\/sessions\/[^/]+\/subagents\/[^/]+$/.test(pathname)) return { title: 'Sous-agent', kind: 'session' };

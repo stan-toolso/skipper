@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { refUrl, splitRefs } from '../lib/idRefs';
 import type { TaskPerson, TaskPriority, TaskRef, TaskStatus } from '../graphql/operations';
 
 const STATUS: Record<TaskStatus, string> = { TODO: 'À faire', IN_PROGRESS: 'En cours', DONE: 'Terminée', CANCELLED: 'Annulée' };
@@ -80,7 +81,10 @@ export function PersonChip({ person, icon = 'bi-person-check' }: { person: TaskP
   );
 }
 
-/** Texte avec les liens http(s) rendus cliquables. */
+/**
+ * Texte avec les liens http(s) rendus cliquables, et les identifiants de tâches et de sessions cités (« la session
+ * 2927a9fc », voir `lib/idRefs`) changés en liens vers leur page.
+ */
 export function Linkified({ text }: { text: string }) {
   const parts = text.split(/(https?:\/\/[^\s<>)]+)/g);
   return (
@@ -91,7 +95,17 @@ export function Linkified({ text }: { text: string }) {
             {part}
           </a>
         ) : (
-          <span key={i}>{part}</span>
+          <span key={i}>
+            {splitRefs(part).map((s, j) =>
+              'kind' in s ? (
+                <Link key={j} to={refUrl(s.kind, s.id)}>
+                  {s.text}
+                </Link>
+              ) : (
+                s.text
+              ),
+            )}
+          </span>
         ),
       )}
     </>

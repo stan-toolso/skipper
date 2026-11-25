@@ -201,7 +201,9 @@ export default function TasksPage() {
     variables: table
       ? { projectId: projectId || null, status: statuses, priority: null, assignee: null, reporter: null, tag: null, mine, closedSince: history ? null : closedSince, limit: history ? 500 : 1000 }
       : { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine, closedSince: dashboard ? null : closedSince, limit: 1000 },
-    pollInterval: 3000,
+    // 10 s : la liste complète (des centaines de tâches) est relue à chaque fois ; les changements faits depuis cette
+    // page mettent le cache à jour aussitôt.
+    pollInterval: 10_000,
   });
 
   const project = projectData?.project;

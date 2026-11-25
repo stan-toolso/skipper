@@ -24,6 +24,7 @@ import TasksPage from './pages/TasksPage';
 const ConversationsPage = lazy(() => import('./pages/ConversationsPage'));
 import TaskPage from './pages/TaskPage';
 import PersonalSpaceRedirect from './pages/PersonalSpaceRedirect';
+import RefRedirect from './pages/RefRedirect';
 import PageLoading from './components/PageLoading';
 import ProjectWindowNotice from './components/ProjectWindowNotice';
 import { projectWindowId, projectWindowRoute } from './lib/projectWindow';
@@ -123,6 +124,7 @@ function PageRoutes({ location, isAdmin, restricted }: { location: Location; isA
       <Route path="/chats" element={<ChatsPage />} />
       <Route path="/chats/:id" element={<SessionDetailPage />} />
       <Route path="/me" element={<PersonalSpaceRedirect />} />
+      <Route path="/r/:kind/:id" element={<RefRedirect />} />
       <Route path="/sessions/:id/browser" element={<BrowserPage />} />
       <Route path="/sessions/:id/subagents/:toolUseId" element={<SubagentPage />} />
       {/* Page publiée par la session, ouverte dans son dossier ; /shared/:id reste la page à part entière (lien partagé, sans session). */}
