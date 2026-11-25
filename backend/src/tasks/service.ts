@@ -9,7 +9,7 @@ import { dependencyCycle, normalizeDependencyIds } from './dependencyGraph.js';
 import { findMentions, sessionMentionable, userMentionable, type Mentionable } from './mentions.js';
 import { taskRepository } from './repository.js';
 import { promptTasks } from './promptList.js';
-import { describeStatusesForAgents, effectiveStatus, resolveTaskState, type TaskStatusDefinition } from './statuses.js';
+import { DEFAULT_TASK_STATUSES, describeStatusesForAgents, effectiveStatus, resolveTaskState, type TaskStatusDefinition } from './statuses.js';
 import {
   OPEN_STATUSES,
   TASK_PRIORITIES,
@@ -196,8 +196,41 @@ const STATUS_TAG_HINT =
  * Rappel de fin : une tâche laissée « en cours » quand la session s'arrête est signalée « agent arrêté » à l'équipe
  * (tasks/stalled.ts) ; l'agent la ferme, la rend ou explique ce qui la retient avant de finir.
  */
-export const FINISH_TASK_HINT =
-  "Avant de terminer (dernier tour, archivage de la session), passe chaque tâche dont tu es en charge à `done` (`tasks.update`) si le travail est fini et vérifié ; sinon rends-la (`tasks.release`) ou laisse-la en cours avec un message dans son fil qui dit ce qui reste et ce que tu attends. Si tu attends un événement daté (un job de nuit, un relevé du lendemain, une réponse), pose une date de réveil (`tasks.update` avec `wake_at`, et `wake_note` : ce qu'il faudra vérifier) : la tâche est « en attente » jusque-là, puis l'agent qui la tenait est reconvoqué (ou la tâche revient dans « À traiter » pour une personne). Une tâche laissée « en cours » par une session arrêtée en erreur, sans rien dire ou dont le réveil est passé est signalée « agent arrêté » à l'équipe.";
+export function finishTaskHint(statuses?: TaskStatusDefinition[] | null): string {
+  const review = reviewStatusOf(statuses);
+  return [
+    `Avant de terminer (dernier tour, archivage de la session), passe chaque tâche dont tu es en charge à \`done\` (\`tasks.update\`) si le travail est fini et vérifié${review ? ` ; ${reviewHint(review)}` : ''} ; sinon rends-la (\`tasks.release\`) ou laisse-la en cours avec un message dans son fil qui dit ce qui reste et ce que tu attends.`,
+    "Si tu attends un événement daté (un job de nuit, un relevé du lendemain, une réponse), pose une date de réveil (`tasks.update` avec `wake_at`, et `wake_note` : ce qu'il faudra vérifier) : la tâche est « en attente » jusque-là, puis l'agent qui la tenait est reconvoqué (ou la tâche revient dans « À traiter » pour une personne). Une tâche laissée « en cours » par une session arrêtée en erreur, sans rien dire ou dont le réveil est passé est signalée « agent arrêté » à l'équipe.",
+  ].join(' ');
+}
+
+/**
+ * Statut « à valider » du projet : le premier statut de la catégorie « en cours » qui attend une personne, hors statut
+ * par défaut de la catégorie (null : le projet n'en a pas, ou « en cours » attend déjà une personne). C'est là que va une tâche dont le travail est fait mais reste à vérifier, plutôt que « en cours ».
+ */
+export function reviewStatusOf(statuses?: TaskStatusDefinition[] | null): TaskStatusDefinition | null {
+  return (statuses?.length ? statuses : DEFAULT_TASK_STATUSES).find((s) => s.category === 'in_progress' && s.attention && !s.isDefault) ?? null;
+}
+
+/** Consigne du passage au statut « à valider » (travail livré, vérification à faire, éventuellement à une date ultérieure). */
+const reviewHint = (review: TaskStatusDefinition) =>
+  `si le travail est fait (livré, fusionné, déployé) mais reste à vérifier — relecture par une personne, mesure en production, relevé à venir —, passe-la au statut \`${review.key}\` « ${review.label} » (\`tasks.update\` avec \`state\`) plutôt que de la laisser « en cours », et si cette vérification ne peut se faire qu'à une date ultérieure, pose aussi une date de réveil (\`wake_at\`, \`wake_note\`) : elle reste « en attente » jusque-là, puis l'agent qui la tenait est reconvoqué pour vérifier et la passer à \`done\``;
+
+/**
+ * Fin de l'instruction d'une session qui réalise une tâche : comment la terminer. Les statuts du projet donnent le
+ * statut « à valider » (s'il existe) : sans lui, un agent qui n'a plus qu'une vérification à faire laisse la tâche
+ * « en cours » (constaté le 25/11/2026 sur la tâche Curso 313c1101).
+ */
+export function finishTaskInstruction(statuses?: TaskStatusDefinition[] | null): string {
+  const review = reviewStatusOf(statuses);
+  return [
+    "Elle t'est assignée et est déjà « en cours ». Quand c'est terminé et vérifié, passe-la en `done` avec l'outil `tasks.update`.",
+    review ? `${reviewHint(review).charAt(0).toUpperCase()}${reviewHint(review).slice(1)}.` : '',
+    "Si tu es bloqué, laisse-la en cours et explique pourquoi dans son fil (`tasks.comment`).",
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
 
 function validate(input: CreateTaskInput | UpdateTaskInput): void {
   if ('title' in input && input.title != null && !input.title.trim()) throw new AppError('Le titre de la tâche est obligatoire');
@@ -631,12 +664,12 @@ export const taskService = {
     lines.push(
       "Quand quelqu'un d'autre modifie l'une de ces tâches ou écrit dans son fil, tu reçois un texte commençant par « [Mise à jour de la tâche] », « [Commentaire sur la tâche] » ou « [Réaction sur la tâche] » qui décrit le changement. Ce qui t'est adressé (message du fil d'une tâche dont tu es en charge ou qui te mentionne, modification par une personne d'une tâche dont tu es en charge) arrive comme une instruction : tiens-en compte, et réponds à un message avec `tasks.comment` (`reply_to` pour rester dans son fil) quand il appelle une réponse ; un simple accusé se fait avec `tasks.react`. Le reste arrive comme une note discrète, jointe au résultat d'un outil ou à l'instruction suivante : prends-la en compte sans en rendre compte, sauf si elle change ton travail.",
     );
-    if (tasks.length) lines.push(STATUS_TAG_HINT, FINISH_TASK_HINT);
+    if (tasks.length) lines.push(STATUS_TAG_HINT, finishTaskHint(statuses.get(tasks[0].projectId)));
     return lines.join('\n');
   },
 
   /** Texte d'une tâche tel que transmis à un agent chargé de la réaliser (avec ses personnes, champs et son fil de discussion). */
-  describeForPrompt(task: Task, comments: TaskComment[] = [], attachments: TaskAttachment[] = [], attached: AttachmentDelivery = 'none', reactions: TaskReaction[] = []): string {
+  describeForPrompt(task: Task, comments: TaskComment[] = [], attachments: TaskAttachment[] = [], attached: AttachmentDelivery = 'none', reactions: TaskReaction[] = [], statuses: TaskStatusDefinition[] | null = null): string {
     const own = attachments.filter((a) => !a.commentId);
     const parts = [
       `Réalise la tâche suivante du projet (id ${task.id}, priorité ${priorityLabels[task.priority]}${task.dueDate ? `, échéance ${task.dueDate}` : ''}) :`,
@@ -656,7 +689,7 @@ export const taskService = {
     if (comments.length) parts.push('', ...describeThread(comments, attachments, reactions, attached));
     parts.push(
       '',
-      "Elle t'est assignée et est déjà « en cours ». Quand c'est terminé et vérifié, passe-la en `done` avec l'outil `tasks.update`. Si tu es bloqué, laisse-la en cours et explique pourquoi dans son fil (`tasks.comment`).",
+      finishTaskInstruction(statuses),
       THREAD_HINT,
       STATUS_TAG_HINT,
     );
@@ -669,7 +702,7 @@ export const taskService = {
     const project = await projectService.get(task.projectId);
     const { kept, leftOut } = fitInInstruction(await taskRepository.listAttachments(id));
     // Même composition que tasks/launch.ts (composeTaskPrompt) : fichiers joints, puis consignes de tâches du projet.
-    const text = this.describeForPrompt({ ...task, status: 'in_progress' }, await taskRepository.listComments(id), kept, 'instruction', await taskRepository.listReactions(id));
+    const text = this.describeForPrompt({ ...task, status: 'in_progress' }, await taskRepository.listComments(id), kept, 'instruction', await taskRepository.listReactions(id), project.taskStatuses);
     const parts = [text];
     if (leftOut.length) parts.push('', `Non joints (au-delà des limites d'une instruction, lisibles dans l'interface) : ${leftOut.map(describeAttachment).join(', ')}.`);
     if (project.taskInstructions.trim()) parts.push('', '---', '', 'Consignes supplémentaires :', '', project.taskInstructions.trim());

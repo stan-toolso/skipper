@@ -3,6 +3,7 @@ import type { Actor } from '../context/types.js';
 import { AppError, NotFoundError, isInvalidUuidError } from '../errors.js';
 import { log } from '../log.js';
 import { projectService } from '../projects/service.js';
+import type { TaskStatusDefinition } from '../tasks/statuses.js';
 import { slugify } from '../projects/slug.js';
 import { isPersonalProject } from '../projects/types.js';
 import { scheduleService } from '../schedules/service.js';
@@ -483,7 +484,7 @@ export const agentService = {
           instructions: text,
         });
       }
-      return this.sessionBesideTask(agent, task, text, opts, actor, project.taskInstructions);
+      return this.sessionBesideTask(agent, task, text, opts, actor, project);
     }
     if (opts.thread) {
       const conversation = await conversationService.get(opts.thread.conversationId);
@@ -579,9 +580,9 @@ export const agentService = {
   },
 
   /** Session de l'agent sur une tâche sans en prendre le dossier : nouveau dossier à elle, reliée à la tâche (fil suivi). */
-  async sessionBesideTask(agent: Agent, task: Task, text: string, opts: SummonOptions, actor: Actor, taskInstructions: string): Promise<Session> {
+  async sessionBesideTask(agent: Agent, task: Task, text: string, opts: SummonOptions, actor: Actor, project: { taskInstructions: string; taskStatuses: TaskStatusDefinition[] }): Promise<Session> {
     const files = await taskFiles(task.id);
-    const prompt = composeTaskPrompt(task, await taskService.comments(task.id), files, taskInstructions, text);
+    const prompt = composeTaskPrompt(task, await taskService.comments(task.id), files, project.taskStatuses, project.taskInstructions, text);
     const session = await sessionService.create(
       {
         projectId: agent.projectId,
