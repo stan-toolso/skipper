@@ -1,10 +1,10 @@
 import { useQuery } from '@apollo/client';
 import PageLoading from '../components/PageLoading';
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-bootstrap';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { PROJECT, PROJECTS, TASKS, TASK_LAUNCH_TARGETS, type Project, type Task, type TaskPerson, type TaskPriority, type TaskStatus, type TaskStatusDefinition } from '../graphql/operations';
+import { PROJECT, PROJECTS, TASKS, TASK_COUNT, TASK_LAUNCH_TARGETS, type Project, type Task, type TaskPerson, type TaskPriority, type TaskStatus, type TaskStatusDefinition } from '../graphql/operations';
 import { PROJECT_TASK_STATUSES, TASK_PEOPLE, TASK_TAGS } from '../graphql/tasks';
 import { formatCost, taskPriorityLabels } from '../lib/humanize';
 import { usePollingQuery } from '../lib/usePollingQuery';
@@ -34,8 +34,10 @@ interface BoardColumn {
 const columns: BoardColumn[] = [
   { key: 'TODO', status: 'TODO', label: 'À faire', hint: 'Prêtes à être confiées à un agent' },
   { key: 'IN_PROGRESS', status: 'IN_PROGRESS', label: 'En cours', hint: 'Un agent ou vous y travaillez' },
-  { key: 'DONE', status: 'DONE', label: 'Terminées', hint: `Fermées ces ${RECENT_DAYS} derniers jours` },
+  { key: 'DONE', status: 'DONE', label: 'Terminées', hint: '' },
 ];
+/** Kanban : terminées montrées (les plus récemment fermées) ; les autres sont dans l'historique de la vue liste. */
+const BOARD_DONE_LIMIT = 20;
 const CANCELLED_COLUMN: BoardColumn = { key: 'CANCELLED', status: 'CANCELLED', label: 'Annulées', hint: '' };
 const priorities: TaskPriority[] = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 const VIEW_KEY = 'skipper.tasks.view';
@@ -188,28 +190,57 @@ export default function TasksPage() {
   // Fermées récemment seulement (liste et kanban) : l'historique complet a sa propre portée, le pilotage prend tout.
   const closedSince = useMemo(() => daysAgoIso(RECENT_DAYS), []);
   // Le pilotage a besoin de tout (terminées et annulées comprises, « mes tâches » aussi) pour mesurer débit et délais.
+  // Liste et kanban ne chargent pas les terminées avec les autres (elles sont souvent bien plus nombreuses que les
+  // ouvertes) : la liste les compte seulement, et ne les charge qu'au dépliage de leur groupe, à une recherche ou un
+  // filtre ; le kanban n'en montre que les 20 dernières.
+  const board = !table && !dashboard;
+  const [doneWanted, setDoneWanted] = useState(false);
+  const splitDone = (table && !history) || (board && !mine);
   const statuses: TaskStatus[] = history
     ? ['DONE', 'CANCELLED']
     : table
-      ? ['TODO', 'IN_PROGRESS', 'DONE']
-      : dashboard || showCancelled
+      ? ['TODO', 'IN_PROGRESS']
+      : dashboard
         ? ['TODO', 'IN_PROGRESS', 'DONE', 'CANCELLED']
-        : mine
-          ? ['TODO', 'IN_PROGRESS']
-          : ['TODO', 'IN_PROGRESS', 'DONE'];
+        : showCancelled && !mine
+          ? ['TODO', 'IN_PROGRESS', 'CANCELLED']
+          : ['TODO', 'IN_PROGRESS'];
+  const filterVars = table
+    ? { projectId: projectId || null, priority: null, assignee: null, reporter: null, tag: null, mine }
+    : { projectId: projectId || null, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine };
   const { data, loading, error } = usePollingQuery<{ tasks: Task[] }>(TASKS, {
-    variables: table
-      ? { projectId: projectId || null, status: statuses, priority: null, assignee: null, reporter: null, tag: null, mine, closedSince: history ? null : closedSince, limit: history ? 500 : 1000 }
-      : { projectId: projectId || null, status: statuses, priority: priority || null, assignee: mine ? null : assigneeQ || null, reporter: reporterQ || null, tag: tagQ.trim() || null, mine, closedSince: dashboard ? null : closedSince, limit: 1000 },
+    variables: { ...filterVars, status: statuses, closedSince: history || dashboard ? null : closedSince, limit: history ? 500 : 1000 },
     // 10 s : la liste complète (des centaines de tâches) est relue à chaque fois ; les changements faits depuis cette
     // page mettent le cache à jour aussitôt.
     pollInterval: 10_000,
   });
+  const loadDone = splitDone && (board || doneWanted);
+  const { data: doneData } = usePollingQuery<{ tasks: Task[] }>(TASKS, {
+    variables: board ? { ...filterVars, status: ['DONE'], closedSince: null, limit: BOARD_DONE_LIMIT, recentFirst: true } : { ...filterVars, status: ['DONE'], closedSince, limit: 1000 },
+    skip: !loadDone,
+    pollInterval: 30_000,
+  });
+  const { data: doneCountData } = usePollingQuery<{ taskCount: number }>(TASK_COUNT, {
+    variables: { ...filterVars, status: ['DONE'], closedSince },
+    skip: !(table && !history) || doneWanted,
+    pollInterval: 30_000,
+  });
+  // Liste : tant que les terminées ne sont pas chargées, leur groupe n'a que son compteur (le dernier connu pendant
+  // leur chargement, le comptage n'étant plus interrogé).
+  const lastDoneCount = useRef<number | null>(null);
+  if (doneCountData) lastDoneCount.current = doneCountData.taskCount;
+  const doneCount = table && !history && !(doneWanted && doneData) ? (doneCountData?.taskCount ?? lastDoneCount.current) : null;
 
   const project = projectData?.project;
   useTabTitle(routeProjectId ? (project ? `Tâches · ${project.name}` : null) : 'Tâches');
   useGitTarget(routeProjectId && project?.gitUrl ? { projectId: project.id, worksessionId: null, label: project.name } : null);
-  const tasks = data?.tasks ?? [];
+  const tasks = useMemo(() => {
+    const main = data?.tasks ?? [];
+    const done = loadDone ? (doneData?.tasks ?? []) : [];
+    if (!done.length) return main;
+    const seen = new Set(main.map((t) => t.id));
+    return [...main, ...done.filter((t) => !seen.has(t.id))];
+  }, [data, doneData, loadDone]);
 
   // Lien profond ?task=<id> : ouvre la tâche en édition (en levant les filtres qui la cacheraient).
   const deepLink = searchParams.get('task');
@@ -242,7 +273,7 @@ export default function TasksPage() {
   const projectStatuses = projectId ? statusesData?.project?.taskStatuses : undefined;
   const cols: BoardColumn[] = useMemo(() => {
     const base: BoardColumn[] = projectStatuses?.length
-      ? projectStatuses.map((st) => ({ key: `${st.category}:${st.key}`, status: st.category, state: st.key, label: st.label, hint: st.description ?? (st.category === 'DONE' ? `Fermées ces ${RECENT_DAYS} derniers jours` : ''), attention: st.attention }))
+      ? projectStatuses.map((st) => ({ key: `${st.category}:${st.key}`, status: st.category, state: st.key, label: st.label, hint: st.description ?? '', attention: st.attention }))
       : [...columns, CANCELLED_COLUMN];
     return base.filter((c) => (c.status === 'DONE' ? !mine : c.status === 'CANCELLED' ? showCancelled && !mine : true));
   }, [projectStatuses, mine, showCancelled]);
@@ -379,6 +410,8 @@ export default function TasksPage() {
           onClearFilters={clearFilters}
           search={deferredSearch}
           history={history}
+          doneCount={doneCount}
+          onDoneWanted={setDoneWanted}
           onEdit={setEditing}
           onTag={onTag}
           targets={targets}
@@ -401,6 +434,22 @@ export default function TasksPage() {
                   <TaskCard key={t.id} task={t} showProject={showProject && !projectId} onEdit={() => setEditing(t)} target={targets.get(t.project.id)} onTag={onTag} />
                 ))}
                 {list.length === 0 && <div className="text-secondary small fst-italic">Rien ici.</div>}
+                {col.status === 'DONE' && (
+                  <div className="small text-secondary">
+                    {cols.filter((c) => c.status === 'DONE').length > 1 ? `Parmi les ${BOARD_DONE_LIMIT} dernières terminées.` : `Les ${BOARD_DONE_LIMIT} dernières au plus.`}{' '}
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="p-0 align-baseline"
+                      onClick={() => {
+                        setViewPersist('table');
+                        setScope('history');
+                      }}
+                    >
+                      Voir l'historique
+                    </Button>
+                  </div>
+                )}
               </Col>
             );
           })}

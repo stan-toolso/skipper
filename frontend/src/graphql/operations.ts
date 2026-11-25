@@ -1992,13 +1992,20 @@ export const TASK_FIELDS = gql`
 export const TASKS = gql`
   ${TASK_FIELDS}
   ${TASK_PULL_REQUEST_FIELDS}
-  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean, $closedSince: DateTime, $limit: Int) {
-    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine, closedSince: $closedSince, limit: $limit) {
+  query Tasks($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean, $closedSince: DateTime, $limit: Int, $recentFirst: Boolean) {
+    tasks(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine, closedSince: $closedSince, limit: $limit, recentFirst: $recentFirst) {
       ...TaskFields
       pullRequests {
         ...TaskPullRequestFields
       }
     }
+  }
+`;
+
+/** Nombre de tâches (mêmes critères que TASKS) : compteur des terminées récemment tant que leur groupe est replié. */
+export const TASK_COUNT = gql`
+  query TaskCount($projectId: ID, $status: [TaskStatus!], $priority: TaskPriority, $assignee: String, $reporter: String, $tag: String, $mine: Boolean, $closedSince: DateTime) {
+    taskCount(projectId: $projectId, status: $status, priority: $priority, assignee: $assignee, reporter: $reporter, tag: $tag, mine: $mine, closedSince: $closedSince)
   }
 `;
 

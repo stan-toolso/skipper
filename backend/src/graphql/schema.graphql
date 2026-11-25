@@ -3418,7 +3418,9 @@ type Query {
   "Messages non lus des canaux, par projet dont je suis membre (hors espace personnel), pour le bouton Messages de la barre du haut."
   unreadMessagesByProject: [ProjectUnreadMessages!]!
   "Tâches, tous projets confondus (par défaut : ouvertes). assignee / reporter : texte cherché dans le nom ou l'e-mail ; mine : tâches dont le responsable a mon e-mail ; tag : tâches portant cette étiquette (sans tenir compte de la casse) ; closedSince : les terminées et annulées seulement si elles ont été fermées depuis cette date (les ouvertes toujours)."
-  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, tag: String, mine: Boolean, closedSince: DateTime, limit: Int): [Task!]!
+  tasks(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, tag: String, mine: Boolean, closedSince: DateTime, limit: Int, "Les plus récemment fermées (ou modifiées) d'abord, au lieu de l'ordre par priorité." recentFirst: Boolean): [Task!]!
+  "Nombre de tâches répondant aux mêmes critères que tasks (sans limite) : compteur d'un groupe qu'on ne charge pas."
+  taskCount(projectId: ID, status: [TaskStatus!], priority: TaskPriority, assignee: String, reporter: String, tag: String, mine: Boolean, closedSince: DateTime): Int!
   task(id: ID!): Task
   contextInstruction(id: ID!): ContextInstruction
   searchContext(projectId: ID!, query: String!, agentId: ID): [ContextInstruction!]!

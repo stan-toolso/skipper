@@ -124,7 +124,7 @@ import { taskService } from '../tasks/service.js';
 import { conversationService } from '../conversations/service.js';
 import type { Conversation, Message, MessageAttachment, MessageReaction } from '../conversations/types.js';
 import { DEFAULT_TASK_STATUSES, effectiveStatus } from '../tasks/statuses.js';
-import type { Task, TaskComment, TaskField, TaskPersonInput, TaskPriority, TaskReaction, TaskStatus, ProjectApiKey } from '../tasks/types.js';
+import type { Task, TaskComment, TaskField, TaskFilter, TaskPersonInput, TaskPriority, TaskReaction, TaskStatus, ProjectApiKey } from '../tasks/types.js';
 import type { TerminalRecord } from '../terminals/types.js';
 import type { AttachmentInput, CreateSessionInput, RelaunchInput, Session, SessionStatus } from '../sessions/types.js';
 import type { OpenItems, User } from '../users/types.js';
@@ -317,6 +317,33 @@ const toTaskInput = (i: GqlTaskInput) => ({
   wakeNote: i.wakeNote,
 });
 /** Statut effectif d'une tâche dans son projet (projet chargé une fois par requête). */
+interface TaskListArgs {
+  projectId?: string | null;
+  status?: GqlTaskStatus[] | null;
+  priority?: GqlTaskPriority | null;
+  assignee?: string | null;
+  reporter?: string | null;
+  tag?: string | null;
+  mine?: boolean | null;
+  closedSince?: Date | null;
+}
+
+/** Filtre des requêtes `tasks` et `taskCount` : projet (vérifié) ou projets accessibles, ouvertes par défaut. */
+async function taskFilterOf(ctx: Ctx, args: TaskListArgs): Promise<TaskFilter> {
+  if (args.projectId) await requireProject(ctx, args.projectId);
+  return {
+    projectId: args.projectId ?? undefined,
+    projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
+    status: fromGqlTaskStatuses(args.status) ?? ['todo', 'in_progress'],
+    priority: fromGqlTaskPriority(args.priority),
+    assignee: args.assignee ?? undefined,
+    reporter: args.reporter ?? undefined,
+    tag: args.tag?.trim() || undefined,
+    assigneeEmail: args.mine ? requireUser(ctx).email : undefined,
+    closedSince: args.closedSince ?? undefined,
+  };
+}
+
 const taskStateOf = async (ctx: Ctx, t: Task) => {
   const project = await loadersOf(ctx).project(t.projectId);
   return effectiveStatus(project?.taskStatuses ?? DEFAULT_TASK_STATUSES, t);
@@ -1597,21 +1624,8 @@ export const resolvers = {
       const counts = await conversationService.unreadByProject(projects.map((p) => p.id), user.id);
       return projects.map((project) => ({ project, count: counts.get(project.id) ?? 0 }));
     },
-    tasks: async (_: unknown, args: { projectId?: string | null; status?: GqlTaskStatus[] | null; priority?: GqlTaskPriority | null; assignee?: string | null; reporter?: string | null; tag?: string | null; mine?: boolean | null; closedSince?: Date | null; limit?: number | null }, ctx: Ctx) => {
-      if (args.projectId) await requireProject(ctx, args.projectId);
-      return taskService.list({
-        projectId: args.projectId ?? undefined,
-        projectIds: args.projectId ? undefined : await accessibleProjectIds(ctx),
-        status: fromGqlTaskStatuses(args.status) ?? ['todo', 'in_progress'],
-        priority: fromGqlTaskPriority(args.priority),
-        assignee: args.assignee ?? undefined,
-        reporter: args.reporter ?? undefined,
-        tag: args.tag?.trim() || undefined,
-        assigneeEmail: args.mine ? requireUser(ctx).email : undefined,
-        closedSince: args.closedSince ?? undefined,
-        limit: args.limit ?? undefined,
-      });
-    },
+    tasks: async (_: unknown, args: TaskListArgs & { limit?: number | null; recentFirst?: boolean | null }, ctx: Ctx) => taskService.list({ ...(await taskFilterOf(ctx, args)), limit: args.limit ?? undefined, recentFirst: args.recentFirst ?? undefined }),
+    taskCount: async (_: unknown, args: TaskListArgs, ctx: Ctx) => taskService.count(await taskFilterOf(ctx, args)),
     task: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardTask(ctx, args.id, 'viewer');
       return taskService.get(args.id);

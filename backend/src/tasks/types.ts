@@ -198,6 +198,8 @@ export interface TaskFilter {
   waiting?: boolean;
   /** Tâches fermées (terminées ou annulées) seulement si elles l'ont été depuis cette date ; les ouvertes passent toujours. */
   closedSince?: Date;
+  /** Les plus récemment fermées (ou modifiées) d'abord, au lieu de l'ordre par priorité (« 20 dernières terminées »). */
+  recentFirst?: boolean;
   limit?: number;
 }
 
