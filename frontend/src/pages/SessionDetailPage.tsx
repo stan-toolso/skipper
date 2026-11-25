@@ -22,7 +22,7 @@ import { useAuth } from '../auth/AuthContext';
 import { bypassConnectionsWarning, dontAskConsequences, permissionModeLabels, permissionModeShortLabels, sessionStatusLabels, splitAllowedTools } from '../lib/humanize';
 import { describeTaskFeed } from '../lib/taskFeed';
 import AttachmentChips from '../components/AttachmentChips';
-import RequestPrompt from '../components/RequestPrompt';
+import { RequestPrompts } from '../components/RequestPrompt';
 import { SessionChildren, SessionParentNote, parentStateHint, useSessionActions } from '../components/SessionControls';
 import { ContextBanner, ContextGauge } from '../components/ContextGauge';
 import Transcript, { ToolPermissionContext, type ChatParticipants, type ToolPermissionActions } from '../components/Transcript';
@@ -557,11 +557,7 @@ export default function SessionDetailPage() {
       {actions.modals}
 
       {pending.length > 0 && !readOnly && (
-        <div className="cc-prompts">
-          {pending.map((r, i) => (
-            <RequestPrompt key={r.id} request={r} keyboard={i === 0} />
-          ))}
-        </div>
+        <RequestPrompts requests={pending} />
       )}
 
       {!chat && !readOnly && !folderGone && (
