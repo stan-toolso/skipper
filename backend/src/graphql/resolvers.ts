@@ -141,6 +141,7 @@ import type { ResolvedLayout } from '../cockpit/types.js';
 import { signInService } from '../auth/signInService.js';
 import type { ProjectMember, ProjectRole } from '../users/types.js';
 import { log } from '../log.js';
+import { folderRemovalBlocker, removeArchivedFolderNow } from '../worksessions/housekeeping.js';
 import { previewService } from '../previews/service.js';
 import { personAuthor } from '../sessions/instructionAuthor.js';
 
@@ -1518,6 +1519,12 @@ export const resolvers = {
       if (session) await requireProject(ctx, session.projectId);
       return session;
     },
+    sessionFolderRemoval: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+      await guardSession(ctx, args.id, 'member');
+      const session = await sessionService.get(args.id);
+      const reason = session?.worksessionId ? await folderRemovalBlocker(session.worksessionId, session.id) : 'Session sans dossier de travail';
+      return { removable: reason === null, reason };
+    },
     personalSpace: (_: unknown, __: unknown, ctx: Ctx) => personalService.ensure(requireUser(ctx)),
     chats: (_: unknown, args: { limit?: number | null }, ctx: Ctx) => personalService.listChats(requireUser(ctx), args.limit ?? undefined),
     sessionChanges: async (_: unknown, args: { sessionId: string }, ctx: Ctx) => {
@@ -2168,9 +2175,14 @@ export const resolvers = {
       await guardSession(ctx, args.id, 'member');
       return sessionService.stop(args.id);
     },
-    archiveSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
+    archiveSession: async (_: unknown, args: { id: string; removeFolder?: boolean | null }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');
-      return archiveSessionCascade(args.id);
+      const session = await archiveSessionCascade(args.id);
+      if (args.removeFolder && session.worksessionId) {
+        const kept = await removeArchivedFolderNow(session.worksessionId).catch((err) => (err as Error).message);
+        if (kept) log.info(`[sessions] ${session.id} archivée, dossier gardé : ${kept}`);
+      }
+      return session;
     },
     unarchiveSession: async (_: unknown, args: { id: string }, ctx: Ctx) => {
       await guardSession(ctx, args.id, 'member');

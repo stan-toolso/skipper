@@ -13,22 +13,24 @@ const root = await vi.hoisted(async () => {
   process.env.WORKSPACES_ROOT = dir;
   return dir;
 });
-const m = vi.hoisted(() => ({ records: [] as Worksession[], busy: new Set<string>() }));
+const m = vi.hoisted(() => ({ records: [] as Worksession[], busy: new Set<string>(), active: new Set<string>() }));
 vi.mock('./repository.js', () => ({
   worksessionRepository: {
     listByProject: async () => m.records.filter((w) => w.archivedAt),
     findById: async (id: string) => m.records.find((w) => w.id === id) ?? null,
     countBusy: async (id: string) => ({ sessions: m.busy.has(id) ? 1 : 0, terminals: 0 }),
+    countActiveSessions: async (id: string) => (m.active.has(id) ? 1 : 0),
   },
 }));
 vi.mock('../envFiles/repository.js', () => ({ envFileRepository: { listByProject: async () => [{ path: 'front/.env.local' }] } }));
+vi.mock('../projects/service.js', () => ({ projectService: { get: async (id: string) => ({ id, slug: id, gitUrl: 'x', gitBranch: 'main' }) } }));
 vi.mock('../projects/repository.js', () => ({ projectRepository: { list: async () => [] } }));
 // Modules lourds de disk.ts (terminaux, aperçus) : hors sujet ici.
 vi.mock('../projects/cleanup.js', () => ({ removeWorksessionKeepingSessions: async () => ({ archivedSessionIds: [] }) }));
 vi.mock('../previews/service.js', () => ({ previewService: {}, previewStateDir: () => '/nonexistent' }));
 vi.mock('../settings/github.js', () => ({ githubService: { gitConfigArgs: async () => [] } }));
 
-const { assessPurge, precious, purgeArchivedWorksessions } = await import('./housekeeping.js');
+const { assessPurge, folderRemovalBlocker, precious, purgeArchivedWorksessions, removeArchivedFolderNow } = await import('./housekeeping.js');
 const { removeNodeModules } = await import('../previews/deps.js');
 
 const origin = path.join(root, 'origin.git');
@@ -100,6 +102,28 @@ describe('retrait des dossiers archivés', () => {
     expect(branches()).not.toContain('vierge');
     expect(branches()).toContain('poussee');
     expect(git(main, 'worktree', 'list')).not.toContain('vierge');
+  });
+});
+
+describe('suppression du dossier à l’archivage', () => {
+  it('propose la suppression d’un dossier vierge, la refuse s’il a du travail ou d’autres sessions actives', async () => {
+    addWorksession('a-archiver', null);
+    expect(await folderRemovalBlocker('a-archiver', 's1')).toBeNull();
+    m.active.add('a-archiver');
+    expect(await folderRemovalBlocker('a-archiver', 's1')).toBe('1 autre(s) session(s) active(s) y travaillent');
+    m.active.delete('a-archiver');
+    const travail = addWorksession('avec-travail', null);
+    await commit(travail, 't.txt', 'pas poussé');
+    expect(await folderRemovalBlocker('avec-travail')).toBe('Commits propres, branche absente d’origin');
+  });
+  it('supprime tout de suite le dossier archivé sans rien d’unique, garde l’autre', async () => {
+    const vierge = path.join(wsRoot, 'a-archiver');
+    m.records.find((w) => w.id === 'a-archiver')!.archivedAt = new Date();
+    m.records.find((w) => w.id === 'avec-travail')!.archivedAt = new Date();
+    expect(await removeArchivedFolderNow('a-archiver')).toBeNull();
+    expect(await present(vierge)).toBe(false);
+    expect(await removeArchivedFolderNow('avec-travail')).toBe('Commits propres, branche absente d’origin');
+    expect(await present(path.join(wsRoot, 'avec-travail'))).toBe(true);
   });
 });
 

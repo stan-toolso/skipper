@@ -7,7 +7,9 @@ import type { Project } from '../projects/types.js';
 import { git, isGitRepository, workspacePath } from '../projects/workspace.js';
 import { forgetSize, gitState } from './disk.js';
 import { worksessionRepository } from './repository.js';
-import { defaultStartPoint, worksessionPath } from './service.js';
+import { projectService } from '../projects/service.js';
+import { defaultStartPoint, worksessionPath, worksessionService } from './service.js';
+import type { Worksession } from './types.js';
 
 /**
  * Retrait des dossiers archivés (tâche périodique de l'instance meneuse). Chaque session a son dossier de travail, et
@@ -90,42 +92,103 @@ export interface PurgeResult {
   kept: { name: string; reason: string }[];
 }
 
+interface FolderContext {
+  main: string;
+  base: string;
+  envPaths: string[];
+}
+
+async function folderContext(project: Project): Promise<FolderContext | null> {
+  const main = workspacePath(project);
+  if (!project.gitUrl || !(await isGitRepository(main))) return null;
+  return { main, base: await defaultStartPoint(main, project.gitBranch), envPaths: (await envFileRepository.listByProject(project.id)).map((f) => f.path) };
+}
+
+/** Ce que le dossier a d'unique (null : rien, il peut être supprimé) et son état git. */
+async function folderVerdict(dir: string, ctx: FolderContext): Promise<{ reason: string | null; state: Awaited<ReturnType<typeof gitState>> }> {
+  const state = await gitState(dir, ctx.base);
+  const ignored = await git(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory'], dir).then((out) => out.split('\n').filter(Boolean), () => null);
+  const reason = ignored === null ? 'Fichiers ignorés illisibles' : assessPurge({ ...state, precious: await expandPrecious(dir, precious(ignored, ctx.envPaths), ctx.envPaths) });
+  return { reason, state };
+}
+
+/** Supprime le dossier (worktree) ; la branche aussi si elle n'a rien de plus que la branche principale. */
+async function removeFolder(dir: string, w: Worksession, state: Awaited<ReturnType<typeof gitState>>, ctx: FolderContext): Promise<void> {
+  await git(['worktree', 'remove', '--force', dir], ctx.main).catch(() => rm(dir, { recursive: true, force: true }));
+  // Branche sans rien de plus que la branche principale : la recréation repartira d'origin, inutile de la garder.
+  if (state.aheadCount === 0 && state.branch === w.branch) await git(['branch', '-D', '--', w.branch], ctx.main).catch(() => undefined);
+  forgetSize(dir);
+}
+
+const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false);
+
+/**
+ * Le dossier d'une work session peut-il être supprimé avec elle sans rien perdre ? Posé avant d'archiver une session
+ * (case « Supprimer aussi son dossier de travail ») : null si oui, sinon pourquoi. Ne regarde pas ce qui tourne
+ * (l'archivage l'arrête) mais refuse si d'autres sessions actives que `exceptSessionId` y travaillent.
+ */
+export async function folderRemovalBlocker(worksessionId: string, exceptSessionId: string | null = null): Promise<string | null> {
+  const w = await worksessionRepository.findById(worksessionId);
+  if (!w) return 'Dossier de travail inconnu';
+  const project = await projectService.get(w.projectId);
+  const ctx = await folderContext(project);
+  if (!ctx) return 'Projet sans dépôt git';
+  const dir = worksessionPath(project, w);
+  if (!(await isDir(dir))) return 'Dossier déjà absent du disque';
+  const others = await worksessionRepository.countActiveSessions(worksessionId, exceptSessionId);
+  if (others) return `${others} autre(s) session(s) active(s) y travaillent`;
+  return (await folderVerdict(dir, ctx)).reason;
+}
+
+/** Supprime tout de suite le dossier d'une work session archivée, s'il n'a rien d'unique ; renvoie pourquoi il est gardé sinon. */
+export async function removeArchivedFolderNow(worksessionId: string): Promise<string | null> {
+  const w = await worksessionRepository.findById(worksessionId);
+  if (!w?.archivedAt) return "Le dossier n'est pas archivé : d'autres sessions y travaillent";
+  await worksessionService.whenLightened(w.id);
+  const project = await projectService.get(w.projectId);
+  const ctx = await folderContext(project);
+  if (!ctx) return 'Projet sans dépôt git';
+  const dir = worksessionPath(project, w);
+  if (!(await isDir(dir))) return null;
+  const busy = await worksessionRepository.countBusy(w.id);
+  if (busy.sessions || busy.terminals) return 'Une session ou un terminal y tourne encore';
+  const { reason, state } = await folderVerdict(dir, ctx);
+  if (reason) return reason;
+  await removeFolder(dir, w, state, ctx);
+  await git(['worktree', 'prune'], ctx.main).catch(() => undefined);
+  log.info(`[worksessions] ${project.slug} : dossier de ${w.name} supprimé à l'archivage`);
+  return null;
+}
+
 /** Retire les dossiers des work sessions du projet archivées depuis plus de `afterDays` jours, quand rien n'y est unique. */
 export async function purgeArchivedWorksessions(project: Project, afterDays = PURGE_AFTER_DAYS): Promise<PurgeResult> {
   const result: PurgeResult = { removed: [], kept: [] };
-  const main = workspacePath(project);
-  if (!project.gitUrl || !(await isGitRepository(main))) return result;
   const cutoff = Date.now() - afterDays * 86_400_000;
   const candidates = (await worksessionRepository.listByProject(project.id, { archived: 'only' })).filter((w) => w.archivedAt && w.archivedAt.getTime() < cutoff);
   if (!candidates.length) return result;
-  const base = await defaultStartPoint(main, project.gitBranch);
-  const envPaths = (await envFileRepository.listByProject(project.id)).map((f) => f.path);
+  const ctx = await folderContext(project);
+  if (!ctx) return result;
   for (const w of candidates) {
     const dir = worksessionPath(project, w);
-    if (!(await stat(dir).then((s) => s.isDirectory(), () => false))) continue;
+    if (!(await isDir(dir))) continue;
     // Relue juste avant : restaurée entre-temps, ou une session ou un terminal y a été rouvert.
     const current = await worksessionRepository.findById(w.id);
     if (!current?.archivedAt) continue;
     const busy = await worksessionRepository.countBusy(w.id);
     if (busy.sessions || busy.terminals) continue;
-    const state = await gitState(dir, base);
-    const ignored = await git(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory'], dir).then((out) => out.split('\n').filter(Boolean), () => null);
-    const reason = ignored === null ? 'Fichiers ignorés illisibles' : assessPurge({ ...state, precious: await expandPrecious(dir, precious(ignored, envPaths), envPaths) });
-    if (reason) {
-      result.kept.push({ name: w.name, reason });
-      continue;
-    }
     try {
-      await git(['worktree', 'remove', '--force', dir], main).catch(() => rm(dir, { recursive: true, force: true }));
-      // Branche sans rien de plus que la branche principale : la recréation repartira d'origin, inutile de la garder.
-      if (state.aheadCount === 0 && state.branch === w.branch) await git(['branch', '-D', '--', w.branch], main).catch(() => undefined);
-      forgetSize(dir);
+      const { reason, state } = await folderVerdict(dir, ctx);
+      if (reason) {
+        result.kept.push({ name: w.name, reason });
+        continue;
+      }
+      await removeFolder(dir, w, state, ctx);
       result.removed.push(w.name);
     } catch (err) {
       result.kept.push({ name: w.name, reason: (err as Error).message });
     }
   }
-  await git(['worktree', 'prune'], main).catch(() => undefined);
+  await git(['worktree', 'prune'], ctx.main).catch(() => undefined);
   if (result.removed.length) log.info(`[worksessions] ${project.slug} : ${result.removed.length} dossier(s) archivé(s) retiré(s) du disque (${result.removed.join(', ')})`);
   return result;
 }

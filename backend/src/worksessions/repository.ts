@@ -70,6 +70,11 @@ export const worksessionRepository = {
     const { rowCount } = await pool.query('DELETE FROM worksessions WHERE id = $1', [id]);
     return (rowCount ?? 0) > 0;
   },
+  /** Sessions non archivées de la work session, hors `exceptId`. */
+  async countActiveSessions(worksessionId: string, exceptId: string | null = null): Promise<number> {
+    const { rows } = await pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM sessions WHERE worksession_id = $1 AND archived_at IS NULL AND ($2::uuid IS NULL OR id <> $2::uuid)`, [worksessionId, exceptId]);
+    return Number(rows[0].n);
+  },
   async countRunningSessions(worksessionId: string): Promise<number> {
     const { rows } = await pool.query<{ n: string }>(`SELECT count(*)::text AS n FROM sessions WHERE worksession_id = $1 AND status IN ('running', 'queued')`, [worksessionId]);
     return Number(rows[0].n);

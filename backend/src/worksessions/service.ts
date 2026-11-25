@@ -403,6 +403,11 @@ export const worksessionService = {
     return archived;
   },
 
+  /** Attend la fin de l'allègement du dossier archivé (`lightenArchived`), s'il est en cours. */
+  async whenLightened(id: string): Promise<void> {
+    await lightening.get(id);
+  },
+
   /** Restaure une work session archivée ; refusé si sa branche est extraite dans une autre work session active. */
   async restore(id: string): Promise<Worksession> {
     const wt = await this.get(id);
