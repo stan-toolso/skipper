@@ -16,6 +16,7 @@ import { containerDrift, countZombies, cpusArgs, SPEC_LABEL, updateCpusValue, sp
 import { AGENT_GIT_ENV_KEYS } from '../git/agentEnv.js';
 import { invalidateContainerStats, parseDockerSize, readContainerStats, SESSION_ENV, type ContainerStats } from './stats.js';
 import { log } from '../log.js';
+import { FIND_CHROMIUM, LAZY_BROWSER_MCP, parseDevToolsActivePort, START_CHROMIUM } from './browserLauncher.js';
 import { claudeConfigFile, trustDirectories } from './trust.js';
 
 const execFileAsync = promisify(execFile);
@@ -385,11 +386,11 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
   }
 
   /**
-   * Navigateur de la session : Skipper lance lui-même Chromium dans le conteneur (profil jetable dans le
-   * /tmp du conteneur, hors des volumes), puis Playwright MCP s'y attache par CDP. Le backend peut ainsi
-   * observer la même page que l'agent (vue en direct) et y saisir les secrets du coffre à la demande.
-   * C'est le CLI qui lance Playwright MCP, et le CLI tourne déjà dans le conteneur (où `docker` n'existe
-   * pas) : la commande s'exécute donc directement, sans `docker exec`.
+   * Navigateur de la session, lancé au premier usage (browserLauncher.ts) : le CLI lance un relais qui démarre
+   * `playwright-mcp` tout de suite et Chromium seulement au premier outil du navigateur (profil jetable dans le
+   * /tmp du conteneur, hors des volumes). Le backend retrouve ensuite le même Chromium par CDP (vue en direct,
+   * saisie des secrets du coffre). C'est le CLI qui lance le relais, et le CLI tourne déjà dans le conteneur (où
+   * `docker` n'existe pas) : la commande s'exécute donc directement, sans `docker exec`.
    */
   async browserMcpCommand(project: Project, cwd: string, options: BrowserMcpOptions): Promise<BrowserMcpServer> {
     await this.ensureReady(project);
@@ -400,20 +401,16 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     };
     // Reste d'une session précédente (serveur arrêté brutalement) : on repart d'un dossier propre.
     await dispose();
-    // `docker exec -d` : Chromium survit à la commande qui l'a lancé (un `&` dans un `docker exec` ne suffit pas).
-    await docker(['exec', '-d', container, 'sh', '-c', START_CHROMIUM, 'sh', dir]);
-    let cdp: BrowserMcpServer['cdp'];
-    try {
-      const { stdout } = await docker(['exec', container, 'sh', '-c', WAIT_CHROMIUM, 'sh', dir]);
-      const [port, browserPath] = stdout.trim().split('\n');
-      if (!/^\d+$/.test(port) || !browserPath?.startsWith('/devtools/browser/')) throw new AppError(`Réponse inattendue de Chromium : ${stdout.trim()}`);
-      cdp = { port: Number(port), browserPath };
-    } catch (err) {
-      await dispose();
-      throw new AppError(`Le navigateur headless n'a pas démarré : ${(err as Error).message}`);
-    }
-    const args = ['--cdp-endpoint', `http://127.0.0.1:${cdp.port}`, '--output-dir', `${cwd}/.playwright-mcp`];
-    return { command: 'playwright-mcp', args, cdp, dispose };
+    // Sans lancer Chromium, on vérifie qu'il est dans l'image : sinon la session part sans navigateur, avec la raison.
+    const { stdout: bin } = await docker(['exec', container, 'sh', '-c', FIND_CHROMIUM], { allowFail: true });
+    if (!bin.trim()) throw new AppError("Le navigateur headless n'a pas démarré : Chromium introuvable dans l'image (/opt/ms-playwright) : reconstruire skipper-runner");
+    // Relu à chaque appel (vue en direct, saisie du coffre) : le relais relance Chromium, sur un autre port, s'il s'arrête.
+    const cdp = async () => {
+      const { stdout, code } = await docker(['exec', container, 'cat', `${dir}/profile/DevToolsActivePort`], { allowFail: true });
+      return code === 0 ? parseDevToolsActivePort(stdout) : null;
+    };
+    const args = ['-e', LAZY_BROWSER_MCP, dir, START_CHROMIUM, '--output-dir', `${cwd}/.playwright-mcp`];
+    return { command: 'node', args, cdp, dispose };
   }
 
   cdpTunnelCommand(project: Project, port: number): SpawnSpec {
@@ -523,33 +520,6 @@ exec docker exec -i -w "$PWD" ${envFlags} ${this.containerName(project)} claude 
     return gateway;
   }
 }
-
-/**
- * Lancement de Chromium ($1 = dossier de la session). Binaire « headless shell » installé par Playwright
- * (dernière version présente dans l'image). Port CDP choisi par Chromium (`=0`, plusieurs sessions par
- * conteneur), qu'il écrit avec le chemin du point d'accès dans `DevToolsActivePort`. Options reprises de
- * celles de Playwright ; `--disable-dev-shm-usage` : le /dev/shm d'un conteneur ne fait que 64 Mo.
- */
-const START_CHROMIUM = `set -e
-mkdir -p "$1/profile"
-bin=$(ls -d /opt/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell 2>/dev/null | sort -V | tail -n 1)
-if [ -z "$bin" ]; then echo "Chromium introuvable dans l'image (/opt/ms-playwright) : reconstruire skipper-runner" > "$1/chromium.log"; exit 1; fi
-echo $$ > "$1/chromium.pid"
-exec "$bin" --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check --disable-background-networking \
-  --disable-component-update --disable-sync --disable-features=Translate,MediaRouter --mute-audio --hide-scrollbars \
-  --password-store=basic --use-mock-keychain --window-size=1280,800 \
-  --remote-debugging-port=0 --user-data-dir="$1/profile" about:blank > "$1/chromium.log" 2>&1`;
-
-/** Attente du port CDP (10 s au plus) : affiche le port puis le chemin du point d'accès du navigateur. */
-const WAIT_CHROMIUM = `i=0
-while [ $i -lt 100 ]; do
-  # Deux lignes (port, chemin), sans saut de ligne final : on attend que la seconde soit écrite.
-  if [ -n "$(sed -n 2p "$1/profile/DevToolsActivePort" 2>/dev/null)" ]; then cat "$1/profile/DevToolsActivePort"; exit 0; fi
-  sleep 0.1; i=$((i + 1))
-done
-grep -v -i -E 'fontconfig|dbus|^[[:space:]]' "$1/chromium.log" 2>/dev/null | tail -n 3 >&2
-echo "délai de 10 s dépassé" >&2
-exit 1`;
 
 /**
  * Arrêt de Chromium puis suppression du dossier de la session (profil, secrets). On attend la fin du

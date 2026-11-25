@@ -45,7 +45,9 @@ interface Probe {
 async function withCdp<T>(sessionId: string, fn: (cdp: CdpClient) => Promise<T>): Promise<T> {
   const browser = liveBrowserService.browserOf(sessionId);
   if (!browser) throw new AppError("Aucun navigateur ouvert pour cette session : l'option « navigateur headless » du projet doit être activée");
-  const cdp = await CdpClient.connect(runner.cdpTunnelCommand(browser.project, browser.cdp.port), browser.cdp.browserPath);
+  const endpoint = await browser.cdp();
+  if (!endpoint) throw new AppError("Le navigateur de la session n'est pas encore ouvert : ouvre d'abord la page avec les outils du navigateur (browser_navigate)");
+  const cdp = await CdpClient.connect(runner.cdpTunnelCommand(browser.project, endpoint.port), endpoint.browserPath);
   try {
     return await fn(cdp);
   } finally {

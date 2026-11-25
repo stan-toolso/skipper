@@ -10,8 +10,8 @@ import { log } from '../log.js';
  * Contrôle du navigateur headless d'un projet (bouton « Tester » de la page Réglages) et diagnostic
  * lisible quand il ne démarre pas au lancement d'une session.
  *
- * Le contrôle refait exactement le chemin d'une session : Chromium lancé par Skipper dans le conteneur
- * (runner.browserMcpCommand), puis `playwright-mcp` attaché par CDP, à qui l'on demande d'ouvrir une page
+ * Le contrôle refait exactement le chemin d'une session : la commande du navigateur (runner.browserMcpCommand :
+ * relais qui lance `playwright-mcp`, puis Chromium au premier outil), à qui l'on demande d'ouvrir une page
  * locale et d'en faire une capture, par le protocole MCP comme le ferait l'agent.
  */
 
@@ -250,9 +250,9 @@ export async function checkBrowser(project: Project): Promise<BrowserCheckResult
   let server: BrowserMcpServer | undefined;
   let client: Client | undefined;
   try {
-    server = await step('Lancement de Chromium', async () => {
+    server = await step('Préparation du navigateur', async () => {
       const s = await runner.browserMcpCommand(project, `/tmp/${sessionTag(tag)}-browser`, { sessionId: tag });
-      return { value: s, detail: `port CDP ${s.cdp.port}` };
+      return { value: s, detail: 'Chromium lancé au premier outil du navigateur' };
     });
     if (!server) return done();
     const browserServer = server;

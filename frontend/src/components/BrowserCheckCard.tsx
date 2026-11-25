@@ -20,7 +20,7 @@ export default function BrowserCheckCard({ projectId, enabled, canEdit }: { proj
         <p className="mb-2">
           {enabled ? (
             <>
-              <span className="text-success">Activé</span> : chaque session reçoit un Chromium sans fenêtre, piloté par le serveur MCP <code>playwright</code>.
+              <span className="text-success">Activé</span> : chaque session reçoit un Chromium sans fenêtre, piloté par le serveur MCP <code>playwright</code> et lancé au premier outil du navigateur.
             </>
           ) : (
             <>
