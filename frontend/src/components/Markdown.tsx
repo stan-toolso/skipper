@@ -1,10 +1,13 @@
-import { memo } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import { memo, useMemo } from 'react';
+import ReactMarkdown, { defaultUrlTransform, type Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
 import remarkRefs from '../lib/remarkRefs';
+import { useKnownRefs } from '../lib/useKnownRefs';
 
-const PLUGINS = [remarkGfm, remarkRefs];
+type PluggableList = NonNullable<Options['remarkPlugins']>;
+
+const PLUGINS: PluggableList = [remarkGfm, remarkRefs];
 /** Garde les liens `mention:` (sinon retirés par react-markdown, qui n'admet que http, https, mailto…). */
 const urlTransform = (url: string) => (url.startsWith('mention:') ? url : defaultUrlTransform(url));
 
@@ -18,13 +21,16 @@ const urlTransform = (url: string) => (url.startsWith('mention:') ? url : defaul
  * Un lien `mention:<kind>:<id>` (produit par `withMentionLinks` du fil des tâches) est rendu comme une mention :
  * pastille pour une personne, lien vers la session pour une session d'agent. Les identifiants de tâches et de sessions
  * cités dans le texte (« la tâche 313c1101 ») deviennent des liens internes (`remarkRefs`) ; un lien interne (`/…`)
- * s'ouvre dans l'application, les autres dans un nouvel onglet.
+ * s'ouvre dans l'application, les autres dans un nouvel onglet. Un identifiant court cité seul (« **56f64f35** : … »)
+ * devient un lien quand le serveur reconnaît une tâche ou une session visible (`useKnownRefs`).
  */
 function Markdown({ text, className, base = 'cc-md' }: { text: string; className?: string; base?: string }) {
+  const known = useKnownRefs(text);
+  const plugins = useMemo<PluggableList>(() => (known ? [remarkGfm, [remarkRefs, { known }]] : PLUGINS), [known]);
   return (
     <div className={`${base}${className ? ` ${className}` : ''}`}>
       <ReactMarkdown
-        remarkPlugins={PLUGINS}
+        remarkPlugins={plugins}
         urlTransform={urlTransform}
         components={{
           a: ({ node: _node, ref: _ref, href, children, ...props }) => {

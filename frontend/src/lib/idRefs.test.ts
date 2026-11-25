@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
-import { bareId, refUrl, splitRefs, trailingKeyword } from './idRefs';
+import { bareId, candidateRefs, refUrl, splitKnown, splitRefs, trailingKeyword } from './idRefs';
 import remarkRefs from './remarkRefs';
 
 const refs = (text: string) => splitRefs(text).filter((s) => 'kind' in s);
@@ -58,5 +58,37 @@ describe('remarkRefs', () => {
   });
   it('laisse les liens existants', () => {
     expect(links('[la tâche 313c1101](https://x.io)')).toEqual(['https://x.io']);
+  });
+});
+
+describe('identifiants cités seuls, reconnus par le serveur', () => {
+  const known = new Map([
+    ['56f64f35', { kind: 'task' as const, id: '56f64f35-1111-4222-8333-444455556666' }],
+    ['2927a9fc', { kind: 'session' as const, id: '2927a9fc-1111-4222-8333-444455556666' }],
+  ]);
+  const links = (md: string) => {
+    const proc = unified().use(remarkParse).use(remarkRefs, { known });
+    const tree = proc.runSync(proc.parse(md)) as unknown as { children: unknown[] };
+    const urls: string[] = [];
+    const walk = (n: { type?: string; url?: string; children?: unknown[] }) => {
+      if (n.type === 'link' && n.url) urls.push(n.url);
+      (n.children ?? []).forEach((c) => walk(c as never));
+    };
+    walk(tree as never);
+    return urls;
+  };
+  it('relève les candidats plausibles', () => {
+    expect(candidateRefs('**56f64f35** : renfo, 97754E7A, deadbeef, c87aacf3-30ac-4860-8a01-e9a48f1fa2f0')).toEqual(['56f64f35', '97754e7a']);
+  });
+  it('lie un identifiant reconnu, seul, en gras ou en code', () => {
+    expect(links('- **56f64f35** : 6 nouvelles séances\n- `2927a9fc` relancée')).toEqual([
+      '/tasks/56f64f35-1111-4222-8333-444455556666',
+      '/sessions/2927a9fc-1111-4222-8333-444455556666',
+    ]);
+    expect(links('la tâche 56f64f35')).toEqual(['/tasks/56f64f35-1111-4222-8333-444455556666']);
+  });
+  it('laisse un identifiant inconnu (commit) en texte', () => {
+    expect(links('**97754e7a**, commit `ddec3a84`')).toEqual([]);
+    expect(splitKnown('voir 97754e7a', known)).toEqual([{ text: 'voir 97754e7a' }]);
   });
 });

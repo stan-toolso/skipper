@@ -21,7 +21,7 @@ import { pushPreferencesService } from '../notifications/preferences.js';
 import { pushService, type PushSubscriptionInput } from '../notifications/push.js';
 import { notificationChannelService, type ChannelInput, type ChannelPatch } from '../notifications/channels.js';
 import { mailService, type MailInput } from '../notifications/mail.js';
-import { searchService, type SearchKind } from '../search/service.js';
+import { resolveRefs, searchService, type SearchKind } from '../search/service.js';
 import { sharedPageCommentService } from '../sharedPages/commentService.js';
 import { sharedPageService } from '../sharedPages/service.js';
 import { artifactDataService } from '../sharedPages/dataService.js';
@@ -1358,6 +1358,7 @@ export const resolvers = {
       const projectIds = args.projectId ? [args.projectId] : user.isSuperAdmin ? (await projectService.list()).map((p) => p.id) : memberProjectIds;
       return { query: args.query, groups: await searchService.search({ userId: user.id, memberProjectIds, projectIds, onlyProjectId: args.projectId ?? undefined }, args.query, args.kinds, args.limit) };
     },
+    resolveRefs: async (_: unknown, args: { prefixes: string[] }, ctx: Ctx) => resolveRefs(await accessibleProjectIds(ctx), args.prefixes),
     sessionOwners: async (_: unknown, args: { projectId?: string | null }, ctx: Ctx) => {
       if (args.projectId) await requireProject(ctx, args.projectId);
       const ids = await sessionRepository.listOwnerIds(args.projectId ? [args.projectId] : await accessibleProjectIds(ctx));
