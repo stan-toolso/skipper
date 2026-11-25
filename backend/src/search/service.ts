@@ -2,11 +2,14 @@ import { pool } from '../db/pool.js';
 import { vaultService } from '../vault/service.js';
 import { kindLabels as vaultKindLabels } from '../vault/types.js';
 import { log } from '../log.js';
+import { idPrefixOf } from './idPrefix.js';
 
 /**
  * Recherche globale (palette ⌘K) : projets, sessions, terminaux, tâches et éléments du coffre
  * que la personne peut voir. Chaque mot de la requête doit apparaître ; les titres qui commencent par la
- * requête viennent d'abord, puis ceux qui la contiennent, puis le reste par date de mise à jour.
+ * requête viennent d'abord, puis ceux qui la contiennent, puis le reste par date de mise à jour. Une requête qui
+ * ressemble à un identifiant (« 313c1101 ») trouve aussi la session (même archivée), la tâche, le projet ou le
+ * terminal dont l'identifiant commence par elle.
  */
 
 export type SearchKind = 'PROJECT' | 'SESSION' | 'TERMINAL' | 'TASK' | 'VAULT_ITEM';
@@ -47,6 +50,7 @@ export interface SearchScope {
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 const words = (query: string) => query.trim().split(/\s+/).filter(Boolean);
 
+
 interface RawRow {
   id: string;
   title: string;
@@ -61,18 +65,27 @@ interface RawRow {
 }
 
 /** Requête d'un type : `haystack` concatène les colonnes cherchées, `title` sert au classement. */
-async function searchKind(kind: SearchKind, sql: { from: string; title: string; detail: string; haystack: string; projectId: string; worksessionBranch: string; status: string; activity: string; updatedAt: string; where: string }, scope: SearchScope, query: string, limit: number): Promise<SearchGroup | null> {
+/**
+ * `hidden` : condition des éléments écartés d'ordinaire (sessions archivées) mais retrouvés par leur identifiant.
+ * Une requête qui ressemble à un identifiant (`idPrefixOf`) trouve aussi l'élément dont l'identifiant commence par
+ * elle, classé en tête.
+ */
+async function searchKind(kind: SearchKind, sql: { from: string; title: string; detail: string; haystack: string; projectId: string; worksessionBranch: string; status: string; activity: string; updatedAt: string; where: string; visible?: string }, scope: SearchScope, query: string, limit: number): Promise<SearchGroup | null> {
   if (!scope.projectIds.length) return null;
   const params: unknown[] = [scope.projectIds];
   const terms = words(query).map((w) => `${sql.haystack} ILIKE $${params.push(`%${escapeLike(w)}%`)}`);
+  const visible = sql.visible ?? 'TRUE';
+  const textMatch = `(${[visible, ...terms].join(' AND ')})`;
+  const prefix = idPrefixOf(query);
+  const idMatch = prefix ? `x.id::text LIKE $${params.push(`${prefix}%`)}` : null;
   const q = query.trim().toLowerCase();
-  const rank = q ? `CASE WHEN lower(${sql.title}) LIKE $${params.push(`${escapeLike(q)}%`)} THEN 0 WHEN lower(${sql.title}) LIKE $${params.push(`%${escapeLike(q)}%`)} THEN 1 ELSE 2 END` : '2';
+  const rank = q ? `CASE ${idMatch ? `WHEN ${idMatch} THEN -1 ` : ''}WHEN lower(${sql.title}) LIKE $${params.push(`${escapeLike(q)}%`)} THEN 0 WHEN lower(${sql.title}) LIKE $${params.push(`%${escapeLike(q)}%`)} THEN 1 ELSE 2 END` : '2';
   params.push(limit);
   const { rows } = await pool.query<RawRow>(
     `SELECT x.id, ${sql.title} AS title, ${sql.detail} AS detail, ${sql.projectId} AS project_id, p.name AS project_name, ${sql.worksessionBranch} AS worksession_branch,
             ${sql.status} AS status, ${sql.activity} AS activity, ${sql.updatedAt} AS updated_at, count(*) OVER () AS total
      FROM ${sql.from} LEFT JOIN projects p ON p.id = ${sql.projectId}
-     WHERE ${sql.projectId} = ANY($1::uuid[]) ${sql.where} ${terms.map((t) => `AND ${t}`).join(' ')}
+     WHERE ${sql.projectId} = ANY($1::uuid[]) ${sql.where} AND ${idMatch ? `(${idMatch} OR ${textMatch})` : textMatch}
      ORDER BY ${rank}, ${sql.updatedAt} DESC NULLS LAST
      LIMIT $${params.length}`,
     params,
@@ -108,7 +121,7 @@ export const searchService = {
       PROJECT: () =>
         searchKind('PROJECT', { from: 'projects x', title: 'x.name', detail: 'x.description', haystack: "(x.name || ' ' || x.slug || ' ' || coalesce(x.description, ''))", projectId: 'x.id', worksessionBranch: 'NULL', status: 'NULL', activity: 'NULL', updatedAt: 'x.updated_at', where: '' }, scope, query, n),
       SESSION: () =>
-        searchKind('SESSION', { from: 'sessions x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'x.activity', updatedAt: 'x.updated_at', where: "AND x.archived_at IS NULL AND x.kind = 'session'" }, scope, query, n),
+        searchKind('SESSION', { from: 'sessions x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'x.provider', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: "CASE WHEN x.archived_at IS NOT NULL THEN 'archived' ELSE x.status::text END", activity: 'x.activity', updatedAt: 'x.updated_at', where: "AND x.kind = 'session'", visible: 'x.archived_at IS NULL' }, scope, query, n),
       TERMINAL: () =>
         searchKind('TERMINAL', { from: 'terminals x LEFT JOIN worksessions w ON w.id = x.worksession_id', title: 'x.name', detail: 'NULL', haystack: 'x.name', projectId: 'x.project_id', worksessionBranch: 'w.branch', status: 'x.status::text', activity: 'NULL', updatedAt: 'x.created_at', where: `AND (x.created_by IS NULL OR x.created_by = '${scope.userId}')` }, scope, query, n),
       TASK: () =>

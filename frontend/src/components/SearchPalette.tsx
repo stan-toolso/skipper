@@ -74,6 +74,7 @@ function hitMeta(h: SearchHit): string {
     if (h.status === 'running') parts.push(h.activity === 'busy' ? 'travaille' : 'attend vos instructions');
     else if (h.status === 'queued') parts.push("en file d'attente");
     else if (h.status === 'pending') parts.push('pas démarrée');
+    else if (h.status === 'archived') parts.push('archivée');
     else if (h.status) parts.push(h.status);
   } else if (h.kind === 'TERMINAL') parts.push(h.status === 'running' ? 'ouvert' : 'fermé');
   else if (h.kind === 'TASK') parts.push(h.status === 'in_progress' ? 'en cours' : h.status === 'todo' ? 'à faire' : h.status === 'done' ? 'terminée' : 'annulée');
@@ -167,7 +168,7 @@ function Palette({ onClose }: { onClose: () => void }) {
     <Modal show onHide={onClose} animation={false} dialogClassName="sp-dialog" contentClassName="sp-content">
       <div className="sp-head">
         <i className="bi bi-search" />
-        <input autoFocus={canAutoFocus()} className="sp-input" placeholder="Rechercher un projet, une session, une tâche, un élément du coffre…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
+        <input autoFocus={canAutoFocus()} className="sp-input" placeholder="Rechercher un projet, une session, une tâche (nom ou identifiant), un élément du coffre…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} />
         {loading && <Spinner size="sm" />}
       </div>
       <div className="sp-filters" role="tablist">

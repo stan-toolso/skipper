@@ -173,7 +173,7 @@ export function matchesSearch(t: Task, query: string): boolean {
       t.project.name,
       t.worksession?.branch ?? t.branch ?? '',
       ...(t.pullRequests ?? []).map((pr) => (pr.number != null ? `#${pr.number}` : '')),
-      t.id.slice(0, 8),
+      t.id,
     ].join(' '),
   );
   return words.every((w) => hay.includes(w));

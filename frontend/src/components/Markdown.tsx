@@ -1,7 +1,12 @@
 import { memo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Link } from 'react-router-dom';
+import remarkRefs from '../lib/remarkRefs';
+
+const PLUGINS = [remarkGfm, remarkRefs];
+/** Garde les liens `mention:` (sinon retirés par react-markdown, qui n'admet que http, https, mailto…). */
+const urlTransform = (url: string) => (url.startsWith('mention:') ? url : defaultUrlTransform(url));
 
 /**
  * Rendu Markdown des textes produits par les agents (réponses, questions, motifs de demande) :
@@ -11,13 +16,16 @@ import { Link } from 'react-router-dom';
  * Mémoïsé : l'analyse Markdown coûte cher et le texte d'un message ne change jamais une fois journalisé.
  *
  * Un lien `mention:<kind>:<id>` (produit par `withMentionLinks` du fil des tâches) est rendu comme une mention :
- * pastille pour une personne, lien vers la session pour une session d'agent.
+ * pastille pour une personne, lien vers la session pour une session d'agent. Les identifiants de tâches et de sessions
+ * cités dans le texte (« la tâche 313c1101 ») deviennent des liens internes (`remarkRefs`) ; un lien interne (`/…`)
+ * s'ouvre dans l'application, les autres dans un nouvel onglet.
  */
 function Markdown({ text, className, base = 'cc-md' }: { text: string; className?: string; base?: string }) {
   return (
     <div className={`${base}${className ? ` ${className}` : ''}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={PLUGINS}
+        urlTransform={urlTransform}
         components={{
           a: ({ node: _node, ref: _ref, href, children, ...props }) => {
             const mention = href?.startsWith('mention:') ? href.slice('mention:'.length).split(':') : null;
@@ -32,6 +40,13 @@ function Markdown({ text, className, base = 'cc-md' }: { text: string; className
                 <span className="task-mention" title="Personne mentionnée">
                   {children}
                 </span>
+              );
+            }
+            if (href?.startsWith('/') && !href.startsWith('//')) {
+              return (
+                <Link to={href} className={props.className} title={props.title}>
+                  {children}
+                </Link>
               );
             }
             return (
