@@ -129,6 +129,28 @@ const project = (id, name, slug, description, gitUrl, extra = {}) => ({
     useCount,
     usageTrackedSince: ago(60 * 24 * 30),
   })),
+  // Dossiers de travail sur disque (réglages du projet) : fusionnés, en cours, archivés, un inconnu de Skipper.
+  worksessionDisk: () => {
+    const own = tasks.filter((t) => t.project.id === id);
+    const MB = 1024 ** 2;
+    const rows = [
+      ['est-ce-facile-de-generer-des', 663, { archived: true, changes: 2, prMerged: true, ahead: 3, blocker: '2 fichiers modifiés non commités', minutes: 60 * 24 * 10 }],
+      ['task/bench-seance-manquee', 586, { archived: true, prMerged: true, ahead: 0, deps: 'COPY', cleanable: true, minutes: 60 * 24 * 4 }],
+      ['task/rgpd-export-des-donnees', 380, { archived: false, changes: 2, ahead: 3, deps: 'LINKED', active: 1, busy: 1, blocker: 'Une session y tourne', minutes: 120 }],
+      ['corrige-le-menu-mobile', 129, { archived: true, ahead: 0, deps: 'LINKED', cleanable: true, minutes: 60 * 24 * 6 }],
+      ['essai-migration-stripe', 74, { orphan: true, ahead: 5, blocker: 'Dossier inconnu de Skipper', minutes: 60 * 24 * 20 }],
+      ['ajoute-les-relances', 41, { archived: false, ahead: 1, deps: 'LINKED', active: 1, blocker: '1 commit non fusionné', minutes: 30 }],
+    ];
+    return {
+      __typename: 'WorksessionDiskReport', computedAt: ago(4), measuring: false, sharedBytes: 817 * MB, totalBytes: (817 + rows.reduce((n, r) => n + r[1], 0)) * MB, prunable: [],
+      entries: rows.map(([branch, mb, o], i) => ({
+        __typename: 'WorksessionDiskEntry', name: branch.replace('/', '-'), branch, exists: true, gitWorktree: true, bytes: mb * MB, aheadCount: o.ahead, changes: o.changes ?? 0,
+        prMerged: Boolean(o.prMerged), merged: Boolean(o.prMerged) || o.ahead === 0, activeSessions: o.active ?? 0, busySessions: o.busy ?? 0, lastActivityAt: ago(o.minutes),
+        deps: o.deps ?? null, cleanable: Boolean(o.cleanable), blocker: o.cleanable ? null : (o.blocker ?? null),
+        worksession: o.orphan ? null : { __typename: 'Worksession', id: `${id}-wsd-${i}`, label: branch, archivedAt: o.archived ? ago(o.minutes) : null, task: own[i] ? { __typename: 'Task', id: own[i].id, title: own[i].title, status: own[i].status, statusTag: own[i].statusTag ?? null } : null },
+      })),
+    };
+  },
   ...extra,
 });
 const key = (id) => id.slice(2);
