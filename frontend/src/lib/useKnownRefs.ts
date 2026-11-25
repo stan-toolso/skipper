@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useApolloClient, type ApolloClient } from '@apollo/client';
+import { useContext, useEffect, useMemo, useState } from 'react';
+import { getApolloContext, type ApolloClient } from '@apollo/client';
 import { RESOLVE_REFS } from '../graphql/misc';
 import { candidateRefs, type KnownRefs } from './idRefs';
 
@@ -8,6 +8,7 @@ import { candidateRefs, type KnownRefs } from './idRefs';
  * (`resolveRefs`) en tâches ou sessions que la personne peut voir. Les demandes de tous les textes affichés sont
  * groupées en une requête (40 ms), et chaque réponse est gardée pour la page (un identifiant inconnu aussi : on ne le
  * redemande pas). Renvoie null tant que rien n'est reconnu, pour ne pas recalculer le rendu des textes sans référence.
+ * Hors d'un fournisseur Apollo (page publique d'une session partagée, tests), rien n'est résolu.
  */
 
 type Ref = { kind: 'task' | 'session'; id: string };
@@ -42,15 +43,15 @@ function flush(client: ApolloClient<unknown>) {
 }
 
 export function useKnownRefs(text: string): KnownRefs | null {
-  const client = useApolloClient();
-  const candidates = useMemo(() => candidateRefs(text), [text]);
+  const client = useContext(getApolloContext()).client;
+  const candidates = useMemo(() => (client ? candidateRefs(text) : []), [client, text]);
   const [version, setVersion] = useState(0);
   useEffect(() => {
-    if (!candidates.some((c) => !cache.has(c))) return;
+    if (!client || !candidates.some((c) => !cache.has(c))) return;
     const listener = () => setVersion((v) => v + 1);
     listeners.add(listener);
     for (const c of candidates) if (!cache.has(c) && !inflight.has(c)) queued.add(c);
-    if (queued.size && !timer) timer = setTimeout(() => flush(client), 40);
+    if (queued.size && !timer) timer = setTimeout(() => flush(client as ApolloClient<unknown>), 40);
     return () => void listeners.delete(listener);
   }, [candidates, client, version]);
   return useMemo(() => {
