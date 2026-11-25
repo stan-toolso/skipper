@@ -198,6 +198,23 @@ div.cc-chat-text:not(.cc-md) { white-space: pre-wrap; overflow-wrap: anywhere; }
    commande, règle à retenir, plusieurs options) pousse ses options sous le bord du conteneur .cc (overflow: hidden) :
    on ne peut plus répondre, surtout sur mobile. Bornée pour laisser toujours un bout de conversation visible. */
 .cc-prompts { flex: 0 1 auto; min-height: 0; max-height: 70%; overflow-y: auto; }
+/* Barre de la zone (toujours là, collée en haut quand la zone défile) : la réduire à une ligne pour relire la
+   conversation au-dessus, la rouvrir pour répondre. */
+.cc-prompts-bar {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 8px; width: calc(100% - 32px); margin: 8px 16px 0; padding: 5px 10px;
+  font: inherit; font-family: var(--bs-font-sans-serif); font-size: 12.5px; text-align: left; color: var(--cc-fg);
+  background: color-mix(in srgb, var(--cc-yellow-soft) 60%, var(--cc-bg-elevated));
+  border: 1px solid var(--cc-yellow); border-radius: var(--cc-radius); cursor: pointer;
+}
+.cc-prompts-bar:hover { background: color-mix(in srgb, var(--cc-yellow-soft) 85%, var(--cc-bg-elevated)); }
+.cc-prompts-bar-icon { color: var(--cc-yellow); }
+.cc-prompts-bar-label { font-weight: 600; white-space: nowrap; }
+.cc-prompts-bar-summary { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-dim); }
+.cc-prompts-bar-action { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--cc-dim); }
+.cc-prompts-bar:hover .cc-prompts-bar-action { color: var(--cc-fg); }
+.cc-prompts:not(.collapsed) .cc-prompt:first-child { margin-top: 6px; }
+.cc-prompts.collapsed { padding-bottom: 8px; }
 
 /* Demande d'intervention (autorisation, question) : encadré orange, options numérotées */
 .cc-prompt {
@@ -456,6 +473,8 @@ div.cc-chat-text:not(.cc-md) { white-space: pre-wrap; overflow-wrap: anywhere; }
   .cc-hint { padding: 0 8px 8px; justify-content: flex-end; }
   .cc-hint .cc-hint-text { display: none; }
   .cc-prompts { max-height: 75%; min-height: 160px; }
+  .cc-prompts.collapsed { min-height: 0; }
+  .cc-prompts-bar { width: calc(100% - 16px); margin: 6px 8px 0; }
   .cc-pr-card { margin: 6px 6px 0; padding: 8px 10px; }
   .cc-pr-card-meta .cc-pr-card-branches { display: none; }
   .cc-pr-card-actions { padding-left: 0; }

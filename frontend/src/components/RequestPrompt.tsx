@@ -285,3 +285,56 @@ export default function RequestPrompt({ request, keyboard = true }: { request: H
     </KeyboardTurn.Provider>
   );
 }
+
+/** Une ligne qui résume une demande (zone réduite). */
+export function requestSummary(request: HumanRequest): string {
+  if (request.type === 'permission') {
+    const p = request.payload as { toolName?: string; input?: Record<string, unknown> };
+    return `L'agent souhaite ${describeTool(p.toolName ?? 'outil', p.input ?? {}).action}`;
+  }
+  if (request.type === 'question') {
+    const q = ((request.payload as { questions?: Question[] }).questions ?? [])[0];
+    return q ? (q.header ? `${q.header} : ${q.question}` : q.question) : request.title;
+  }
+  if (request.type === 'approval') return `Accord demandé : ${request.title}`;
+  if (request.type === 'secrets') return "L'agent vous demande des secrets";
+  return request.title;
+}
+
+/**
+ * Zone des demandes en attente de la page de session, réductible : une demande haute (question, autorisation avec
+ * une longue commande) cache la conversation au-dessus, qu'il faut parfois relire avant de répondre. Réduite, il
+ * reste une ligne qui résume la demande ; les prompts restent montés (saisie en cours gardée) mais masqués, donc
+ * ils ne prennent plus les raccourcis clavier. Une nouvelle demande rouvre la zone.
+ */
+export function RequestPrompts({ requests }: { requests: HumanRequest[] }) {
+  const ids = requests.map((r) => r.id).join(',');
+  const [collapsedFor, setCollapsedFor] = useState<string | null>(null);
+  const collapsed = collapsedFor === ids;
+  const count = requests.length;
+  const label = count > 1 ? `${count} demandes en attente` : 'Demande en attente';
+  return (
+    <div className={`cc-prompts${collapsed ? ' collapsed' : ''}`}>
+      <button
+        type="button"
+        className="cc-prompts-bar"
+        aria-expanded={!collapsed}
+        title={collapsed ? 'Afficher la demande pour y répondre' : 'Réduire la demande pour lire la conversation au-dessus'}
+        onClick={() => setCollapsedFor(collapsed ? null : ids)}
+      >
+        <i className="bi bi-exclamation-circle cc-prompts-bar-icon" />
+        <span className="cc-prompts-bar-label">{label}</span>
+        {collapsed && <span className="cc-prompts-bar-summary">{requestSummary(requests[0])}</span>}
+        <span className="cc-prompts-bar-action">
+          {collapsed ? 'Afficher' : 'Réduire'}
+          <i className={`bi bi-chevron-${collapsed ? 'up' : 'down'}`} />
+        </span>
+      </button>
+      <div className="cc-prompts-list" hidden={collapsed}>
+        {requests.map((r, i) => (
+          <RequestPrompt key={r.id} request={r} keyboard={i === 0} />
+        ))}
+      </div>
+    </div>
+  );
+}
