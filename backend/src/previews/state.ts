@@ -54,6 +54,8 @@ export function deriveState(events: PreviewEvent[], alive: boolean, portOpen: bo
   if (!last) return base;
   switch (last.name) {
     case 'stopped':
+      // Arrêté par Skipper faute de visite (previews/idle.ts) : dit pourquoi, relancer suffit.
+      if (last.arg.startsWith('idle')) return { ...base, status: 'STOPPED', error: `Arrêté après ${last.arg.split(/\s+/)[1] ?? 'plusieurs'} h sans visite : relancez-le pour le rouvrir` };
       return { ...base, status: 'STOPPED' };
     case 'failed':
       return { ...base, status: 'FAILED', error: failureMessage(last.arg) };

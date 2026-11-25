@@ -31,6 +31,7 @@ import { registerTaskSessionEnd } from './tasks/endSessions.js';
 import { registerStalledTasks } from './tasks/stalled.js';
 import { taskWaker } from './tasks/wake.js';
 import { archivedWorksessionPurge } from './worksessions/housekeeping.js';
+import { sessionProcessSweep } from './runners/sessionProcessSweep.js';
 import { agentService } from './agents/service.js';
 import { vaultService } from './vault/service.js';
 import { authSession, readCookie, SESSION_COOKIE } from './auth/session.js';
@@ -74,6 +75,7 @@ import { handleInternalRoute } from './instances/internalRoute.js';
 import { handlePreviewOpenRoute, handlePreviewRoute, previewUpgrade } from './previews/proxy.js';
 import { previewRepository } from './previews/repository.js';
 import { previewService } from './previews/service.js';
+import { previewIdleSweep } from './previews/idle.js';
 import { deliveryService } from './deliveries/service.js';
 import { deliveryQualityService } from './deliveries/qualityService.js';
 
@@ -220,6 +222,8 @@ async function main() {
     // Après le guetteur des relectures : écoute leurs rapports pour fusionner dès qu'une relecture est favorable.
     { name: 'politique de livraison', start: () => deliveryPolicyService.start(), stop: () => deliveryPolicyService.stop() },
     { name: 'retrait des dossiers archivés', start: () => archivedWorksessionPurge.start(), stop: () => archivedWorksessionPurge.stop() },
+    { name: 'arrêt des processus des sessions terminées', start: () => sessionProcessSweep.start(), stop: () => sessionProcessSweep.stop() },
+    { name: 'arrêt des aperçus sans visite', start: () => previewIdleSweep.start(), stop: () => previewIdleSweep.stop() },
     // Rattrapage des tâches qualité rattachées aux livraisons (une fois, à la prise du rôle de meneuse).
     { name: 'rattrapage des tâches qualité', start: () => void deliveryQualityService.backfillAll().catch((err) => log.warn('[deliveries] rattrapage des tâches qualité', err)), stop: () => undefined },
   ];

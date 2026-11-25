@@ -53,6 +53,8 @@ export const config = {
    * aperçus désactivés.
    */
   previewUrl: (process.env.PREVIEW_URL ?? '').trim().replace(/\/+$/, ''),
+  /** Un aperçu sans visite ni lancement depuis ce nombre d'heures est arrêté (previews/idle.ts) ; 0 : jamais. */
+  previewIdleHours: Math.max(0, Number(process.env.PREVIEW_IDLE_HOURS ?? 4) || 0),
   /** Identifiants OAuth Google (console Google Cloud, type « application Web »). */
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',

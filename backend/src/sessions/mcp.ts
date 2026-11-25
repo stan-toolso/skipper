@@ -68,6 +68,10 @@ export function sessionsPromptSummary(project: Pick<Project, 'gitUrl'>, opts: { 
     project.gitUrl
       ? "Le serveur MCP `worksessions` (list, create, delete) gère les work sessions du projet : chacune est un git worktree sur sa propre branche, pour isoler un chantier ou faire travailler plusieurs agents en parallèle sans se gêner."
       : "Le serveur MCP `worksessions` (list, create, delete) gère les work sessions du projet : chacune est un dossier séparé.",
+    // Arrêt des processus des sessions terminées (runners/sessionProcessSweep.ts) : un chat tourne sur le serveur, sans conteneur.
+    opts.chat
+      ? ''
+      : "Les processus que tu lances en arrière-plan (serveur de développement, base de test, `nohup … &`) sont arrêtés par Skipper quelques minutes après la fin de ta session. Un service partagé avec les autres sessions du projet (base de test réutilisée par toutes les CI, par exemple) se lance avec `SKIPPER_KEEP_ALIVE=1` dans son environnement pour être épargné ; pour montrer l'application à une personne, préfère l'aperçu (onglet « Aperçu »).",
   ]
     .filter(Boolean)
     .join('\n');

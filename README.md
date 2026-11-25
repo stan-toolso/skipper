@@ -1959,6 +1959,10 @@ modification de l'agent apparaît d'elle-même.
   (`frontend/scripts/mobile-audit/mock-server.mjs`, `MOCK_STABLE=1` pour des données stables d'un sondage à l'autre) sur
   `$PORT + 1000`, et Vite le sert à travers son proxy (`SKIPPER_PREVIEW_API`, `VITE_GRAPHQL_URL=/graphql`) : l'aperçu
   montre toute l'interface avec des données inventées.
+- **Arrêt des aperçus sans visite** (`previews/idle.ts`) : la dernière visite est notée dans le fichier `seen` du dossier
+  d'état (requête relayée, au plus une fois par minute ; WebSocket ouverte ; capture d'un agent). Toutes les dix minutes,
+  l'instance meneuse arrête un aperçu vivant sans visite ni lancement depuis `PREVIEW_IDLE_HOURS` (4 h par défaut, 0 =
+  jamais) ; l'événement `stopped idle <h>` l'explique dans l'onglet « Aperçu ».
 - **Mise en service** : `PREVIEW_URL` (`https://*.apercu.<domaine>` ; vide = aperçus désactivés), DNS et certificat
   génériques, bloc nginx `deploy/cellule/templates/nginx-previews.conf` et `frame-src` de la CSP : voir DEPLOY.md. En
   local : `PREVIEW_URL=http://*.localhost:4000` (`*.localhost` résout vers la machine dans Chrome et Firefox).

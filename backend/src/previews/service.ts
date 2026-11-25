@@ -109,6 +109,14 @@ const starting = new Map<string, Promise<PreviewInfo>>();
 /** Instantanés en cours d'enregistrement, par empreinte. */
 const saving = new Set<string>();
 
+/** Dernière visite d'un aperçu (horodatage en ms), lue par l'arrêt des aperçus sans visite (idle.ts). */
+export const SEEN_FILE = 'seen';
+
+/** Note une visite de l'aperçu (proxy, capture d'un agent). */
+export async function touchSeen(state: string, now = Date.now()): Promise<void> {
+  await writeFile(path.join(state, SEEN_FILE), String(now)).catch(() => undefined);
+}
+
 async function readText(file: string): Promise<string> {
   return readFile(file, 'utf8').catch(() => '');
 }
@@ -390,6 +398,7 @@ export const previewService = {
     const info = await this.get(worksessionId);
     if (info.status !== 'RUNNING') throw new AppError(`L'aperçu n'est pas prêt (état : ${info.status}) : lance-le et attends qu'il réponde avant de le capturer`);
     const { project, state } = await this.context(worksessionId);
+    await touchSeen(state);
     const base = await this.internalUrl(worksessionId);
     if (!base) throw new AppError("L'aperçu n'a jamais été lancé");
     const url = `${base}${safeNext(pagePath)}`;
@@ -437,7 +446,8 @@ export const previewService = {
    * script meurt au premier TERM quand le serveur de développement peut tarder à s'arrêter, et resterait sinon en vie à
    * tenir son port (« Port … is already in use » au lancement suivant).
    */
-  async stopProcess(project: Project, state: string): Promise<boolean> {
+  /** Arrête le groupe de processus du lancement ; `reason` est noté avec l'événement `stopped` (ex. `idle`). */
+  async stopProcess(project: Project, state: string, reason = ''): Promise<boolean> {
     const pid = (await readText(path.join(state, 'pid'))).trim();
     if (!/^\d+$/.test(pid)) return false;
     const groupAlive = async () => (await runner.exec(project, ['kill', '-0', '--', `-${pid}`]).catch(() => ({ code: 1 }))).code === 0;
@@ -448,7 +458,7 @@ export const previewService = {
       if (!(await groupAlive())) break;
     }
     if (await groupAlive()) await runner.exec(project, ['kill', '-KILL', '--', `-${pid}`]).catch(() => undefined);
-    await event(state, 'stopped');
+    await event(state, 'stopped', reason);
     return true;
   },
 
