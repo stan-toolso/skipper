@@ -313,6 +313,7 @@ const auditActor = (actor: TaskActor | null | undefined) =>
 
 export const taskService = {
   list: (filter?: TaskFilter) => taskRepository.list(filter),
+  count: (filter?: TaskFilter) => taskRepository.count(filter),
   listForSession: (sessionId: string) => taskRepository.listForSession(sessionId),
   /** Tâches de ces identifiants, sans ordre garanti (dépendances d'une tâche…). */
   findByIds: (ids: string[]) => taskRepository.findByIds(ids),

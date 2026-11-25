@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Button, Form } from 'react-bootstrap';
+import { Button, Form, Spinner } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
 import type { Task } from '../graphql/operations';
 import { formatCost, timeAgo } from '../lib/humanize';
@@ -44,6 +44,12 @@ export interface TaskGridProps {
   onEdit: (t: Task) => void;
   onTag: (tag: string) => void;
   targets: Map<string, LaunchTarget>;
+  /**
+   * Terminées récemment pas chargées (non null) : leur nombre. Leur groupe n'a alors que son en-tête et son compteur ;
+   * le déplier, chercher, filtrer, les isoler ou grouper autrement les demande (`onDoneWanted`).
+   */
+  doneCount?: number | null;
+  onDoneWanted?: (wanted: boolean) => void;
 }
 
 const GROUP_BY_KEY = 'skipper.tasks.groupBy';
@@ -75,7 +81,7 @@ function writeJson(key: string, value: unknown) {
  * par pertinence) et se choisissent ; la ligne de filtres par colonne s'ouvre avec « Filtres ». La disposition est
  * mémorisée dans localStorage (lib/taskTable.ts).
  */
-export default function TaskGrid({ tasks, showProject, projects, filters, onFilterChange, onClearFilters, search, history, onEdit, onTag, targets }: TaskGridProps) {
+export default function TaskGrid({ tasks, showProject, projects, filters, onFilterChange, onClearFilters, search, history, onEdit, onTag, targets, doneCount = null, onDoneWanted }: TaskGridProps) {
   const [layout, setLayout] = useState<TaskTableLayout>(() => loadLayout());
   useEffect(() => saveLayout(layout), [layout]);
   const [groupBy, setGroupByState] = useState<GroupBy>(() => {
@@ -103,12 +109,22 @@ export default function TaskGrid({ tasks, showProject, projects, filters, onFilt
     return new Map(tasks.map((t) => [t.id, placeTask(t, now)]));
   }, [tasks]);
   const matching = useMemo(() => applyFilters(tasks, filters).filter((t) => matchesSearch(t, search)), [tasks, filters, search]);
-  const counts = useMemo(() => laneCounts(matching, placements), [matching, placements]);
+  const counts = useMemo(() => {
+    const c = laneCounts(matching, placements);
+    return doneCount != null ? { ...c, done: c.done + doneCount } : c;
+  }, [matching, placements, doneCount]);
   const sort = layout.sort;
   const groups = useMemo(() => {
     const list = focus ? matching.filter((t) => placements.get(t.id)?.lane === focus) : matching;
-    return groupTasks(list, effectiveGroupBy, placements, sort ? (l) => sortTasks(l, sort) : null);
-  }, [matching, placements, focus, effectiveGroupBy, sort]);
+    const out = groupTasks(list, effectiveGroupBy, placements, sort ? (l) => sortTasks(l, sort) : null);
+    // Terminées pas encore chargées : leur groupe (en-tête seul) à sa place, avant les annulées.
+    if (effectiveGroupBy === 'lane' && doneCount && !out.some((g) => g.lane === 'done') && (!focus || focus === 'done')) {
+      const l = LANES.find((x) => x.key === 'done')!;
+      const at = out.findIndex((g) => g.lane === 'cancelled');
+      out.splice(at < 0 ? out.length : at, 0, { key: l.key, label: l.label, hint: l.hint, tone: l.tone, lane: 'done', tasks: [] });
+    }
+    return out;
+  }, [matching, placements, focus, effectiveGroupBy, sort, doneCount]);
   const shown = groups.reduce((n, g) => n + g.tasks.length, 0);
   const totalWidth = cols.reduce((sum, c) => sum + (layout.widths[c.key] ?? c.width), 0);
   const narrowed = filtering || search.trim() !== '' || focus !== null;
@@ -119,6 +135,10 @@ export default function TaskGrid({ tasks, showProject, projects, filters, onFilt
     if (v !== undefined) return v;
     return !history && (g.lane === 'done' || g.lane === 'cancelled');
   };
+  // Les terminées récemment sont chargées à la demande : groupe déplié ou isolé, recherche, filtre de colonne, autre groupement.
+  const columnFiltering = Object.entries(filters).some(([k, v]) => k !== 'project' && v && v.trim());
+  const doneWanted = history || effectiveGroupBy !== 'lane' || focus === 'done' || columnFiltering || search.trim() !== '' || !isCollapsed({ key: 'done', label: '', lane: 'done', tasks: [] });
+  useEffect(() => onDoneWanted?.(doneWanted), [doneWanted, onDoneWanted]);
   const toggleGroup = (g: TaskGroup) =>
     setCollapsedMap((m) => {
       const next = { ...m, [g.key]: !isCollapsed(g) };
@@ -275,6 +295,7 @@ export default function TaskGrid({ tasks, showProject, projects, filters, onFilt
             const collapsed = isCollapsed(g);
             const limit = pages[g.key] ?? PAGE;
             const rows = collapsed ? [] : g.tasks.slice(0, limit);
+            const unloaded = g.lane === 'done' && doneCount != null && g.tasks.length === 0;
             const rest = collapsed ? 0 : g.tasks.length - rows.length;
             return (
               <tbody key={g.key} className={`task-grid-group-body${collapsed ? ' collapsed' : ''}`}>
@@ -285,7 +306,7 @@ export default function TaskGrid({ tasks, showProject, projects, filters, onFilt
                         <i className={`bi ${collapsed ? 'bi-chevron-right' : 'bi-chevron-down'} task-grid-group-chevron`} />
                         {g.tone && <span className="task-lane-dot" style={{ '--lane-tone': g.tone } as CSSProperties} />}
                         <span className="task-grid-group-label">{g.lane === 'done' && !history ? `${g.label} · ${RECENT_DAYS} derniers jours` : g.label}</span>
-                        <span className="task-grid-group-count">{g.tasks.length}</span>
+                        <span className="task-grid-group-count">{unloaded ? doneCount : g.tasks.length}</span>
                         {g.hint && <span className="task-grid-group-hint">{g.hint}</span>}
                       </button>
                     </th>
@@ -300,6 +321,14 @@ export default function TaskGrid({ tasks, showProject, projects, filters, onFilt
                     ))}
                   </tr>
                 ))}
+                {unloaded && !collapsed && (
+                  <tr className="task-grid-more">
+                    <td colSpan={cols.length} className="text-secondary small">
+                      <Spinner size="sm" className="me-2" />
+                      Chargement des terminées…
+                    </td>
+                  </tr>
+                )}
                 {rest > 0 && (
                   <tr className="task-grid-more">
                     <td colSpan={cols.length}>

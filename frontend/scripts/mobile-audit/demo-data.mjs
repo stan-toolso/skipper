@@ -1096,6 +1096,7 @@ export const demoRoot = {
   archivedSessions: [],
   sessionOwners: () => [U.me, U.hugo, U.lea, U.chris, U.max, U.nora],
   tasks: (a = {}) => filterTasks({ ...a, status: a.status ?? undefined }),
+  taskCount: (a = {}) => filterTasks({ ...a, status: a.status ?? undefined, limit: 100000 }).length,
   task: (a) => byId(tasks, a.id),
   conversation: (a) => byId(conversations, a.id),
   conversationBySlug: (a) => conversations.find((c) => c.project.id === a.projectId && c.slug === a.slug) ?? null,

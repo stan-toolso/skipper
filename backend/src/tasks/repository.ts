@@ -279,6 +279,32 @@ export function statusDateSets(status: TaskStatus): string[] {
   ];
 }
 
+/** Conditions SQL d'un filtre de tâches (alias `t`, `att` pour les signaux d'attention). */
+function whereOf(filter: TaskFilter): { where: string[]; params: unknown[] } {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.projectId) where.push(`t.project_id = $${params.push(filter.projectId)}`);
+    if (filter.projectIds) where.push(`t.project_id = ANY($${params.push(filter.projectIds)}::uuid[])`);
+    if (filter.status?.length) where.push(`t.status = ANY($${params.push(filter.status)}::task_status[])`);
+    if (filter.priority) where.push(`t.priority = $${params.push(filter.priority)}`);
+    if (filter.sessionId) where.push(`EXISTS (SELECT 1 FROM task_sessions ts WHERE ts.task_id = t.id AND ts.session_id = $${params.push(filter.sessionId)} AND ts.in_charge_since IS NOT NULL)`);
+    if (filter.branch) where.push(`t.branch = $${params.push(filter.branch)}`);
+    if (filter.tag) where.push(`EXISTS (SELECT 1 FROM unnest(t.tags) tag WHERE lower(tag) = lower($${params.push(filter.tag)}))`);
+    if (filter.assignee) {
+      const p = params.push(contains(filter.assignee));
+      where.push(`(t.assignee_name ILIKE $${p} OR t.assignee_email ILIKE $${p})`);
+    }
+    if (filter.reporter) {
+      const p = params.push(contains(filter.reporter));
+      where.push(`(t.reporter_name ILIKE $${p} OR t.reporter_email ILIKE $${p})`);
+    }
+    if (filter.assigneeEmail) where.push(`lower(t.assignee_email) = lower($${params.push(filter.assigneeEmail)})`);
+    if (filter.stalled) where.push('att.stalled_since IS NOT NULL');
+    if (filter.waiting) where.push('att.waiting_since IS NOT NULL');
+    if (filter.closedSince) where.push(`(t.status IN ('todo', 'in_progress') OR COALESCE(t.completed_at, t.cancelled_at, t.updated_at) >= $${params.push(filter.closedSince)})`);
+  return { where, params };
+}
+
 export const taskRepository = {
   async create(projectId: string, input: CreateTaskInput & { assignee?: TaskPerson | null; reporter?: TaskPerson | null }, actor: Actor): Promise<Task> {
     const status = input.status ?? 'todo';
@@ -353,30 +379,19 @@ export const taskRepository = {
   },
 
   async list(filter: TaskFilter = {}): Promise<Task[]> {
-    const where: string[] = [];
-    const params: unknown[] = [];
-    if (filter.projectId) where.push(`t.project_id = $${params.push(filter.projectId)}`);
-    if (filter.projectIds) where.push(`t.project_id = ANY($${params.push(filter.projectIds)}::uuid[])`);
-    if (filter.status?.length) where.push(`t.status = ANY($${params.push(filter.status)}::task_status[])`);
-    if (filter.priority) where.push(`t.priority = $${params.push(filter.priority)}`);
-    if (filter.sessionId) where.push(`EXISTS (SELECT 1 FROM task_sessions ts WHERE ts.task_id = t.id AND ts.session_id = $${params.push(filter.sessionId)} AND ts.in_charge_since IS NOT NULL)`);
-    if (filter.branch) where.push(`t.branch = $${params.push(filter.branch)}`);
-    if (filter.tag) where.push(`EXISTS (SELECT 1 FROM unnest(t.tags) tag WHERE lower(tag) = lower($${params.push(filter.tag)}))`);
-    if (filter.assignee) {
-      const p = params.push(contains(filter.assignee));
-      where.push(`(t.assignee_name ILIKE $${p} OR t.assignee_email ILIKE $${p})`);
-    }
-    if (filter.reporter) {
-      const p = params.push(contains(filter.reporter));
-      where.push(`(t.reporter_name ILIKE $${p} OR t.reporter_email ILIKE $${p})`);
-    }
-    if (filter.assigneeEmail) where.push(`lower(t.assignee_email) = lower($${params.push(filter.assigneeEmail)})`);
-    if (filter.stalled) where.push('att.stalled_since IS NOT NULL');
-    if (filter.waiting) where.push('att.waiting_since IS NOT NULL');
-    if (filter.closedSince) where.push(`(t.status IN ('todo', 'in_progress') OR COALESCE(t.completed_at, t.cancelled_at, t.updated_at) >= $${params.push(filter.closedSince)})`);
+    const { where, params } = whereOf(filter);
     params.push(Math.min(filter.limit ?? 200, 1000));
-    const { rows } = await pool.query<Row>(`${SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${ORDER} LIMIT $${params.length}`, params);
+    const order = filter.recentFirst ? 'ORDER BY COALESCE(t.completed_at, t.cancelled_at, t.updated_at) DESC, t.id' : ORDER;
+    const { rows } = await pool.query<Row>(`${SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ${order} LIMIT $${params.length}`, params);
     return rows.map(toTask);
+  },
+
+  /** Nombre de tâches du filtre (sans limite) : compteur d'un groupe qu'on ne charge pas (terminées récemment, repliées). */
+  async count(filter: TaskFilter = {}): Promise<number> {
+    const { where, params } = whereOf(filter);
+    const att = filter.stalled || filter.waiting ? ATTENTION_JOIN : '';
+    const { rows } = await pool.query<{ n: string }>(`SELECT count(*) AS n FROM tasks t ${att} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`, params);
+    return Number(rows[0]?.n ?? 0);
   },
 
   /** Tâches reliées à une session (historique task_sessions), la plus récemment reliée d'abord. */
