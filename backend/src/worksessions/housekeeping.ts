@@ -122,26 +122,45 @@ async function removeFolder(dir: string, w: Worksession, state: Awaited<ReturnTy
 
 const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false);
 
-/**
- * Le dossier d'une work session peut-il être supprimé avec elle sans rien perdre ? Posé avant d'archiver une session
- * (case « Supprimer aussi son dossier de travail ») : null si oui, sinon pourquoi. Ne regarde pas ce qui tourne
- * (l'archivage l'arrête) mais refuse si d'autres sessions actives que `exceptSessionId` y travaillent.
- */
-export async function folderRemovalBlocker(worksessionId: string, exceptSessionId: string | null = null): Promise<string | null> {
-  const w = await worksessionRepository.findById(worksessionId);
-  if (!w) return 'Dossier de travail inconnu';
-  const project = await projectService.get(w.projectId);
-  const ctx = await folderContext(project);
-  if (!ctx) return 'Projet sans dépôt git';
-  const dir = worksessionPath(project, w);
-  if (!(await isDir(dir))) return 'Dossier déjà absent du disque';
-  const others = await worksessionRepository.countActiveSessions(worksessionId, exceptSessionId);
-  if (others) return `${others} autre(s) session(s) active(s) y travaillent`;
-  return (await folderVerdict(dir, ctx)).reason;
+/** Réponse à « le dossier peut-il partir avec la session ? » : `reason` null si rien n'y serait perdu ; sinon pourquoi, et
+ * `forcible` dit si la personne peut quand même choisir de le supprimer (travail unique qu'elle accepte de perdre) ou non
+ * (autres sessions actives, dossier absent, projet sans git). */
+export interface FolderRemovalCheck {
+  reason: string | null;
+  forcible: boolean;
 }
 
-/** Supprime tout de suite le dossier d'une work session archivée, s'il n'a rien d'unique ; renvoie pourquoi il est gardé sinon. */
-export async function removeArchivedFolderNow(worksessionId: string): Promise<string | null> {
+/**
+ * Le dossier d'une work session peut-il être supprimé avec elle sans rien perdre ? Posé avant d'archiver une session
+ * (case « Supprimer aussi son dossier de travail », cochée seulement si rien n'y serait perdu). Ne regarde pas ce qui
+ * tourne (l'archivage l'arrête) mais refuse si d'autres sessions actives que `exceptSessionId` y travaillent.
+ */
+export async function folderRemovalCheck(worksessionId: string, exceptSessionId: string | null = null): Promise<FolderRemovalCheck> {
+  const blocked = (reason: string): FolderRemovalCheck => ({ reason, forcible: false });
+  const w = await worksessionRepository.findById(worksessionId);
+  if (!w) return blocked('Dossier de travail inconnu');
+  const project = await projectService.get(w.projectId);
+  const ctx = await folderContext(project);
+  if (!ctx) return blocked('Projet sans dépôt git');
+  const dir = worksessionPath(project, w);
+  if (!(await isDir(dir))) return blocked('Dossier déjà absent du disque');
+  const others = await worksessionRepository.countActiveSessions(worksessionId, exceptSessionId);
+  if (others) return blocked(`${others} autre(s) session(s) active(s) y travaillent`);
+  const { reason } = await folderVerdict(dir, ctx);
+  return { reason, forcible: reason !== null };
+}
+
+/** Raccourci de `folderRemovalCheck` : null si le dossier peut partir sans rien perdre, sinon pourquoi. */
+export async function folderRemovalBlocker(worksessionId: string, exceptSessionId: string | null = null): Promise<string | null> {
+  return (await folderRemovalCheck(worksessionId, exceptSessionId)).reason;
+}
+
+/**
+ * Supprime tout de suite le dossier d'une work session archivée, s'il n'a rien d'unique ; renvoie pourquoi il est gardé
+ * sinon. `force` : la personne a choisi de le supprimer malgré tout (modifications non commitées et fichiers ignorés
+ * perdus ; la branche locale et ses commits restent, la restauration recrée le dossier depuis elle).
+ */
+export async function removeArchivedFolderNow(worksessionId: string, opts: { force?: boolean } = {}): Promise<string | null> {
   const w = await worksessionRepository.findById(worksessionId);
   if (!w?.archivedAt) return "Le dossier n'est pas archivé : d'autres sessions y travaillent";
   await worksessionService.whenLightened(w.id);
@@ -153,10 +172,10 @@ export async function removeArchivedFolderNow(worksessionId: string): Promise<st
   const busy = await worksessionRepository.countBusy(w.id);
   if (busy.sessions || busy.terminals) return 'Une session ou un terminal y tourne encore';
   const { reason, state } = await folderVerdict(dir, ctx);
-  if (reason) return reason;
+  if (reason && !opts.force) return reason;
   await removeFolder(dir, w, state, ctx);
   await git(['worktree', 'prune'], ctx.main).catch(() => undefined);
-  log.info(`[worksessions] ${project.slug} : dossier de ${w.name} supprimé à l'archivage`);
+  log.info(`[worksessions] ${project.slug} : dossier de ${w.name} supprimé à l'archivage${reason ? ` malgré : ${reason}` : ''}`);
   return null;
 }
 

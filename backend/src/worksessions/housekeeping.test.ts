@@ -30,7 +30,7 @@ vi.mock('../projects/cleanup.js', () => ({ removeWorksessionKeepingSessions: asy
 vi.mock('../previews/service.js', () => ({ previewService: {}, previewStateDir: () => '/nonexistent' }));
 vi.mock('../settings/github.js', () => ({ githubService: { gitConfigArgs: async () => [] } }));
 
-const { assessPurge, folderRemovalBlocker, precious, purgeArchivedWorksessions, removeArchivedFolderNow } = await import('./housekeeping.js');
+const { assessPurge, folderRemovalBlocker, folderRemovalCheck, precious, purgeArchivedWorksessions, removeArchivedFolderNow } = await import('./housekeeping.js');
 const { removeNodeModules } = await import('../previews/deps.js');
 
 const origin = path.join(root, 'origin.git');
@@ -115,6 +115,11 @@ describe('suppression du dossier à l’archivage', () => {
     const travail = addWorksession('avec-travail', null);
     await commit(travail, 't.txt', 'pas poussé');
     expect(await folderRemovalBlocker('avec-travail')).toBe('Commits propres, branche absente d’origin');
+    // Travail unique : supprimable quand même au choix de la personne ; autres sessions actives : jamais.
+    expect(await folderRemovalCheck('avec-travail')).toEqual({ reason: 'Commits propres, branche absente d’origin', forcible: true });
+    m.active.add('a-archiver');
+    expect((await folderRemovalCheck('a-archiver', 's1')).forcible).toBe(false);
+    m.active.delete('a-archiver');
   });
   it('supprime tout de suite le dossier archivé sans rien d’unique, garde l’autre', async () => {
     const vierge = path.join(wsRoot, 'a-archiver');
@@ -124,6 +129,12 @@ describe('suppression du dossier à l’archivage', () => {
     expect(await present(vierge)).toBe(false);
     expect(await removeArchivedFolderNow('avec-travail')).toBe('Commits propres, branche absente d’origin');
     expect(await present(path.join(wsRoot, 'avec-travail'))).toBe(true);
+  });
+  it('supprime le dossier malgré son travail unique quand la personne le choisit, en gardant la branche', async () => {
+    const dir = path.join(wsRoot, 'avec-travail');
+    expect(await removeArchivedFolderNow('avec-travail', { force: true })).toBeNull();
+    expect(await present(dir)).toBe(false);
+    expect(branches()).toContain('avec-travail');
   });
 });
 

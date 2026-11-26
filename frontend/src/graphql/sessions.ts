@@ -35,8 +35,8 @@ export const CREATE_CHAT = gql`
 `;
 
 export const ARCHIVE_SESSION = gql`
-  mutation ArchiveSession($id: ID!, $removeFolder: Boolean) {
-    archiveSession(id: $id, removeFolder: $removeFolder) {
+  mutation ArchiveSession($id: ID!, $removeFolder: Boolean, $force: Boolean) {
+    archiveSession(id: $id, removeFolder: $removeFolder, force: $force) {
       id
       archivedAt
       status
@@ -49,6 +49,7 @@ export const SESSION_FOLDER_REMOVAL = gql`
     sessionFolderRemoval(id: $id) {
       removable
       reason
+      forcible
     }
   }
 `;
