@@ -41,6 +41,8 @@ export interface SidebarSession {
   status: SessionStatus;
   activity: SessionActivity | null;
   pendingRequestCount: number;
+  /** Session archivée : n'est listée que parce qu'elle attend une réponse (demande d'accord qui survit à l'archivage). */
+  archivedAt?: string | null;
   browserActive: boolean;
   /** Sous-agents du CLI en cours (outil Agent, dans le processus de la session) ; absent : pas encore chargé. */
   subagents?: CliSubagent[];

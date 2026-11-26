@@ -185,6 +185,8 @@ export interface SessionFilter {
   provider?: string;
   /** Sessions archivées : exclues (défaut), seules, ou toutes. */
   archived?: 'exclude' | 'only' | 'all';
+  /** Seulement les sessions qui ont une demande en attente (accord, question…). */
+  withPendingRequests?: boolean;
   /** Texte cherché dans le nom, la consigne et la conversation. */
   search?: string;
   limit?: number;

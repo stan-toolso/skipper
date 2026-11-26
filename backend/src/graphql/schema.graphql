@@ -161,7 +161,12 @@ type Project {
   git: WorkspaceGit
   createdAt: DateTime!
   updatedAt: DateTime!
-  sessions(status: SessionStatus, limit: Int, offset: Int): [Session!]!
+  """
+  Sessions non archivées, les plus récentes d'abord. withPendingRequests : y ajoute (après la page) les sessions qui
+  attendent une réponse, même archivées ou plus anciennes que la page — une demande d'accord survit à l'archivage
+  d'office d'une session d'agent, et la sidebar doit la montrer dans sa session.
+  """
+  sessions(status: SessionStatus, limit: Int, offset: Int, withPendingRequests: Boolean): [Session!]!
   "Bibliothèque de contexte : dossiers et instructions à plat, avec leur chemin ; agentId : la bibliothèque propre d’un agent du projet."
   contextFolders(agentId: ID): [ContextFolder!]!
   contextInstructions(agentId: ID): [ContextInstruction!]!

@@ -224,6 +224,7 @@ export const sessionRepository = {
     const archived = filter.archived ?? 'exclude';
     if (archived === 'exclude') where.push('archived_at IS NULL');
     else if (archived === 'only') where.push('archived_at IS NOT NULL');
+    if (filter.withPendingRequests) where.push(`EXISTS (SELECT 1 FROM requests q WHERE q.session_id = sessions.id AND q.status = 'pending')`);
     if (filter.search?.trim()) {
       params.push(`%${filter.search.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
       const s = `$${params.length}`;

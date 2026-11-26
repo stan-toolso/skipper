@@ -1065,8 +1065,15 @@ export const resolvers = {
     git: (project: Project) => workspaceGitInfo(project),
     gitHosted: (project: Project) => project.gitHosted,
     hostedGit: (project: Project) => (project.gitHosted ? hostedGitView(project) : null),
-    sessions: (project: Project, args: { status?: GqlStatus | null; limit?: number | null; offset?: number | null }) =>
-      sessionService.list({ projectId: project.id, status: fromGqlStatus(args.status), limit: args.limit ?? undefined, offset: args.offset ?? undefined }),
+    sessions: async (project: Project, args: { status?: GqlStatus | null; limit?: number | null; offset?: number | null; withPendingRequests?: boolean | null }) => {
+      const page = await sessionService.list({ projectId: project.id, status: fromGqlStatus(args.status), limit: args.limit ?? undefined, offset: args.offset ?? undefined });
+      if (!args.withPendingRequests) return page;
+      // Une demande d'accord survit à l'archivage d'office de la session qui l'a posée : sans cet ajout, elle ne
+      // figurait que dans « À traiter », jamais dans sa session de la sidebar.
+      const waiting = await sessionService.list({ projectId: project.id, archived: 'all', withPendingRequests: true, limit: 100 });
+      const seen = new Set(page.map((s) => s.id));
+      return [...page, ...waiting.filter((s) => !seen.has(s.id))];
+    },
   },
 
   RepoRef: {
