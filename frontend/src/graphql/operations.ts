@@ -1704,7 +1704,7 @@ export const SIDEBAR = gql`
       isMember
       isPersonal
       myRole
-      sessions(limit: 50) {
+      sessions(limit: 50, withPendingRequests: true) {
         ...SidebarSession
         worksession {
           id
@@ -1741,6 +1741,7 @@ export const SIDEBAR = gql`
     status
     activity
     pendingRequestCount
+    archivedAt
     browserActive
     subagents {
       id

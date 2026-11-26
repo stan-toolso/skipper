@@ -719,6 +719,11 @@ function WorkspaceCard({ ws, pr, prOf, expanded, onToggle, tabUrl, filterMine, s
           <span className="wb-ws-name">{label ?? ws.name}</span>
           {ws.primary && ws.projectName && <span className="wb-tag" title="Sessions et terminaux d'avant les work sessions, dans le checkout principal">principal</span>}
           {!ws.exists && <span className="wb-tag missing">absent</span>}
+          {session?.archivedAt && (
+            <span className="wb-tag" title="Session archivée : elle reste ici tant qu'une de ses demandes attend votre réponse">
+              archivée
+            </span>
+          )}
           {modelTag}
           {session?.agent ? (
             <AgentAvatar agent={session.agent} size={16} className="wb-owner wb-owner-agent" title={`Session de l'agent ${session.agent.name}`} />
@@ -1017,7 +1022,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
     if (p.id === activeProjectId) return true;
     // L'espace personnel s'ouvre quand un chat est en cours ou attend une réponse, ou qu'un chat est affiché.
     if (p.isPersonal && (location.pathname.startsWith('/chats') || chats.some((c) => c.status === 'RUNNING' || c.pendingRequestCount > 0))) return true;
-    return p.sessions.some((s) => participates(s, userId) && (s.status === 'RUNNING' || s.status === 'QUEUED' || s.pendingRequestCount > 0));
+    return p.sessions.some((s) => s.pendingRequestCount > 0 || (participates(s, userId) && (s.status === 'RUNNING' || s.status === 'QUEUED')));
   };
 
   return (
@@ -1116,7 +1121,7 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
           .map((p) => {
           const open = projectWindowId ? true : (expanded[p.id] ?? projectDefaultOpen(p));
           const list = workspaces.ofProject(p.id);
-          const collapsedPending = !open ? p.sessions.filter((s) => participates(s, userId)).reduce((n, s) => n + s.pendingRequestCount, 0) : 0;
+          const collapsedPending = !open ? p.sessions.reduce((n, s) => n + s.pendingRequestCount, 0) : 0;
           return (
             <div key={p.id} className={`wb-project${p.isPersonal ? ' wb-personal' : ''}`}>
               <div className={`wb-row wb-project-row${p.id === activeProjectId ? ' active' : ''}`}>
@@ -1167,7 +1172,8 @@ export default function Sidebar({ onCollapse }: { onCollapse?: () => void }) {
                 });
                 // Les dossiers de la personne restent à plat ; ceux des autres sont rangés par personne ou agent, sous une
                 // ligne repliable. Avec le filtre « les miennes », ces groupes sont cachés (comptés), sauf celui de la page affichée.
-                const isShown = (ws: Workspace) => location.pathname.startsWith(`/sessions/${ws.session!.id}`);
+                // Une session qui attend une réponse (accord, question) reste visible malgré le filtre : c'est là qu'on y répond.
+                const isShown = (ws: Workspace) => location.pathname.startsWith(`/sessions/${ws.session!.id}`) || ws.session!.pendingRequestCount > 0;
                 // Les sessions lancées par une planification se rangent sous une seule ligne, celle de la planification.
                 const { rest: plainCards, groups: runGroups } = scheduleGroups(cards);
                 const { mine: mineCards, groups } = ownerGroups(plainCards, userId);

@@ -274,7 +274,8 @@ function session(id, p, name, opts = {}) {
 const sessionsOf = (projectId, args = {}) =>
   sessions
     .filter((s) => s.project.id === projectId && s.kind === 'SESSION' && !s.archivedAt && (!args.status || s.status === args.status))
-    .slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100));
+    .slice(args.offset ?? 0, (args.offset ?? 0) + (args.limit ?? 100))
+    .concat(args.withPendingRequests ? sessions.filter((s) => s.project.id === projectId && s.kind === 'SESSION' && s.archivedAt && requests.some((r) => r.session === s && r.status === 'PENDING')) : []);
 
 const S = {
   tarifs: session('s-page-tarifs', P.site, 'Refonte de la page tarifs', { activity: 'BUSY', age: 70, updated: 0, cost: 1.86, tokens: 64_000,
@@ -290,6 +291,8 @@ const S = {
   contact: session('s-formulaire-contact', P.site, 'Formulaire de contact sur mobile', { model: 'claude-sonnet-5-5', age: 60 * 5, updated: 25, cost: 0.74,
     // Tour clos sur une commande de fond (outil Bash, run_in_background) : l'agent attend sa fin pour reprendre.
     subagents: [{ __typename: 'SessionSubagent', kind: 'command', id: 'bash-e2e', toolUseId: 'tu-e2e', description: 'npm run test:e2e -- contact', agentType: null, background: true, startedAt: ago(6), toolUses: 0, lastTool: null, summary: null }] }),
+  // Session d'agent archivée d'office à la fin de son tour, dont la demande d'accord attend toujours : la sidebar la montre.
+  release: session('s-chris-release', P.site, 'Release du site · 26/11', { owner: U.chris, status: 'COMPLETED', age: 60 * 2, updated: 50, cost: 0.42, archivedAt: ago(50) }),
   blog: session('s-chris-tri-blog', P.site, 'Tri des demandes du blog', { owner: U.chris, requestedBy: U.me, age: 60 * 3, updated: 40, cost: 0.31, branch: null }),
   pdf: session('s-export-pdf', P.api, 'Export des factures en PDF', { owner: U.hugo, activity: 'BUSY', age: 50, updated: 1, cost: 1.12 }),
   revuePdf: session('s-nora-revue-118', P.api, 'Revue de la PR #118', { model: 'claude-haiku-5-5', owner: U.nora, requestedBy: U.hugo, age: 25, updated: 4, cost: 0.22, branch: null }),
@@ -671,6 +674,11 @@ const requests = [
       ],
     },
     response: null, answeredBy: null, createdAt: ago(2), answeredAt: null,
+  },
+  {
+    __typename: 'Request', id: 'r-approval-release', session: S.release, type: 'approval', status: 'PENDING', title: 'Mettre en production main (3d5e9cb) sur le site',
+    message: '**En bref** : la page tarifs et la FAQ. Retour arrière : revert du merge puis redéploiement.', payload: { taskId: T.tarifs.id, taskTitle: T.tarifs.title },
+    response: null, answeredBy: null, createdAt: ago(52), answeredAt: null,
   },
   {
     __typename: 'Request', id: 'r-old', session: S.stripe, type: 'permission', status: 'ANSWERED', title: 'Bash : npm test', message: null,
