@@ -90,6 +90,21 @@ describe('message envoyé à une session archivée', () => {
     start.mockRestore();
   });
 
+  it("transmis à la session qui travaille désormais dans son dossier (agent reconvoqué sur la tâche)", async () => {
+    store.sessions.set('a4', { ...base, id: 'a4', name: 'ancienne', worksessionId: 'w4', archivedAt: new Date() });
+    store.sessions.set('a5', { ...base, id: 'a5', name: 'nouvelle', worksessionId: 'w4' });
+    repo.list.mockImplementationOnce((async () => [{ ...store.sessions.get('a5') }]) as never);
+    const { sessionService } = await import('./service.js');
+    const start = vi.spyOn(sessionService, 'start').mockImplementation(async (id: string) => ({ id }) as never);
+    const result = await sessionService.sendMessage('a4', 'Met en prod la 470 aussi', null, { byPerson: true, unarchive: true });
+    expect(result).toMatchObject({ id: 'a5' });
+    expect(store.sessions.get('a4')!.archivedAt).toBeInstanceOf(Date);
+    expect(worksessions.restore).not.toHaveBeenCalled();
+    expect(repo.addEvent).toHaveBeenCalledWith('a4', 'system', expect.objectContaining({ reason: 'forwarded_to_successor', sessionId: 'a5' }));
+    expect(start).toHaveBeenCalledWith('a5', expect.stringMatching(/session archivée « ancienne » \(a4\)[\s\S]*Met en prod la 470 aussi$/), [], expect.anything());
+    start.mockRestore();
+  });
+
   it('reste archivée si son dossier a été supprimé', async () => {
     store.sessions.set('a3', { ...base, id: 'a3', worksessionId: null, archivedAt: new Date(), formerWorksession: { name: 'task-x', branch: 'task/x', label: 'x' } });
     const { sessionService } = await import('./service.js');

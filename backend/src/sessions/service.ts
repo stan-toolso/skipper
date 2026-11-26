@@ -361,6 +361,17 @@ function assertNotArchived(session: Session): void {
 }
 
 /**
+ * Session active (hors revue de code) qui occupe le dossier d'une session archivée : une work session n'héberge
+ * qu'une session active, la session archivée ne peut pas être restaurée tant que celle-ci y travaille. Null pour une
+ * session de revue (elle se restaure à côté) ou sans dossier.
+ */
+async function activeSuccessorInFolder(session: Session): Promise<Session | null> {
+  if (!session.worksessionId || reviewOf(session)) return null;
+  const others = await sessionRepository.list({ worksessionId: session.worksessionId, archived: 'exclude', limit: 50 });
+  return others.find((s) => s.id !== session.id && !reviewOf(s)) ?? null;
+}
+
+/**
  * Une session (hors chat) ne s'exécute que dans sa work session : sans elle (dossier supprimé à la fusion de sa PR,
  * retiré depuis l'interface ou l'outil `worksessions.delete`, session d'avant les work sessions), elle ne démarre pas,
  * et surtout pas dans le checkout principal du projet, où l'agent se croirait sur sa branche alors qu'il est sur la
@@ -904,6 +915,15 @@ export const sessionService = {
       // Une personne qui écrit dans une session archivée la restaure (avec son dossier) puis la relance avec son
       // message. Refusé comme la restauration si le dossier a disparu ou si une autre session y travaille.
       if (!opts.unarchive) assertNotArchived(session);
+      // Une autre session travaille désormais dans ce dossier (l'agent reconvoqué sur la tâche en ouvre une nouvelle
+      // dans le même dossier) : le message lui est transmis plutôt que refusé. Renvoie cette session, que
+      // l'interface ouvre à la place.
+      const successor = await activeSuccessorInFolder(session);
+      if (successor) {
+        await emitEvent(id, 'system', { message: `Message transmis à la session « ${successor.name} », qui travaille désormais dans ce dossier`, notice: true, reason: 'forwarded_to_successor', sessionId: successor.id });
+        const note = `[Message écrit dans la session archivée « ${session.name} » (${id}), qui travaillait avant toi dans ce dossier ; \`sessions.get\` avec cet id montre sa dernière réponse]`;
+        return this.sendMessage(successor.id, `${note}\n\n${trimmed}`, files, { ...opts, unarchive: false });
+      }
       await this.unarchive(id);
       await emitEvent(id, 'system', { message: 'Session restaurée par un nouveau message', notice: true, reason: 'unarchived_by_message' });
       session = (await sessionRepository.findById(id))!;
@@ -1202,8 +1222,8 @@ export const sessionService = {
     // Dossier supprimé depuis : restaurée, elle resterait active sans pouvoir reprendre.
     assertHasWorksession(session);
     if (session.worksessionId) {
-      const [other] = (await sessionRepository.list({ worksessionId: session.worksessionId, archived: 'exclude', limit: 50 })).filter((s) => s.id !== id && !reviewOf(s));
-      if (other && !reviewOf(session)) throw new AppError(`La session « ${other.name} » travaille déjà dans le dossier de cette session : archivez-la d'abord, ou relancez celle-ci`);
+      const other = await activeSuccessorInFolder(session);
+      if (other) throw new AppError(`La session « ${other.name} » travaille déjà dans le dossier de cette session : archivez-la d'abord, ou relancez celle-ci`);
       await worksessionService.restore(session.worksessionId);
     }
     return publishSession(await sessionRepository.update(id, { archivedAt: null }));
