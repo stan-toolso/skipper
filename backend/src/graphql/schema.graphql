@@ -1930,6 +1930,8 @@ type FolderRemoval {
   removable: Boolean!
   "Pourquoi il serait gardé (null : supprimable)."
   reason: String
+  "Pas supprimable sans perte, mais la personne peut choisir de le supprimer quand même (modifications non commitées et fichiers ignorés perdus, branche et commits gardés). Faux quand d'autres sessions y travaillent ou qu'il n'y a pas de dossier."
+  forcible: Boolean!
 }
 
 
@@ -3676,7 +3678,7 @@ type Mutation {
   "Arrêt immédiat de la session (abandon du travail en cours)."
   stopSession(id: ID!): Session!
   "Archive la session et, avec elle, son dossier de travail (terminaux fermés, dossier et branche conservés) : consultable, restaurable et relançable depuis l'historique du projet."
-  archiveSession(id: ID!, "Supprimer aussi le dossier de travail s'il n'a rien d'unique (sinon il est gardé). La restauration le recrée." removeFolder: Boolean = false): Session!
+  archiveSession(id: ID!, "Supprimer aussi le dossier de travail s'il n'a rien d'unique (sinon il est gardé). La restauration le recrée." removeFolder: Boolean = false, "Avec removeFolder : le supprimer même s'il a du travail unique (non commité, fichiers ignorés ; la branche reste)." force: Boolean = false): Session!
   "Restaure une session archivée avec son dossier de travail ; refusé si une autre session y travaille depuis."
   unarchiveSession(id: ID!): Session!
   "Nouvelle session qui reprend la conversation de celle-ci comme contexte."

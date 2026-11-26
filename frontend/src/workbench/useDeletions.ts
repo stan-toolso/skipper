@@ -68,13 +68,16 @@ export function useDeletions() {
   const sessionTabs = (id: string) => (key: string) => key === `/sessions/${id}` || key.startsWith(`/sessions/${id}/`);
 
   const archiveSession = async (session: DeletableSession) => {
-    // Le dossier peut-il partir avec elle sans rien perdre ? Proposé (coché) seulement dans ce cas.
+    // Le dossier peut-il partir avec elle ? Case cochée s'il n'a rien d'unique ; proposée décochée s'il a du travail
+    // unique (la personne peut accepter de le perdre) ; absente s'il ne peut pas partir (autres sessions, pas de dossier).
     const removal = await client
-      .query<{ sessionFolderRemoval: { removable: boolean; reason: string | null } }>({ query: SESSION_FOLDER_REMOVAL, variables: { id: session.id }, fetchPolicy: 'network-only' })
+      .query<{ sessionFolderRemoval: { removable: boolean; reason: string | null; forcible: boolean } }>({ query: SESSION_FOLDER_REMOVAL, variables: { id: session.id }, fetchPolicy: 'network-only' })
       .then((r) => r.data.sessionFolderRemoval, () => null);
     const base = `Archiver la session « ${session.name} » ? Elle quitte la barre latérale (terminaux fermés, branche conservée) et reste consultable, restaurable et relançable depuis l'historique du projet.`;
     const opts = { title: 'Archiver la session', confirmLabel: 'Archiver' };
+    const lower = (s: string) => `${s.charAt(0).toLowerCase()}${s.slice(1)}`;
     let removeFolder = false;
+    let force = false;
     if (removal?.removable) {
       const res = await confirm({
         ...opts,
@@ -83,14 +86,22 @@ export function useDeletions() {
       });
       if (!res) return;
       removeFolder = res.checked;
+    } else if (removal?.forcible && removal.reason) {
+      const res = await confirm({
+        ...opts,
+        message: `${base} Son dossier de travail contient du travail unique (${lower(removal.reason)}) : il est conservé, sauf si vous choisissez de le supprimer. Les modifications non commitées et les fichiers ignorés seraient alors perdus ; la branche et ses commits restent, la restauration recrée le dossier depuis elle.`,
+        checkbox: { label: 'Supprimer quand même son dossier de travail', defaultChecked: false },
+      });
+      if (!res) return;
+      removeFolder = force = res.checked;
     } else {
-      const why = removal?.reason && !/sans dossier|sans dépôt|déjà absent/i.test(removal.reason) ? ` Son dossier de travail est conservé : ${removal.reason.charAt(0).toLowerCase()}${removal.reason.slice(1)}.` : '';
+      const why = removal?.reason && !/sans dossier|sans dépôt|déjà absent/i.test(removal.reason) ? ` Son dossier de travail est conservé : ${lower(removal.reason)}.` : '';
       if (!(await confirm({ ...opts, message: `${base}${why}` }))) return;
     }
     const layer = `archive:session:${session.id}`;
     hide(layer, sessionTabs(session.id), [['Session', session.id]]);
     await finish(layer, async () => {
-      await client.mutate({ mutation: ARCHIVE_SESSION, variables: { id: session.id, removeFolder }, update: (cache) => evict(cache, 'Session', session.id) });
+      await client.mutate({ mutation: ARCHIVE_SESSION, variables: { id: session.id, removeFolder, force }, update: (cache) => evict(cache, 'Session', session.id) });
     });
   };
 
