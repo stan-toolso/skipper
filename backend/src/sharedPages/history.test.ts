@@ -39,7 +39,7 @@ const admin = person('root', { isAdmin: true });
 const reader = person('bob');
 
 beforeEach(() => {
-  state.page = { id: 'p1', ownerId: 'stan', title: 'Offre', description: null, linkAccess: true, projectAccess: false, version: 3, projectId: null, sessionId: null, sourcePath: null, agentHandoff: 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date() };
+  state.page = { id: 'p1', ownerId: 'stan', title: 'Offre', description: null, linkAccess: true, publicAccess: false, projectAccess: false, version: 3, projectId: null, sessionId: null, sourcePath: null, agentHandoff: 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date() };
   state.members.clear();
   state.purged = [];
   state.deleted = [];

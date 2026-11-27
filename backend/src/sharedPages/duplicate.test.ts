@@ -35,7 +35,7 @@ const alice = person('alice');
 
 function page(extra: Partial<SharedPage> = {}): SharedPage {
   return {
-    id: 'p1', ownerId: 'stan', title: 'Tableau des ventes', description: 'Par mois', linkAccess: false, projectAccess: false, version: 3, projectId: 'proj', sessionId: 'sess', sourcePath: 'ventes.html',
+    id: 'p1', ownerId: 'stan', title: 'Tableau des ventes', description: 'Par mois', linkAccess: false, publicAccess: false, projectAccess: false, version: 3, projectId: 'proj', sessionId: 'sess', sourcePath: 'ventes.html',
     agentHandoff: 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra,
   };
 }
