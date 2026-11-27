@@ -108,6 +108,8 @@ export interface SharedPage {
   description: string | null;
   owner: { id: string; name: string; email: string };
   linkAccess: boolean;
+  /** Visible par tout le monde avec le lien, sans connexion. */
+  publicAccess: boolean;
   /** Visible par tout membre du projet d'origine (sauf les invités). */
   projectAccess: boolean;
   version: number;
@@ -233,6 +235,7 @@ export const SHARED_PAGE_FIELDS = gql`
       email
     }
     linkAccess
+    publicAccess
     projectAccess
     agentHandoff
     historyEnabled

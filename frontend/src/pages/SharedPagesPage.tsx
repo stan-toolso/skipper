@@ -18,7 +18,8 @@ import './artifacts.css';
 type Filter = 'all' | 'mine' | 'shared' | 'favorites';
 type KindFilter = 'all' | ArtifactKind;
 
-export function accessLabel(page: Pick<SharedPage, 'linkAccess' | 'projectAccess' | 'members'>): { icon: string; text: string } {
+export function accessLabel(page: Pick<SharedPage, 'linkAccess' | 'projectAccess' | 'members'> & { publicAccess?: boolean }): { icon: string; text: string } {
+  if (page.publicAccess) return { icon: 'bi-globe', text: 'Publique : tout le monde avec le lien, sans connexion' };
   if (page.linkAccess) return { icon: 'bi-building', text: 'Toute personne de Skipper avec le lien' };
   if (page.projectAccess) return { icon: 'bi-people', text: `Membres du projet${page.members.length ? ` et ${page.members.length} personne${page.members.length > 1 ? 's' : ''}` : ''}` };
   if (page.members.length) return { icon: 'bi-people', text: `Partagée avec ${page.members.length} personne${page.members.length > 1 ? 's' : ''}` };

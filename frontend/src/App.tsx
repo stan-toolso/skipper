@@ -64,6 +64,7 @@ const RepoPage = lazy(() => import('./pages/RepoPage'));
 const ProjectAgentsPage = lazy(() => import('./pages/ProjectAgentsPage'));
 const AgentPage = lazy(() => import('./pages/AgentPage'));
 const SharedSessionPage = lazy(() => import('./pages/SharedSessionPage'));
+const PublicSharedPage = lazy(() => import('./pages/PublicSharedPage'));
 const GuestLayout = lazy(() => import('./components/GuestLayout'));
 
 /** Routes des pages ; `location` est celle de l'onglet rendu (figée pour un onglet caché). */
@@ -171,7 +172,17 @@ function Gate() {
       </div>
     );
   }
-  if (!user) return <LoginPage />;
+  if (!user) {
+    // Page partagée publique : lisible sans connexion (sinon la page de connexion, voir PublicSharedPage).
+    const shared = window.location.pathname.match(/^\/shared\/([0-9a-f-]{36})\/?$/);
+    if (shared)
+      return (
+        <Suspense fallback={<PageLoading />}>
+          <PublicSharedPage id={shared[1]} />
+        </Suspense>
+      );
+    return <LoginPage />;
+  }
   // Invité des pages partagées : seulement les pages partagées avec lui, sans sidebar ni onglets.
   if (user.isGuest)
     return (

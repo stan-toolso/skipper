@@ -16,7 +16,7 @@ vi.mock('./service.js', () => ({
     async getFor(userId: string, id: string): Promise<SharedPage> {
       const p = state.pages.get(id);
       if (!p || !(p.ownerId === userId || p.linkAccess || p.members.includes(userId))) throw new Error('Page partagée introuvable, ou non partagée avec vous');
-      return { id: p.id, ownerId: p.ownerId, title: p.title, version: p.version, linkAccess: p.linkAccess, projectAccess: false, description: null, projectId: null, sessionId: p.sessionId ?? null, sourcePath: null, agentHandoff: p.agentHandoff ?? 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date() };
+      return { id: p.id, ownerId: p.ownerId, title: p.title, version: p.version, linkAccess: p.linkAccess, publicAccess: false, projectAccess: false, description: null, projectId: null, sessionId: p.sessionId ?? null, sourcePath: null, agentHandoff: p.agentHandoff ?? 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date() };
     },
     canManage: (page: SharedPage, user: { id: string; isAdmin: boolean; isGuest: boolean }) => page.ownerId === user.id || (user.isAdmin && !user.isGuest),
   },

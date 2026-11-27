@@ -79,7 +79,7 @@ vi.mock('../runners/index.js', () => ({
 }));
 vi.mock('../log.js', () => ({ log: { info: () => undefined, warn: () => undefined, error: () => undefined } }));
 
-const page = (extra: Partial<SharedPage> = {}): SharedPage => ({ id: 'p1', ownerId: 'owner', title: 'Tableau', description: null, linkAccess: false, projectAccess: false, version: 1, projectId: 'pr', sessionId: null, sourcePath: null, agentHandoff: 'manual', historyEnabled: true, kind: 'data', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
+const page = (extra: Partial<SharedPage> = {}): SharedPage => ({ id: 'p1', ownerId: 'owner', title: 'Tableau', description: null, linkAccess: false, publicAccess: false, projectAccess: false, version: 1, projectId: 'pr', sessionId: null, sourcePath: null, agentHandoff: 'manual', historyEnabled: true, kind: 'data', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
 const source = (extra: Partial<DataSource>): DataSource => ({ id: 's1', pageId: 'p1', name: 'ventes', kind: 'sql', config: { item: 'base', database: null, query: 'SELECT 1' }, position: 0, data: null, rowCount: null, status: 'pending', error: null, durationMs: null, refreshedAt: null, attemptedAt: null, ...extra });
 
 const { artifactDataService } = await import('./dataService.js');

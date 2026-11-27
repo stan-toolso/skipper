@@ -50,7 +50,7 @@ vi.mock('../log.js', () => ({ log: { info: () => undefined, warn: () => undefine
 const { alertService } = await import('./alertService.js');
 const { parseAlerts } = await import('./alerts.js');
 
-const page = (extra: Partial<SharedPage> = {}): SharedPage => ({ id: 'p1', ownerId: 'owner', title: 'Commandes', description: null, linkAccess: false, projectAccess: false, version: 1, projectId: 'pr', sessionId: null, sourcePath: null, agentHandoff: 'manual', historyEnabled: true, kind: 'data', refreshMinutes: 60, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
+const page = (extra: Partial<SharedPage> = {}): SharedPage => ({ id: 'p1', ownerId: 'owner', title: 'Commandes', description: null, linkAccess: false, publicAccess: false, projectAccess: false, version: 1, projectId: 'pr', sessionId: null, sourcePath: null, agentHandoff: 'manual', historyEnabled: true, kind: 'data', refreshMinutes: 60, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
 const source = (data: unknown, extra: Partial<DataSource> = {}): DataSource => ({ id: 's1', pageId: 'p1', name: 'stats', kind: 'sql', config: { item: 'base', database: null, query: 'SELECT 1' }, position: 0, data, rowCount: null, status: 'ok', error: null, durationMs: null, refreshedAt: new Date(), attemptedAt: new Date(), ...extra });
 const alert = (input: Record<string, unknown>, id = 'a1'): DataAlert => {
   const [parsed] = parseAlerts([{ name: 'taux', source: 'stats', path: 'rows.0.taux', op: '>', value: 5, ...input } as never], [{ name: 'stats', kind: 'sql' }]);

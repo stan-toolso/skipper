@@ -69,7 +69,7 @@ describe('pages.share', () => {
   it('ouvre aux membres du projet au nom du propriétaire de la session', async () => {
     const res = await call('share', { page_id: 'p1', project_access: true });
     expect(res.isError).toBe(false);
-    expect(state.updates).toEqual([{ userId: 'stan', id: 'p1', input: { projectAccess: true, linkAccess: null } }]);
+    expect(state.updates).toEqual([{ userId: 'stan', id: 'p1', input: { projectAccess: true, linkAccess: null, publicAccess: null } }]);
     expect(res.text).toContain('les membres du projet');
   });
 

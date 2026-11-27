@@ -171,15 +171,23 @@ export default function SharePageModal({ page, onClose }: { page: SharedPage; on
           <Form.Label className="small text-secondary mb-1">Accès général</Form.Label>
           <Form.Select
             size="sm"
-            value={page.linkAccess ? 'link' : page.projectAccess ? 'project' : 'restricted'}
-            onChange={(e) => void run(() => update({ variables: { id: page.id, input: e.target.value === 'link' ? { linkAccess: true } : e.target.value === 'project' ? { linkAccess: false, projectAccess: true } : { linkAccess: false, projectAccess: false } } }))}
+            value={page.publicAccess ? 'public' : page.linkAccess ? 'link' : page.projectAccess ? 'project' : 'restricted'}
+            onChange={async (e) => {
+              const v = e.target.value;
+              if (v === 'public' && !(await confirm({ title: 'Rendre la page publique', message: 'Toute personne qui a le lien pourra lire la page et ses données, sans compte ni connexion. Les commentaires restent réservés aux personnes connectées.', confirmLabel: 'Rendre publique' }))) return;
+              const input = v === 'public' ? { publicAccess: true } : v === 'link' ? { linkAccess: true, publicAccess: false } : v === 'project' ? { linkAccess: false, projectAccess: true } : { linkAccess: false, projectAccess: false };
+              void run(() => update({ variables: { id: page.id, input } }));
+            }}
           >
             <option value="restricted">Restreint : seules les personnes ci-dessus</option>
             {(page.project || page.projectAccess) && <option value="project">Les membres du projet{page.project ? ` « ${page.project.name} »` : ''}</option>}
             <option value="link">Toute personne connectée à Skipper disposant du lien</option>
+            <option value="public">Tout le monde disposant du lien, sans connexion (publique)</option>
           </Form.Select>
           <Form.Text className="text-secondary">
-            {page.linkAccess
+            {page.publicAccess
+              ? 'Le lien suffit, sans compte ni connexion : à ne faire que pour une page sans donnée confidentielle. Les commentaires restent réservés aux personnes connectées.'
+              : page.linkAccess
               ? 'Le lien suffit à toute personne ayant un compte Skipper (sauf les invités, qui ne voient que les pages où ils ont été ajoutés).'
               : page.projectAccess
                 ? 'Tout membre du projet voit la page (sauf les invités) : nécessaire pour l’épingler dans le tableau de bord du projet.'

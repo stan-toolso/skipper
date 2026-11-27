@@ -21,6 +21,8 @@ export interface SharedPage {
   description: string | null;
   /** Visible par quiconque est connecté et a le lien. */
   linkAccess: boolean;
+  /** Visible par tout le monde avec le lien, sans connexion (implique `linkAccess`). */
+  publicAccess: boolean;
   /** Visible par tout membre du projet d'origine (sauf les invités) : nécessaire pour l'épingler dans un tableau de bord partagé. */
   projectAccess: boolean;
   /** Numéro de la dernière version. */

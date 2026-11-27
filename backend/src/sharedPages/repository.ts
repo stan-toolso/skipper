@@ -7,6 +7,7 @@ interface Row {
   title: string;
   description: string | null;
   link_access: boolean;
+  public_access: boolean;
   project_access: boolean;
   version: number;
   project_id: string | null;
@@ -27,6 +28,7 @@ const toPage = (r: Row): SharedPage => ({
   title: r.title,
   description: r.description,
   linkAccess: r.link_access,
+  publicAccess: r.public_access ?? false,
   projectAccess: r.project_access ?? false,
   version: r.version,
   projectId: r.project_id,
@@ -277,12 +279,13 @@ export const sharedPageRepository = {
     }
   },
 
-  async update(id: string, patch: { title?: string; description?: string | null; linkAccess?: boolean; projectAccess?: boolean; agentHandoff?: AgentHandoff; historyEnabled?: boolean; refreshMinutes?: number | null }): Promise<SharedPage | null> {
+  async update(id: string, patch: { title?: string; description?: string | null; linkAccess?: boolean; publicAccess?: boolean; projectAccess?: boolean; agentHandoff?: AgentHandoff; historyEnabled?: boolean; refreshMinutes?: number | null }): Promise<SharedPage | null> {
     const sets = ['updated_at = now()'];
     const params: unknown[] = [id];
     if (patch.title !== undefined) sets.push(`title = $${params.push(patch.title)}`);
     if (patch.description !== undefined) sets.push(`description = $${params.push(patch.description)}`);
     if (patch.linkAccess !== undefined) sets.push(`link_access = $${params.push(patch.linkAccess)}`);
+    if (patch.publicAccess !== undefined) sets.push(`public_access = $${params.push(patch.publicAccess)}`);
     if (patch.projectAccess !== undefined) sets.push(`project_access = $${params.push(patch.projectAccess)}`);
     if (patch.agentHandoff !== undefined) sets.push(`agent_handoff = $${params.push(patch.agentHandoff)}`);
     if (patch.historyEnabled !== undefined) sets.push(`history_enabled = $${params.push(patch.historyEnabled)}`);

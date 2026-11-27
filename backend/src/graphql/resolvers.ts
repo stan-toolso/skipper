@@ -2524,7 +2524,7 @@ export const resolvers = {
       const file = await readRawFile(args, args.path);
       return sharedPageService.publish({ ownerId: requireUser(ctx).id, title: args.title, html: file.data, pageId: args.pageId ?? null, projectId: args.projectId, sourcePath: args.path });
     },
-    updateSharedPage: async (_: unknown, args: { id: string; input: { title?: string | null; description?: string | null; linkAccess?: boolean | null; projectAccess?: boolean | null; agentHandoff?: string | null; refreshMinutes?: number | null } }, ctx: Ctx) => {
+    updateSharedPage: async (_: unknown, args: { id: string; input: { title?: string | null; description?: string | null; linkAccess?: boolean | null; publicAccess?: boolean | null; projectAccess?: boolean | null; agentHandoff?: string | null; refreshMinutes?: number | null } }, ctx: Ctx) => {
       const user = requireUser(ctx);
       const { agentHandoff, ...input } = args.input;
       if (agentHandoff === 'AUTO') {

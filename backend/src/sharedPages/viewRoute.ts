@@ -8,9 +8,26 @@ import { liveSources } from '../cockpit/liveSources.js';
 import { projectService } from '../projects/service.js';
 import { INJECT_MAX_BYTES, injectCommentScript, injectDataScript, injectEmbed, injectSlidesScript } from './inject.js';
 import { sharedPageRepository } from './repository.js';
+import { userRepository } from '../users/repository.js';
 import { downloadName, sharedPageService } from './service.js';
 
 const ROUTE = /^\/api\/shared\/([0-9a-f-]{36})$/;
+const INFO_ROUTE = /^\/api\/shared\/([0-9a-f-]{36})\/info$/;
+
+/**
+ * GET /api/shared/<id>/info : titre, type et auteur d'une page publique, lus sans connexion par la page publique du
+ * frontend (pages/PublicSharedPage.tsx). 404 pour toute autre page (son existence n'est pas révélée).
+ */
+async function handleInfo(id: string, res: ServerResponse): Promise<void> {
+  const page = await sharedPageService.getPublic(id);
+  if (!page) {
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify({ error: 'not_found' }));
+    return;
+  }
+  const owner = await userRepository.findById(page.ownerId).catch(() => null);
+  const body = { id: page.id, title: page.title, description: page.description, kind: page.kind, version: page.version, updatedAt: page.updatedAt.toISOString(), ownerName: owner?.name ?? null };
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(body));
+}
 
 /** Paramètres d'un bloc (JSON dans l'URL) : un objet, 4 Ko au plus ; sinon vide. */
 function parseParams(raw: string | null): Record<string, unknown> {
@@ -34,9 +51,17 @@ function parseParams(raw: string | null): Record<string, unknown> {
  * ce qui garde le rafraîchissement automatique en marche. Artefact de diapositives : le lecteur est injecté (mode
  * `thumb=1` pour l'aperçu réduit, `print=1` pour l'export PDF : toutes les diapositives puis impression), sauf au
  * téléchargement et avec `raw=1` (le fichier HTML tel que publié).
+ * Page publique (`publicAccess`) : servie aussi sans connexion, sans commentaires, mode bloc ni sources graphql vivantes
+ * (lues aux droits de la personne qui regarde). GET /api/shared/<id>/info en donne le titre et le type, pour la page
+ * publique du frontend.
  */
 export async function handleSharedPageRoute(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const url = new URL(req.url ?? '/', config.apiUrl);
+  const info = url.pathname.match(INFO_ROUTE);
+  if (info && req.method === 'GET') {
+    await handleInfo(info[1], res).catch(() => res.writeHead(500).end());
+    return true;
+  }
   const match = url.pathname.match(ROUTE);
   if (!match) return false;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -44,12 +69,13 @@ export async function handleSharedPageRoute(req: IncomingMessage, res: ServerRes
     return true;
   }
   const user = await authSession.resolve(readCookie(req.headers.cookie, SESSION_COOKIE));
-  if (!user) {
-    res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' }).end("Connectez-vous à Skipper pour ouvrir cette page.");
-    return true;
-  }
   try {
-    const page = await sharedPageService.getFor(user.id, match[1]);
+    // Sans connexion : seulement une page publique (sinon on invite à se connecter, sans révéler si elle existe).
+    const page = user ? await sharedPageService.getFor(user.id, match[1]) : await sharedPageService.getPublic(match[1]);
+    if (!page) {
+      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Connectez-vous à Skipper pour ouvrir cette page.');
+      return true;
+    }
     const v = url.searchParams.get('v');
     const content = await sharedPageService.content(page, v ? Number(v) : null);
     const download = url.searchParams.get('download') === '1';
@@ -57,7 +83,8 @@ export async function handleSharedPageRoute(req: IncomingMessage, res: ServerRes
     let html = content.html;
     // Type de la version servie (une republication peut l'avoir changé) ; celui de l'artefact si elle ne l'a pas gardé.
     const kind = content.version === page.version ? page.kind : ((await sharedPageRepository.version(page.id, content.version))?.kind ?? page.kind);
-    const embed = !raw && url.searchParams.get('embed') === '1';
+    // Bloc de tableau de bord et commentaires : réservés aux personnes connectées.
+    const embed = Boolean(user) && !raw && url.searchParams.get('embed') === '1';
     const blockParams = embed ? parseParams(url.searchParams.get('params')) : {};
     const project = page.projectId ? await projectService.get(page.projectId).catch(() => null) : null;
     if (kind === 'data' && content.html.length <= INJECT_MAX_BYTES && url.searchParams.get('raw') !== '1') {
@@ -66,6 +93,11 @@ export async function handleSharedPageRoute(req: IncomingMessage, res: ServerRes
       const live = new Map<string, Awaited<ReturnType<typeof liveSources.run>>>();
       for (const s of sources) {
         if (s.kind !== 'graphql' || s.status === 'inactive') continue;
+        // Lecteur anonyme d'une page publique : une source vivante se lit avec les droits de qui regarde, donc rien.
+        if (!user) {
+          live.set(s.name, { data: null, status: 'error', error: 'Connectez-vous à Skipper pour voir ces données.', durationMs: 0 });
+          continue;
+        }
         live.set(s.name, await liveSources.run(s, user, { project: project ? { id: project.id, name: project.name } : null, viewer: { id: user.id, name: user.name }, params: blockParams }, content.version));
       }
       const data = Object.fromEntries(sources.map((s) => [s.name, live.has(s.name) ? live.get(s.name)!.data : s.data]));
@@ -94,13 +126,13 @@ export async function handleSharedPageRoute(req: IncomingMessage, res: ServerRes
         scope: (url.searchParams.get('scope') ?? '').slice(0, 120),
         region: parseEmbedRegion(url.searchParams.get('region')),
         params: blockParams,
-        viewer: { id: user.id, name: user.name },
+        viewer: { id: user!.id, name: user!.name },
         project: project ? { id: project.id, name: project.name } : null,
         artifact: { id: page.id, version: content.version, kind },
         theme,
       };
       html = Buffer.from(injectEmbed(html.toString('utf8'), { style: embedStyle(theme), context }), 'utf8');
-    } else if (!raw) html = Buffer.from(injectCommentScript(html.toString('utf8')), 'utf8');
+    } else if (!raw && user) html = Buffer.from(injectCommentScript(html.toString('utf8')), 'utf8');
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Length': html.length,

@@ -37,7 +37,7 @@ vi.mock('./commentService.js', () => ({ sharedPageCommentService: { roots: async
 const { formatUpdateInstruction, sharedPageUpdateService: svc } = await import('./updateRequest.js');
 
 const owner = { id: 'owner', name: 'Olivia', email: 'olivia@example.org' } as unknown as import('../users/types.js').User;
-const page = (extra: Partial<SharedPage> = {}): SharedPage => ({ id: 'p1', ownerId: 'owner', title: 'Rapport', description: null, linkAccess: false, projectAccess: false, version: 3, projectId: 'pr', sessionId: 's1', sourcePath: 'rapport.html', agentHandoff: 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
+const page = (extra: Partial<SharedPage> = {}): SharedPage => ({ id: 'p1', ownerId: 'owner', title: 'Rapport', description: null, linkAccess: false, publicAccess: false, projectAccess: false, version: 3, projectId: 'pr', sessionId: 's1', sourcePath: 'rapport.html', agentHandoff: 'manual', historyEnabled: true, kind: 'page', refreshMinutes: null, dataRefreshedAt: null, viewedAt: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
 const comment = (id: string, extra: Partial<SharedPageComment> = {}): SharedPageComment => ({ id, pageId: 'p1', parentId: null, authorId: 'alice', sessionId: null, body: 'Trop petit', anchor: { selector: 'main > h1', text: 'Titre', tag: 'h1' }, version: 3, resolvedAt: null, resolvedById: null, createdAt: new Date(), updatedAt: new Date(), ...extra });
 
 beforeEach(() => {
