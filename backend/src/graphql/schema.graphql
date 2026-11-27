@@ -2786,6 +2786,8 @@ type SharedPage {
   owner: User!
   "Visible par quiconque est connecté et a le lien."
   linkAccess: Boolean!
+  "Visible par tout le monde avec le lien, sans connexion (implique linkAccess)."
+  publicAccess: Boolean!
   "Visible par tout membre du projet d'origine (sauf les invités) : nécessaire pour l'épingler dans un tableau de bord partagé."
   projectAccess: Boolean!
   version: Int!
@@ -2995,6 +2997,8 @@ input SharedPageInput {
   title: String
   description: String
   linkAccess: Boolean
+  "Ouvrir (ou fermer) la page à tout le monde, sans connexion ; true ouvre aussi le lien, linkAccess false le referme."
+  publicAccess: Boolean
   "Ouvrir (ou fermer) l'artefact aux membres de son projet."
   projectAccess: Boolean
   agentHandoff: SharedPageAgentHandoff

@@ -7,3 +7,10 @@
   .shared-session { padding: 0; }
   .shared-session .cc { height: 100vh; border-radius: 0; }
 }
+
+/* Page partagée publique (/shared/<id> sans connexion) : bandeau d'une ligne puis la page en pleine fenêtre. */
+.public-page { height: 100vh; display: flex; flex-direction: column; background: var(--cc-bg); }
+.public-page-bar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--cc-border); font-size: 13px; min-width: 0; }
+.public-page-title { font-weight: 600; color: var(--cc-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.public-page-meta { color: var(--cc-dim); white-space: nowrap; }
+.public-page-frame { flex: 1; width: 100%; border: 0; background: var(--cc-bg-elevated); }

@@ -323,7 +323,7 @@ const scheduleRun = (id, s, status, startedMin, over = {}) => ({
 });
 // Pages partagées : une à moi (fenêtre « Partager »), une partagée avec moi avec un message (bandeau du message).
 const demoSharedPage = (id, title, owner, members, extra = {}) => ({
-  __typename: 'SharedPage', id, title, description: null, owner, linkAccess: false, projectAccess: false, version: 1, createdAt: ago(60 * 24), updatedAt: ago(60 * 3),
+  __typename: 'SharedPage', id, title, description: null, owner, linkAccess: false, publicAccess: false, projectAccess: false, version: 1, createdAt: ago(60 * 24), updatedAt: ago(60 * 3),
   members: members.map(([u, message]) => ({ __typename: 'SharedPageMember', user: u, addedBy: owner, addedAt: ago(60 * 20), message })),
   versions: [{ __typename: 'SharedPageVersion', version: 1, size: 18_400, createdBy: owner, createdAt: ago(60 * 24), kind: extra.kind ?? 'PAGE', refreshMinutes: extra.refreshMinutes ?? null, sourceCount: extra.kind === 'DATA' ? (extra.sources ?? []).length : null }],
   project: null, session: null, sourcePath: null, comments: [], openComments: 0, agentHandoff: 'MANUAL', historyEnabled: true, kind: 'PAGE', refreshMinutes: null, dataRefreshedAt: null, sources: [], alerts: [], favorite: false,
