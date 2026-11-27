@@ -4,7 +4,7 @@ import { isGoneError } from '../lib/gone';
 import { useMutation, useQuery } from '@apollo/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Spinner } from 'react-bootstrap';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTabTitle, useTabs } from '../workbench/TabsContext';
 import { canAutoFocus } from '../lib/device';
 import { describeCron } from '../lib/cron';
@@ -82,6 +82,7 @@ export default function SessionDetailPage() {
   const { data, loading, error } = usePollingQuery<{ session: SessionWithRequests | null }>(SESSION, { variables: { id }, pollInterval: 1500 });
   const { events, loaded: eventsLoaded, draft, refresh: refreshEvents } = useSessionEvents(id);
   const [sendMessage, { loading: sending, error: sendError }] = useMutation(SEND_SESSION_MESSAGE);
+  const navigate = useNavigate();
   const [interruptSession] = useMutation(INTERRUPT_SESSION, { onError: (err) => void showError(err) });
   const [resumeSession, { loading: resuming }] = useMutation(RESUME_SESSION, { onError: (err) => void showError(err) });
   const { confirm, choose, showError } = useDialogs();
@@ -283,7 +284,15 @@ export default function SessionDetailPage() {
     try {
       const files = items.length ? await toAttachmentInputs(items) : null;
       // Une session archivée est restaurée par le message : la sidebar la remet parmi les sessions actives.
-      await sendMessage({ variables: { id, text: value, attachments: files }, refetchQueries: archived ? ['Sidebar'] : [] });
+      const { data: sent } = await sendMessage({ variables: { id, text: value, attachments: files }, refetchQueries: archived ? ['Sidebar'] : [] });
+      // Session archivée dont le dossier est occupé par une autre session (l'agent reconvoqué sur la tâche) : le
+      // serveur a transmis le message à celle-ci et la renvoie ; on l'ouvre.
+      const target = sent?.sendSessionMessage?.id;
+      if (target && target !== id) {
+        dropPending([pending]);
+        navigate(`/sessions/${target}`);
+        return true;
+      }
       // Le serveur a journalisé l'instruction : on la relève tout de suite plutôt qu'au prochain tour de sondage.
       refreshEvents();
       return true;
